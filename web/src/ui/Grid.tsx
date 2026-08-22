@@ -9,7 +9,13 @@ import {
   untrack,
 } from "solid-js";
 import { justify, totalHeight, visibleRows } from "../layout/justified";
-import { fullyPassedRows } from "../layout/read-state";
+import {
+  fullyPassedRows,
+  intersectingRowIDs,
+  shouldLoadNextPage,
+  shouldMarkAtBottom,
+  shouldShowEndCard,
+} from "../layout/read-state";
 import type { Item } from "../types";
 import { gridCommand } from "./keyboard";
 
@@ -37,7 +43,15 @@ interface GridProps {
 
 export function Grid(props: GridProps) {
   let scroller!: HTMLDivElement;
+  let endButton!: HTMLButtonElement;
   let frame = 0;
+  let programmaticFrame = 0;
+  let scrollIdle: number | undefined;
+  let goTimer: number | undefined;
+  let userScrolling = false;
+  let programmaticScrolling = false;
+  let endRequested = false;
+  let goPending = false;
   const [width, setWidth] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
@@ -54,6 +68,13 @@ export function Grid(props: GridProps) {
   const visible = createMemo(() =>
     visibleRows(rows(), scrollTop(), viewportHeight()),
   );
+  const unreadIDs = createMemo(() =>
+    props.items.filter((item) => !item.read).map((item) => item.item_id),
+  );
+  const endTop = createMemo(() => totalHeight(rows()) + 28);
+  const canvasHeight = createMemo(
+    () => endTop() + (props.hasMore ? 0 : viewportHeight()),
+  );
   const passedIDs = new Set<string>();
 
   const updateViewport = () => {
@@ -61,21 +82,70 @@ export function Grid(props: GridProps) {
     setViewportHeight(scroller.clientHeight);
   };
 
+  const noteUserScroll = () => {
+    if (programmaticScrolling) return;
+    userScrolling = true;
+    endRequested = false;
+    window.clearTimeout(scrollIdle);
+    scrollIdle = window.setTimeout(() => {
+      userScrolling = false;
+    }, 180);
+  };
+
+  const programmaticScroll = (action: () => void) => {
+    userScrolling = false;
+    programmaticScrolling = true;
+    window.clearTimeout(scrollIdle);
+    action();
+    cancelAnimationFrame(programmaticFrame);
+    programmaticFrame = requestAnimationFrame(() => {
+      programmaticScrolling = false;
+      userScrolling = false;
+    });
+  };
+
   const processScroll = () => {
-    setScrollTop(scroller.scrollTop);
-    const passed = fullyPassedRows(rows(), -1, scroller.scrollTop);
-    const ids = passed.rows.flatMap((row) =>
-      row.cells.flatMap((cell) => {
-        const id = cell.item.item_id;
-        if (passedIDs.has(id)) return [];
-        passedIDs.add(id);
-        return [id];
-      }),
-    );
-    if (ids.length > 0) props.onItemsPassed(ids);
+    const top = scroller.scrollTop;
+    setScrollTop(top);
+    const ids = new Set<string>();
+    if (userScrolling && !programmaticScrolling) {
+      const passed = fullyPassedRows(rows(), -1, top);
+      for (const row of passed.rows) {
+        for (const cell of row.cells) {
+          const id = cell.item.item_id;
+          if (passedIDs.has(id) || liveItems().get(id)?.read) continue;
+          passedIDs.add(id);
+          ids.add(id);
+        }
+      }
+      if (
+        shouldMarkAtBottom(
+          true,
+          top,
+          scroller.clientHeight,
+          scroller.scrollHeight,
+        )
+      ) {
+        for (const id of intersectingRowIDs(
+          rows(),
+          top,
+          scroller.clientHeight,
+          14,
+        )) {
+          if (passedIDs.has(id) || liveItems().get(id)?.read) continue;
+          passedIDs.add(id);
+          ids.add(id);
+        }
+      }
+    }
+    if (ids.size > 0) props.onItemsPassed([...ids]);
     if (
-      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
-      scroller.clientHeight * 2
+      shouldLoadNextPage(
+        props.hasMore,
+        top,
+        scroller.clientHeight,
+        scroller.scrollHeight,
+      )
     )
       props.onLoadMore();
   };
@@ -83,6 +153,10 @@ export function Grid(props: GridProps) {
   const onScroll = () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(processScroll);
+    window.clearTimeout(scrollIdle);
+    scrollIdle = window.setTimeout(() => {
+      userScrolling = false;
+    }, 180);
   };
 
   onMount(() => {
@@ -90,25 +164,54 @@ export function Grid(props: GridProps) {
     observer.observe(scroller);
     updateViewport();
     scroller.addEventListener("scroll", onScroll, { passive: true });
+    scroller.addEventListener("wheel", noteUserScroll, { passive: true });
+    scroller.addEventListener("touchmove", noteUserScroll, { passive: true });
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
       observer.disconnect();
       scroller.removeEventListener("scroll", onScroll);
+      scroller.removeEventListener("wheel", noteUserScroll);
+      scroller.removeEventListener("touchmove", noteUserScroll);
       window.removeEventListener("keydown", onKeyDown);
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(programmaticFrame);
+      window.clearTimeout(scrollIdle);
+      window.clearTimeout(goTimer);
     });
   });
 
   createEffect(() => {
     props.scrollToTopKey;
     if (!scroller) return;
-    scroller.scrollTop = 0;
+    endRequested = false;
+    programmaticScroll(() => {
+      scroller.scrollTop = 0;
+    });
     setScrollTop(0);
     passedIDs.clear();
   });
 
   createEffect(() => {
     if (props.items.length === 0 && props.hasMore) props.onLoadMore();
+  });
+
+  const continueToEnd = () => {
+    if (!scroller || !endRequested) return;
+    programmaticScroll(() => {
+      scroller.scrollTop = scroller.scrollHeight;
+    });
+    if (props.hasMore) {
+      props.onLoadMore();
+      return;
+    }
+    endRequested = false;
+    requestAnimationFrame(() => endButton?.focus({ preventScroll: true }));
+  };
+
+  createEffect(() => {
+    props.layoutKey;
+    props.hasMore;
+    if (endRequested) requestAnimationFrame(continueToEnd);
   });
 
   const position = () => {
@@ -138,24 +241,65 @@ export function Grid(props: GridProps) {
       Math.min(targetRow.cells.length - 1, current.cellIndex + cellDelta),
     );
     const id = targetRow.cells[cellIndex].item.item_id;
+    endRequested = false;
     props.onFocus(id);
-    requestAnimationFrame(() =>
-      scroller
-        .querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" }),
-    );
+    requestAnimationFrame(() => {
+      programmaticScroll(() =>
+        scroller
+          .querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`)
+          ?.scrollIntoView({ block: "nearest", inline: "nearest" }),
+      );
+    });
   };
 
   const focused = () =>
     props.items.find((item) => item.item_id === props.focusedID) ??
     props.items[0];
 
+  const clearGo = () => {
+    goPending = false;
+    window.clearTimeout(goTimer);
+  };
+
+  const goHome = () => {
+    endRequested = false;
+    const first = rows()[0]?.cells[0]?.item.item_id;
+    if (first) props.onFocus(first);
+    programmaticScroll(() => {
+      scroller.scrollTop = 0;
+      scroller.focus({ preventScroll: true });
+    });
+  };
+
+  const goEnd = () => {
+    endRequested = true;
+    continueToEnd();
+  };
+
+  const markRemaining = () => {
+    const ids = unreadIDs();
+    for (const id of ids) passedIDs.add(id);
+    props.onItemsPassed(ids);
+  };
+
   const onKeyDown = (event: KeyboardEvent) => {
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
     if (target.matches("input, textarea, select")) return;
+    if (target === endButton && (event.key === "Enter" || event.key === " "))
+      return;
     const item = focused();
     const command = gridCommand(event.key);
+    if (!command) {
+      clearGo();
+      if (
+        ["PageDown", "PageUp", " "].includes(event.key) &&
+        !(event.key === " " && target.matches("button, a"))
+      )
+        noteUserScroll();
+      return;
+    }
+    if (command !== "go-prefix") clearGo();
     switch (command) {
       case "down":
         move(1, 0);
@@ -187,6 +331,21 @@ export function Grid(props: GridProps) {
       case "mark-below":
         if (item) props.onMarkBelow(item);
         break;
+      case "end":
+        goEnd();
+        break;
+      case "home":
+        goHome();
+        break;
+      case "go-prefix":
+        if (goPending) {
+          clearGo();
+          goHome();
+        } else {
+          goPending = true;
+          goTimer = window.setTimeout(clearGo, 600);
+        }
+        break;
       case "undo":
         props.onUndo();
         break;
@@ -202,18 +361,13 @@ export function Grid(props: GridProps) {
       case "help":
         props.onKeys();
         break;
-      default:
-        return;
     }
     event.preventDefault();
   };
 
   return (
     <div class="grid-scroll" ref={scroller} tabindex="-1">
-      <div
-        class="virtual-canvas"
-        style={{ height: `${totalHeight(rows()) + 28}px` }}
-      >
+      <div class="virtual-canvas" style={{ height: `${canvasHeight()}px` }}>
         <For each={visible()}>
           {(row) => (
             <div
@@ -318,6 +472,23 @@ export function Grid(props: GridProps) {
             </div>
           )}
         </For>
+        <Show when={shouldShowEndCard(props.hasMore)}>
+          <section
+            class="end-of-feed"
+            style={{
+              top: `${endTop()}px`,
+              "min-height": `${viewportHeight()}px`,
+            }}
+          >
+            <div>
+              <h2>You&apos;re all caught up</h2>
+              <p>Everything currently loaded is behind you.</p>
+              <button ref={endButton} type="button" onClick={markRemaining}>
+                Mark remaining {unreadIDs().length} as read
+              </button>
+            </div>
+          </section>
+        </Show>
       </div>
     </div>
   );

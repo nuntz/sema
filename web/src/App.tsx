@@ -86,7 +86,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       setGridIDs(visibleItemIDs(pageItems, nextUnreadOnly));
       setLayoutVersion((value) => value + 1);
       setScrollTopVersion((value) => value + 1);
-      setCursor(page.next_cursor);
+      setCursor(page.next_cursor ?? "");
       setHasPage(true);
       setFocusedID(visibleItemIDs(pageItems, nextUnreadOnly)[0] ?? "");
     } catch (caught) {
@@ -115,8 +115,8 @@ export function App(props: { token: () => string; signOut(): void }) {
         setGridIDs((current) => [...current, ...visible]);
         setLayoutVersion((value) => value + 1);
       }
-      setCursor(page.next_cursor);
-      continueLoading = visible.length === 0 && page.next_cursor !== "";
+      setCursor(page.next_cursor ?? "");
+      continueLoading = visible.length === 0 && (page.next_cursor ?? "") !== "";
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -238,6 +238,7 @@ export function App(props: { token: () => string; signOut(): void }) {
     const unread = [...requested].filter((id) => !alreadyRead.has(id));
     if (unread.length === 0) return;
     for (const id of unread) pendingRead.add(id);
+    setUndo({ ids: [...pendingRead] });
     setItems((current) => updateRead(current, requested, true));
     if (document.visibilityState === "hidden") {
       void flushRead(true);
@@ -270,7 +271,10 @@ export function App(props: { token: () => string; signOut(): void }) {
 
   const toggleRead = (item: Item) => {
     pendingRead.delete(item.item_id);
-    if (pendingRead.size === 0) window.clearTimeout(readTimer);
+    if (pendingRead.size === 0) {
+      window.clearTimeout(readTimer);
+      readTimer = undefined;
+    }
     replaceItem(item.item_id, { read: !item.read });
     api.read(item.item_id, !item.read).catch((caught) => {
       replaceItem(item.item_id, { read: item.read });
@@ -282,8 +286,16 @@ export function App(props: { token: () => string; signOut(): void }) {
     const operation = undo();
     if (!operation) return;
     setUndo(undefined);
+    const unsent = new Set(
+      operation.ids.filter((id) => pendingRead.delete(id)),
+    );
+    if (pendingRead.size === 0) {
+      window.clearTimeout(readTimer);
+      readTimer = undefined;
+    }
     setItems((current) => updateRead(current, operation.ids, false));
-    writeReadBatch(operation.ids, false).catch(handleError);
+    const sent = operation.ids.filter((id) => !unsent.has(id));
+    if (sent.length > 0) writeReadBatch(sent, false).catch(handleError);
   };
 
   const markBelow = async (item: Item) => {
@@ -302,7 +314,7 @@ export function App(props: { token: () => string; signOut(): void }) {
             .filter((candidate) => !candidate.read)
             .map((candidate) => candidate.item_id),
         );
-        nextCursor = page.next_cursor;
+        nextCursor = page.next_cursor ?? "";
       }
       queueRead(ids);
     } catch (caught) {

@@ -35,7 +35,7 @@ export interface Item {
 
 export interface ItemsResponse {
   items: Item[];
-  next_cursor: string;
+  next_cursor: string | null;
 }
 
 export interface Feed {

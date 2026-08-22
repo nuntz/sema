@@ -49,6 +49,11 @@ button:disabled { cursor: default; opacity: 0.38; }
 .grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: #2d3137 transparent; contain: strict; }
 .virtual-canvas { position: relative; width: 100%; min-height: 100%; contain: layout style; }
 .grid-row { position: absolute; left: 16px; right: 16px; display: flex; gap: 10px; contain: strict; }
+.end-of-feed { position: absolute; left: 16px; right: 16px; display: grid; place-items: center; border-top: 1px solid var(--hairline); text-align: center; }
+.end-of-feed > div { max-width: 360px; padding: 48px 20px; }
+.end-of-feed h2 { margin: 0 0 8px; color: #f2f0eb; font: 400 24px/1.25 "Newsreader", Georgia, serif; }
+.end-of-feed p { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+.end-of-feed button { min-height: 34px; padding: 0 15px; border-radius: 7px; background: var(--accent); color: #11150a; font-weight: 600; font-size: 12.5px; }
 .grid-cell {
   position: relative; min-width: 0; height: 100%; overflow: hidden; border: 1px solid var(--hairline); border-radius: 6px;
   background: var(--surface); transition: opacity 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
@@ -192,6 +197,7 @@ button:disabled { cursor: default; opacity: 0.38; }
   .unread-toggle, .keys-chip { display: none; }
   .avatar { width: 26px; height: 26px; border-radius: 13px; }
   .grid-row { left: 14px; right: 14px; gap: 10px; }
+  .end-of-feed { left: 14px; right: 14px; }
   .grid-cell { border-radius: 8px; }
   .cell-actions { top: 5px; right: 5px; gap: 4px; }
   .cell-actions button { width: 44px; height: 44px; }

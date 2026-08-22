@@ -9,6 +9,9 @@ export type GridCommand =
   | "heart"
   | "read"
   | "mark-below"
+  | "end"
+  | "home"
+  | "go-prefix"
   | "undo"
   | "original"
   | "order"
@@ -41,6 +44,10 @@ const gridBindings: Record<string, GridCommand> = {
   f: "heart",
   m: "read",
   M: "mark-below",
+  End: "end",
+  G: "end",
+  Home: "home",
+  g: "go-prefix",
   u: "undo",
   v: "original",
   t: "order",

@@ -68,6 +68,19 @@ describe("item list", () => {
     ).toEqual([true]);
   });
 
+  it("marks every remaining loaded unread item from the caught-up card", () => {
+    const items = [
+      make("one"),
+      { ...make("already-read"), read: true },
+      make("three"),
+    ];
+    const ids = visibleItemIDs(items, true);
+    const read = updateRead(items, ids, true);
+
+    expect(ids).toEqual(["one", "three"]);
+    expect(read.every((item) => item.read)).toBe(true);
+  });
+
   it("undoes an explicit read batch without changing item order", () => {
     const items = [make("one"), make("two"), make("three")];
     const read = updateRead(items, ["one", "two"], true);
