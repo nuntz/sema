@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -103,6 +104,13 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if cleaned, removed := extract.RemoveLeadingImage(article.HTML, lead.SourceURL); removed {
 			article.HTML = cleaned
 		}
+	} else {
+		attributes := []any{"user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", mediaErr}
+		var leadErr *media.LeadError
+		if errors.As(mediaErr, &leadErr) {
+			attributes = append(attributes, "url", leadErr.URL, "content_type", leadErr.ContentType)
+		}
+		slog.Warn("media failed", attributes...)
 	}
 	bodyKey, hasBody := "", false
 	if article.HTML != "" {

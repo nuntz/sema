@@ -108,6 +108,7 @@ func (c *Client) Get(ctx context.Context, rawURL string, headers http.Header) (R
 	req.Header.Set("User-Agent", c.agent)
 	req.Header.Set("Accept", "application/rss+xml, application/atom+xml, application/feed+json, application/json, text/html;q=0.9, */*;q=0.5")
 	for key, values := range headers {
+		req.Header.Del(key)
 		for _, value := range values {
 			req.Header.Add(key, value)
 		}

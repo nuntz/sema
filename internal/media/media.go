@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
@@ -19,6 +20,8 @@ import (
 	"golang.org/x/net/html"
 )
 
+const imageAccept = "image/avif,image/webp,image/*,*/*;q=0.8"
+
 type Image struct {
 	Bytes       []byte
 	ContentType string
@@ -28,7 +31,26 @@ type Image struct {
 	Height      int
 }
 
-type Processor struct{ client *httpx.Client }
+type LeadError struct {
+	URL         string
+	ContentType string
+	Err         error
+}
+
+func (e *LeadError) Error() string {
+	if e.ContentType != "" {
+		return fmt.Sprintf("lead image %q with content type %q: %v", e.URL, e.ContentType, e.Err)
+	}
+	return fmt.Sprintf("lead image %q: %v", e.URL, e.Err)
+}
+
+func (e *LeadError) Unwrap() error { return e.Err }
+
+type client interface {
+	Get(context.Context, string, http.Header) (httpx.Response, error)
+}
+
+type Processor struct{ client client }
 
 func New(client *httpx.Client) *Processor { return &Processor{client: client} }
 
@@ -88,23 +110,34 @@ func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML []byte, art
 func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Image, error) {
 	var lastErr error
 	for _, candidate := range candidates {
-		response, err := p.client.Get(ctx, candidate, nil)
-		if err != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
-			lastErr = err
+		response, err := p.client.Get(ctx, candidate, http.Header{"Accept": []string{imageAccept}})
+		if err != nil {
+			lastErr = &LeadError{URL: candidate, Err: err}
+			continue
+		}
+		contentType := response.Header.Get("Content-Type")
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("HTTP status %d", response.StatusCode)}
+			continue
+		}
+		mediaType, _, parseErr := mime.ParseMediaType(contentType)
+		if parseErr != nil || !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("unexpected content type")}
 			continue
 		}
 		decoded, err := decode(response.Body, 40_000_000)
 		if err != nil {
-			lastErr = err
+			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("decode: %w", err)}
 			continue
 		}
 		bounds := decoded.Bounds()
 		if bounds.Dx() < 300 {
+			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("image width %d is below 300 pixels", bounds.Dx())}
 			continue
 		}
 		lead, err := encodeLead(decoded)
 		if err != nil {
-			lastErr = err
+			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("encode: %w", err)}
 			continue
 		}
 		lead.SourceURL = candidate
@@ -138,7 +171,7 @@ func (p *Processor) Favicon(ctx context.Context, siteURL string) (Image, error) 
 	}
 	candidates = append(candidates, root.ResolveReference(&url.URL{Path: "/favicon.ico"}).String())
 	for _, candidate := range candidates {
-		response, fetchErr := p.client.Get(ctx, candidate, http.Header{"Accept": []string{"image/*"}})
+		response, fetchErr := p.client.Get(ctx, candidate, http.Header{"Accept": []string{imageAccept}})
 		if fetchErr != nil || response.StatusCode < 200 || response.StatusCode >= 300 {
 			continue
 		}
