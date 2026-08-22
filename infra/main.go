@@ -222,7 +222,7 @@ func main() {
 			},
 			DefaultCacheBehavior: defaultBehavior,
 			OrderedCacheBehaviors: cloudfront.DistributionOrderedCacheBehaviorArray{
-				contentBehavior("/content/bodies/*", "content", keyGroup.ID()), contentBehavior("/content/media/*", "content", keyGroup.ID()), contentBehavior("/content/favicons/*", "content", nil), contentBehavior("/content/*", "content", keyGroup.ID()), apiBehavior("/api/*", "api"),
+				contentBehavior("/bodies/*", "content", keyGroup.ID()), contentBehavior("/media/*", "content", keyGroup.ID()), contentBehavior("/favicons/*", "content", nil), apiBehavior("/api/*", "api"),
 			},
 			Restrictions:      &cloudfront.DistributionRestrictionsArgs{GeoRestriction: &cloudfront.DistributionRestrictionsGeoRestrictionArgs{RestrictionType: pulumi.String("none")}},
 			ViewerCertificate: &cloudfront.DistributionViewerCertificateArgs{CloudfrontDefaultCertificate: pulumi.Bool(true), MinimumProtocolVersion: pulumi.String("TLSv1.2_2021")},

@@ -53,7 +53,7 @@ pulumi up
 
 The stack exports `url`, `distributionId`, `appBucket`, `contentBucket`, and `apiEndpoint`. Add the `url` HTTPS origin to the Google OAuth client's authorized JavaScript origins before signing in; sign-in fails until that origin is registered. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build automatically.
 
-Pulumi generates an RSA key in encrypted stack state, registers its public half with CloudFront, and supplies the secret half only to the API Lambda. Authenticated API responses refresh one-hour signed cookies scoped to `/content/bodies/<sub>/` and `/content/media/<sub>/`; favicons are shared public assets. S3 itself remains private behind origin access control.
+Pulumi generates an RSA key in encrypted stack state, registers its public half with CloudFront, and supplies the secret half only to the API Lambda. Authenticated API responses refresh one-hour signed cookies scoped to `/bodies/<sub>/` and `/media/<sub>/`, which are also the object keys in the content bucket; favicons are shared public assets. S3 itself remains private behind origin access control.
 
 `pulumi up` runs the pinned Bun install and builds the Lambda archives and SPA before registering their assets, so a clean checkout does not need a separate build command. `make deploy` is an equivalent shortcut from the repository root.
 

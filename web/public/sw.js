@@ -1,5 +1,6 @@
-const CACHE = "sema-shell-v1";
+const CACHE = "sema-shell-v2";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest"];
+const NETWORK_ONLY_PREFIXES = ["/api/", "/bodies/", "/media/", "/favicons/"];
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
   self.skipWaiting();
@@ -10,7 +11,8 @@ self.addEventListener("activate", (event) => {
 });
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
-  if (new URL(event.request.url).pathname.startsWith("/api/") || new URL(event.request.url).pathname.startsWith("/content/")) return;
+  const path = new URL(event.request.url).pathname;
+  if (NETWORK_ONLY_PREFIXES.some((prefix) => path.startsWith(prefix))) return;
   event.respondWith(fetch(event.request).then((response) => {
     const copy = response.clone();
     caches.open(CACHE).then((cache) => cache.put(event.request, copy));

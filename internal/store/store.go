@@ -439,7 +439,7 @@ func (s *Store) ContentURL(objectKey string) string {
 	if objectKey == "" {
 		return ""
 	}
-	return s.contentURL + "/content/" + strings.TrimLeft(objectKey, "/")
+	return s.contentURL + "/" + strings.TrimLeft(objectKey, "/")
 }
 
 func (s *Store) PublicItem(item domain.Item) domain.Item {
