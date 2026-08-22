@@ -23,6 +23,7 @@ type Image struct {
 	Bytes       []byte
 	ContentType string
 	Extension   string
+	SourceURL   string
 	Width       int
 	Height      int
 }
@@ -101,7 +102,13 @@ func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Image, 
 		if bounds.Dx() < 300 {
 			continue
 		}
-		return encodeLead(decoded)
+		lead, err := encodeLead(decoded)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		lead.SourceURL = candidate
+		return lead, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no usable lead image")

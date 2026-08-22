@@ -95,14 +95,6 @@ func (h *handler) process(ctx context.Context, body string) error {
 		article = extract.Result{}
 	}
 
-	bodyKey, hasBody := "", false
-	if article.HTML != "" {
-		bodyKey = store.BodyKey(message.User, message.ItemID)
-		if err := h.store.PutContent(ctx, bodyKey, "text/html; charset=utf-8", []byte(article.HTML)); err != nil {
-			return fmt.Errorf("store body: %w", err)
-		}
-		hasBody = true
-	}
 	summary := extract.Summary(message.SummaryRaw, article.FirstParagraph)
 	candidates := media.Candidates(message.EnclosureURLs, pageHTML, []byte(article.HTML), article.LeadImage, pageURL)
 	mediaKey, mediaW, mediaH := "", 0, 0
@@ -112,6 +104,17 @@ func (h *handler) process(ctx context.Context, body string) error {
 			return fmt.Errorf("store media: %w", err)
 		}
 		mediaW, mediaH = lead.Width, lead.Height
+		if cleaned, removed := extract.RemoveLeadingImage(article.HTML, lead.SourceURL); removed {
+			article.HTML = cleaned
+		}
+	}
+	bodyKey, hasBody := "", false
+	if article.HTML != "" {
+		bodyKey = store.BodyKey(message.User, message.ItemID)
+		if err := h.store.PutContent(ctx, bodyKey, "text/html; charset=utf-8", []byte(article.HTML)); err != nil {
+			return fmt.Errorf("store body: %w", err)
+		}
+		hasBody = true
 	}
 	embedInput := capRunes(strings.TrimSpace(message.Title+"\n"+summary+"\n"+article.FirstParagraph), 2048)
 	embedStarted := time.Now()

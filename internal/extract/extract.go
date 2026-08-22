@@ -123,6 +123,66 @@ func Sanitize(raw string, pageURL *url.URL) (string, error) {
 	return strings.TrimSpace(policy.Sanitize(rendered.String())), nil
 }
 
+// RemoveLeadingImage removes the first content node only when that node
+// consists solely of the image selected for lead media. This keeps inline
+// article images intact and preserves the body if lead-media processing fails.
+func RemoveLeadingImage(raw, sourceURL string) (string, bool) {
+	sourceURL = strings.TrimSpace(sourceURL)
+	if strings.TrimSpace(raw) == "" || sourceURL == "" {
+		return raw, false
+	}
+	nodes, err := html.ParseFragment(strings.NewReader(raw), &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div})
+	if err != nil {
+		return raw, false
+	}
+	for index, node := range nodes {
+		if ignorableNode(node) {
+			continue
+		}
+		if !containsOnlyImage(node, sourceURL) {
+			return raw, false
+		}
+		nodes = append(nodes[:index], nodes[index+1:]...)
+		var rendered strings.Builder
+		for _, remaining := range nodes {
+			if err := html.Render(&rendered, remaining); err != nil {
+				return raw, false
+			}
+		}
+		return strings.TrimSpace(rendered.String()), true
+	}
+	return raw, false
+}
+
+func containsOnlyImage(node *html.Node, sourceURL string) bool {
+	if node.Type == html.ElementNode && node.Data == "img" {
+		for _, attribute := range node.Attr {
+			if attribute.Key == "src" {
+				return strings.TrimSpace(attribute.Val) == sourceURL
+			}
+		}
+		return false
+	}
+	if node.Type != html.ElementNode {
+		return false
+	}
+	found := false
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if ignorableNode(child) {
+			continue
+		}
+		if found || !containsOnlyImage(child, sourceURL) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func ignorableNode(node *html.Node) bool {
+	return node.Type == html.CommentNode || (node.Type == html.TextNode && strings.TrimSpace(node.Data) == "")
+}
+
 func rewriteURLs(node *html.Node, base *url.URL) {
 	if node.Type == html.ElementNode {
 		if node.Data == "img" && trackingPixel(node) {

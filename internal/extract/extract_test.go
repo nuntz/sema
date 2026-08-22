@@ -33,3 +33,33 @@ func TestSummary(t *testing.T) {
 		t.Fatalf("fallback summary = %q", got)
 	}
 }
+
+func TestRemoveLeadingImage(t *testing.T) {
+	const source = "https://cdn.example.com/lead.jpg"
+	tests := []struct {
+		name    string
+		raw     string
+		removed bool
+	}{
+		{name: "direct", raw: `<img src="https://cdn.example.com/lead.jpg"><p>Body</p>`, removed: true},
+		{name: "image only wrapper", raw: `<figure><a href="https://example.com"><img src="https://cdn.example.com/lead.jpg"></a></figure><p>Body</p>`, removed: true},
+		{name: "different image", raw: `<img src="https://cdn.example.com/other.jpg"><p>Body</p>`},
+		{name: "image after text", raw: `<p>Introduction</p><img src="https://cdn.example.com/lead.jpg">`},
+		{name: "captioned figure", raw: `<figure><img src="https://cdn.example.com/lead.jpg"><figcaption>Keep this caption</figcaption></figure>`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cleaned, removed := RemoveLeadingImage(test.raw, source)
+			if removed != test.removed {
+				t.Fatalf("removed = %v, want %v; body = %s", removed, test.removed, cleaned)
+			}
+			if removed {
+				if strings.Contains(cleaned, source) || !strings.Contains(cleaned, "Body") {
+					t.Fatalf("unexpected cleaned body: %s", cleaned)
+				}
+			} else if cleaned != test.raw {
+				t.Fatalf("unchanged body = %s, want %s", cleaned, test.raw)
+			}
+		})
+	}
+}

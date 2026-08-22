@@ -2,6 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
+import { hasLeadingImage } from "./reader-content";
 
 interface ReaderProps {
   item: Item;
@@ -171,7 +172,7 @@ export function Reader(props: ReaderProps) {
               ? `By ${props.item.author}`
               : props.item.feed_title}
           </p>
-          <Show when={props.item.media_url}>
+          <Show when={props.item.media_url && !hasLeadingImage(body())}>
             <img
               class="article-lead"
               src={props.item.media_url}

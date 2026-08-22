@@ -18,7 +18,12 @@ export function Feeds(props: {
     setMessage("");
     try {
       const result = await props.api.importOPML(file);
-      setMessage(`${result.imported} feeds queued for their first fetch.`);
+      const queued = `${result.imported} ${result.imported === 1 ? "feed" : "feeds"} queued for ${result.imported === 1 ? "its" : "their"} first fetch.`;
+      const unsupported = result.unsupported ?? [];
+      const skipped = unsupported.length
+        ? ` ${unsupported.length} YouTube ${unsupported.length === 1 ? "feed was" : "feeds were"} skipped. ${unsupported[0].reason}.`
+        : "";
+      setMessage(queued + skipped);
       await refetch();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Import failed.");

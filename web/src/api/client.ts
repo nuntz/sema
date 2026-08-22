@@ -1,5 +1,10 @@
 import type { Feed, ItemsResponse, MeResponse, Order, Profile } from "../types";
 
+export interface FeedImportResult {
+  imported: number;
+  unsupported: Array<{ title?: string; url: string; reason: string }>;
+}
+
 export class UnauthorizedError extends Error {}
 
 export class APIClient {
@@ -80,7 +85,7 @@ export class APIClient {
     );
   }
 
-  importOPML(file: File): Promise<{ imported: number }> {
+  importOPML(file: File): Promise<FeedImportResult> {
     const data = new FormData();
     data.append("file", file);
     return this.request("/feeds/import", { method: "POST", body: data });

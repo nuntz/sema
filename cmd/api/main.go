@@ -39,6 +39,17 @@ type server struct {
 	signer   *auth.CookieSigner
 }
 
+type unsupportedFeed struct {
+	Title  string `json:"title,omitempty"`
+	URL    string `json:"url"`
+	Reason string `json:"reason"`
+}
+
+type importFeedsResult struct {
+	Imported    int               `json:"imported"`
+	Unsupported []unsupportedFeed `json:"unsupported"`
+}
+
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	claims, err := auth.FromRequest(request)
 	if err != nil {
@@ -275,6 +286,19 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	if len(subscriptions) == 0 {
 		return badRequest(errors.New("no OPML file found"))
 	}
+	supported := make([]rss.Subscription, 0, len(subscriptions))
+	unsupported := make([]unsupportedFeed, 0)
+	for _, subscription := range subscriptions {
+		if reason := rss.UnsupportedReason(subscription.URL); reason != "" {
+			unsupported = append(unsupported, unsupportedFeed{Title: subscription.Title, URL: subscription.URL, Reason: reason})
+			continue
+		}
+		supported = append(supported, subscription)
+	}
+	subscriptions = supported
+	if len(subscriptions) == 0 {
+		return response(http.StatusAccepted, importFeedsResult{Unsupported: unsupported})
+	}
 	now := time.Now().UTC()
 	messages := make([]domain.FeedMessage, len(subscriptions))
 	semaphore := make(chan struct{}, 20)
@@ -310,7 +334,7 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	if err := s.enqueueFeeds(ctx, messages); err != nil {
 		return s.failure("enqueue imported feeds", err)
 	}
-	return response(http.StatusAccepted, map[string]int{"imported": len(messages)})
+	return response(http.StatusAccepted, importFeedsResult{Imported: len(messages), Unsupported: unsupported})
 }
 
 func (s *server) enqueueFeeds(ctx context.Context, messages []domain.FeedMessage) error {
