@@ -145,10 +145,8 @@ func Sanitize(raw string, pageURL *url.URL) (string, error) {
 	return strings.TrimSpace(policy.Sanitize(rendered.String())), nil
 }
 
-// RemoveLeadingImage removes the first content node only when that node
-// consists solely of the image selected for lead media. This keeps inline
-// article images intact and preserves the body if lead-media processing fails.
-func RemoveLeadingImage(raw, sourceURL string) (string, bool) {
+// RemoveLeadImage removes the image selected for lead media from the body.
+func RemoveLeadImage(raw, sourceURL string) (string, bool) {
 	sourceURL = strings.TrimSpace(sourceURL)
 	if strings.TrimSpace(raw) == "" || sourceURL == "" {
 		return raw, false
@@ -157,52 +155,81 @@ func RemoveLeadingImage(raw, sourceURL string) (string, bool) {
 	if err != nil {
 		return raw, false
 	}
-	for index, node := range nodes {
-		if ignorableNode(node) {
-			continue
-		}
-		if !containsOnlyImage(node, sourceURL) {
+	root := &html.Node{Type: html.DocumentNode}
+	for _, node := range nodes {
+		root.AppendChild(node)
+	}
+	image := matchingImage(root, sourceURL)
+	if image == nil || hasCaptionedFigure(image, root) {
+		return raw, false
+	}
+	parent := image.Parent
+	parent.RemoveChild(image)
+	for node := parent; node != root && emptyNode(node); {
+		parent = node.Parent
+		parent.RemoveChild(node)
+		node = parent
+	}
+	var rendered strings.Builder
+	for node := root.FirstChild; node != nil; node = node.NextSibling {
+		if err := html.Render(&rendered, node); err != nil {
 			return raw, false
 		}
-		nodes = append(nodes[:index], nodes[index+1:]...)
-		var rendered strings.Builder
-		for _, remaining := range nodes {
-			if err := html.Render(&rendered, remaining); err != nil {
-				return raw, false
-			}
-		}
-		return strings.TrimSpace(rendered.String()), true
 	}
-	return raw, false
+	return strings.TrimSpace(rendered.String()), true
 }
 
-func containsOnlyImage(node *html.Node, sourceURL string) bool {
+func matchingImage(node *html.Node, sourceURL string) *html.Node {
 	if node.Type == html.ElementNode && node.Data == "img" {
-		for _, attribute := range node.Attr {
-			if attribute.Key == "src" {
-				return strings.TrimSpace(attribute.Val) == sourceURL
+		for _, attr := range node.Attr {
+			if attr.Key == "src" && sameURL(attr.Val, sourceURL) {
+				return node
 			}
 		}
-		return false
 	}
-	if node.Type != html.ElementNode {
-		return false
-	}
-	found := false
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
-		if ignorableNode(child) {
-			continue
+		if image := matchingImage(child, sourceURL); image != nil {
+			return image
 		}
-		if found || !containsOnlyImage(child, sourceURL) {
+	}
+	return nil
+}
+
+func sameURL(left, right string) bool {
+	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
+	if left == right {
+		return true
+	}
+	leftURL, leftErr := url.Parse(left)
+	rightURL, rightErr := url.Parse(right)
+	return leftErr == nil && rightErr == nil && leftURL.String() == rightURL.String()
+}
+
+func hasCaptionedFigure(node, root *html.Node) bool {
+	for ancestor := node.Parent; ancestor != root; ancestor = ancestor.Parent {
+		if ancestor.Type == html.ElementNode && ancestor.Data == "figure" && containsElement(ancestor, "figcaption") {
+			return true
+		}
+	}
+	return false
+}
+
+func containsElement(node *html.Node, name string) bool {
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type == html.ElementNode && child.Data == name || containsElement(child, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func emptyNode(node *html.Node) bool {
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type != html.CommentNode && (child.Type != html.TextNode || strings.TrimSpace(child.Data) != "") {
 			return false
 		}
-		found = true
 	}
-	return found
-}
-
-func ignorableNode(node *html.Node) bool {
-	return node.Type == html.CommentNode || (node.Type == html.TextNode && strings.TrimSpace(node.Data) == "")
+	return true
 }
 
 func rewriteURLs(node *html.Node, base *url.URL) {

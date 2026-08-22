@@ -106,7 +106,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			return fmt.Errorf("store media: %w", err)
 		}
 		mediaW, mediaH = lead.Width, lead.Height
-		if cleaned, removed := extract.RemoveLeadingImage(article.HTML, lead.SourceURL); removed {
+		if cleaned, removed := extract.RemoveLeadImage(article.HTML, lead.SourceURL); removed {
 			article.HTML = cleaned
 		}
 	} else {
