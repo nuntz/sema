@@ -12,6 +12,7 @@ import (
 	"github.com/microcosm-cc/bluemonday"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+	"golang.org/x/net/publicsuffix"
 )
 
 type Result struct {
@@ -56,7 +57,28 @@ func FeedContent(raw string, pageURL *url.URL) (Result, error) {
 	return Result{HTML: cleaned, Text: text, FirstParagraph: FirstParagraph(cleaned)}, nil
 }
 
+const LinkblogCommentaryMinRunes = 200
+
 func Substantial(raw string) bool { return utf8.RuneCountInString(PlainText(raw)) > 1500 }
+
+func IsLinkblogEntry(itemURL, siteURL, rawContent string) bool {
+	if utf8.RuneCountInString(PlainText(rawContent)) <= LinkblogCommentaryMinRunes {
+		return false
+	}
+	item, itemErr := url.Parse(strings.TrimSpace(itemURL))
+	site, siteErr := url.Parse(strings.TrimSpace(siteURL))
+	if itemErr != nil || siteErr != nil || item.Hostname() == "" || site.Hostname() == "" {
+		return false
+	}
+	itemHost := strings.ToLower(strings.TrimSuffix(item.Hostname(), "."))
+	siteHost := strings.ToLower(strings.TrimSuffix(site.Hostname(), "."))
+	itemDomain, itemErr := publicsuffix.EffectiveTLDPlusOne(itemHost)
+	siteDomain, siteErr := publicsuffix.EffectiveTLDPlusOne(siteHost)
+	if itemErr == nil && siteErr == nil {
+		return !strings.EqualFold(itemDomain, siteDomain)
+	}
+	return itemHost != siteHost
+}
 
 func Summary(summaryRaw, firstParagraph string) string {
 	value := strings.TrimSpace(PlainText(summaryRaw))

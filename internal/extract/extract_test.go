@@ -34,6 +34,37 @@ func TestSummary(t *testing.T) {
 	}
 }
 
+func TestIsLinkblogEntry(t *testing.T) {
+	commentary := func(length int) string { return `<p>` + strings.Repeat("x", length) + `</p>` }
+	tests := []struct {
+		name    string
+		itemURL string
+		siteURL string
+		raw     string
+		want    bool
+	}{
+		{name: "Daring Fireball", itemURL: "https://corporate.walmart.com/news", siteURL: "https://daringfireball.net/", raw: commentary(709), want: true},
+		{name: "Hacker News", itemURL: "https://example.com/article", siteURL: "https://news.ycombinator.com/", raw: commentary(150)},
+		{name: "Show HN", itemURL: "https://example.com/project", siteURL: "https://news.ycombinator.com/", raw: commentary(4000), want: true},
+		{name: "same site", itemURL: "https://example.com/article", siteURL: "https://example.com/", raw: commentary(700)},
+		{name: "subdomain", itemURL: "https://www.example.com/article", siteURL: "https://example.com/", raw: commentary(700)},
+		{name: "blank site URL", itemURL: "https://example.com/article", raw: commentary(700)},
+		{name: "unparseable item URL", itemURL: "://bad", siteURL: "https://example.com/", raw: commentary(700)},
+		{name: "empty content", itemURL: "https://example.com/article", siteURL: "https://feed.example.org/"},
+		{name: "exact floor", itemURL: "https://example.com/article", siteURL: "https://example.org/", raw: commentary(LinkblogCommentaryMinRunes)},
+		{name: "over floor", itemURL: "https://example.com/article", siteURL: "https://example.org/", raw: commentary(LinkblogCommentaryMinRunes + 1), want: true},
+		{name: "fallback different IP hosts", itemURL: "http://192.0.2.1/article", siteURL: "http://192.0.2.2/", raw: commentary(700), want: true},
+		{name: "fallback same IP host", itemURL: "http://192.0.2.1/article", siteURL: "http://192.0.2.1/", raw: commentary(700)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsLinkblogEntry(test.itemURL, test.siteURL, test.raw); got != test.want {
+				t.Fatalf("IsLinkblogEntry() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRemoveLeadingImage(t *testing.T) {
 	const source = "https://cdn.example.com/lead.jpg"
 	tests := []struct {

@@ -86,11 +86,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 	}
-	if extract.Substantial(message.ContentRaw) {
-		article, err = extract.FeedContent(message.ContentRaw, pageURL)
-	} else if len(pageHTML) > 0 {
-		article, err = extract.Article(pageHTML, pageURL)
-	}
+	article, err = articleContent(message.ContentRaw, message.URL, feed.SiteURL, pageURL, pageHTML)
 	if err != nil || article.HTML == "" {
 		article = extract.Result{}
 	}
@@ -158,6 +154,23 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	observability.Emit(metrics, nil)
 	return nil
+}
+
+func articleContent(rawContent, itemURL, siteURL string, pageURL *url.URL, pageHTML []byte) (extract.Result, error) {
+	if extract.Substantial(rawContent) {
+		return extract.FeedContent(rawContent, pageURL)
+	}
+	if extract.IsLinkblogEntry(itemURL, siteURL, rawContent) {
+		feedURL, err := url.Parse(siteURL)
+		if err != nil {
+			return extract.Result{}, fmt.Errorf("parse feed site URL: %w", err)
+		}
+		return extract.FeedContent(rawContent, feedURL)
+	}
+	if len(pageHTML) > 0 {
+		return extract.Article(pageHTML, pageURL)
+	}
+	return extract.Result{}, nil
 }
 
 func capRunes(value string, count int) string {

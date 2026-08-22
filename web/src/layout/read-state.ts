@@ -25,3 +25,10 @@ export function chronoBoundary(row: LayoutRow): string {
 export function chronoRead(published: string, boundary: string): boolean {
   return boundary !== "" && published >= boundary;
 }
+
+export function monotonicChronoBoundary(
+  current: string,
+  candidate: string,
+): string {
+  return current === "" || candidate < current ? candidate : current;
+}

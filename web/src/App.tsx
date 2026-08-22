@@ -1,7 +1,7 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
 import type { LayoutRow } from "./layout/justified";
-import { chronoRead } from "./layout/read-state";
+import { chronoRead, monotonicChronoBoundary } from "./layout/read-state";
 import type { Item, Order, Profile } from "./types";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
@@ -218,8 +218,11 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const rowsPassed = (rows: LayoutRow[], boundary?: string) => {
-    if (order() === "chrono" && boundary) applyBoundary(boundary);
-    else
+    if (order() === "chrono" && boundary) {
+      const current = profile()?.read_boundary_ts ?? "";
+      const next = monotonicChronoBoundary(current, boundary);
+      if (next !== current) applyBoundary(next);
+    } else
       queueInterestRead(
         rows.flatMap((row) => row.cells.map((cell) => cell.item.item_id)),
       );
