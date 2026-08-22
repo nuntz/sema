@@ -38,7 +38,6 @@ interface GridProps {
   onToggleOrder(): void;
   onToggleUnread(): void;
   onUndo(): void;
-  onKeys(): void;
 }
 
 export function Grid(props: GridProps) {
@@ -357,9 +356,6 @@ export function Grid(props: GridProps) {
         break;
       case "unread":
         props.onToggleUnread();
-        break;
-      case "help":
-        props.onKeys();
         break;
     }
     event.preventDefault();

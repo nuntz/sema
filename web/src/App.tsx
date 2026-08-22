@@ -11,6 +11,7 @@ import type { Item, Order, Profile } from "./types";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
+import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
 
 type Undo = { ids: string[] };
@@ -160,12 +161,34 @@ export function App(props: { token: () => string; signOut(): void }) {
       if (document.visibilityState === "hidden") flush();
       else void pollNew();
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const command = appCommand(event.key);
+      if (
+        event.repeat ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        !command ||
+        (command === "close-help" && !keysOpen())
+      )
+        return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.matches("input, textarea, select"))
+      )
+        return;
+      event.preventDefault();
+      setKeysOpen((open) => (command === "toggle-help" ? !open : false));
+    };
     pollTimer = window.setInterval(() => void pollNew(), 60_000);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", flush);
+    window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", flush);
+      window.removeEventListener("keydown", onKeyDown);
       window.clearTimeout(readTimer);
       window.clearInterval(pollTimer);
     });
@@ -380,11 +403,17 @@ export function App(props: { token: () => string; signOut(): void }) {
     <Show
       when={view() === "grid"}
       fallback={
-        <Feeds
-          api={api}
-          onBack={() => setView("grid")}
-          onSignOut={props.signOut}
-        />
+        <>
+          <Feeds
+            api={api}
+            onBack={() => setView("grid")}
+            onKeys={() => setKeysOpen(true)}
+            onSignOut={props.signOut}
+          />
+          <Show when={keysOpen()}>
+            <KeyboardMap onClose={() => setKeysOpen(false)} />
+          </Show>
+        </>
       }
     >
       <main class="app-shell">
@@ -498,7 +527,6 @@ export function App(props: { token: () => string; signOut(): void }) {
               onToggleOrder={toggleOrder}
               onToggleUnread={toggleUnread}
               onUndo={undoLast}
-              onKeys={() => setKeysOpen(true)}
             />
           </Show>
         </Show>
@@ -509,6 +537,7 @@ export function App(props: { token: () => string; signOut(): void }) {
           {(item) => (
             <Reader
               item={item()}
+              active={!keysOpen()}
               hearted={hearted().has(item().item_id)}
               canPrevious={selectedIndex() > 0}
               canNext={

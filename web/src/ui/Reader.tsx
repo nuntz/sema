@@ -6,6 +6,7 @@ import { hasLeadingImage } from "./reader-content";
 
 interface ReaderProps {
   item: Item;
+  active: boolean;
   hearted: boolean;
   canPrevious: boolean;
   canNext: boolean;
@@ -47,7 +48,7 @@ export function Reader(props: ReaderProps) {
   };
 
   const onKey = (event: KeyboardEvent) => {
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     switch (readerCommand(event.key)) {
       case "close":
         props.onClose();

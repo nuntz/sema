@@ -34,7 +34,7 @@ export function KeyboardMap(props: { onClose(): void }) {
         <header>
           <h2 id="keys-title">Keyboard</h2>
           <button type="button" onClick={props.onClose}>
-            ? to close
+            ? / Esc to close
           </button>
         </header>
         <div class="key-grid">

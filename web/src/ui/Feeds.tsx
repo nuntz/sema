@@ -5,6 +5,7 @@ import { relativeTime } from "./Grid";
 export function Feeds(props: {
   api: APIClient;
   onBack(): void;
+  onKeys(): void;
   onSignOut(): void;
 }) {
   const [feeds, { refetch }] = createResource(() => props.api.feeds());
@@ -50,6 +51,9 @@ export function Feeds(props: {
         <span class="feeds-summary">
           {feeds()?.length ?? 0} feeds · {failing()} failing
         </span>
+        <button type="button" class="keys-chip" onClick={props.onKeys}>
+          ? keys
+        </button>
         <button type="button" class="signout" onClick={props.onSignOut}>
           sign out
         </button>

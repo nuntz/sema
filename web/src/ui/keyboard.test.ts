@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gridCommand, readerCommand } from "./keyboard";
+import { appCommand, gridCommand, readerCommand } from "./keyboard";
 
 describe("keyboard map", () => {
   it.each([
@@ -28,7 +28,6 @@ describe("keyboard map", () => {
     ["v", "original"],
     ["t", "order"],
     ["a", "unread"],
-    ["?", "help"],
   ])("maps grid key %s", (key, command) =>
     expect(gridCommand(key)).toBe(command),
   );
@@ -48,5 +47,11 @@ describe("keyboard map", () => {
   it("ignores unmapped keys", () => {
     expect(gridCommand("x")).toBeUndefined();
     expect(readerCommand("x")).toBeUndefined();
+  });
+
+  it("maps help at the app level", () => {
+    expect(appCommand("?")).toBe("toggle-help");
+    expect(appCommand("Escape")).toBe("close-help");
+    expect(gridCommand("?")).toBeUndefined();
   });
 });
