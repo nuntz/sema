@@ -25,6 +25,7 @@ describe("keyboard map", () => {
     ["Home", "home"],
     ["g", "go-prefix"],
     ["u", "undo"],
+    ["c", "copy"],
     ["v", "original"],
     ["t", "order"],
     ["a", "unread"],
@@ -39,6 +40,7 @@ describe("keyboard map", () => {
     ["+", "like"],
     ["-", "dislike"],
     ["f", "heart"],
+    ["c", "copy"],
     ["v", "original"],
   ])("maps reader key %s", (key, command) =>
     expect(readerCommand(key)).toBe(command),

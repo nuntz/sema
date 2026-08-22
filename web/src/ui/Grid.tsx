@@ -18,6 +18,7 @@ import {
 } from "../layout/read-state";
 import type { Item } from "../types";
 import { gridCommand } from "./keyboard";
+import { LinkIcon } from "./LinkIcon";
 
 interface GridProps {
   items: Item[];
@@ -27,11 +28,13 @@ interface GridProps {
   active: boolean;
   hasMore: boolean;
   hearted: Set<string>;
+  linkActionID: string;
   onFocus(id: string): void;
   onOpen(item: Item): void;
   onSignal(item: Item, value: -1 | 0 | 1): void;
   onHeart(item: Item): void;
   onToggleRead(item: Item): void;
+  onCopy(item: Item): void;
   onMarkBelow(item: Item): void;
   onItemsPassed(ids: string[]): void;
   onLoadMore(): void;
@@ -348,6 +351,9 @@ export function Grid(props: GridProps) {
       case "undo":
         props.onUndo();
         break;
+      case "copy":
+        if (item) props.onCopy(item);
+        break;
       case "original":
         if (item) window.open(item.url, "_blank", "noopener,noreferrer");
         break;
@@ -436,6 +442,23 @@ export function Grid(props: GridProps) {
                           onClick={() => props.onHeart(item())}
                         >
                           ♥
+                        </button>
+                        <button
+                          type="button"
+                          class="copy-link"
+                          classList={{
+                            activated: props.linkActionID === item().item_id,
+                          }}
+                          aria-label="Copy original link"
+                          title="Copy original link"
+                          onClick={() => props.onCopy(item())}
+                        >
+                          <Show
+                            when={props.linkActionID === item().item_id}
+                            fallback={<LinkIcon />}
+                          >
+                            ✓
+                          </Show>
                         </button>
                       </div>
                       <button

@@ -7,6 +7,11 @@ import {
   updateRead,
   visibleItemIDs,
 } from "./item-list";
+import {
+  copyOriginalLink,
+  isCancelledShare,
+  LinkActionFailure,
+} from "./link-action";
 import type { Item, Order, Profile } from "./types";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
@@ -15,6 +20,7 @@ import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
 
 type Undo = { ids: string[] };
+type Toast = { id: number; kind: "success" | "error"; message: string };
 
 export function App(props: { token: () => string; signOut(): void }) {
   const api = new APIClient(props.token);
@@ -36,6 +42,8 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [readerID, setReaderID] = createSignal("");
   const [hearted, setHearted] = createSignal(new Set<string>());
   const [keysOpen, setKeysOpen] = createSignal(false);
+  const [linkActionID, setLinkActionID] = createSignal("");
+  const [toast, setToast] = createSignal<Toast>();
   const [view, setView] = createSignal<"grid" | "feeds">("grid");
   const [undo, setUndo] = createSignal<Undo>();
   let requestVersion = 0;
@@ -43,6 +51,9 @@ export function App(props: { token: () => string; signOut(): void }) {
   let pollTimer: number | undefined;
   let pollInFlight = false;
   let markBelowInFlight = false;
+  let linkActionTimer: number | undefined;
+  let toastTimer: number | undefined;
+  let toastID = 0;
   const pendingRead = new Set<string>();
 
   const handleError = (caught: unknown) => {
@@ -53,6 +64,32 @@ export function App(props: { token: () => string; signOut(): void }) {
     setError(
       caught instanceof Error ? caught.message : "Something went wrong.",
     );
+  };
+
+  const showToast = (kind: Toast["kind"], message: string) => {
+    window.clearTimeout(toastTimer);
+    setToast({ id: ++toastID, kind, message });
+    toastTimer = window.setTimeout(() => setToast(), 2_320);
+  };
+
+  const copyLink = async (item: Item) => {
+    try {
+      const action = await copyOriginalLink({
+        url: item.url,
+        title: item.title,
+      });
+      window.clearTimeout(linkActionTimer);
+      setLinkActionID(item.item_id);
+      linkActionTimer = window.setTimeout(() => setLinkActionID(""), 900);
+      showToast("success", action === "shared" ? "Link shared" : "Link copied");
+    } catch (caught) {
+      if (isCancelledShare(caught)) return;
+      const message =
+        caught instanceof LinkActionFailure && caught.action === "shared"
+          ? "Couldn't share"
+          : "Couldn't copy";
+      showToast("error", message);
+    }
   };
 
   const bootstrap = async () => {
@@ -191,6 +228,8 @@ export function App(props: { token: () => string; signOut(): void }) {
       window.removeEventListener("keydown", onKeyDown);
       window.clearTimeout(readTimer);
       window.clearInterval(pollTimer);
+      window.clearTimeout(linkActionTimer);
+      window.clearTimeout(toastTimer);
     });
   });
 
@@ -516,11 +555,13 @@ export function App(props: { token: () => string; signOut(): void }) {
               active={!readerID() && !keysOpen()}
               hasMore={cursor() !== ""}
               hearted={hearted()}
+              linkActionID={linkActionID()}
               onFocus={setFocusedID}
               onOpen={markOpened}
               onSignal={setSignal}
               onHeart={toggleHeart}
               onToggleRead={toggleRead}
+              onCopy={copyLink}
               onMarkBelow={markBelow}
               onItemsPassed={queueRead}
               onLoadMore={loadMore}
@@ -539,6 +580,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               item={item()}
               active={!keysOpen()}
               hearted={hearted().has(item().item_id)}
+              linkActionActive={linkActionID() === item().item_id}
               canPrevious={selectedIndex() > 0}
               canNext={
                 selectedIndex() >= 0 && selectedIndex() < gridItems().length - 1
@@ -548,11 +590,25 @@ export function App(props: { token: () => string; signOut(): void }) {
               onNext={() => moveReader(1)}
               onSignal={(value) => setSignal(item(), value)}
               onHeart={() => toggleHeart(item())}
+              onCopy={() => copyLink(item())}
             />
           )}
         </Show>
         <Show when={keysOpen()}>
           <KeyboardMap onClose={() => setKeysOpen(false)} />
+        </Show>
+        <Show when={toast()} keyed>
+          {(notice) => (
+            <div
+              class="link-toast"
+              classList={{ error: notice.kind === "error" }}
+              role={notice.kind === "error" ? "alert" : "status"}
+              aria-live={notice.kind === "error" ? "assertive" : "polite"}
+            >
+              <b>{notice.kind === "error" ? "✕" : "✓"}</b>
+              <span>{notice.message}</span>
+            </div>
+          )}
         </Show>
       </main>
     </Show>

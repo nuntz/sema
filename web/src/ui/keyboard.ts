@@ -13,6 +13,7 @@ export type GridCommand =
   | "home"
   | "go-prefix"
   | "undo"
+  | "copy"
   | "original"
   | "order"
   | "unread";
@@ -24,6 +25,7 @@ export type ReaderCommand =
   | "like"
   | "dislike"
   | "heart"
+  | "copy"
   | "original";
 
 const gridBindings: Record<string, GridCommand> = {
@@ -49,6 +51,7 @@ const gridBindings: Record<string, GridCommand> = {
   Home: "home",
   g: "go-prefix",
   u: "undo",
+  c: "copy",
   v: "original",
   t: "order",
   a: "unread",
@@ -70,6 +73,7 @@ const readerBindings: Record<string, ReaderCommand> = {
   "-": "dislike",
   ",": "dislike",
   f: "heart",
+  c: "copy",
   v: "original",
 };
 

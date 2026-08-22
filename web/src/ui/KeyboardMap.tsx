@@ -15,6 +15,7 @@ const bindings = [
   ["End / ⇧ G", "go to caught-up card"],
   ["Home / G G", "return to top"],
   ["U", "undo last read batch"],
+  ["C", "copy or share original link"],
   ["V", "open original"],
   ["T", "toggle order"],
   ["A", "toggle all items"],

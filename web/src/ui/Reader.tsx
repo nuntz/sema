@@ -2,12 +2,14 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
+import { LinkIcon } from "./LinkIcon";
 import { hasLeadingImage } from "./reader-content";
 
 interface ReaderProps {
   item: Item;
   active: boolean;
   hearted: boolean;
+  linkActionActive: boolean;
   canPrevious: boolean;
   canNext: boolean;
   onClose(): void;
@@ -15,6 +17,7 @@ interface ReaderProps {
   onNext(): void;
   onSignal(value: -1 | 0 | 1): void;
   onHeart(): void;
+  onCopy(): void;
 }
 
 export function Reader(props: ReaderProps) {
@@ -67,6 +70,9 @@ export function Reader(props: ReaderProps) {
         break;
       case "heart":
         props.onHeart();
+        break;
+      case "copy":
+        props.onCopy();
         break;
       case "original":
         window.open(props.item.url, "_blank", "noopener,noreferrer");
@@ -131,6 +137,15 @@ export function Reader(props: ReaderProps) {
             onClick={props.onHeart}
           >
             ♥ keep
+          </button>
+          <button
+            type="button"
+            class="copy-link"
+            classList={{ activated: props.linkActionActive }}
+            onClick={props.onCopy}
+          >
+            <span>{props.linkActionActive ? "✓" : <LinkIcon />}</span>
+            copy link
           </button>
           <i />
           <a href={props.item.url} target="_blank" rel="noopener noreferrer">
@@ -252,6 +267,15 @@ export function Reader(props: ReaderProps) {
           disabled={!props.canNext}
         >
           NEXT →
+        </button>
+        <button
+          type="button"
+          class="copy-link"
+          classList={{ activated: props.linkActionActive }}
+          aria-label="Copy or share original link"
+          onClick={props.onCopy}
+        >
+          {props.linkActionActive ? "✓" : <LinkIcon />}
         </button>
       </nav>
     </section>
