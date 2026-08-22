@@ -123,7 +123,7 @@ func (s *Store) Feed(ctx context.Context, userID, feedID string) (domain.Feed, e
 }
 
 func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error) {
-	var feeds []domain.Feed
+	feeds := []domain.Feed{}
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
@@ -148,7 +148,7 @@ func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 }
 
 func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, error) {
-	var result []domain.Feed
+	result := []domain.Feed{}
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Scan(ctx, &dynamodb.ScanInput{
@@ -238,8 +238,9 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 	}
 	input := &dynamodb.QueryInput{
 		TableName: aws.String(s.table), ScanIndexForward: aws.Bool(false), Limit: aws.Int32(int32(limit)), ExclusiveStartKey: start,
-		KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
-		FilterExpression:       aws.String("ttl > :now"),
+		KeyConditionExpression:   aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+		FilterExpression:         aws.String("#ttl > :now"),
+		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"},
 			":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
@@ -250,7 +251,7 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 		input.KeyConditionExpression = aws.String("PK = :pk")
 		delete(input.ExpressionAttributeValues, ":prefix")
 	}
-	var items []domain.Item
+	items := []domain.Item{}
 	var last map[string]types.AttributeValue
 	for len(items) < limit {
 		input.Limit = aws.Int32(int32(limit - len(items)))
@@ -278,7 +279,8 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
 			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
-			FilterExpression: aws.String("item_id = :id AND ttl > :now"), Limit: aws.Int32(100), ExclusiveStartKey: start,
+			FilterExpression: aws.String("item_id = :id AND #ttl > :now"), Limit: aws.Int32(100), ExclusiveStartKey: start,
+			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 			ExpressionAttributeValues: map[string]types.AttributeValue{
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"}, ":id": &types.AttributeValueMemberS{Value: itemID},
 				":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
@@ -299,7 +301,7 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 }
 
 func (s *Store) Signals(ctx context.Context, userID string) ([]domain.Signal, error) {
-	var result []domain.Signal
+	result := []domain.Signal{}
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{

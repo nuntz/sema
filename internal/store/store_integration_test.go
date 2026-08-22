@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -15,7 +17,10 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 )
 
-func TestDynamoAccessPatterns(t *testing.T) {
+// newIntegrationStore creates an isolated table on DynamoDB Local and returns a
+// store bound to it. The table is dropped when the test finishes.
+func newIntegrationStore(t *testing.T) (context.Context, *Store) {
+	t.Helper()
 	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
 	if endpoint == "" {
 		t.Skip("DYNAMODB_ENDPOINT is not configured")
@@ -60,7 +65,11 @@ func TestDynamoAccessPatterns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	repository := New(db, nil, table, "", "")
+	return ctx, New(db, nil, table, "", "")
+}
+
+func TestDynamoAccessPatterns(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
 	if err := repository.EnsureUser(ctx, "user", "reader@example.com"); err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +112,50 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	signals, err := repository.Signals(ctx, "user")
 	if err != nil || len(signals) != 1 || signals[0].Value != 1 {
 		t.Fatalf("signals = %#v, %v", signals, err)
+	}
+}
+
+// A table with no rows must still produce empty JSON arrays. The API encodes
+// these slices straight into its responses, and Go renders a nil slice as
+// null, which the client cannot consume.
+func TestDynamoEmptyDatabase(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+
+	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
+		items, cursor, err := repository.Items(ctx, "nobody", order, "", 100)
+		if err != nil {
+			t.Fatalf("items(%s) = %v", order, err)
+		}
+		if len(items) != 0 || cursor != "" {
+			t.Fatalf("items(%s) = %#v, cursor %q", order, items, cursor)
+		}
+		assertEncodesAsArray(t, fmt.Sprintf("items(%s)", order), items)
+	}
+
+	feeds, err := repository.Feeds(ctx, "nobody")
+	if err != nil || len(feeds) != 0 {
+		t.Fatalf("feeds = %#v, %v", feeds, err)
+	}
+	assertEncodesAsArray(t, "feeds", feeds)
+
+	signals, err := repository.Signals(ctx, "nobody")
+	if err != nil || len(signals) != 0 {
+		t.Fatalf("signals = %#v, %v", signals, err)
+	}
+	assertEncodesAsArray(t, "signals", signals)
+
+	if _, err := repository.Item(ctx, "nobody", "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("item = %v, want ErrNotFound", err)
+	}
+}
+
+func assertEncodesAsArray(t *testing.T, label string, value any) {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", label, err)
+	}
+	if string(encoded) != "[]" {
+		t.Fatalf("%s encoded as %s, want []", label, encoded)
 	}
 }

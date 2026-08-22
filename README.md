@@ -14,7 +14,9 @@ This repository contains the complete MVP stack:
 - Go 1.26+
 - Bun 1.3+
 - Pulumi 3+
-- an AWS account with Bedrock access to `amazon.titan-embed-text-v2:0` in `us-east-1`
+- `zip` on `PATH` (the Lambda archive step shells out to it)
+- AWS credentials for the target account (`aws sts get-caller-identity` must succeed)
+- Bedrock model access to `amazon.titan-embed-text-v2:0` in `us-east-1`
 - a Google OAuth web client ID
 
 ## Verify and build
@@ -42,13 +44,14 @@ For local frontend work, put the Google client ID in `web/.env.local` as `VITE_G
 
 ```sh
 cd infra
-pulumi stack init dev
-pulumi config set aws:region us-east-1
-pulumi config set sema:googleClientId YOUR_CLIENT_ID
+pulumi stack init dev                                    # or: pulumi stack select dev
+pulumi config set --secret sema:googleClientId YOUR_CLIENT_ID
 pulumi up
 ```
 
-The first deployment outputs `url`. Add that HTTPS origin to the Google OAuth client's authorized JavaScript origins. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build automatically.
+`Pulumi.dev.yaml` and `Pulumi.prod.yaml` are checked in with `aws:region: us-east-1`, so the client ID is the only configuration a new stack needs. `Pulumi.yaml` declares `sema:googleClientId` as a secret, so set it with `--secret`.
+
+The stack exports `url`, `distributionId`, `appBucket`, `contentBucket`, and `apiEndpoint`. Add the `url` HTTPS origin to the Google OAuth client's authorized JavaScript origins before signing in; sign-in fails until that origin is registered. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build automatically.
 
 Pulumi generates an RSA key in encrypted stack state, registers its public half with CloudFront, and supplies the secret half only to the API Lambda. Authenticated API responses refresh one-hour signed cookies scoped to `/content/bodies/<sub>/` and `/content/media/<sub>/`; favicons are shared public assets. S3 itself remains private behind origin access control.
 
@@ -77,5 +80,3 @@ The DynamoDB access-pattern test runs when `DYNAMODB_ENDPOINT` is set. CI starts
 ```sh
 DYNAMODB_ENDPOINT=http://localhost:8000 go test ./internal/store
 ```
-
-See [SPEC-MVP.md](SPEC-MVP.md) for the implementation contract and [IDEA.md](IDEA.md) for the product stance.

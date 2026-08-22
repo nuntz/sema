@@ -70,10 +70,10 @@ export function App(props: { token: () => string; signOut(): void }) {
     try {
       const page = await api.items(nextOrder);
       if (version !== requestVersion) return;
-      setItems(page.items);
+      setItems(page.items ?? []);
       setCursor(page.next_cursor);
       setHasPage(true);
-      setFocusedID(page.items[0]?.item_id ?? "");
+      setFocusedID(page.items?.[0]?.item_id ?? "");
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -90,7 +90,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       if (nextCursor !== cursor()) return;
       setItems((current) => [
         ...current,
-        ...page.items.filter(
+        ...(page.items ?? []).filter(
           (item) =>
             !current.some((existing) => existing.item_id === item.item_id),
         ),
