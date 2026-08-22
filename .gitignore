@@ -37,3 +37,6 @@ bin/
 web/dist/
 web/node_modules/
 .pulumi/
+
+# Compiled Pulumi program (go build ./... inside infra/)
+/infra/infra
