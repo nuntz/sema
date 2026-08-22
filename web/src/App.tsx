@@ -1,16 +1,19 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
-import type { LayoutRow } from "./layout/justified";
-import { chronoRead, monotonicChronoBoundary } from "./layout/read-state";
+import {
+  mergeNewItems,
+  pollCandidates,
+  unreadIDsAfter,
+  updateRead,
+  visibleItemIDs,
+} from "./item-list";
 import type { Item, Order, Profile } from "./types";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { Reader } from "./ui/Reader";
 
-type Undo =
-  | { kind: "chrono"; boundary: string }
-  | { kind: "interest"; ids: string[] };
+type Undo = { ids: string[] };
 
 export function App(props: { token: () => string; signOut(): void }) {
   const api = new APIClient(props.token);
@@ -18,12 +21,16 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [signalCount, setSignalCount] = createSignal(0);
   const [order, setOrder] = createSignal<Order>("chrono");
   const [items, setItems] = createSignal<Item[]>([]);
+  const [gridIDs, setGridIDs] = createSignal<string[]>([]);
+  const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
+  const [layoutVersion, setLayoutVersion] = createSignal(0);
+  const [scrollTopVersion, setScrollTopVersion] = createSignal(0);
   const [cursor, setCursor] = createSignal("");
   const [hasPage, setHasPage] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [error, setError] = createSignal("");
-  const [unreadOnly, setUnreadOnly] = createSignal(false);
+  const [unreadOnly, setUnreadOnly] = createSignal(true);
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
   const [hearted, setHearted] = createSignal(new Set<string>());
@@ -31,9 +38,11 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [view, setView] = createSignal<"grid" | "feeds">("grid");
   const [undo, setUndo] = createSignal<Undo>();
   let requestVersion = 0;
-  let boundaryTimer: number | undefined;
-  let interestTimer: number | undefined;
-  const pendingInterest = new Set<string>();
+  let readTimer: number | undefined;
+  let pollTimer: number | undefined;
+  let pollInFlight = false;
+  let markBelowInFlight = false;
+  const pendingRead = new Set<string>();
 
   const handleError = (caught: unknown) => {
     if (caught instanceof UnauthorizedError) {
@@ -61,19 +70,25 @@ export function App(props: { token: () => string; signOut(): void }) {
     }
   };
 
-  const reload = async (nextOrder = order()) => {
+  const reload = async (nextOrder = order(), nextUnreadOnly = unreadOnly()) => {
     const version = ++requestVersion;
     setLoading(true);
     setHasPage(false);
     setItems([]);
+    setGridIDs([]);
+    setPendingNew([]);
     setCursor("");
     try {
-      const page = await api.items(nextOrder);
+      const page = await api.items(nextOrder, "", !nextUnreadOnly);
       if (version !== requestVersion) return;
-      setItems(page.items ?? []);
+      const pageItems = page.items ?? [];
+      setItems(pageItems);
+      setGridIDs(visibleItemIDs(pageItems, nextUnreadOnly));
+      setLayoutVersion((value) => value + 1);
+      setScrollTopVersion((value) => value + 1);
       setCursor(page.next_cursor);
       setHasPage(true);
-      setFocusedID(page.items?.[0]?.item_id ?? "");
+      setFocusedID(visibleItemIDs(pageItems, nextUnreadOnly)[0] ?? "");
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -85,51 +100,89 @@ export function App(props: { token: () => string; signOut(): void }) {
     if (loadingMore() || !hasPage() || !cursor()) return;
     setLoadingMore(true);
     const nextCursor = cursor();
+    let continueLoading = false;
     try {
-      const page = await api.items(order(), nextCursor);
+      const page = await api.items(order(), nextCursor, !unreadOnly());
       if (nextCursor !== cursor()) return;
-      setItems((current) => [
-        ...current,
-        ...(page.items ?? []).filter(
-          (item) =>
-            !current.some((existing) => existing.item_id === item.item_id),
-        ),
-      ]);
+      let added: Item[] = [];
+      setItems((current) => {
+        const seen = new Set(current.map((item) => item.item_id));
+        added = (page.items ?? []).filter((item) => !seen.has(item.item_id));
+        return added.length > 0 ? [...current, ...added] : current;
+      });
+      const visible = visibleItemIDs(added, unreadOnly());
+      if (visible.length > 0) {
+        setGridIDs((current) => [...current, ...visible]);
+        setLayoutVersion((value) => value + 1);
+      }
       setCursor(page.next_cursor);
+      continueLoading = visible.length === 0 && page.next_cursor !== "";
     } catch (caught) {
       handleError(caught);
     } finally {
       setLoadingMore(false);
+      if (continueLoading) void loadMore();
+    }
+  };
+
+  const pollNew = async () => {
+    if (
+      pollInFlight ||
+      loading() ||
+      !hasPage() ||
+      document.visibilityState !== "visible"
+    )
+      return;
+    const version = requestVersion;
+    pollInFlight = true;
+    try {
+      const page = await api.items("chrono");
+      if (version !== requestVersion) return;
+      const unseen = pollCandidates(
+        items(),
+        pendingNew(),
+        page.items ?? [],
+        unreadOnly(),
+      );
+      if (unseen.length > 0)
+        setPendingNew((current) => mergeNewItems(current, unseen));
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      pollInFlight = false;
     }
   };
 
   onMount(() => {
     bootstrap();
-    const flush = () => {
-      flushBoundary(true);
-      flushInterest(true);
-    };
+    const flush = () => void flushRead(true);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
+      else void pollNew();
     };
+    pollTimer = window.setInterval(() => void pollNew(), 60_000);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", flush);
     onCleanup(() => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", flush);
-      window.clearTimeout(boundaryTimer);
-      window.clearTimeout(interestTimer);
+      window.clearTimeout(readTimer);
+      window.clearInterval(pollTimer);
     });
   });
 
-  const shownItems = createMemo(() =>
-    unreadOnly() ? items().filter((item) => !item.read) : items(),
-  );
+  const gridItems = createMemo(() => {
+    const byID = new Map(items().map((item) => [item.item_id, item]));
+    return gridIDs().flatMap((id) => {
+      const item = byID.get(id);
+      return item ? [item] : [];
+    });
+  });
   const selected = createMemo(() =>
     items().find((item) => item.item_id === readerID()),
   );
   const selectedIndex = createMemo(() =>
-    shownItems().findIndex((item) => item.item_id === readerID()),
+    gridItems().findIndex((item) => item.item_id === readerID()),
   );
 
   const replaceItem = (itemID: string, patch: Partial<Item>) => {
@@ -164,119 +217,131 @@ export function App(props: { token: () => string; signOut(): void }) {
       return next;
     });
 
-  const applyBoundary = (boundary: string, remember = true) => {
-    const previous = profile()?.read_boundary_ts ?? "";
-    if (remember) setUndo({ kind: "chrono", boundary: previous });
-    setProfile((current) =>
-      current ? { ...current, read_boundary_ts: boundary } : current,
-    );
-    setItems((current) =>
-      current.map((item) => ({
-        ...item,
-        read: chronoRead(item.published_ts, boundary),
-      })),
-    );
-    window.clearTimeout(boundaryTimer);
-    boundaryTimer = window.setTimeout(flushBoundary, 5_000);
-  };
-
-  const flushBoundary = (keepalive = false) => {
-    window.clearTimeout(boundaryTimer);
-    boundaryTimer = undefined;
-    const boundary = profile()?.read_boundary_ts;
-    if (boundary !== undefined)
-      api.patchMe({ read_boundary_ts: boundary }, keepalive).catch(handleError);
-  };
-
-  const queueInterestRead = (ids: string[]) => {
-    for (const id of ids) pendingInterest.add(id);
-    setItems((current) =>
-      current.map((item) =>
-        pendingInterest.has(item.item_id) ? { ...item, read: true } : item,
+  const writeReadBatch = (ids: string[], read: boolean, keepalive = false) =>
+    Promise.all(
+      Array.from({ length: Math.ceil(ids.length / 100) }, (_, index) =>
+        api.readBatch(
+          ids.slice(index * 100, (index + 1) * 100),
+          read,
+          keepalive,
+        ),
       ),
     );
-    window.clearTimeout(interestTimer);
-    interestTimer = window.setTimeout(flushInterest, 5_000);
-  };
 
-  const flushInterest = (keepalive = false) => {
-    window.clearTimeout(interestTimer);
-    interestTimer = undefined;
-    const ids = [...pendingInterest];
-    if (ids.length === 0) return;
-    pendingInterest.clear();
-    setUndo({ kind: "interest", ids });
-    const firstUnread = items().find((item) => !item.read);
-    const position = firstUnread ? String(firstUnread.score) : "0";
-    setProfile((current) =>
-      current ? { ...current, interest_position: position } : current,
+  const queueRead = (ids: string[]) => {
+    const requested = new Set(ids);
+    const alreadyRead = new Set(
+      items()
+        .filter((item) => item.read)
+        .map((item) => item.item_id),
     );
-    Promise.all([
-      api.readBatch(ids, true, keepalive),
-      api.patchMe({ interest_position: position }, keepalive),
-    ]).catch(handleError);
+    const unread = [...requested].filter((id) => !alreadyRead.has(id));
+    if (unread.length === 0) return;
+    for (const id of unread) pendingRead.add(id);
+    setItems((current) => updateRead(current, requested, true));
+    if (document.visibilityState === "hidden") {
+      void flushRead(true);
+      return;
+    }
+    window.clearTimeout(readTimer);
+    readTimer = window.setTimeout(() => void flushRead(), 5_000);
   };
 
-  const rowsPassed = (rows: LayoutRow[], boundary?: string) => {
-    if (order() === "chrono" && boundary) {
-      const current = profile()?.read_boundary_ts ?? "";
-      const next = monotonicChronoBoundary(current, boundary);
-      if (next !== current) applyBoundary(next);
-    } else
-      queueInterestRead(
-        rows.flatMap((row) => row.cells.map((cell) => cell.item.item_id)),
-      );
+  const flushRead = (keepalive = false) => {
+    window.clearTimeout(readTimer);
+    readTimer = undefined;
+    const ids = [...pendingRead];
+    if (ids.length === 0) return Promise.resolve();
+    pendingRead.clear();
+    setUndo({ ids });
+    return writeReadBatch(ids, true, keepalive).catch(handleError);
   };
 
   const markOpened = (item: Item) => {
     if (!item.read) {
-      if (order() === "chrono") applyBoundary(item.published_ts);
-      else {
-        replaceItem(item.item_id, { read: true });
-        api.read(item.item_id, true).catch(handleError);
-      }
+      replaceItem(item.item_id, { read: true });
+      api.read(item.item_id, true).catch((caught) => {
+        replaceItem(item.item_id, { read: false });
+        handleError(caught);
+      });
     }
     setReaderID(item.item_id);
   };
 
   const toggleRead = (item: Item) => {
-    if (order() === "interest") {
-      replaceItem(item.item_id, { read: !item.read });
-      api.read(item.item_id, !item.read).catch((caught) => {
-        replaceItem(item.item_id, { read: item.read });
-        handleError(caught);
-      });
-      return;
-    }
-    if (!item.read) {
-      applyBoundary(item.published_ts);
-      return;
-    }
-    const index = items().findIndex(
-      (candidate) => candidate.item_id === item.item_id,
-    );
-    const newer = index > 0 ? items()[index - 1] : undefined;
-    applyBoundary(newer?.published_ts ?? "");
+    pendingRead.delete(item.item_id);
+    if (pendingRead.size === 0) window.clearTimeout(readTimer);
+    replaceItem(item.item_id, { read: !item.read });
+    api.read(item.item_id, !item.read).catch((caught) => {
+      replaceItem(item.item_id, { read: item.read });
+      handleError(caught);
+    });
   };
 
   const undoLast = () => {
     const operation = undo();
     if (!operation) return;
     setUndo(undefined);
-    if (operation.kind === "chrono") {
-      applyBoundary(operation.boundary, false);
-      flushBoundary();
-      return;
+    setItems((current) => updateRead(current, operation.ids, false));
+    writeReadBatch(operation.ids, false).catch(handleError);
+  };
+
+  const markBelow = async (item: Item) => {
+    if (markBelowInFlight) return;
+    markBelowInFlight = true;
+    const version = requestVersion;
+    const markOrder = order();
+    const ids = unreadIDsAfter(items(), item.item_id);
+    let nextCursor = cursor();
+    try {
+      while (nextCursor !== "") {
+        const page = await api.items(markOrder, nextCursor, !unreadOnly());
+        if (version !== requestVersion || markOrder !== order()) return;
+        ids.push(
+          ...(page.items ?? [])
+            .filter((candidate) => !candidate.read)
+            .map((candidate) => candidate.item_id),
+        );
+        nextCursor = page.next_cursor;
+      }
+      queueRead(ids);
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      markBelowInFlight = false;
     }
-    setItems((current) =>
-      current.map((item) =>
-        operation.ids.includes(item.item_id) ? { ...item, read: false } : item,
-      ),
-    );
-    api.readBatch(operation.ids, false).catch(handleError);
+  };
+
+  const toggleUnread = async () => {
+    await flushRead();
+    const next = !unreadOnly();
+    setUnreadOnly(next);
+    void reload(order(), next);
+  };
+
+  const insertPendingNew = () => {
+    const incoming = pendingNew();
+    if (incoming.length === 0) return;
+    const known = new Set(items().map((item) => item.item_id));
+    const added = incoming.filter((item) => !known.has(item.item_id));
+    setPendingNew([]);
+    if (added.length === 0) return;
+    setItems((current) => mergeNewItems(current, added));
+    const visible = visibleItemIDs(added, unreadOnly());
+    if (visible.length > 0) {
+      const addedIDs = new Set(visible);
+      setGridIDs((current) => [
+        ...visible,
+        ...current.filter((id) => !addedIDs.has(id)),
+      ]);
+      setFocusedID(visible[0]);
+      setLayoutVersion((value) => value + 1);
+    }
+    setScrollTopVersion((value) => value + 1);
   };
 
   const toggleOrder = async () => {
+    await flushRead();
     const next: Order = order() === "chrono" ? "interest" : "chrono";
     setOrder(next);
     setReaderID("");
@@ -288,7 +353,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const moveReader = (delta: number) => {
-    const next = shownItems()[selectedIndex() + delta];
+    const next = gridItems()[selectedIndex() + delta];
     if (next) markOpened(next);
   };
 
@@ -336,13 +401,13 @@ export function App(props: { token: () => string; signOut(): void }) {
             </button>
           </fieldset>
           <span class="status-line">
-            {shownItems().filter((item) => !item.read).length} unread ·{" "}
+            {items().filter((item) => !item.read).length} unread ·{" "}
             {order() === "interest"
               ? `ranked from ${signalCount()} signals`
               : `${items().length} recent items`}
           </span>
           <span class="mobile-status">
-            {shownItems().filter((item) => !item.read).length} unread
+            {items().filter((item) => !item.read).length} unread
           </span>
           <div class="topbar-right">
             <label class="unread-toggle">
@@ -350,7 +415,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               <input
                 type="checkbox"
                 checked={unreadOnly()}
-                onChange={() => setUnreadOnly((value) => !value)}
+                onChange={toggleUnread}
               />
               <i />
             </label>
@@ -372,6 +437,15 @@ export function App(props: { token: () => string; signOut(): void }) {
             </button>
           </div>
         </header>
+        <Show when={pendingNew().length > 0}>
+          <button
+            type="button"
+            class="new-items-pill"
+            onClick={insertPendingNew}
+          >
+            {pendingNew().length} new
+          </button>
+        </Show>
         <Show when={error()}>
           <div class="error-banner" role="alert">
             <span>{error()}</span>
@@ -394,13 +468,11 @@ export function App(props: { token: () => string; signOut(): void }) {
             fallback={<ColdStart onImport={() => setView("feeds")} />}
           >
             <Grid
-              items={shownItems()}
-              order={order()}
-              boundary={profile()?.read_boundary_ts}
-              interestPosition={profile()?.interest_position}
+              items={gridItems()}
+              layoutKey={layoutVersion()}
+              scrollToTopKey={scrollTopVersion()}
               focusedID={focusedID()}
               active={!readerID() && !keysOpen()}
-              resetKey={`${order()}:${unreadOnly()}`}
               hasMore={cursor() !== ""}
               hearted={hearted()}
               onFocus={setFocusedID}
@@ -408,10 +480,11 @@ export function App(props: { token: () => string; signOut(): void }) {
               onSignal={setSignal}
               onHeart={toggleHeart}
               onToggleRead={toggleRead}
-              onRowsPassed={rowsPassed}
+              onMarkBelow={markBelow}
+              onItemsPassed={queueRead}
               onLoadMore={loadMore}
               onToggleOrder={toggleOrder}
-              onToggleUnread={() => setUnreadOnly((value) => !value)}
+              onToggleUnread={toggleUnread}
               onUndo={undoLast}
               onKeys={() => setKeysOpen(true)}
             />
@@ -427,8 +500,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               hearted={hearted().has(item().item_id)}
               canPrevious={selectedIndex() > 0}
               canNext={
-                selectedIndex() >= 0 &&
-                selectedIndex() < shownItems().length - 1
+                selectedIndex() >= 0 && selectedIndex() < gridItems().length - 1
               }
               onClose={() => setReaderID("")}
               onPrevious={() => moveReader(-1)}

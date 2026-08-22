@@ -54,7 +54,8 @@ func (s *Store) EnsureUser(ctx context.Context, userID, email string) error {
 		TableName: aws.String(s.table),
 		Key:       key(domain.UserPK(userID), "PROFILE"),
 		UpdateExpression: aws.String("SET email = if_not_exists(email, :email), created_at = if_not_exists(created_at, :now), " +
-			"order_pref = if_not_exists(order_pref, :order)"),
+			"order_pref = if_not_exists(order_pref, :order) REMOVE #read_boundary"),
+		ExpressionAttributeNames: map[string]string{"#read_boundary": "read_boundary_ts"},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":email": &types.AttributeValueMemberS{Value: email},
 			":now":   &types.AttributeValueMemberS{Value: now},
@@ -76,16 +77,12 @@ func (s *Store) User(ctx context.Context, userID string) (domain.User, error) {
 	return user, attributevalue.UnmarshalMap(response.Item, &user)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Order, boundary, position *string) error {
-	sets := make([]string, 0, 3)
+func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Order, position *string) error {
+	sets := make([]string, 0, 2)
 	values := make(map[string]types.AttributeValue)
 	if order != nil {
 		sets = append(sets, "order_pref = :order")
 		values[":order"] = &types.AttributeValueMemberS{Value: string(*order)}
-	}
-	if boundary != nil {
-		sets = append(sets, "read_boundary_ts = :boundary")
-		values[":boundary"] = &types.AttributeValueMemberS{Value: *boundary}
 	}
 	if position != nil {
 		sets = append(sets, "interest_position = :position")
@@ -221,7 +218,7 @@ type cursor struct {
 	Score *float64 `json:"s,omitempty"`
 }
 
-func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int) ([]domain.Item, string, error) {
+func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
@@ -254,7 +251,7 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 	items := []domain.Item{}
 	var last map[string]types.AttributeValue
 	for len(items) < limit {
-		input.Limit = aws.Int32(int32(limit - len(items)))
+		input.Limit = aws.Int32(100)
 		response, err := s.db.Query(ctx, input)
 		if err != nil {
 			return nil, "", err
@@ -263,7 +260,26 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, "", err
 		}
-		items = append(items, page...)
+		if err := s.ResolveRead(ctx, userID, page); err != nil {
+			return nil, "", err
+		}
+		for i, item := range page {
+			if !includeRead && item.Read {
+				continue
+			}
+			items = append(items, item)
+			if len(items) == limit {
+				if i < len(page)-1 {
+					last = itemPageKey(response.Items[i], order)
+				} else {
+					last = response.LastEvaluatedKey
+				}
+				break
+			}
+		}
+		if len(items) == limit {
+			break
+		}
 		last = response.LastEvaluatedKey
 		if len(last) == 0 {
 			break
@@ -272,6 +288,14 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 	}
 	next, err := encodeCursor(last)
 	return items, next, err
+}
+
+func itemPageKey(item map[string]types.AttributeValue, order domain.Order) map[string]types.AttributeValue {
+	result := map[string]types.AttributeValue{"PK": item["PK"], "SK": item["SK"]}
+	if order == domain.OrderInterest {
+		result["score"] = item["score"]
+	}
+	return result
 }
 
 func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, error) {
@@ -342,13 +366,7 @@ func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, 
 	return err
 }
 
-func (s *Store) ResolveRead(ctx context.Context, userID string, order domain.Order, boundary string, items []domain.Item) error {
-	if order == domain.OrderChrono {
-		for i := range items {
-			items[i].Read = boundary != "" && items[i].PublishedTS >= boundary
-		}
-		return nil
-	}
+func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.Item) error {
 	if len(items) == 0 {
 		return nil
 	}

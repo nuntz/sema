@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../types";
 import { justify } from "./justified";
-import {
-  chronoBoundary,
-  chronoRead,
-  fullyPassedRows,
-  monotonicChronoBoundary,
-} from "./read-state";
+import { fullyPassedRows } from "./read-state";
 
 const make = (id: number): Item => ({
   item_id: `${id}`,
@@ -36,30 +31,5 @@ describe("read state", () => {
       rows[2].top + rows[2].height + 1,
     );
     expect(second.rows.length).toBe(1);
-  });
-
-  it("uses the oldest timestamp in the passed row", () => {
-    const row = justify([make(1), make(3), make(2)], 800)[0];
-    expect(chronoBoundary(row)).toBe("2026-08-17T00:00:00Z");
-  });
-
-  it("marks items at and above the descending-time boundary read", () => {
-    const boundary = "2026-08-18T00:00:00Z";
-    expect(chronoRead("2026-08-19T00:00:00Z", boundary)).toBe(true);
-    expect(chronoRead(boundary, boundary)).toBe(true);
-    expect(chronoRead("2026-08-17T00:00:00Z", boundary)).toBe(false);
-  });
-
-  it("does not move a scroll boundary newer after a grid reflow", () => {
-    const current = "2026-08-21T23:59:31.000Z";
-    const reflowed = "2026-08-21T23:59:49.000Z";
-    expect(monotonicChronoBoundary(current, reflowed)).toBe(current);
-  });
-
-  it("advances a scroll boundary only toward older items", () => {
-    const current = "2026-08-21T23:59:31.000Z";
-    const older = "2026-08-21T23:59:12.000Z";
-    expect(monotonicChronoBoundary(current, older)).toBe(older);
-    expect(monotonicChronoBoundary("", older)).toBe(older);
   });
 });

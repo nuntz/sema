@@ -19,6 +19,7 @@ describe("keyboard map", () => {
     [",", "dislike"],
     ["f", "heart"],
     ["m", "read"],
+    ["M", "mark-below"],
     ["u", "undo"],
     ["v", "original"],
     ["t", "order"],

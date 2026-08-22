@@ -11,10 +11,11 @@ const bindings = [
   ["− / ,", "thumbs down"],
   ["F", "toggle heart"],
   ["M", "toggle read"],
+  ["⇧ M", "mark all below read"],
   ["U", "undo last read batch"],
   ["V", "open original"],
   ["T", "toggle order"],
-  ["A", "toggle unread only"],
+  ["A", "toggle all items"],
   ["ESC", "close reader"],
   ["?", "this map"],
 ];

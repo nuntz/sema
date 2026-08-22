@@ -151,7 +151,7 @@ func main() {
 			return err
 		}
 
-		rule, err := cloudwatch.NewEventRule(ctx, "hourly", &cloudwatch.EventRuleArgs{ScheduleExpression: pulumi.String("rate(1 hour)")})
+		rule, err := cloudwatch.NewEventRule(ctx, "hourly", &cloudwatch.EventRuleArgs{ScheduleExpression: pulumi.String("rate(15 minutes)")})
 		if err != nil {
 			return err
 		}

@@ -1,0 +1,89 @@
+import { describe, expect, it } from "vitest";
+import {
+  mergeNewItems,
+  pollCandidates,
+  unreadIDsAfter,
+  updateRead,
+  visibleItemIDs,
+} from "./item-list";
+import type { Item } from "./types";
+
+const make = (itemID: string): Item => ({
+  item_id: itemID,
+  feed_id: "feed",
+  url: `https://example.com/${itemID}`,
+  title: itemID,
+  published_ts: "2026-08-22T00:00:00Z",
+  fetched_ts: "2026-08-22T00:00:00Z",
+  has_body: false,
+  score: 0.5,
+  size: "M",
+  read: false,
+  signal: 0,
+});
+
+describe("item list", () => {
+  it("inserts pill items above row zero without replacing existing state", () => {
+    const existing = { ...make("existing"), read: true, signal: 1 as const };
+    const current = [existing, make("older")];
+    const incoming = [make("newest"), make("newer"), make("existing")];
+
+    const merged = mergeNewItems(current, incoming);
+
+    expect(merged.map((item) => item.item_id)).toEqual([
+      "newest",
+      "newer",
+      "existing",
+      "older",
+    ]);
+    expect(merged[2]).toBe(existing);
+  });
+
+  it("does not update the list when the first page has nothing new", () => {
+    const current = [make("existing")];
+    expect(mergeNewItems(current, [make("existing")])).toBe(current);
+  });
+
+  it("deduplicates repeated incoming items", () => {
+    expect(mergeNewItems([], [make("new"), make("new")])).toHaveLength(1);
+  });
+
+  it("offers only newly fetched items in the pill", () => {
+    const loaded = [{ ...make("loaded"), fetched_ts: "2026-08-22T10:00:00Z" }];
+    const incoming = [
+      { ...make("new"), fetched_ts: "2026-08-22T10:01:00Z" },
+      { ...make("older-page-fill"), fetched_ts: "2026-08-22T09:59:00Z" },
+    ];
+    expect(pollCandidates(loaded, [], incoming, true)).toEqual([incoming[0]]);
+  });
+
+  it("keeps session-read items in the unread-only grid snapshot", () => {
+    const items = [make("unread"), { ...make("already-read"), read: true }];
+    const visible = visibleItemIDs(items, true);
+    const read = updateRead(items, visible, true);
+
+    expect(visible).toEqual(["unread"]);
+    expect(
+      visible.map((id) => read.find((item) => item.item_id === id)?.read),
+    ).toEqual([true]);
+  });
+
+  it("undoes an explicit read batch without changing item order", () => {
+    const items = [make("one"), make("two"), make("three")];
+    const read = updateRead(items, ["one", "two"], true);
+    const undone = updateRead(read, ["one", "two"], false);
+
+    expect(read.map((item) => item.read)).toEqual([true, true, false]);
+    expect(undone).toEqual(items);
+  });
+
+  it("selects every unread item below the focused item", () => {
+    const items = [
+      make("above"),
+      make("focused"),
+      { ...make("read-below"), read: true },
+      make("unread-below"),
+    ];
+    expect(unreadIDsAfter(items, "focused")).toEqual(["unread-below"]);
+  });
+});

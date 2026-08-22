@@ -33,9 +33,7 @@ export class APIClient {
   }
 
   patchMe(
-    patch: Partial<
-      Pick<Profile, "order_pref" | "read_boundary_ts" | "interest_position">
-    >,
+    patch: Partial<Pick<Profile, "order_pref">>,
     keepalive = false,
   ): Promise<void> {
     return this.request("/me", {
@@ -45,9 +43,14 @@ export class APIClient {
     });
   }
 
-  items(order: Order, cursor = ""): Promise<ItemsResponse> {
+  items(
+    order: Order,
+    cursor = "",
+    includeRead = false,
+  ): Promise<ItemsResponse> {
     const params = new URLSearchParams({ order, limit: "100" });
     if (cursor) params.set("cursor", cursor);
+    if (includeRead) params.set("include_read", "true");
     return this.request(`/items?${params}`);
   }
 

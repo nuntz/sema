@@ -73,7 +73,7 @@ Feed and item queue consumers use partial-batch failure reporting. Fetches are b
 
 ## Tests
 
-The default suite covers feed normalization, OPML, sanitization, score math, timestamp ordering, signed content cookies, row justification, read-boundary computation, and keyboard/layout behavior.
+The default suite covers feed normalization, OPML, sanitization, score math, timestamp ordering, signed content cookies, row justification, per-item read batching and undo, new-item insertion, and keyboard/layout behavior.
 
 The DynamoDB access-pattern test runs when `DYNAMODB_ENDPOINT` is set. CI starts DynamoDB Local and exercises conditional dedupe, both item orders, expiry filtering, read rows, and persistent signal rows.
 

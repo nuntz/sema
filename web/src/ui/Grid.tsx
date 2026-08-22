@@ -6,25 +6,19 @@ import {
   onCleanup,
   onMount,
   Show,
+  untrack,
 } from "solid-js";
-import {
-  justify,
-  type LayoutRow,
-  totalHeight,
-  visibleRows,
-} from "../layout/justified";
-import { chronoBoundary, fullyPassedRows } from "../layout/read-state";
-import type { Item, Order } from "../types";
+import { justify, totalHeight, visibleRows } from "../layout/justified";
+import { fullyPassedRows } from "../layout/read-state";
+import type { Item } from "../types";
 import { gridCommand } from "./keyboard";
 
 interface GridProps {
   items: Item[];
-  order: Order;
-  boundary?: string;
-  interestPosition?: string;
+  layoutKey: number;
+  scrollToTopKey: number;
   focusedID: string;
   active: boolean;
-  resetKey: string;
   hasMore: boolean;
   hearted: Set<string>;
   onFocus(id: string): void;
@@ -32,7 +26,8 @@ interface GridProps {
   onSignal(item: Item, value: -1 | 0 | 1): void;
   onHeart(item: Item): void;
   onToggleRead(item: Item): void;
-  onRowsPassed(rows: LayoutRow[], boundary?: string): void;
+  onMarkBelow(item: Item): void;
+  onItemsPassed(ids: string[]): void;
   onLoadMore(): void;
   onToggleOrder(): void;
   onToggleUnread(): void;
@@ -46,20 +41,20 @@ export function Grid(props: GridProps) {
   const [width, setWidth] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
-  const rows = createMemo(() =>
-    justify(props.items, Math.max(0, width() - (width() < 700 ? 28 : 32))),
+  const liveItems = createMemo(
+    () => new Map(props.items.map((item) => [item.item_id, item])),
   );
+  const rows = createMemo(() => {
+    props.layoutKey;
+    return justify(
+      untrack(() => props.items),
+      Math.max(0, width() - (width() < 700 ? 28 : 32)),
+    );
+  });
   const visible = createMemo(() =>
     visibleRows(rows(), scrollTop(), viewportHeight()),
   );
-  let lastPassed = -1;
-  let restored = false;
-
-  createEffect(() => {
-    props.resetKey;
-    lastPassed = -1;
-    restored = false;
-  });
+  const passedIDs = new Set<string>();
 
   const updateViewport = () => {
     setWidth(scroller.clientWidth);
@@ -68,16 +63,16 @@ export function Grid(props: GridProps) {
 
   const processScroll = () => {
     setScrollTop(scroller.scrollTop);
-    const passed = fullyPassedRows(rows(), lastPassed, scroller.scrollTop);
-    if (passed.rows.length > 0) {
-      lastPassed = passed.lastIndex;
-      const finalRow = passed.rows.at(-1);
-      const boundary =
-        props.order === "chrono" && finalRow
-          ? chronoBoundary(finalRow)
-          : undefined;
-      props.onRowsPassed(passed.rows, boundary);
-    }
+    const passed = fullyPassedRows(rows(), -1, scroller.scrollTop);
+    const ids = passed.rows.flatMap((row) =>
+      row.cells.flatMap((cell) => {
+        const id = cell.item.item_id;
+        if (passedIDs.has(id)) return [];
+        passedIDs.add(id);
+        return [id];
+      }),
+    );
+    if (ids.length > 0) props.onItemsPassed(ids);
     if (
       scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <
       scroller.clientHeight * 2
@@ -105,29 +100,15 @@ export function Grid(props: GridProps) {
   });
 
   createEffect(() => {
-    const availableRows = rows();
-    if (restored || availableRows.length === 0 || width() === 0) return;
-    let target: LayoutRow | undefined;
-    const boundary = props.boundary;
-    if (props.order === "chrono" && boundary)
-      target = availableRows.find((row) =>
-        row.cells.some((cell) => cell.item.published_ts <= boundary),
-      );
-    if (props.order === "interest" && props.interestPosition) {
-      const score = Number(props.interestPosition);
-      if (Number.isFinite(score))
-        target = availableRows.find((row) =>
-          row.cells.some((cell) => cell.item.score <= score),
-        );
-    }
-    if (target) {
-      scroller.scrollTop = Math.max(0, target.top - 20);
-      restored = true;
-    } else if (props.hasMore) {
-      props.onLoadMore();
-    } else {
-      restored = true;
-    }
+    props.scrollToTopKey;
+    if (!scroller) return;
+    scroller.scrollTop = 0;
+    setScrollTop(0);
+    passedIDs.clear();
+  });
+
+  createEffect(() => {
+    if (props.items.length === 0 && props.hasMore) props.onLoadMore();
   });
 
   const position = () => {
@@ -203,6 +184,9 @@ export function Grid(props: GridProps) {
       case "read":
         if (item) props.onToggleRead(item);
         break;
+      case "mark-below":
+        if (item) props.onMarkBelow(item);
+        break;
       case "undo":
         props.onUndo();
         break;
@@ -224,20 +208,6 @@ export function Grid(props: GridProps) {
     event.preventDefault();
   };
 
-  const hasBoundary = (row: LayoutRow, rowIndex: number) => {
-    const boundary = props.boundary;
-    if (props.order !== "chrono" || !boundary) return false;
-    const currentRead = row.cells.some(
-      (cell) => cell.item.published_ts <= boundary,
-    );
-    const previousRead =
-      rowIndex > 0 &&
-      rows()[rowIndex - 1].cells.some(
-        (cell) => cell.item.published_ts <= boundary,
-      );
-    return currentRead && !previousRead;
-  };
-
   return (
     <div class="grid-scroll" ref={scroller} tabindex="-1">
       <div
@@ -245,125 +215,108 @@ export function Grid(props: GridProps) {
         style={{ height: `${totalHeight(rows()) + 28}px` }}
       >
         <For each={visible()}>
-          {(row) => {
-            const rowIndex = () => rows().indexOf(row);
-            return (
-              <>
-                <Show when={hasBoundary(row, rowIndex())}>
-                  <div
-                    class="read-boundary"
-                    style={{ top: `${Math.max(0, row.top - 8)}px` }}
-                  >
-                    <i />
-                    <span>
-                      READ FROM HERE ↓ · press U to undo the last batch
-                    </span>
-                    <i />
-                  </div>
-                </Show>
-                <div
-                  class="grid-row"
-                  style={{
-                    top: `${row.top + 14}px`,
-                    height: `${row.height}px`,
-                  }}
-                >
-                  <For each={row.cells}>
-                    {(cell) => (
-                      <article
-                        class="grid-cell"
-                        classList={{
-                          focused: cell.item.item_id === props.focusedID,
-                          read: cell.item.read,
-                          "text-cell": !cell.item.media_url,
-                          [`size-${cell.effectiveSize.toLowerCase()}`]: true,
-                        }}
-                        style={{ width: `${cell.width}px` }}
-                        data-item-id={cell.item.item_id}
-                        onMouseEnter={() => props.onFocus(cell.item.item_id)}
-                        onDblClick={() => props.onOpen(cell.item)}
-                      >
-                        <Show when={cell.item.media_url}>
-                          <img
-                            src={cell.item.media_url}
-                            alt=""
-                            loading="lazy"
-                            width={cell.item.media_w}
-                            height={cell.item.media_h}
-                          />
-                        </Show>
-                        <div class="cell-scrim" />
-                        <div class="cell-actions">
-                          <button
-                            type="button"
-                            classList={{ selected: cell.item.signal === 1 }}
-                            aria-label="Thumbs up"
-                            onClick={() =>
-                              props.onSignal(
-                                cell.item,
-                                cell.item.signal === 1 ? 0 : 1,
-                              )
-                            }
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            classList={{ selected: cell.item.signal === -1 }}
-                            aria-label="Thumbs down"
-                            onClick={() =>
-                              props.onSignal(
-                                cell.item,
-                                cell.item.signal === -1 ? 0 : -1,
-                              )
-                            }
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            class="heart"
-                            classList={{
-                              selected: props.hearted.has(cell.item.item_id),
-                            }}
-                            aria-label="Heart"
-                            onClick={() => props.onHeart(cell.item)}
-                          >
-                            ♥
-                          </button>
-                        </div>
+          {(row) => (
+            <div
+              class="grid-row"
+              style={{
+                top: `${row.top + 14}px`,
+                height: `${row.height}px`,
+              }}
+            >
+              <For each={row.cells}>
+                {(cell) => {
+                  const item = createMemo(
+                    () => liveItems().get(cell.item.item_id) ?? cell.item,
+                  );
+                  return (
+                    <article
+                      class="grid-cell"
+                      classList={{
+                        focused: item().item_id === props.focusedID,
+                        read: item().read,
+                        "text-cell": !item().media_url,
+                        [`size-${cell.effectiveSize.toLowerCase()}`]: true,
+                      }}
+                      style={{ width: `${cell.width}px` }}
+                      data-item-id={item().item_id}
+                      onMouseEnter={() => props.onFocus(item().item_id)}
+                      onDblClick={() => props.onOpen(item())}
+                    >
+                      <Show when={item().media_url}>
+                        <img
+                          src={item().media_url}
+                          alt=""
+                          loading="lazy"
+                          width={item().media_w}
+                          height={item().media_h}
+                        />
+                      </Show>
+                      <div class="cell-scrim" />
+                      <div class="cell-actions">
                         <button
                           type="button"
-                          class="cell-main"
-                          onClick={() => props.onOpen(cell.item)}
-                          aria-label={`Open ${cell.item.title}`}
+                          classList={{ selected: item().signal === 1 }}
+                          aria-label="Thumbs up"
+                          onClick={() =>
+                            props.onSignal(item(), item().signal === 1 ? 0 : 1)
+                          }
                         >
-                          <div class="cell-copy">
-                            <h2>{cell.item.title}</h2>
-                            <Show
-                              when={!cell.item.media_url && cell.item.summary}
-                            >
-                              <p>{cell.item.summary}</p>
-                            </Show>
-                            <div class="cell-meta">
-                              <Favicon item={cell.item} />
-                              <span>
-                                {cell.item.feed_title || "Feed"} ·{" "}
-                                {relativeTime(cell.item.published_ts)}
-                              </span>
-                              <Show when={!cell.item.read}>
-                                <b>{Math.round(cell.item.score * 100)}</b>
-                              </Show>
-                            </div>
-                          </div>
+                          ↑
                         </button>
-                      </article>
-                    )}
-                  </For>
-                </div>
-              </>
-            );
-          }}
+                        <button
+                          type="button"
+                          classList={{ selected: item().signal === -1 }}
+                          aria-label="Thumbs down"
+                          onClick={() =>
+                            props.onSignal(
+                              item(),
+                              item().signal === -1 ? 0 : -1,
+                            )
+                          }
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          class="heart"
+                          classList={{
+                            selected: props.hearted.has(item().item_id),
+                          }}
+                          aria-label="Heart"
+                          onClick={() => props.onHeart(item())}
+                        >
+                          ♥
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        class="cell-main"
+                        onClick={() => props.onOpen(item())}
+                        aria-label={`Open ${item().title}`}
+                      >
+                        <div class="cell-copy">
+                          <h2>{item().title}</h2>
+                          <Show when={!item().media_url && item().summary}>
+                            <p>{item().summary}</p>
+                          </Show>
+                          <div class="cell-meta">
+                            <Favicon item={item()} />
+                            <span>
+                              {item().feed_title || "Feed"} ·{" "}
+                              {relativeTime(item().published_ts)}
+                            </span>
+                            <Show when={!item().read}>
+                              <b>{Math.round(item().score * 100)}</b>
+                            </Show>
+                          </div>
+                        </div>
+                      </button>
+                    </article>
+                  );
+                }}
+              </For>
+            </div>
+          )}
         </For>
       </div>
     </div>

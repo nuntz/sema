@@ -4,8 +4,6 @@ export interface Profile {
   email: string;
   created_at: string;
   order_pref: Order;
-  read_boundary_ts?: string;
-  interest_position?: string;
 }
 
 export interface MeResponse {

@@ -109,7 +109,6 @@ func (s *server) getMe(ctx context.Context, userID string) events.APIGatewayV2HT
 func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
 	var input struct {
 		OrderPref        *domain.Order `json:"order_pref"`
-		ReadBoundaryTS   *string       `json:"read_boundary_ts"`
 		InterestPosition *string       `json:"interest_position"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
@@ -118,12 +117,7 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 	if input.OrderPref != nil && *input.OrderPref != domain.OrderChrono && *input.OrderPref != domain.OrderInterest {
 		return badRequest(errors.New("order_pref must be chrono or interest"))
 	}
-	if input.ReadBoundaryTS != nil && *input.ReadBoundaryTS != "" {
-		if _, err := time.Parse(time.RFC3339Nano, *input.ReadBoundaryTS); err != nil {
-			return badRequest(errors.New("read_boundary_ts must be an RFC3339 timestamp"))
-		}
-	}
-	if err := s.store.UpdateUser(ctx, userID, input.OrderPref, input.ReadBoundaryTS, input.InterestPosition); err != nil {
+	if err := s.store.UpdateUser(ctx, userID, input.OrderPref, input.InterestPosition); err != nil {
 		return s.failure("update profile", err)
 	}
 	return response(http.StatusOK, map[string]bool{"ok": true})
@@ -137,20 +131,17 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	if order != domain.OrderChrono && order != domain.OrderInterest {
 		return badRequest(errors.New("order must be chrono or interest"))
 	}
+	includeRead, err := parseIncludeRead(query["include_read"])
+	if err != nil {
+		return badRequest(err)
+	}
 	limit, _ := strconv.Atoi(query["limit"])
-	items, next, err := s.store.Items(ctx, userID, order, query["cursor"], limit)
+	items, next, err := s.store.Items(ctx, userID, order, query["cursor"], limit, includeRead)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
 		}
 		return s.failure("list items", err)
-	}
-	user, err := s.store.User(ctx, userID)
-	if err != nil {
-		return s.failure("get profile", err)
-	}
-	if err := s.store.ResolveRead(ctx, userID, order, user.ReadBoundaryTS, items); err != nil {
-		return s.failure("resolve read state", err)
 	}
 	signals, err := s.store.Signals(ctx, userID)
 	if err != nil {
@@ -167,6 +158,17 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	return response(http.StatusOK, map[string]any{"items": items, "next_cursor": next})
 }
 
+func parseIncludeRead(value string) (bool, error) {
+	switch value {
+	case "", "false":
+		return false, nil
+	case "true":
+		return true, nil
+	default:
+		return false, errors.New("include_read must be true or false")
+	}
+}
+
 func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body string) events.APIGatewayV2HTTPResponse {
 	parts := strings.Split(suffix, "/")
 	itemID := parts[0]
@@ -181,6 +183,11 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		return s.failure("get item", err)
 	}
 	if method == http.MethodGet && len(parts) == 1 {
+		items := []domain.Item{item}
+		if err := s.store.ResolveRead(ctx, userID, items); err != nil {
+			return s.failure("resolve read state", err)
+		}
+		item = items[0]
 		return response(http.StatusOK, s.store.PublicItem(item))
 	}
 	if method != http.MethodPost || len(parts) != 2 {

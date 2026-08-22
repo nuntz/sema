@@ -18,6 +18,8 @@ import (
 	"github.com/nuntz/sema/internal/store"
 )
 
+const dueMargin = 5 * time.Minute
+
 type handler struct {
 	store *store.Store
 	queue *sqs.Client
@@ -26,7 +28,7 @@ type handler struct {
 
 func (h *handler) run(ctx context.Context) error {
 	started := time.Now()
-	feeds, err := h.store.DueFeeds(ctx, started.UTC())
+	feeds, err := h.store.DueFeeds(ctx, started.UTC().Add(dueMargin))
 	if err != nil {
 		return err
 	}

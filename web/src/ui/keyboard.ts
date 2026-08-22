@@ -8,6 +8,7 @@ export type GridCommand =
   | "dislike"
   | "heart"
   | "read"
+  | "mark-below"
   | "undo"
   | "original"
   | "order"
@@ -39,6 +40,7 @@ const gridBindings: Record<string, GridCommand> = {
   ",": "dislike",
   f: "heart",
   m: "read",
+  M: "mark-below",
   u: "undo",
   v: "original",
   t: "order",

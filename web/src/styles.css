@@ -44,6 +44,7 @@ button:disabled { cursor: default; opacity: 0.38; }
 .unread-toggle input:checked + i::after { background: var(--bg); transform: translateX(11px); }
 .keys-chip { height: 22px; padding: 0 8px; border-radius: 5px; background: rgba(255, 255, 255, 0.06); color: var(--muted); font: 500 10px/1 "IBM Plex Mono", monospace; }
 .avatar { width: 24px; height: 24px; border-radius: 6px; background: #2a3038; color: #c7ccd3; font: 500 10px/1 "IBM Plex Mono", monospace; }
+.new-items-pill { position: fixed; top: 58px; left: 50%; z-index: 30; height: 28px; padding: 0 12px; transform: translateX(-50%); border: 1px solid rgba(214, 242, 75, 0.35); border-radius: 14px; background: #20251a; color: var(--accent); box-shadow: 0 5px 18px rgba(0, 0, 0, 0.35); font: 500 11px/1 "IBM Plex Mono", monospace; }
 
 .grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: #2d3137 transparent; contain: strict; }
 .virtual-canvas { position: relative; width: 100%; min-height: 100%; contain: layout style; }
@@ -86,9 +87,6 @@ button:disabled { cursor: default; opacity: 0.38; }
 .text-cell .cell-scrim { display: none; }
 .text-cell .cell-copy { inset: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 12px; background: none; }
 .text-cell .cell-copy h2 { color: #f0eee9; font: 400 17px/1.28 "Newsreader", Georgia, serif; }
-.read-boundary { position: absolute; left: 16px; right: 16px; z-index: 8; display: flex; align-items: center; gap: 12px; transform: translateY(-50%); pointer-events: none; }
-.read-boundary i { flex: 1; height: 1px; background: rgba(214, 242, 75, 0.3); }
-.read-boundary span { color: var(--accent); font: 500 9.5px/1 "IBM Plex Mono", monospace; letter-spacing: 0.1em; white-space: nowrap; }
 
 .error-banner { min-height: 34px; padding: 7px 16px; display: flex; justify-content: center; gap: 16px; align-items: center; background: rgba(255, 95, 109, 0.15); color: #ff9aa4; font-size: 12px; z-index: 30; }
 .error-banner button { padding: 0 4px; background: transparent; color: inherit; font-size: 18px; }
@@ -202,8 +200,7 @@ button:disabled { cursor: default; opacity: 0.38; }
   .size-l .cell-copy p { -webkit-line-clamp: 3; font-size: 12px; }
   .cell-meta > span { font-size: 10px; }
   .favicon { width: 12px; height: 12px; }
-  .read-boundary { left: 14px; right: 14px; }
-  .read-boundary span { font-size: 9px; }
+  .new-items-pill { top: 60px; }
   .reader-bar { min-height: 48px; height: 48px; padding: 2px 14px 8px; border: 0; }
   .reader-back { width: auto; border: 0; font-size: 13px; }
   .reader-back::after { content: " grid"; }

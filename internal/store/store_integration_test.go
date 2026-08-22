@@ -73,6 +73,27 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if err := repository.EnsureUser(ctx, "user", "reader@example.com"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repository.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(repository.table), Key: key(domain.UserPK("user"), "PROFILE"),
+		UpdateExpression: aws.String("SET read_boundary_ts = :boundary"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":boundary": &types.AttributeValueMemberS{Value: domain.Timestamp(time.Now())},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.EnsureUser(ctx, "user", "reader@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(repository.table), Key: key(domain.UserPK("user"), "PROFILE"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := profile.Item["read_boundary_ts"]; exists {
+		t.Fatal("read_boundary_ts was not removed from profile")
+	}
 	user, err := repository.User(ctx, "user")
 	if err != nil || user.OrderPref != domain.OrderChrono {
 		t.Fatalf("profile = %#v, %v", user, err)
@@ -92,19 +113,45 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if written, err := repository.PutItem(ctx, items[0]); err != nil || written {
 		t.Fatalf("conditional dedupe = %v, %v", written, err)
 	}
-	chrono, _, err := repository.Items(ctx, "user", domain.OrderChrono, "", 100)
+	chrono, _, err := repository.Items(ctx, "user", domain.OrderChrono, "", 100, true)
 	if err != nil || len(chrono) != 2 || chrono[0].ItemID != "new" {
 		t.Fatalf("chrono = %#v, %v", chrono, err)
 	}
-	interest, _, err := repository.Items(ctx, "user", domain.OrderInterest, "", 100)
+	interest, _, err := repository.Items(ctx, "user", domain.OrderInterest, "", 100, true)
 	if err != nil || len(interest) != 2 || interest[0].ItemID != "new" {
 		t.Fatalf("interest = %#v, %v", interest, err)
+	}
+	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
+		first, cursor, err := repository.Items(ctx, "user", order, "", 1, false)
+		if err != nil || len(first) != 1 || first[0].ItemID != "new" || cursor == "" {
+			t.Fatalf("first unread page (%s) = %#v, cursor %q, %v", order, first, cursor, err)
+		}
+		second, cursor, err := repository.Items(ctx, "user", order, cursor, 1, false)
+		if err != nil || len(second) != 1 || second[0].ItemID != "old" || cursor != "" {
+			t.Fatalf("second unread page (%s) = %#v, cursor %q, %v", order, second, cursor, err)
+		}
+	}
+	if err := repository.SetRead(ctx, "user", []string{"old"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ResolveRead(ctx, "user", chrono); err != nil || chrono[0].Read || !chrono[1].Read {
+		t.Fatalf("read state = %#v, %v", chrono, err)
+	}
+	unread, _, err := repository.Items(ctx, "user", domain.OrderChrono, "", 100, false)
+	if err != nil || len(unread) != 1 || unread[0].ItemID != "new" || unread[0].Read {
+		t.Fatalf("unread items = %#v, %v", unread, err)
+	}
+	if err := repository.SetRead(ctx, "user", []string{"old"}, false); err != nil {
+		t.Fatal(err)
 	}
 	if err := repository.SetRead(ctx, "user", []string{"new"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.ResolveRead(ctx, "user", domain.OrderInterest, "", chrono); err != nil || !chrono[0].Read {
-		t.Fatalf("read state = %#v, %v", chrono, err)
+	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
+		unread, cursor, err := repository.Items(ctx, "user", order, "", 1, false)
+		if err != nil || len(unread) != 1 || unread[0].ItemID != "old" || cursor != "" {
+			t.Fatalf("read-heavy page (%s) = %#v, cursor %q, %v", order, unread, cursor, err)
+		}
 	}
 	if err := repository.SetSignal(ctx, "user", items[1], 1); err != nil {
 		t.Fatal(err)
@@ -122,7 +169,7 @@ func TestDynamoEmptyDatabase(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 
 	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
-		items, cursor, err := repository.Items(ctx, "nobody", order, "", 100)
+		items, cursor, err := repository.Items(ctx, "nobody", order, "", 100, false)
 		if err != nil {
 			t.Fatalf("items(%s) = %v", order, err)
 		}

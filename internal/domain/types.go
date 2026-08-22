@@ -21,7 +21,6 @@ type User struct {
 	Email            string `dynamodbav:"email,omitempty" json:"email"`
 	CreatedAt        string `dynamodbav:"created_at" json:"created_at"`
 	OrderPref        Order  `dynamodbav:"order_pref" json:"order_pref"`
-	ReadBoundaryTS   string `dynamodbav:"read_boundary_ts,omitempty" json:"read_boundary_ts,omitempty"`
 	InterestPosition string `dynamodbav:"interest_position,omitempty" json:"interest_position,omitempty"`
 }
 
