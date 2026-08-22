@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      dynamodb:
+        image: amazon/dynamodb-local:latest
+        ports:
+          - 8000:8000
+    env:
+      DYNAMODB_ENDPOINT: http://localhost:8000
+      GOCACHE: /tmp/sema-go-build
+      GOMODCACHE: /tmp/sema-go-mod
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: go test ./...
+      - run: go test ./...
+        working-directory: infra
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - run: bun run lint
+        working-directory: web
+      - run: bun run test
+        working-directory: web
+      - run: bun run build
+        working-directory: web

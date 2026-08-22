@@ -1,0 +1,6 @@
+name: sema
+runtime: go
+description: Sema feed triage infrastructure
+config:
+  sema:googleClientId:
+    secret: true

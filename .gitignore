@@ -26,7 +26,14 @@ go.work.sum
 
 # env file
 .env
+*.local
 
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Project build output
+bin/
+web/dist/
+web/node_modules/
+.pulumi/
