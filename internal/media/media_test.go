@@ -7,6 +7,8 @@ import (
 	"image"
 	"image/jpeg"
 	"net/http"
+	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/nuntz/sema/internal/httpx"
@@ -62,5 +64,18 @@ func TestFetchLeadRejectsNonImageContentType(t *testing.T) {
 	}
 	if leadErr.ContentType != "text/html; charset=utf-8" {
 		t.Fatalf("ContentType = %q", leadErr.ContentType)
+	}
+}
+
+func TestCandidatesFallsBackToFeedContentImage(t *testing.T) {
+	pageURL, _ := url.Parse("https://www.reddit.com/comments/one")
+	feedURL, _ := url.Parse("https://www.reddit.com/")
+	pageHTML := []byte(`<html><head><meta property="og:image" content="https://cdn.example.com/page.jpg"></head></html>`)
+	feedHTML := []byte(`<table><tr><td><img src="/preview.jpeg?width=640"></td></tr></table>`)
+
+	candidates := Candidates(nil, pageHTML, nil, feedHTML, "", pageURL, feedURL)
+	want := []string{"https://cdn.example.com/page.jpg", "https://www.reddit.com/preview.jpeg?width=640"}
+	if !slices.Equal(candidates, want) {
+		t.Fatalf("candidates = %#v, want %#v", candidates, want)
 	}
 }

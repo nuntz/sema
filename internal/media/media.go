@@ -54,11 +54,11 @@ type Processor struct{ client client }
 
 func New(client *httpx.Client) *Processor { return &Processor{client: client} }
 
-func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML []byte, articleImage string, pageURL *url.URL) []string {
+func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML, feedHTML []byte, articleImage string, pageURL, feedURL *url.URL) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0, 4)
-	add := func(raw string) {
-		value := resolve(pageURL, raw)
+	add := func(base *url.URL, raw string) {
+		value := resolve(base, raw)
 		if value != "" && !seen[value] {
 			seen[value] = true
 			result = append(result, value)
@@ -66,7 +66,7 @@ func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML []byte, art
 	}
 	for _, enclosure := range enclosures {
 		if strings.HasPrefix(strings.ToLower(enclosure.Type), "image/") || imageExtension(enclosure.URL) {
-			add(enclosure.URL)
+			add(pageURL, enclosure.URL)
 		}
 	}
 	if len(pageHTML) > 0 {
@@ -79,7 +79,7 @@ func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML []byte, art
 					property = attr(node, "name")
 				}
 				if property == "og:image" || property == "twitter:image" || property == "twitter:image:src" {
-					add(content)
+					add(pageURL, content)
 				}
 			}
 			for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -88,22 +88,28 @@ func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML []byte, art
 		}
 		walk(doc)
 	}
-	add(articleImage)
-	if len(articleHTML) > 0 {
-		doc, _ := html.Parse(bytes.NewReader(articleHTML))
-		var firstImage string
-		var walk func(*html.Node)
-		walk = func(node *html.Node) {
-			if firstImage == "" && node.Type == html.ElementNode && node.Data == "img" {
-				firstImage = attr(node, "src")
-			}
-			for child := node.FirstChild; child != nil && firstImage == ""; child = child.NextSibling {
-				walk(child)
-			}
-		}
-		walk(doc)
-		add(firstImage)
+	add(pageURL, articleImage)
+	add(pageURL, firstImage(articleHTML))
+	add(feedURL, firstImage(feedHTML))
+	return result
+}
+
+func firstImage(document []byte) string {
+	if len(document) == 0 {
+		return ""
 	}
+	doc, _ := html.Parse(bytes.NewReader(document))
+	var result string
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if result == "" && node.Type == html.ElementNode && node.Data == "img" {
+			result = attr(node, "src")
+		}
+		for child := node.FirstChild; child != nil && result == ""; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
 	return result
 }
 

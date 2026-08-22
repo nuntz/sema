@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	ext "github.com/mmcdole/gofeed/extensions"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 )
@@ -82,9 +83,65 @@ func (c *Connector) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchRe
 				URL: resolve(baseURL, enclosure.URL), Type: enclosure.Type, Length: enclosure.Length,
 			})
 		}
+		entry.Enclosures = append(entry.Enclosures, mediaRSSEnclosures(item, baseURL)...)
 		result.Entries = append(result.Entries, entry)
 	}
 	return result, nil
+}
+
+func mediaRSSEnclosures(item *gofeed.Item, base *url.URL) []domain.Enclosure {
+	seen := make(map[string]bool)
+	result := []domain.Enclosure{}
+	var walk func(map[string][]ext.Extension)
+	walk = func(elements map[string][]ext.Extension) {
+		for _, kind := range []string{"thumbnail", "content"} {
+			matches := extensionsNamed(elements, kind)
+			for _, extension := range matches {
+				imageURL := resolve(base, extensionAttr(extension.Attrs, "url"))
+				if imageURL != "" && !seen[imageURL] {
+					mediaType := extensionAttr(extension.Attrs, "type")
+					if kind == "thumbnail" || strings.EqualFold(extensionAttr(extension.Attrs, "medium"), "image") {
+						if mediaType == "" {
+							mediaType = "image/*"
+						}
+					}
+					seen[imageURL] = true
+					result = append(result, domain.Enclosure{URL: imageURL, Type: mediaType, Length: extensionAttr(extension.Attrs, "fileSize")})
+				}
+			}
+		}
+		for _, matches := range elements {
+			for _, extension := range matches {
+				if len(extension.Children) > 0 {
+					walk(extension.Children)
+				}
+			}
+		}
+	}
+	for namespace, elements := range item.Extensions {
+		if strings.EqualFold(namespace, "media") {
+			walk(elements)
+		}
+	}
+	return result
+}
+
+func extensionsNamed(elements map[string][]ext.Extension, name string) []ext.Extension {
+	for key, matches := range elements {
+		if strings.EqualFold(key, name) {
+			return matches
+		}
+	}
+	return nil
+}
+
+func extensionAttr(attributes map[string]string, name string) string {
+	for key, value := range attributes {
+		if strings.EqualFold(key, name) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func resolve(base *url.URL, raw string) string {

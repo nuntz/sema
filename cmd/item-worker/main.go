@@ -93,7 +93,12 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 
 	summary := extract.Summary(message.SummaryRaw, article.FirstParagraph)
-	candidates := media.Candidates(message.EnclosureURLs, pageHTML, []byte(article.HTML), article.LeadImage, pageURL)
+	feedURL, feedErr := url.Parse(feed.SiteURL)
+	if feedErr != nil || feedURL.Host == "" {
+		feedURL = pageURL
+	}
+	feedHTML := []byte(message.ContentRaw + "\n" + message.SummaryRaw)
+	candidates := media.Candidates(message.EnclosureURLs, pageHTML, []byte(article.HTML), feedHTML, article.LeadImage, pageURL, feedURL)
 	mediaKey, mediaW, mediaH := "", 0, 0
 	if lead, mediaErr := h.media.FetchLead(ctx, candidates); mediaErr == nil {
 		mediaKey = store.MediaKey(message.User, message.ItemID, lead.Extension)
@@ -176,7 +181,17 @@ func articleContent(rawContent, itemURL, siteURL string, pageURL *url.URL, pageH
 		return extract.FeedContent(rawContent, feedURL)
 	}
 	if len(pageHTML) > 0 {
-		return extract.Article(pageHTML, pageURL)
+		article, err := extract.Article(pageHTML, pageURL)
+		if err == nil && article.HTML != "" {
+			return article, nil
+		}
+		if strings.TrimSpace(extract.PlainText(rawContent)) != "" {
+			return extract.FeedContent(rawContent, pageURL)
+		}
+		return article, err
+	}
+	if strings.TrimSpace(extract.PlainText(rawContent)) != "" {
+		return extract.FeedContent(rawContent, pageURL)
 	}
 	return extract.Result{}, nil
 }

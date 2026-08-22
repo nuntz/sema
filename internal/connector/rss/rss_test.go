@@ -100,6 +100,27 @@ func TestConditionalFetch(t *testing.T) {
 	}
 }
 
+func TestFetchMediaRSSEnclosures(t *testing.T) {
+	body := `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/"><title>Reddit</title><link href="/site"/><entry><id>reddit-one</id><title>Reddit post</title><link href="/comments/one"/><updated>2026-08-20T12:00:00Z</updated><media:thumbnail url="/preview.jpeg?width=640"/><media:group><media:content url="https://cdn.example.com/full.webp" medium="image" fileSize="42"/></media:group></entry></feed>`
+	result, err := connectorFor(body, "application/atom+xml").Fetch(context.Background(), domain.Feed{URL: "https://example.com/feed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 {
+		t.Fatalf("entries = %#v", result.Entries)
+	}
+	enclosures := result.Entries[0].Enclosures
+	if len(enclosures) != 2 {
+		t.Fatalf("enclosures = %#v", enclosures)
+	}
+	if enclosures[0].URL != "https://example.com/preview.jpeg?width=640" || enclosures[0].Type != "image/*" {
+		t.Fatalf("thumbnail = %#v", enclosures[0])
+	}
+	if enclosures[1].URL != "https://cdn.example.com/full.webp" || enclosures[1].Type != "image/*" || enclosures[1].Length != "42" {
+		t.Fatalf("content = %#v", enclosures[1])
+	}
+}
+
 func TestFetchRejectsInvalidFeed(t *testing.T) {
 	if _, err := connectorFor("this is not a feed", "text/plain").Fetch(context.Background(), domain.Feed{URL: "https://example.com/feed"}); err == nil {
 		t.Fatal("expected a parse error")
