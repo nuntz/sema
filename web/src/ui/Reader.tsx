@@ -1,10 +1,9 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { isOlderThanThirtyDays } from "../archive";
+import { Icon } from "../components/Icon";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
-import { HeartIcon } from "./HeartIcon";
 import { readerCommand } from "./keyboard";
-import { LinkIcon } from "./LinkIcon";
 import { hasLeadingImage } from "./reader-content";
 
 interface ReaderProps {
@@ -175,9 +174,9 @@ export function Reader(props: ReaderProps) {
           type="button"
           class="reader-back"
           onClick={props.onClose}
-          aria-label="Close reader"
+          aria-label="Back to grid"
         >
-          ←
+          <Icon name="back-to-grid" />
         </button>
         <Show when={props.item.favicon_url}>
           <img class="reader-favicon" src={props.item.favicon_url} alt="" />
@@ -189,25 +188,32 @@ export function Reader(props: ReaderProps) {
         <div class="reader-actions">
           <button
             type="button"
+            class="signal"
             classList={{ selected: props.item.signal === 1 }}
+            aria-pressed={props.item.signal === 1}
             onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
           >
-            ↑ up
+            <Icon name="thumbs-up" filled={props.item.signal === 1} />
+            up
           </button>
           <button
             type="button"
+            class="signal"
             classList={{ selected: props.item.signal === -1 }}
+            aria-pressed={props.item.signal === -1}
             onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
           >
-            ↓ down
+            <Icon name="thumbs-down" filled={props.item.signal === -1} />
+            down
           </button>
           <button
             type="button"
             class="keep"
             classList={{ selected: props.hearted }}
+            aria-pressed={props.hearted}
             onClick={props.onHeart}
           >
-            <HeartIcon filled={props.hearted} />
+            <Icon name="keep" filled={props.hearted} />
             {props.hearted ? "kept" : "keep"}
           </button>
           <button
@@ -216,7 +222,13 @@ export function Reader(props: ReaderProps) {
             classList={{ activated: props.linkActionActive }}
             onClick={props.onCopy}
           >
-            <span>{props.linkActionActive ? "✓" : <LinkIcon />}</span>
+            <span>
+              {props.linkActionActive ? (
+                <Icon name="check" />
+              ) : (
+                <Icon name="copy-link" />
+              )}
+            </span>
             copy link
           </button>
           <i />
@@ -224,23 +236,29 @@ export function Reader(props: ReaderProps) {
             href={props.item.url}
             target="_blank"
             rel="noopener noreferrer"
+            class="original-link"
             onClick={props.onOriginal}
           >
-            original ↗
+            original
+            <Icon name="open-original" />
           </a>
           <button
             type="button"
             onClick={props.onPrevious}
             disabled={!props.canPrevious}
+            aria-label="Previous item"
+            title="Previous item"
           >
-            P
+            <Icon name="previous-item" />
           </button>
           <button
             type="button"
             onClick={props.onNext}
             disabled={!props.canNext}
+            aria-label="Next item"
+            title="Next item"
           >
-            N
+            <Icon name="next-item" />
           </button>
         </div>
       </header>
@@ -294,7 +312,8 @@ export function Reader(props: ReaderProps) {
                       rel="noopener noreferrer"
                       onClick={props.onOriginal}
                     >
-                      Read the original ↗
+                      Read the original
+                      <Icon name="open-original" />
                     </a>
                   </Show>
                 </Show>
@@ -320,7 +339,8 @@ export function Reader(props: ReaderProps) {
                 rel="noopener noreferrer"
                 onClick={props.onOriginal}
               >
-                Open original ↗
+                Open original
+                <Icon name="open-original" />
               </a>
             </div>
           </Show>
@@ -331,9 +351,14 @@ export function Reader(props: ReaderProps) {
               onClick={props.onNext}
               disabled={!props.canNext}
             >
-              {props.canNext
-                ? "Continue to the next item →"
-                : "You’re at the end"}
+              <span>
+                {props.canNext
+                  ? "Continue to the next item"
+                  : "You’re at the end"}
+              </span>
+              <Show when={props.canNext}>
+                <Icon name="next-item" />
+              </Show>
             </button>
           </footer>
         </article>
@@ -342,24 +367,34 @@ export function Reader(props: ReaderProps) {
         <button
           type="button"
           classList={{ selected: props.item.signal === 1 }}
+          aria-label="Thumbs up"
+          aria-pressed={props.item.signal === 1}
           onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
         >
-          ↑
+          <Icon name="thumbs-up" size={18} filled={props.item.signal === 1} />
         </button>
         <button
           type="button"
           classList={{ selected: props.item.signal === -1 }}
+          aria-label="Thumbs down"
+          aria-pressed={props.item.signal === -1}
           onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
         >
-          ↓
+          <Icon
+            name="thumbs-down"
+            size={18}
+            filled={props.item.signal === -1}
+          />
         </button>
         <button
           type="button"
           class="keep"
           classList={{ selected: props.hearted }}
+          aria-label={props.hearted ? "Remove from archive" : "Keep in archive"}
+          aria-pressed={props.hearted}
           onClick={props.onHeart}
         >
-          <HeartIcon filled={props.hearted} />
+          <Icon name="keep" size={18} filled={props.hearted} />
         </button>
         <button
           type="button"
@@ -367,7 +402,8 @@ export function Reader(props: ReaderProps) {
           onClick={props.onNext}
           disabled={!props.canNext}
         >
-          NEXT →
+          NEXT
+          <Icon name="next-item" size={18} />
         </button>
         <button
           type="button"
@@ -376,7 +412,11 @@ export function Reader(props: ReaderProps) {
           aria-label="Copy or share original link"
           onClick={props.onCopy}
         >
-          {props.linkActionActive ? "✓" : <LinkIcon />}
+          {props.linkActionActive ? (
+            <Icon name="check" size={18} />
+          ) : (
+            <Icon name="copy-link" size={18} />
+          )}
         </button>
       </nav>
     </section>

@@ -17,7 +17,7 @@ type DraftRow = { cells: LayoutCell[]; targetWidth: number };
 
 const desktopGap = 10;
 const mobileGap = 8;
-const targetHeight = 172;
+const targetHeight = 184;
 const sizeFactor = { S: 0.8, M: 1.05, L: 1.6 } as const;
 
 function aspect(item: Item): number {
@@ -102,7 +102,7 @@ export function justify(items: Item[], containerWidth: number): LayoutRow[] {
         draft.cells.length;
       const smallWidth = Math.min(desiredWidth, fittingWidth);
       widths = draft.cells.map(() => smallWidth);
-      height = clamp(smallWidth, 112, 132);
+      height = clamp(smallWidth + 12, 124, 144);
     } else if (lastRow) {
       height = rows.at(-1)?.height ?? targetHeight;
       const available = containerWidth - desktopGap * (draft.cells.length - 1);
@@ -114,7 +114,7 @@ export function justify(items: Item[], containerWidth: number): LayoutRow[] {
       const available = containerWidth - desktopGap * (draft.cells.length - 1);
       const scale = available / draft.targetWidth;
       widths = draft.cells.map((cell) => cell.width * scale);
-      height = clamp(targetHeight * scale, 128, 192);
+      height = clamp(targetHeight * scale, 140, 204);
     }
 
     rows.push({
@@ -213,10 +213,10 @@ function mobileRows(items: Item[], containerWidth: number): LayoutRow[] {
     const hasLarge = draft.some((cell) => cell.effectiveSize === "L");
     let cells = draft;
     let height = allSmall
-      ? clamp(draft[0].width, 86, 132)
+      ? clamp(draft[0].width + 12, 98, 144)
       : hasLarge
-        ? clamp(containerWidth * 0.43, 118, 192)
-        : clamp(containerWidth * 0.35, 96, 160);
+        ? clamp(containerWidth * 0.43 + 12, 130, 204)
+        : clamp(containerWidth * 0.35 + 12, 108, 172);
 
     if (lastRow && rows.length > 0) {
       height = rows.at(-1)?.height ?? height;

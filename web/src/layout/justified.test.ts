@@ -71,12 +71,12 @@ describe("justify", () => {
     );
     for (const row of rows) {
       expect(row.cells.length).toBeLessThanOrEqual(6);
-      expect(row.height).toBeLessThanOrEqual(132);
+      expect(row.height).toBeLessThanOrEqual(144);
       expect(usedWidth(row)).toBeLessThan(width);
     }
   });
 
-  it("keeps desktop row-height variance within 64 pixels", () => {
+  it("raises desktop rows for the larger typography scale", () => {
     const rows = justify(
       Array.from({ length: 30 }, (_, index) =>
         item(index, (["S", "S", "M", "L"] as const)[index % 4]),
@@ -84,8 +84,8 @@ describe("justify", () => {
       1180,
     );
     const heights = rows.map((row) => row.height);
-    expect(Math.min(...heights)).toBeGreaterThanOrEqual(128);
-    expect(Math.max(...heights)).toBeLessThanOrEqual(192);
+    expect(Math.min(...heights)).toBeGreaterThanOrEqual(140);
+    expect(Math.max(...heights)).toBeLessThanOrEqual(204);
     expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(64);
   });
 
@@ -117,7 +117,7 @@ describe("justify", () => {
     expect(rows.every((row) => row.gap === 8 && row.cells.length === 3)).toBe(
       true,
     );
-    expect(rows.every((row) => row.height <= 132)).toBe(true);
+    expect(rows.every((row) => row.height <= 144)).toBe(true);
   });
 
   it("gives a mobile large item its own row when its neighbour would be under 96px", () => {

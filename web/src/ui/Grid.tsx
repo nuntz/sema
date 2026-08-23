@@ -8,6 +8,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import { Icon } from "../components/Icon";
 import { justify, totalHeight, visibleRows } from "../layout/justified";
 import {
   fullyPassedRows,
@@ -19,9 +20,7 @@ import {
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import type { Item } from "../types";
-import { HeartIcon } from "./HeartIcon";
 import { gridCommand } from "./keyboard";
-import { LinkIcon } from "./LinkIcon";
 
 interface GridProps {
   items: Item[];
@@ -420,9 +419,38 @@ export function Grid(props: GridProps) {
                         />
                       </Show>
                       <div class="cell-scrim" />
+                      <div class="cell-corner" aria-hidden="true">
+                        <Show
+                          when={props.archive}
+                          fallback={
+                            <span
+                              class="cell-age"
+                              title={publishedDate(item().published_ts)}
+                            >
+                              {relativeTime(item().published_ts)}
+                            </span>
+                          }
+                        >
+                          <span
+                            class="cell-age"
+                            title={publishedDate(
+                              item().hearted_ts || item().published_ts,
+                            )}
+                          >
+                            {`kept ${relativeTime(
+                              item().hearted_ts || item().published_ts,
+                            )}`}
+                          </span>
+                        </Show>
+                        <Show when={!props.archive}>
+                          <span class="cell-rank">
+                            {rankBand(cell.effectiveSize)}
+                          </span>
+                        </Show>
+                      </div>
                       <Show when={props.archive}>
                         <span class="kept-marker">
-                          <HeartIcon filled={true} />
+                          <Icon name="keep" size={14} filled={true} />
                         </span>
                       </Show>
                       <div class="cell-actions">
@@ -432,6 +460,7 @@ export function Grid(props: GridProps) {
                             class="thumb-up"
                             classList={{ selected: item().signal === 1 }}
                             aria-label="Thumbs up"
+                            aria-pressed={item().signal === 1}
                             onClick={() =>
                               props.onSignal(
                                 item(),
@@ -439,13 +468,18 @@ export function Grid(props: GridProps) {
                               )
                             }
                           >
-                            ↑
+                            <Icon
+                              name="thumbs-up"
+                              size={14}
+                              filled={item().signal === 1}
+                            />
                           </button>
                           <button
                             type="button"
                             class="thumb-down"
                             classList={{ selected: item().signal === -1 }}
                             aria-label="Thumbs down"
+                            aria-pressed={item().signal === -1}
                             onClick={() =>
                               props.onSignal(
                                 item(),
@@ -453,7 +487,11 @@ export function Grid(props: GridProps) {
                               )
                             }
                           >
-                            ↓
+                            <Icon
+                              name="thumbs-down"
+                              size={14}
+                              filled={item().signal === -1}
+                            />
                           </button>
                         </Show>
                         <Show when={props.archive}>
@@ -463,7 +501,7 @@ export function Grid(props: GridProps) {
                             title="Open original"
                             onClick={() => props.onOriginal(item())}
                           >
-                            ↗
+                            <Icon name="open-original" size={14} />
                           </button>
                         </Show>
                         <Show when={!props.archive}>
@@ -476,9 +514,14 @@ export function Grid(props: GridProps) {
                                 ? "Remove from archive"
                                 : "Keep in archive"
                             }
+                            aria-pressed={item().hearted}
                             onClick={() => props.onHeart(item())}
                           >
-                            <HeartIcon filled={item().hearted} />
+                            <Icon
+                              name="keep"
+                              size={14}
+                              filled={item().hearted}
+                            />
                           </button>
                         </Show>
                         <button
@@ -493,9 +536,9 @@ export function Grid(props: GridProps) {
                         >
                           <Show
                             when={props.linkActionID === item().item_id}
-                            fallback={<LinkIcon />}
+                            fallback={<Icon name="copy-link" size={14} />}
                           >
-                            ✓
+                            <Icon name="check" size={14} />
                           </Show>
                         </button>
                         <Show when={props.archive}>
@@ -504,9 +547,14 @@ export function Grid(props: GridProps) {
                             class="heart"
                             classList={{ selected: item().hearted }}
                             aria-label="Remove from archive"
+                            aria-pressed={item().hearted}
                             onClick={() => props.onHeart(item())}
                           >
-                            <HeartIcon filled={item().hearted} />
+                            <Icon
+                              name="keep"
+                              size={14}
+                              filled={item().hearted}
+                            />
                           </button>
                         </Show>
                       </div>
@@ -518,32 +566,22 @@ export function Grid(props: GridProps) {
                       >
                         <div class="cell-copy">
                           <h2>{item().title}</h2>
-                          <Show when={!item().media_url && item().summary}>
+                          <Show
+                            when={cell.effectiveSize !== "S" && item().summary}
+                          >
                             <p>{item().summary}</p>
                           </Show>
                           <div class="cell-meta">
                             <Show when={props.archive && !item().has_body}>
                               <em>text only</em>
                             </Show>
-                            <Favicon item={item()} />
                             <Show
                               when={props.archive}
                               fallback={
-                                <span>
-                                  {item().feed_title || "Feed"} ·{" "}
-                                  {relativeTime(item().published_ts)}
-                                </span>
+                                <span>{item().feed_title || "Feed"}</span>
                               }
                             >
-                              <span title={publishedDate(item().published_ts)}>
-                                kept {relativeTime(item().hearted_ts || "")} ago
-                                {item().feed_title
-                                  ? ` · ${item().feed_title}`
-                                  : ""}
-                              </span>
-                            </Show>
-                            <Show when={!props.archive}>
-                              <b>{item().score.toFixed(2)}</b>
+                              <span>{item().feed_title || "Feed"}</span>
                             </Show>
                           </div>
                           <Show
@@ -617,27 +655,6 @@ export function Grid(props: GridProps) {
   );
 }
 
-function Favicon(props: { item: Item }) {
-  return (
-    <Show
-      when={props.item.favicon_url}
-      fallback={
-        <i class="favicon fallback">
-          {(props.item.feed_title || "F").slice(0, 1).toUpperCase()}
-        </i>
-      }
-    >
-      <img
-        class="favicon"
-        src={props.item.favicon_url}
-        alt=""
-        width="11"
-        height="11"
-      />
-    </Show>
-  );
-}
-
 export function relativeTime(value: string): string {
   const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
   if (seconds < 60) return "now";
@@ -650,6 +667,12 @@ function publishedDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
     new Date(value),
   );
+}
+
+function rankBand(size: "S" | "M" | "L"): string {
+  if (size === "L") return "top 10%";
+  if (size === "M") return "top 40%";
+  return "rest";
 }
 
 function oldestHeartMonth(items: Item[]): string {

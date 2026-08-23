@@ -6,6 +6,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
+import { Icon } from "../components/Icon";
 import type { Feed } from "../types";
 import { feedTagOptions } from "./tag-options";
 
@@ -110,7 +111,9 @@ export function TagFilter(props: {
             onClick={() => (props.value ? clear() : begin())}
           >
             #{props.value || "all"}
-            <Show when={props.value}> ×</Show>
+            <Show when={props.value}>
+              <Icon name="close" size={14} />
+            </Show>
           </button>
         }
       >

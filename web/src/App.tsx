@@ -6,6 +6,7 @@ import {
   linkBehaviourEvent,
   mergeBehaviourEvent,
 } from "./behaviour-events";
+import { Icon } from "./components/Icon";
 import {
   mergeNewItems,
   pollCandidates,
@@ -22,7 +23,6 @@ import type { Feed, Item, Order, Profile } from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
-import { HeartIcon } from "./ui/HeartIcon";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
@@ -709,7 +709,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               }
               onClick={() => void toggleArchive()}
             >
-              <HeartIcon filled={mode() === "archive"} />
+              <Icon name="archive" />
               <span>archive</span>
               <small>{heartCount()}</small>
             </button>
@@ -743,8 +743,12 @@ export function App(props: { token: () => string; signOut(): void }) {
         <Show when={error()}>
           <div class="error-banner" role="alert">
             <span>{error()}</span>
-            <button type="button" onClick={() => setError("")}>
-              ×
+            <button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => setError("")}
+            >
+              <Icon name="close" />
             </button>
           </div>
         </Show>
@@ -854,7 +858,10 @@ export function App(props: { token: () => string; signOut(): void }) {
               role={notice.kind === "error" ? "alert" : "status"}
               aria-live={notice.kind === "error" ? "assertive" : "polite"}
             >
-              <b>{notice.kind === "error" ? "✕" : "✓"}</b>
+              <Icon
+                name={notice.kind === "error" ? "close" : "check"}
+                class="toast-icon"
+              />
               <span>{notice.message}</span>
             </div>
           )}
@@ -867,7 +874,9 @@ export function App(props: { token: () => string; signOut(): void }) {
 function ColdStart(props: { onImport(): void }) {
   return (
     <section class="cold-start">
-      <div class="cold-mark">◲</div>
+      <div class="cold-mark">
+        <Icon name="back-to-grid" size={24} class="icon-quiet" />
+      </div>
       <h1>Nothing scored yet.</h1>
       <p>
         Sema starts newest-first and sizes items by media and recency. Thumb a
@@ -875,6 +884,7 @@ function ColdStart(props: { onImport(): void }) {
         actually read.
       </p>
       <button type="button" onClick={props.onImport}>
+        <Icon name="import-opml" />
         Import OPML
       </button>
       <small>ranking activates at ~10 signals · 0 so far</small>
@@ -885,7 +895,7 @@ function ColdStart(props: { onImport(): void }) {
 function ArchiveEmpty() {
   return (
     <section class="archive-empty">
-      <HeartIcon filled={false} />
+      <Icon name="keep" size={24} filled={false} class="icon-quiet" />
       <h1>Nothing kept yet</h1>
       <p>
         Heart an item and it lands here permanently. Everything else in the feed

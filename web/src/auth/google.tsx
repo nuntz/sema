@@ -1,4 +1,5 @@
 import { createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { Icon } from "../components/Icon";
 
 declare global {
   interface Window {
@@ -125,7 +126,9 @@ export function AuthGate(props: {
       fallback={
         <main class="signin-shell">
           <section class="signin-card">
-            <div class="signin-mark">◲</div>
+            <div class="signin-mark">
+              <Icon name="back-to-grid" size={24} class="icon-quiet" />
+            </div>
             <h1>Sema</h1>
             <p>Your feed, shaped around what deserves your attention.</p>
             <div ref={button} class="google-button" aria-busy={!ready()} />

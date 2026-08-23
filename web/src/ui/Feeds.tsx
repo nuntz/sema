@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import type { APIClient } from "../api/client";
 import { archiveSize } from "../archive";
+import { Icon, type IconName } from "../components/Icon";
 import { formatPrior } from "../ranking-display";
 import type { Feed, FeedCandidate } from "../types";
 import {
@@ -208,7 +209,7 @@ export function Feeds(props: {
         </div>
         <div class="feed-toolbar">
           <label class="feed-search">
-            <span aria-hidden="true">⌕</span>
+            <Icon name="search" />
             <input
               type="search"
               value={query()}
@@ -222,6 +223,7 @@ export function Feeds(props: {
           </label>
           <label class="feed-sort">
             <span class="sr-only">Sort feeds</span>
+            <Icon name="sort" class="sort-icon" />
             <select
               value={sort()}
               onChange={(event) =>
@@ -233,6 +235,7 @@ export function Feeds(props: {
               <option value="errors">Errors first</option>
               <option value="prior">Prior</option>
             </select>
+            <Icon name="menu" class="sort-menu-icon" />
           </label>
           <button
             type="button"
@@ -240,7 +243,7 @@ export function Feeds(props: {
             aria-label="Add feed"
             onClick={() => setAdding(true)}
           >
-            +
+            <Icon name="add-feed" />
           </button>
         </div>
 
@@ -255,6 +258,7 @@ export function Feeds(props: {
                 <div class="feed-empty">
                   <p>{query() ? "No feeds match." : "No feeds yet."}</p>
                   <button type="button" onClick={() => setAdding(true)}>
+                    <Icon name="add-feed" />
                     {query() ? "Add it as a feed?" : "Add your first feed"}
                   </button>
                 </div>
@@ -307,9 +311,11 @@ export function Feeds(props: {
             onChange={(event) => importFile(event.currentTarget.files?.[0])}
           />
           <button type="button" disabled={busy()} onClick={() => input.click()}>
+            <Icon name="import-opml" />
             Import
           </button>
           <button type="button" disabled={busy()} onClick={exportOPML}>
+            <Icon name="export-opml" />
             Export
           </button>
         </div>
@@ -468,20 +474,21 @@ function FeedDrawer(props: {
           aria-label="Close feed details"
           onClick={props.onClose}
         >
-          ×
+          <Icon name="close" />
         </button>
         <header>
           <FeedIcon feed={props.feed} />
           <div>
             <div>
               <h2 id="feed-drawer-title">{displayTitle(props.feed)}</h2>
-              <StatusBadge feed={props.feed} />
+              <DrawerStatus feed={props.feed} />
             </div>
             <code class="feed-source-url">{props.feed.url}</code>
             <Show when={props.feed.site_url}>
               {(siteURL) => (
                 <a href={siteURL()} target="_blank" rel="noreferrer">
-                  Visit site ↗
+                  Visit site
+                  <Icon name="open-original" />
                 </a>
               )}
             </Show>
@@ -541,6 +548,7 @@ function FeedDrawer(props: {
           </div>
         </fieldset>
         <label class="mute-row">
+          <Icon name="mute" />
           <span>
             <strong>Mute feed</strong>
             <small>Stop fetching and hide its items.</small>
@@ -582,6 +590,7 @@ function FeedDrawer(props: {
                     autofocus
                     onClick={() => void props.onRemove()}
                   >
+                    <Icon name="remove-feed" />
                     Remove
                   </button>
                 </div>
@@ -598,6 +607,9 @@ function FeedDrawer(props: {
               <Show when={retrying()}>
                 <i aria-hidden="true" />
               </Show>
+              <Show when={!retrying()}>
+                <Icon name="retry" />
+              </Show>
               {retrying() ? "Retrying…" : "Retry now"}
             </button>
             <button
@@ -605,6 +617,7 @@ function FeedDrawer(props: {
               class="remove-link"
               onClick={() => setConfirming(true)}
             >
+              <Icon name="remove-feed" />
               Remove feed
             </button>
           </Show>
@@ -698,7 +711,7 @@ function AddFeedDialog(props: {
             aria-label="Close add feed"
             onClick={props.onClose}
           >
-            ×
+            <Icon name="close" />
           </button>
         </header>
         <label class="add-address">
@@ -775,6 +788,7 @@ function AddFeedDialog(props: {
             <code>{error()}</code>
             <div>
               <button type="button" onClick={resolve}>
+                <Icon name="retry" />
                 Try again
               </button>
               <button
@@ -812,6 +826,9 @@ function AddFeedDialog(props: {
             }
             onClick={add}
           >
+            <Show when={!adding()}>
+              <Icon name="add-feed" />
+            </Show>
             {adding()
               ? "Adding…"
               : chosen()
@@ -827,7 +844,9 @@ function AddFeedDialog(props: {
 function CandidateCard(props: { candidate: FeedCandidate; compact?: boolean }) {
   return (
     <div class="candidate-card" classList={{ compact: props.compact }}>
-      <i>{props.candidate.title[0]?.toUpperCase() || "F"}</i>
+      <i>
+        <Icon name="feed-fallback" />
+      </i>
       <span>
         <strong>{props.candidate.title}</strong>
         <small>
@@ -885,7 +904,7 @@ function TagEditor(props: {
                 props.onChange(props.tags.filter((item) => item !== tag))
               }
             >
-              ×
+              <Icon name="close" size={14} />
             </button>
           </span>
         )}
@@ -952,7 +971,7 @@ function FeedIcon(props: { feed: Feed }) {
       when={props.feed.favicon_url}
       fallback={
         <i class="feed-icon fallback">
-          {displayTitle(props.feed)[0]?.toUpperCase() || "F"}
+          <Icon name="feed-fallback" />
         </i>
       }
     >
@@ -961,12 +980,26 @@ function FeedIcon(props: { feed: Feed }) {
   );
 }
 
+function DrawerStatus(props: { feed: Feed }) {
+  const name = (): IconName => `status-${props.feed.status}`;
+  return (
+    <span class="drawer-status">
+      <Icon name={name()} />
+      <span>{props.feed.status}</span>
+    </span>
+  );
+}
+
 function StatusBadge(props: { feed: Feed }) {
+  const description = () =>
+    `${props.feed.status}: ${props.feed.error_count} consecutive fetch failures`;
   return (
     <Show when={props.feed.status !== "ok"}>
       <span
+        role="status"
         class={`feed-status ${props.feed.status}`}
-        title={`${props.feed.error_count} consecutive fetch failures`}
+        title={description()}
+        aria-label={description()}
       >
         {props.feed.status}
       </span>
@@ -981,12 +1014,16 @@ function PriorBadge(props: { feed: Feed }) {
       : props.feed.prior < -0.0005
         ? "negative"
         : "neutral";
+  const description = () =>
+    `${formatPrior(props.feed.prior)}: based on ${props.feed.prior_signals} signals in the last 90 days`;
   return (
     <span class="prior-wrap">
       <span
+        role="status"
         class="prior-badge"
         classList={{ [variant()]: true }}
-        title={`Based on ${props.feed.prior_signals} signals in the last 90 days`}
+        title={description()}
+        aria-label={description()}
       >
         {formatPrior(props.feed.prior)}
       </span>
