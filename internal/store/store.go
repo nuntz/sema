@@ -30,7 +30,6 @@ type dynamoAPI interface {
 	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
 	PutItem(context.Context, *dynamodb.PutItemInput, ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error)
 	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
-	Scan(context.Context, *dynamodb.ScanInput, ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
 	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
 	TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 }
@@ -49,6 +48,8 @@ type Store struct {
 	bucket     string
 	contentURL string
 }
+
+const feedIndexPK = "FEED"
 
 func New(db dynamoAPI, objects s3API, table, bucket, contentURL string) *Store {
 	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/")}
@@ -106,6 +107,7 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 }
 
 func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
+	feed.GSI1PK = feedIndexPK
 	item, err := attributevalue.MarshalMap(feed)
 	if err != nil {
 		return err
@@ -155,11 +157,11 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, err
 	result := []domain.Feed{}
 	var start map[string]types.AttributeValue
 	for {
-		response, err := s.db.Scan(ctx, &dynamodb.ScanInput{
-			TableName:        aws.String(s.table),
-			FilterExpression: aws.String("begins_with(SK, :feed) AND next_fetch_at <= :now"),
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(s.table), IndexName: aws.String("by-next-fetch"),
+			KeyConditionExpression: aws.String("gsi1pk = :feed AND next_fetch_at <= :now"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{
-				":feed": &types.AttributeValueMemberS{Value: "F#"}, ":now": &types.AttributeValueMemberS{Value: domain.Timestamp(now)},
+				":feed": &types.AttributeValueMemberS{Value: feedIndexPK}, ":now": &types.AttributeValueMemberS{Value: domain.Timestamp(now)},
 			}, ExclusiveStartKey: start,
 		})
 		if err != nil {
@@ -180,8 +182,10 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, err
 func (s *Store) ScheduleFeed(ctx context.Context, userID, feedID string, next time.Time) error {
 	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID)),
-		UpdateExpression:          aws.String("SET next_fetch_at = :next"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":next": &types.AttributeValueMemberS{Value: domain.Timestamp(next)}},
+		UpdateExpression: aws.String("SET next_fetch_at = :next, gsi1pk = :feed"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":next": &types.AttributeValueMemberS{Value: domain.Timestamp(next)}, ":feed": &types.AttributeValueMemberS{Value: feedIndexPK},
+		},
 	})
 	return err
 }

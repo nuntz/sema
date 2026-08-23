@@ -28,6 +28,7 @@ type User struct {
 type Feed struct {
 	PK           string `dynamodbav:"PK" json:"-"`
 	SK           string `dynamodbav:"SK" json:"-"`
+	GSI1PK       string `dynamodbav:"gsi1pk,omitempty" json:"-"`
 	FeedID       string `dynamodbav:"feed_id" json:"feed_id"`
 	URL          string `dynamodbav:"url" json:"url"`
 	SiteURL      string `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`

@@ -54,6 +54,8 @@ func main() {
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("score"), Type: pulumi.String("N")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("feed_pk"), Type: pulumi.String("S")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("published_ts"), Type: pulumi.String("S")},
+				&dynamodb.TableAttributeArgs{Name: pulumi.String("gsi1pk"), Type: pulumi.String("S")},
+				&dynamodb.TableAttributeArgs{Name: pulumi.String("next_fetch_at"), Type: pulumi.String("S")},
 			},
 			GlobalSecondaryIndexes: dynamodb.TableGlobalSecondaryIndexArray{
 				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
@@ -63,6 +65,10 @@ func main() {
 				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-feed"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("feed_pk"), KeyType: pulumi.String("HASH")},
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("published_ts"), KeyType: pulumi.String("RANGE")},
+				}, ProjectionType: pulumi.String("ALL")},
+				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-next-fetch"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
+					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
 				}, ProjectionType: pulumi.String("ALL")},
 			},
 			Ttl:  &dynamodb.TableTtlArgs{AttributeName: pulumi.String("ttl"), Enabled: pulumi.Bool(true)},
@@ -153,6 +159,7 @@ func main() {
 			return err
 		}
 
+		// Keep the old Pulumi name to avoid replacing the rule.
 		rule, err := cloudwatch.NewEventRule(ctx, "hourly", &cloudwatch.EventRuleArgs{ScheduleExpression: pulumi.String("rate(15 minutes)")})
 		if err != nil {
 			return err
@@ -307,7 +314,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 		switch name {
 		case "scheduler":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:Scan", "dynamodb:UpdateItem"}, "Resource": tableResources},
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:Query", "dynamodb:UpdateItem"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": values[2].(string)},
 			)
 		case "feed-worker":
