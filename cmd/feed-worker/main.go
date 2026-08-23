@@ -26,11 +26,18 @@ import (
 )
 
 type handler struct {
-	store     *store.Store
+	store     feedStore
 	connector connector.Connector
 	media     *media.Processor
 	queue     *sqs.Client
 	itemsURL  string
+}
+
+type feedStore interface {
+	Feed(context.Context, string, string) (domain.Feed, error)
+	PutFeed(context.Context, domain.Feed) error
+	ItemExists(context.Context, string, string, time.Time) (bool, error)
+	PutContent(context.Context, string, string, []byte) error
 }
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -76,8 +83,9 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if storeErr := h.store.PutFeed(ctx, feed); storeErr != nil {
 			return fmt.Errorf("fetch: %v; update failure: %w", err, storeErr)
 		}
+		slog.WarnContext(ctx, "feed fetch failed", "user", message.User, "feed_id", message.FeedID, "error", err, "next_fetch_at", feed.NextFetchAt)
 		observability.Emit(map[string]float64{"FeedsFailed": 1}, nil)
-		return err
+		return nil
 	}
 	if result.NotModified {
 		feed.LastFetchAt = domain.Timestamp(started)
