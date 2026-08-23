@@ -3,12 +3,15 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/nuntz/sema/internal/httpx"
@@ -39,11 +42,46 @@ func TestFetchLeadRequestsAndAcceptsImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := client.headers.Get("Accept"); got != imageAccept {
-		t.Fatalf("Accept = %q, want %q", got, imageAccept)
+	if got, want := client.headers.Get("Accept"), "image/webp,image/jpeg,image/png"; got != want {
+		t.Fatalf("Accept = %q, want %q", got, want)
 	}
 	if lead.Width != 300 || lead.Height != 200 {
 		t.Fatalf("lead dimensions = %dx%d, want 300x200", lead.Width, lead.Height)
+	}
+}
+
+func TestAdvertisedImageFormatsAreDecodable(t *testing.T) {
+	source := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	var jpegBody, pngBody bytes.Buffer
+	if err := jpeg.Encode(&jpegBody, source, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(&pngBody, source); err != nil {
+		t.Fatal(err)
+	}
+	webpBody, err := base64.StdEncoding.DecodeString("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAgA0JaQAA3AA/vuUAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixtures := map[string][]byte{
+		"image/jpeg": jpegBody.Bytes(),
+		"image/png":  pngBody.Bytes(),
+		"image/webp": webpBody,
+	}
+	for _, mediaType := range strings.Split(imageAccept, ",") {
+		body, ok := fixtures[mediaType]
+		if !ok {
+			t.Errorf("advertised image format %q has no decoder fixture", mediaType)
+			continue
+		}
+		if _, _, err := image.DecodeConfig(bytes.NewReader(body)); err != nil {
+			t.Errorf("advertised image format %q is not decodable: %v", mediaType, err)
+		}
+		delete(fixtures, mediaType)
+	}
+	for mediaType := range fixtures {
+		t.Errorf("decoder fixture %q is not advertised", mediaType)
 	}
 }
 

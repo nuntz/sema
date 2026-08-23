@@ -20,7 +20,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-const imageAccept = "image/avif,image/webp,image/*,*/*;q=0.8"
+// Keep this list limited to formats registered with the image package above.
+const imageAccept = "image/webp,image/jpeg,image/png"
 
 type Image struct {
 	Bytes       []byte
