@@ -168,6 +168,11 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if err != nil || len(signals) != 1 || signals[0].Value != 1 {
 		t.Fatalf("signals = %#v, %v", signals, err)
 	}
+	values, err := repository.SignalValues(ctx, "user", []string{"new", "missing"})
+	if err != nil || len(values) != 1 || values["new"] != 1 {
+		t.Fatalf("signal values = %#v, %v", values, err)
+	}
+	assertUserCounts(t, repository, "user", 0, 1)
 }
 
 func TestHeartArchiveLifecycle(t *testing.T) {
@@ -197,6 +202,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if err != nil || archiveSK == "" || count != 1 {
 		t.Fatalf("heart = %q, %d, %v", archiveSK, count, err)
 	}
+	assertUserCounts(t, repository, "keeper", 1, 1)
 	if !objects.objects[ArchiveBodyKey("keeper", "kept")] || !objects.objects[ArchiveMediaKey("keeper", "kept")] {
 		t.Fatalf("archive objects = %#v", objects.objects)
 	}
@@ -248,6 +254,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if err != nil || len(signals) != 1 || signals[0].Source != "" {
 		t.Fatalf("explicit signal did not replace heart source = %#v, %v", signals, err)
 	}
+	assertUserCounts(t, repository, "keeper", 1, 1)
 	if err := repository.SetSignal(ctx, "keeper", live, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -255,6 +262,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if err != nil || len(signals) != 1 || signals[0].Value != 1 || signals[0].Source != "heart" {
 		t.Fatalf("cleared explicit signal did not restore heart = %#v, %v", signals, err)
 	}
+	assertUserCounts(t, repository, "keeper", 1, 1)
 	secondSK, count, err := repository.SetHeart(ctx, "keeper", item.ItemID, true)
 	if err != nil || secondSK != archiveSK || count != 1 {
 		t.Fatalf("second heart = %q, %d, %v", secondSK, count, err)
@@ -266,6 +274,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
 		t.Fatalf("unheart = %d, %v", count, err)
 	}
+	assertUserCounts(t, repository, "keeper", 0, 1)
 	if _, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("archive after unheart = %v", err)
 	}
@@ -283,6 +292,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
 		t.Fatalf("second unheart = %d, %v", count, err)
 	}
+	assertUserCounts(t, repository, "keeper", 0, 1)
 }
 
 func TestHeartToleratesMissingContentAndRejectsExpiredItem(t *testing.T) {
@@ -305,6 +315,7 @@ func TestHeartToleratesMissingContentAndRejectsExpiredItem(t *testing.T) {
 	if _, _, err := repository.SetHeart(ctx, "keeper", missing.ItemID, true); err != nil {
 		t.Fatal(err)
 	}
+	assertUserCounts(t, repository, "keeper", 1, 1)
 	archived, err := repository.ArchiveItem(ctx, "keeper", missing.ItemID)
 	if err != nil || archived.HasBody || archived.BodyKey != "" || archived.MediaKey != "" {
 		t.Fatalf("missing-content archive = %#v, %v", archived, err)
@@ -349,6 +360,15 @@ func TestArchivePaginationIsNewestHeartFirst(t *testing.T) {
 	second, cursor, err := repository.Archives(ctx, "keeper", cursor, 2)
 	if err != nil || len(second) != 1 || second[0].ItemID != "first" || cursor != "" {
 		t.Fatalf("second archive page = %#v, cursor %q, %v", second, cursor, err)
+	}
+	assertUserCounts(t, repository, "keeper", 3, 3)
+}
+
+func assertUserCounts(t *testing.T, repository *Store, userID string, hearts, signals int) {
+	t.Helper()
+	user, err := repository.User(context.Background(), userID)
+	if err != nil || user.HeartCount != hearts || user.SignalCount != signals {
+		t.Fatalf("profile counts = hearts %d, signals %d, %v; want %d, %d", user.HeartCount, user.SignalCount, err, hearts, signals)
 	}
 }
 

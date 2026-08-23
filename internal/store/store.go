@@ -61,7 +61,7 @@ func (s *Store) EnsureUser(ctx context.Context, userID, email string) error {
 		TableName: aws.String(s.table),
 		Key:       key(domain.UserPK(userID), "PROFILE"),
 		UpdateExpression: aws.String("SET email = if_not_exists(email, :email), created_at = if_not_exists(created_at, :now), " +
-			"order_pref = if_not_exists(order_pref, :order), heart_count = if_not_exists(heart_count, :zero) REMOVE #read_boundary"),
+			"order_pref = if_not_exists(order_pref, :order), heart_count = if_not_exists(heart_count, :zero), signal_count = if_not_exists(signal_count, :zero) REMOVE #read_boundary"),
 		ExpressionAttributeNames: map[string]string{"#read_boundary": "read_boundary_ts"},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":email": &types.AttributeValueMemberS{Value: email},
@@ -517,7 +517,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		":archive": &types.AttributeValueMemberS{Value: archiveSK},
 		":one":     &types.AttributeValueMemberN{Value: "1"},
 	}
-	baseWrites := []types.TransactWriteItem{
+	stateWrites := []types.TransactWriteItem{
 		{Put: &types.Put{TableName: aws.String(s.table), Item: encodedArchive, ConditionExpression: aws.String("attribute_not_exists(SK)")}},
 		{Update: &types.Update{
 			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), item.SK),
@@ -525,12 +525,15 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 			ConditionExpression:       aws.String("attribute_exists(PK) AND attribute_not_exists(archive_sk)"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": values[":archive"]},
 		}},
-		{Update: &types.Update{
-			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
-			UpdateExpression: aws.String("ADD heart_count :one"), ExpressionAttributeValues: map[string]types.AttributeValue{":one": values[":one"]},
-		}},
 	}
-	withSignal := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Put: &types.Put{
+	baseWrites := append(append([]types.TransactWriteItem{}, stateWrites...), types.TransactWriteItem{Update: &types.Update{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+		UpdateExpression: aws.String("ADD heart_count :one"), ExpressionAttributeValues: map[string]types.AttributeValue{":one": values[":one"]},
+	}})
+	withSignal := append(append([]types.TransactWriteItem{}, stateWrites...), types.TransactWriteItem{Update: &types.Update{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+		UpdateExpression: aws.String("ADD heart_count :one, signal_count :one"), ExpressionAttributeValues: map[string]types.AttributeValue{":one": values[":one"]},
+	}}, types.TransactWriteItem{Put: &types.Put{
 		TableName: aws.String(s.table), Item: heartSignal, ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
 	err = s.transact(ctx, withSignal)
@@ -585,12 +588,16 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": &types.AttributeValueMemberS{Value: archive.SK}},
 		}})
 	}
-	baseWrites = append(baseWrites, types.TransactWriteItem{Update: &types.Update{
+	stateWrites := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Update: &types.Update{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
 		UpdateExpression:          aws.String("ADD heart_count :minus_one"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":minus_one": minusOne},
 	}})
-	withSignalDelete := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Delete: &types.Delete{
+	withSignalDelete := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Update: &types.Update{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+		UpdateExpression:          aws.String("ADD heart_count :minus_one, signal_count :minus_one"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":minus_one": minusOne},
+	}}, types.TransactWriteItem{Delete: &types.Delete{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
 		ConditionExpression:       aws.String("#source = :heart"),
 		ExpressionAttributeNames:  map[string]string{"#source": "source"},
@@ -599,7 +606,7 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 	err = s.transact(ctx, withSignalDelete)
 	if isTransactionCanceled(err) {
 		// Missing or explicit signals must survive un-hearting.
-		err = s.transact(ctx, baseWrites)
+		err = s.transact(ctx, stateWrites)
 	}
 	if err != nil {
 		if _, currentErr := s.ArchiveItem(ctx, userID, itemID); errors.Is(currentErr, ErrNotFound) {
@@ -685,6 +692,46 @@ func (s *Store) Signals(ctx context.Context, userID string) ([]domain.Signal, er
 	}
 }
 
+func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []string) (map[string]int, error) {
+	result := make(map[string]int, len(itemIDs))
+	if len(itemIDs) == 0 {
+		return result, nil
+	}
+	keys := make([]map[string]types.AttributeValue, 0, len(itemIDs))
+	seen := make(map[string]bool, len(itemIDs))
+	for _, itemID := range itemIDs {
+		if seen[itemID] {
+			continue
+		}
+		seen[itemID] = true
+		keys = append(keys, key(domain.UserPK(userID), domain.SignalSK(itemID)))
+	}
+	pending := keys
+	for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
+		response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
+			Keys: pending, ProjectionExpression: aws.String("SK, #value"), ExpressionAttributeNames: map[string]string{"#value": "value"},
+		}}})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range response.Responses[s.table] {
+			var signal struct {
+				SK    string `dynamodbav:"SK"`
+				Value int    `dynamodbav:"value"`
+			}
+			if err := attributevalue.UnmarshalMap(row, &signal); err != nil {
+				return nil, err
+			}
+			result[strings.TrimPrefix(signal.SK, "S#")] = signal.Value
+		}
+		pending = response.UnprocessedKeys[s.table].Keys
+	}
+	if len(pending) > 0 {
+		return nil, fmt.Errorf("%d signal lookups were throttled", len(pending))
+	}
+	return result, nil
+}
+
 func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
 	heartSource := false
 	if value == 0 {
@@ -692,8 +739,13 @@ func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, 
 			value = 1
 			heartSource = true
 		} else {
-			_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID))})
-			return err
+			response, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+				TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID)), ReturnValues: types.ReturnValueAllOld,
+			})
+			if err != nil || len(response.Attributes) == 0 {
+				return err
+			}
+			return s.addSignalCount(ctx, userID, -1)
 		}
 	}
 	signal := domain.Signal{
@@ -707,7 +759,19 @@ func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, 
 	if err != nil {
 		return err
 	}
-	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded})
+	response, err := s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded, ReturnValues: types.ReturnValueAllOld})
+	if err != nil || len(response.Attributes) > 0 {
+		return err
+	}
+	return s.addSignalCount(ctx, userID, 1)
+}
+
+func (s *Store) addSignalCount(ctx context.Context, userID string, delta int) error {
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+		UpdateExpression:          aws.String("ADD signal_count :delta"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":delta": &types.AttributeValueMemberN{Value: strconv.Itoa(delta)}},
+	})
 	return err
 }
 

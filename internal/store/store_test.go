@@ -150,3 +150,219 @@ func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
 		t.Fatalf("schedule update = %#v", update)
 	}
 }
+
+func TestSignalValuesRetriesUnprocessedKeys(t *testing.T) {
+	first := map[string]types.AttributeValue{
+		"SK": &types.AttributeValueMemberS{Value: "S#first"}, "value": &types.AttributeValueMemberN{Value: "1"},
+	}
+	second := map[string]types.AttributeValue{
+		"SK": &types.AttributeValueMemberS{Value: "S#second"}, "value": &types.AttributeValueMemberN{Value: "-1"},
+	}
+	secondKey := key("U#user", "S#second")
+	calls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		calls++
+		request := input.RequestItems["table"]
+		if aws.ToString(request.ProjectionExpression) != "SK, #value" || request.ExpressionAttributeNames["#value"] != "value" {
+			t.Fatalf("batch get projection = %#v", request)
+		}
+		if calls == 1 {
+			if len(request.Keys) != 2 {
+				t.Fatalf("first keys = %#v", request.Keys)
+			}
+			return &dynamodb.BatchGetItemOutput{
+				Responses:       map[string][]map[string]types.AttributeValue{"table": {first}},
+				UnprocessedKeys: map[string]types.KeysAndAttributes{"table": {Keys: []map[string]types.AttributeValue{secondKey}}},
+			}, nil
+		}
+		if len(request.Keys) != 1 || request.Keys[0]["SK"].(*types.AttributeValueMemberS).Value != "S#second" {
+			t.Fatalf("retry keys = %#v", request.Keys)
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {second}}}, nil
+	}}
+
+	values, err := New(db, nil, "table", "", "").SignalValues(context.Background(), "user", []string{"first", "second", "first"})
+	if err != nil || calls != 2 || len(values) != 2 || values["first"] != 1 || values["second"] != -1 {
+		t.Fatalf("SignalValues = %#v, calls %d, %v", values, calls, err)
+	}
+}
+
+func TestSignalValuesSkipsEmptyBatch(t *testing.T) {
+	db := &fakeDynamoDB{batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		t.Fatal("unexpected BatchGetItem")
+		return nil, nil
+	}}
+	values, err := New(db, nil, "table", "", "").SignalValues(context.Background(), "user", nil)
+	if err != nil || len(values) != 0 {
+		t.Fatalf("SignalValues = %#v, %v", values, err)
+	}
+}
+
+func TestSetSignalMaintainsProfileCount(t *testing.T) {
+	var signal map[string]types.AttributeValue
+	var deltas []string
+	db := &fakeDynamoDB{
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			if input.ReturnValues != types.ReturnValueAllOld {
+				t.Fatalf("put return values = %q", input.ReturnValues)
+			}
+			old := signal
+			signal = input.Item
+			return &dynamodb.PutItemOutput{Attributes: old}, nil
+		},
+		deleteItem: func(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+			if input.ReturnValues != types.ReturnValueAllOld {
+				t.Fatalf("delete return values = %q", input.ReturnValues)
+			}
+			old := signal
+			signal = nil
+			return &dynamodb.DeleteItemOutput{Attributes: old}, nil
+		},
+		updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			if aws.ToString(input.UpdateExpression) != "ADD signal_count :delta" {
+				t.Fatalf("count update = %#v", input)
+			}
+			deltas = append(deltas, input.ExpressionAttributeValues[":delta"].(*types.AttributeValueMemberN).Value)
+			return &dynamodb.UpdateItemOutput{}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	item := domain.Item{ItemID: "item", FeedID: "feed", Title: "title", Vector: []byte{1}}
+	for _, value := range []int{1, -1, 0, 0} {
+		if err := repository.SetSignal(context.Background(), "user", item, value); err != nil {
+			t.Fatalf("SetSignal(%d): %v", value, err)
+		}
+	}
+	item.ArchiveSK = "A#item"
+	if err := repository.SetSignal(context.Background(), "user", item, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(deltas) != 3 || deltas[0] != "1" || deltas[1] != "-1" || deltas[2] != "1" {
+		t.Fatalf("signal count deltas = %#v", deltas)
+	}
+	if signal["source"].(*types.AttributeValueMemberS).Value != "heart" {
+		t.Fatalf("restored signal = %#v", signal)
+	}
+}
+
+func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fallback bool
+	}{
+		{name: "creates heart signal"},
+		{name: "keeps existing signal", fallback: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			item := domain.Item{
+				PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "title", TTL: time.Now().Add(time.Hour).Unix(),
+			}
+			encodedItem, err := attributevalue.MarshalMap(item)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile, err := attributevalue.MarshalMap(domain.User{PK: "U#user", SK: "PROFILE", HeartCount: 1, SignalCount: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var transactions []*dynamodb.TransactWriteItemsInput
+			db := &fakeDynamoDB{
+				query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{encodedItem}}, nil
+				},
+				getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+					return &dynamodb.GetItemOutput{Item: profile}, nil
+				},
+				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+					transactions = append(transactions, input)
+					if test.fallback && len(transactions) == 1 {
+						return nil, &types.TransactionCanceledException{}
+					}
+					return &dynamodb.TransactWriteItemsOutput{}, nil
+				},
+			}
+			if _, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", true); err != nil {
+				t.Fatal(err)
+			}
+			if len(transactions) != 1+boolInt(test.fallback) {
+				t.Fatalf("transactions = %d", len(transactions))
+			}
+			if got := profileUpdateExpression(transactions[0]); got != "ADD heart_count :one, signal_count :one" {
+				t.Fatalf("signal transaction profile update = %q", got)
+			}
+			if test.fallback {
+				if got := profileUpdateExpression(transactions[1]); got != "ADD heart_count :one" {
+					t.Fatalf("fallback profile update = %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestRemoveHeartCountsOnlyDeletedHeartSignal(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fallback bool
+	}{
+		{name: "deletes heart signal"},
+		{name: "keeps explicit signal", fallback: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			item := domain.Item{PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", ArchiveSK: "A#item", TTL: time.Now().Add(time.Hour).Unix()}
+			archive := item
+			archive.SK = item.ArchiveSK
+			encodedItem, _ := attributevalue.MarshalMap(item)
+			encodedArchive, _ := attributevalue.MarshalMap(archive)
+			profile, _ := attributevalue.MarshalMap(domain.User{PK: "U#user", SK: "PROFILE"})
+			var transactions []*dynamodb.TransactWriteItemsInput
+			db := &fakeDynamoDB{
+				query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{encodedItem}}, nil
+				},
+				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+					if input.Key["SK"].(*types.AttributeValueMemberS).Value == "PROFILE" {
+						return &dynamodb.GetItemOutput{Item: profile}, nil
+					}
+					return &dynamodb.GetItemOutput{Item: encodedArchive}, nil
+				},
+				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+					transactions = append(transactions, input)
+					if test.fallback && len(transactions) == 1 {
+						return nil, &types.TransactionCanceledException{}
+					}
+					return &dynamodb.TransactWriteItemsOutput{}, nil
+				},
+			}
+			if _, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", false); err != nil {
+				t.Fatal(err)
+			}
+			if len(transactions) != 1+boolInt(test.fallback) {
+				t.Fatalf("transactions = %d", len(transactions))
+			}
+			if got := profileUpdateExpression(transactions[0]); got != "ADD heart_count :minus_one, signal_count :minus_one" {
+				t.Fatalf("signal transaction profile update = %q", got)
+			}
+			if test.fallback {
+				if got := profileUpdateExpression(transactions[1]); got != "ADD heart_count :minus_one" {
+					t.Fatalf("fallback profile update = %q", got)
+				}
+			}
+		})
+	}
+}
+
+func profileUpdateExpression(input *dynamodb.TransactWriteItemsInput) string {
+	for _, write := range input.TransactItems {
+		if write.Update != nil && write.Update.Key["SK"].(*types.AttributeValueMemberS).Value == "PROFILE" {
+			return aws.ToString(write.Update.UpdateExpression)
+		}
+	}
+	return ""
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}

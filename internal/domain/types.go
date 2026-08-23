@@ -23,6 +23,7 @@ type User struct {
 	OrderPref        Order  `dynamodbav:"order_pref" json:"order_pref"`
 	InterestPosition string `dynamodbav:"interest_position,omitempty" json:"interest_position,omitempty"`
 	HeartCount       int    `dynamodbav:"heart_count" json:"heart_count"`
+	SignalCount      int    `dynamodbav:"signal_count" json:"signal_count"`
 }
 
 type Feed struct {

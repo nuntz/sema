@@ -103,11 +103,7 @@ func (s *server) getMe(ctx context.Context, userID string) events.APIGatewayV2HT
 	if err != nil {
 		return s.failure("get profile", err)
 	}
-	signals, err := s.store.Signals(ctx, userID)
-	if err != nil {
-		return s.failure("get signals", err)
-	}
-	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": len(signals), "heart_count": user.HeartCount})
+	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": user.SignalCount, "heart_count": user.HeartCount})
 }
 
 func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
@@ -187,13 +183,13 @@ func (s *server) getArchiveItem(ctx context.Context, userID, itemID string) even
 }
 
 func (s *server) prepareItems(ctx context.Context, userID string, items []domain.Item) error {
-	signals, err := s.store.Signals(ctx, userID)
+	itemIDs := make([]string, len(items))
+	for i := range items {
+		itemIDs[i] = items[i].ItemID
+	}
+	byID, err := s.store.SignalValues(ctx, userID, itemIDs)
 	if err != nil {
 		return err
-	}
-	byID := make(map[string]int, len(signals))
-	for _, signal := range signals {
-		byID[signal.ItemID] = signal.Value
 	}
 	for i := range items {
 		items[i].Signal = byID[items[i].ItemID]
