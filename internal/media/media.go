@@ -156,6 +156,12 @@ func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Image, 
 	return Image{}, lastErr
 }
 
+// FetchEmbed applies the lead-image safety, decode, resize, and byte limits to
+// a provider thumbnail. The caller stores it under the embed-specific key.
+func (p *Processor) FetchEmbed(ctx context.Context, sourceURL string) (Image, error) {
+	return p.FetchLead(ctx, []string{sourceURL})
+}
+
 func (p *Processor) Favicon(ctx context.Context, siteURL string) (Image, error) {
 	base, err := url.Parse(siteURL)
 	if err != nil {

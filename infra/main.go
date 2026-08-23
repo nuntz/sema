@@ -40,6 +40,10 @@ func main() {
 		if modelVersion == "" {
 			modelVersion = "amazon.titan-embed-text-v2:0"
 		}
+		summarizeModel := cfg.Get("summarizeModel")
+		if summarizeModel == "" {
+			summarizeModel = "amazon.nova-micro-v1:0"
+		}
 		scoringVersion := cfg.Get("scoringVersion")
 		if scoringVersion == "" {
 			scoringVersion = "2"
@@ -141,7 +145,7 @@ func main() {
 
 		common := pulumi.StringMap{
 			"TABLE_NAME": table.Name, "CONTENT_BUCKET": contentBucket.Bucket,
-			"MODEL_VERSION": pulumi.String(modelVersion), "SCORING_VERSION": pulumi.String(scoringVersion),
+			"MODEL_VERSION": pulumi.String(modelVersion), "SCORING_VERSION": pulumi.String(scoringVersion), "SUMMARIZE_MODEL": pulumi.String(summarizeModel),
 		}
 		schedulerRole, err := lambdaRole(ctx, "scheduler", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, "")
 		if err != nil {
@@ -151,7 +155,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		itemRole, err := lambdaRole(ctx, "item-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, modelVersion)
+		itemRole, err := lambdaRole(ctx, "item-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, modelVersion, summarizeModel)
 		if err != nil {
 			return err
 		}
@@ -181,7 +185,7 @@ func main() {
 			return err
 		}
 		apiLambda, err := function(ctx, "api", apiRole, 256, 29, 0, merge(common, pulumi.StringMap{
-			"FEEDS_QUEUE_URL": feedsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
+			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
 		}))
 		if err != nil {
 			return err
@@ -386,6 +390,13 @@ func main() {
 		}); err != nil {
 			return err
 		}
+		if _, err := cloudwatch.NewMetricAlarm(ctx, "generated-summaries-daily", &cloudwatch.MetricAlarmArgs{
+			Namespace: pulumi.String("Sema"), MetricName: pulumi.String("SummariesGenerated"), Statistic: pulumi.String("Sum"), Period: pulumi.Int(86400), EvaluationPeriods: pulumi.Int(1),
+			ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(2000), TreatMissingData: pulumi.String("notBreaching"), AlarmActions: alarmActions,
+			AlarmDescription: pulumi.String("summary generation exceeded the 2,000 item daily cost guard"),
+		}); err != nil {
+			return err
+		}
 
 		cloudfrontURL := pulumi.Sprintf("https://%s", distribution.DomainName)
 		ctx.Export("cloudfrontUrl", cloudfrontURL)
@@ -450,7 +461,7 @@ func queues(ctx *pulumi.Context, name string, visibility int) (*sqs.Queue, *sqs.
 	return dlq, queue, err
 }
 
-func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn, itemsArn pulumi.StringOutput, bedrockModel string) (*iam.Role, error) {
+func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn, itemsArn pulumi.StringOutput, bedrockModels ...string) (*iam.Role, error) {
 	role, err := iam.NewRole(ctx, name+"-role", &iam.RoleArgs{AssumeRolePolicy: pulumi.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}`)})
 	if err != nil {
 		return nil, err
@@ -483,15 +494,21 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:TransactWriteItems"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": "s3:GetObject", "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:DeleteObject"}, "Resource": values[1].(string) + "/archive/*"},
-				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": values[2].(string)},
+				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": []string{values[2].(string), values[3].(string)}},
 			)
 		case "rescore":
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem"}, "Resource": tableResources},
 			)
 		}
-		if bedrockModel != "" {
-			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "bedrock:InvokeModel", "Resource": "arn:aws:bedrock:us-east-1::foundation-model/" + bedrockModel})
+		modelResources := make([]string, 0, len(bedrockModels))
+		for _, model := range bedrockModels {
+			if strings.TrimSpace(model) != "" {
+				modelResources = append(modelResources, "arn:aws:bedrock:us-east-1::foundation-model/"+model)
+			}
+		}
+		if len(modelResources) > 0 {
+			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "bedrock:InvokeModel", "Resource": modelResources})
 		}
 		encoded, err := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": statements})
 		return string(encoded), err

@@ -72,6 +72,9 @@ func TestFetchFeedFormats(t *testing.T) {
 			if entry.Title != tt.wantTitle || entry.URL != "https://example.com"+tt.wantURL {
 				t.Fatalf("entry = %#v", entry)
 			}
+			if entry.DisplayDate != "2026-08-20T12:00:00.000000000Z" {
+				t.Fatalf("display date = %q", entry.DisplayDate)
+			}
 			if (len(entry.Enclosures) > 0) != tt.wantImage {
 				t.Fatalf("enclosures = %#v", entry.Enclosures)
 			}
@@ -79,6 +82,17 @@ func TestFetchFeedFormats(t *testing.T) {
 				t.Fatalf("etag = %q", result.ETag)
 			}
 		})
+	}
+}
+
+func TestFetchLeavesDisplayDateEmptyWhenFeedHasNoDate(t *testing.T) {
+	body := `<?xml version="1.0"?><rss version="2.0"><channel><title>RSS Feed</title><link>/site</link><item><guid>one</guid><title>Undated</title><link>/item</link></item></channel></rss>`
+	result, err := connectorFor(body, "application/rss+xml").Fetch(context.Background(), domain.Feed{URL: "https://example.com/feed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 1 || result.Entries[0].DisplayDate != "" {
+		t.Fatalf("entry = %#v", result.Entries)
 	}
 }
 

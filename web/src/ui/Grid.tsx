@@ -8,6 +8,7 @@ import {
   Show,
   untrack,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import { justify, totalHeight, visibleRows } from "../layout/justified";
 import {
@@ -21,6 +22,14 @@ import {
 import { whyText } from "../ranking-display";
 import type { Item } from "../types";
 import { gridCommand } from "./keyboard";
+import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
+import {
+  beginLongPress,
+  LONG_PRESS_MS,
+  type LongPressGesture,
+  longPressReady,
+  moveLongPress,
+} from "./touch-gestures";
 
 interface GridProps {
   items: Item[];
@@ -31,6 +40,7 @@ interface GridProps {
   hasMore: boolean;
   archive: boolean;
   linkActionID: string;
+  pendingNewCount: number;
   onFocus(id: string): void;
   onOpen(item: Item): void;
   onSignal(item: Item, value: -1 | 0 | 1): void;
@@ -44,6 +54,8 @@ interface GridProps {
   onToggleOrder(): void;
   onToggleUnread(): void;
   onUndo(): void;
+  onInsertNew(): void;
+  onRefresh(): Promise<number>;
 }
 
 export function Grid(props: GridProps) {
@@ -53,6 +65,17 @@ export function Grid(props: GridProps) {
   let programmaticFrame = 0;
   let scrollIdle: number | undefined;
   let goTimer: number | undefined;
+  let longPressTimer: number | undefined;
+  let longPress: LongPressGesture | undefined;
+  let longPressItem: Item | undefined;
+  let suppressOpenID = "";
+  let sheetPanel!: HTMLElement;
+  let sheetStartY = 0;
+  let pullStartY = 0;
+  let pullTracking = false;
+  let pullWasReady = false;
+  let refreshNoticeTimer: number | undefined;
+  const refreshGate = new RefreshGate();
   let userScrolling = false;
   let programmaticScrolling = false;
   let endRequested = false;
@@ -60,6 +83,13 @@ export function Grid(props: GridProps) {
   const [width, setWidth] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(0);
+  const [sheetItem, setSheetItem] = createSignal<Item>();
+  const [sheetOffset, setSheetOffset] = createSignal(0);
+  const [pullDistance, setPullDistance] = createSignal(0);
+  const [refreshState, setRefreshState] = createSignal<
+    "idle" | "pulling" | "ready" | "fetching" | "landed" | "up-to-date"
+  >("idle");
+  const [refreshCount, setRefreshCount] = createSignal(0);
   const liveItems = createMemo(
     () => new Map(props.items.map((item) => [item.item_id, item])),
   );
@@ -88,6 +118,7 @@ export function Grid(props: GridProps) {
   };
 
   const noteUserScroll = () => {
+    cancelLongPress();
     if (programmaticScrolling) return;
     userScrolling = true;
     endRequested = false;
@@ -95,6 +126,128 @@ export function Grid(props: GridProps) {
     scrollIdle = window.setTimeout(() => {
       userScrolling = false;
     }, 180);
+  };
+
+  const cancelLongPress = () => {
+    window.clearTimeout(longPressTimer);
+    longPressTimer = undefined;
+    if (longPress) longPress.cancelled = true;
+    longPress = undefined;
+    longPressItem = undefined;
+  };
+
+  const openSheet = (item: Item) => {
+    cancelLongPress();
+    props.onFocus(item.item_id);
+    setSheetOffset(0);
+    setSheetItem(item);
+    navigator.vibrate?.(10);
+  };
+
+  const closeSheet = () => {
+    setSheetOffset(0);
+    setSheetItem();
+  };
+
+  const runSheetAction = (action: () => void) => {
+    closeSheet();
+    action();
+  };
+
+  const startSheetDrag = (event: PointerEvent) => {
+    if (event.pointerType === "touch") sheetStartY = event.clientY;
+  };
+
+  const moveSheetDrag = (event: PointerEvent) => {
+    if (!sheetStartY || event.pointerType !== "touch") return;
+    setSheetOffset(Math.max(0, event.clientY - sheetStartY));
+  };
+
+  const finishSheetDrag = () => {
+    if (sheetOffset() > (sheetPanel?.clientHeight ?? 320) * 0.3) closeSheet();
+    else setSheetOffset(0);
+    sheetStartY = 0;
+  };
+
+  const clearRefreshNotice = () => {
+    window.clearTimeout(refreshNoticeTimer);
+    setRefreshCount(0);
+    setRefreshState("idle");
+    setPullDistance(0);
+  };
+
+  const runRefresh = () =>
+    refreshGate.run(async () => {
+      setRefreshState("fetching");
+      setPullDistance(44);
+      const count = await props.onRefresh();
+      setRefreshCount(count);
+      if (count > 0) {
+        setRefreshState("landed");
+        return count;
+      }
+      setRefreshState("up-to-date");
+      refreshNoticeTimer = window.setTimeout(clearRefreshNotice, 1_400);
+      return 0;
+    });
+
+  const onPullStart = (event: TouchEvent) => {
+    if (
+      props.archive ||
+      event.touches.length !== 1 ||
+      scroller.scrollTop > 0 ||
+      refreshState() === "fetching"
+    )
+      return;
+    pullStartY = event.touches[0].clientY;
+    pullTracking = true;
+    pullWasReady = false;
+  };
+
+  const onPullMove = (event: TouchEvent) => {
+    if (!pullTracking || event.touches.length !== 1) return;
+    const distance = resistedPull(event.touches[0].clientY - pullStartY);
+    if (distance <= 0) return;
+    event.preventDefault();
+    setPullDistance(distance);
+    const ready = distance >= PULL_THRESHOLD;
+    setRefreshState(ready ? "ready" : "pulling");
+    if (ready && !pullWasReady) navigator.vibrate?.(8);
+    pullWasReady = ready;
+  };
+
+  const onPullEnd = () => {
+    if (!pullTracking) return;
+    pullTracking = false;
+    pullStartY = 0;
+    if (refreshState() === "ready") void runRefresh();
+    else {
+      setRefreshState("idle");
+      setPullDistance(0);
+    }
+  };
+
+  const startLongPress = (event: PointerEvent, item: Item) => {
+    if (event.pointerType !== "touch") return;
+    if ((event.target as HTMLElement).closest(".cell-actions")) return;
+    cancelLongPress();
+    longPress = beginLongPress(event.clientX, event.clientY, performance.now());
+    longPressItem = item;
+    longPressTimer = window.setTimeout(() => {
+      if (
+        longPress &&
+        longPressItem &&
+        longPressReady(longPress, performance.now())
+      ) {
+        suppressOpenID = longPressItem.item_id;
+        openSheet(longPressItem);
+      }
+    }, LONG_PRESS_MS);
+  };
+
+  const moveLongPressGesture = (event: PointerEvent) => {
+    if (longPress && moveLongPress(longPress, event.clientX, event.clientY))
+      cancelLongPress();
   };
 
   const programmaticScroll = (action: () => void) => {
@@ -175,17 +328,27 @@ export function Grid(props: GridProps) {
     scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("wheel", noteUserScroll, { passive: true });
     scroller.addEventListener("touchmove", noteUserScroll, { passive: true });
+    scroller.addEventListener("touchstart", onPullStart, { passive: true });
+    scroller.addEventListener("touchmove", onPullMove, { passive: false });
+    scroller.addEventListener("touchend", onPullEnd, { passive: true });
+    scroller.addEventListener("touchcancel", onPullEnd, { passive: true });
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
       observer.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", noteUserScroll);
       scroller.removeEventListener("touchmove", noteUserScroll);
+      scroller.removeEventListener("touchstart", onPullStart);
+      scroller.removeEventListener("touchmove", onPullMove);
+      scroller.removeEventListener("touchend", onPullEnd);
+      scroller.removeEventListener("touchcancel", onPullEnd);
       window.removeEventListener("keydown", onKeyDown);
       cancelAnimationFrame(frame);
       cancelAnimationFrame(programmaticFrame);
       window.clearTimeout(scrollIdle);
       window.clearTimeout(goTimer);
+      window.clearTimeout(longPressTimer);
+      window.clearTimeout(refreshNoticeTimer);
     });
   });
 
@@ -292,6 +455,12 @@ export function Grid(props: GridProps) {
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (sheetItem() && event.key === "Escape") {
+      closeSheet();
+      event.preventDefault();
+      return;
+    }
+    if (sheetItem()) return;
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
     if (target.matches("input, textarea, select")) return;
@@ -378,7 +547,69 @@ export function Grid(props: GridProps) {
 
   return (
     <div class="grid-scroll" ref={scroller} tabindex="-1">
-      <div class="virtual-canvas" style={{ height: `${canvasHeight()}px` }}>
+      <Show
+        when={
+          refreshState() !== "idle" ||
+          (!props.archive && props.pendingNewCount > 0)
+        }
+      >
+        <div
+          class="pull-refresh"
+          classList={{
+            fetching: refreshState() === "fetching",
+            ready: refreshState() === "ready",
+          }}
+          style={{ height: `${Math.max(pullDistance(), 44)}px` }}
+        >
+          <Show
+            when={
+              refreshState() === "pulling" ||
+              refreshState() === "ready" ||
+              refreshState() === "fetching"
+            }
+          >
+            <svg viewBox="0 0 20 20" aria-label="Checking for new items">
+              <circle
+                cx="10"
+                cy="10"
+                r="8"
+                style={{
+                  "stroke-dashoffset": `${50.27 * (1 - Math.min(1, pullDistance() / PULL_THRESHOLD))}`,
+                }}
+              />
+            </svg>
+          </Show>
+          <Show when={refreshState() === "up-to-date"}>
+            <span>up to date</span>
+          </Show>
+          <Show
+            when={
+              refreshState() === "landed" ||
+              (refreshState() === "idle" && props.pendingNewCount > 0)
+            }
+          >
+            <button
+              type="button"
+              onClick={() => {
+                if (refreshState() === "idle") props.onInsertNew();
+                clearRefreshNotice();
+              }}
+            >
+              {refreshState() === "landed"
+                ? refreshCount()
+                : props.pendingNewCount}{" "}
+              new
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <div
+        class="virtual-canvas"
+        style={{
+          height: `${canvasHeight()}px`,
+          transform: `translateY(${pullDistance()}px)`,
+        }}
+      >
         <For each={visible()}>
           {(row) => (
             <div
@@ -408,6 +639,10 @@ export function Grid(props: GridProps) {
                       data-item-id={item().item_id}
                       onMouseEnter={() => props.onFocus(item().item_id)}
                       onDblClick={() => props.onOpen(item())}
+                      onPointerDown={(event) => startLongPress(event, item())}
+                      onPointerMove={moveLongPressGesture}
+                      onPointerUp={cancelLongPress}
+                      onPointerCancel={cancelLongPress}
                     >
                       <Show when={item().media_url}>
                         <img
@@ -454,114 +689,40 @@ export function Grid(props: GridProps) {
                         </span>
                       </Show>
                       <div class="cell-actions">
-                        <Show when={!props.archive}>
-                          <button
-                            type="button"
-                            class="thumb-up"
-                            classList={{ selected: item().signal === 1 }}
-                            aria-label="Thumbs up"
-                            aria-pressed={item().signal === 1}
-                            onClick={() =>
-                              props.onSignal(
-                                item(),
-                                item().signal === 1 ? 0 : 1,
-                              )
-                            }
-                          >
-                            <Icon
-                              name="thumbs-up"
-                              size={14}
-                              filled={item().signal === 1}
-                            />
-                          </button>
-                          <button
-                            type="button"
-                            class="thumb-down"
-                            classList={{ selected: item().signal === -1 }}
-                            aria-label="Thumbs down"
-                            aria-pressed={item().signal === -1}
-                            onClick={() =>
-                              props.onSignal(
-                                item(),
-                                item().signal === -1 ? 0 : -1,
-                              )
-                            }
-                          >
-                            <Icon
-                              name="thumbs-down"
-                              size={14}
-                              filled={item().signal === -1}
-                            />
-                          </button>
-                        </Show>
-                        <Show when={props.archive}>
-                          <button
-                            type="button"
-                            aria-label="Open original"
-                            title="Open original"
-                            onClick={() => props.onOriginal(item())}
-                          >
-                            <Icon name="open-original" size={14} />
-                          </button>
-                        </Show>
-                        <Show when={!props.archive}>
-                          <button
-                            type="button"
-                            class="heart"
-                            classList={{ selected: item().hearted }}
-                            aria-label={
-                              item().hearted
-                                ? "Remove from archive"
-                                : "Keep in archive"
-                            }
-                            aria-pressed={item().hearted}
-                            onClick={() => props.onHeart(item())}
-                          >
-                            <Icon
-                              name="keep"
-                              size={14}
-                              filled={item().hearted}
-                            />
-                          </button>
-                        </Show>
                         <button
                           type="button"
-                          class="copy-link"
-                          classList={{
-                            activated: props.linkActionID === item().item_id,
-                          }}
-                          aria-label="Copy original link"
-                          title="Copy original link"
-                          onClick={() => props.onCopy(item())}
+                          class="heart"
+                          classList={{ selected: item().hearted }}
+                          aria-label={
+                            item().hearted
+                              ? "Remove from archive"
+                              : "Keep in archive"
+                          }
+                          aria-pressed={item().hearted}
+                          onClick={() => props.onHeart(item())}
                         >
-                          <Show
-                            when={props.linkActionID === item().item_id}
-                            fallback={<Icon name="copy-link" size={14} />}
-                          >
-                            <Icon name="check" size={14} />
-                          </Show>
+                          <Icon name="keep" size={14} filled={item().hearted} />
                         </button>
-                        <Show when={props.archive}>
-                          <button
-                            type="button"
-                            class="heart"
-                            classList={{ selected: item().hearted }}
-                            aria-label="Remove from archive"
-                            aria-pressed={item().hearted}
-                            onClick={() => props.onHeart(item())}
-                          >
-                            <Icon
-                              name="keep"
-                              size={14}
-                              filled={item().hearted}
-                            />
-                          </button>
-                        </Show>
+                        <button
+                          type="button"
+                          class="more"
+                          aria-label="More actions"
+                          aria-haspopup="dialog"
+                          onClick={() => openSheet(item())}
+                        >
+                          <Icon name="more" size={14} />
+                        </button>
                       </div>
                       <button
                         type="button"
                         class="cell-main"
-                        onClick={() => props.onOpen(item())}
+                        onClick={() => {
+                          if (suppressOpenID === item().item_id) {
+                            suppressOpenID = "";
+                            return;
+                          }
+                          props.onOpen(item());
+                        }}
                         aria-label={`Open ${item().title}`}
                       >
                         <div class="cell-copy">
@@ -651,6 +812,91 @@ export function Grid(props: GridProps) {
           </section>
         </Show>
       </div>
+      <Portal>
+        <Show when={sheetItem()} keyed>
+          {(item) => (
+            <div
+              class="action-sheet-layer"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) closeSheet();
+              }}
+            >
+              <section
+                ref={sheetPanel}
+                class="action-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Actions for ${item.title}`}
+                style={{ transform: `translateY(${sheetOffset()}px)` }}
+                onPointerDown={startSheetDrag}
+                onPointerMove={moveSheetDrag}
+                onPointerUp={finishSheetDrag}
+                onPointerCancel={finishSheetDrag}
+              >
+                <i class="sheet-handle" aria-hidden="true" />
+                <header>
+                  <strong>{item.title}</strong>
+                  <span>
+                    {item.feed_title || "Feed"} ·{" "}
+                    {relativeTime(item.published_ts)}
+                  </span>
+                </header>
+                <button
+                  type="button"
+                  onClick={() => runSheetAction(() => props.onOriginal(item))}
+                >
+                  <Icon name="open-original" size={20} />
+                  Open original
+                </button>
+                <button
+                  type="button"
+                  classList={{ selected: item.signal === 1 }}
+                  onClick={() =>
+                    runSheetAction(() =>
+                      props.onSignal(item, item.signal === 1 ? 0 : 1),
+                    )
+                  }
+                >
+                  <Icon name="thumbs-up" size={20} filled={item.signal === 1} />
+                  More like this
+                </button>
+                <button
+                  type="button"
+                  classList={{ selected: item.signal === -1 }}
+                  onClick={() =>
+                    runSheetAction(() =>
+                      props.onSignal(item, item.signal === -1 ? 0 : -1),
+                    )
+                  }
+                >
+                  <Icon
+                    name="thumbs-down"
+                    size={20}
+                    filled={item.signal === -1}
+                  />
+                  Less like this
+                </button>
+                <button
+                  type="button"
+                  classList={{ selected: item.hearted }}
+                  onClick={() => runSheetAction(() => props.onHeart(item))}
+                >
+                  <Icon name="keep" size={20} filled={item.hearted} />
+                  {item.hearted ? "Kept" : "Keep"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runSheetAction(() => props.onCopy(item))}
+                >
+                  <Icon name="copy-link" size={20} />
+                  Copy link
+                </button>
+              </section>
+            </div>
+          )}
+        </Show>
+      </Portal>
     </div>
   );
 }

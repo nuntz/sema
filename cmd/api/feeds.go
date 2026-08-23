@@ -138,15 +138,16 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 
 func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) events.APIGatewayV2HTTPResponse {
 	var input struct {
-		CustomTitle   *string   `json:"custom_title"`
-		Tags          *[]string `json:"tags"`
-		Muted         *bool     `json:"muted"`
-		FetchInterval *int      `json:"fetch_interval_h"`
+		CustomTitle    *string   `json:"custom_title"`
+		Tags           *[]string `json:"tags"`
+		Muted          *bool     `json:"muted"`
+		AlwaysGenerate *bool     `json:"always_generate"`
+		FetchInterval  *int      `json:"fetch_interval_h"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
 	}
-	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.FetchInterval == nil {
+	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.FetchInterval == nil {
 		return badRequest(errors.New("at least one feed field is required"))
 	}
 	feed, err := s.store.Feed(ctx, userID, feedID)
@@ -179,6 +180,9 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 	}
 	if input.Muted != nil {
 		feed.Muted = *input.Muted
+	}
+	if input.AlwaysGenerate != nil {
+		feed.AlwaysGenerate = *input.AlwaysGenerate
 	}
 	unmuted := wasMuted && !feed.Muted
 	if unmuted {
@@ -325,7 +329,32 @@ func (s *server) cachedFeeds(ctx context.Context, userID string) ([]domain.Feed,
 func (s *server) invalidateFeeds(userID string) {
 	s.feedMu.Lock()
 	delete(s.feedCache, userID)
+	delete(s.feedDetailCache, userID)
 	s.feedMu.Unlock()
+}
+
+func (s *server) cachedDetailedFeeds(ctx context.Context, userID string) ([]domain.Feed, error) {
+	now := time.Now()
+	s.feedMu.Lock()
+	entry, ok := s.feedDetailCache[userID]
+	s.feedMu.Unlock()
+	if ok && now.Sub(entry.loaded) < feedCacheTTL {
+		return append([]domain.Feed(nil), entry.feeds...), nil
+	}
+	feeds, err := s.store.Feeds(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.decorateFeeds(ctx, userID, feeds); err != nil {
+		return nil, err
+	}
+	s.feedMu.Lock()
+	if s.feedDetailCache == nil {
+		s.feedDetailCache = make(map[string]cachedFeedList)
+	}
+	s.feedDetailCache[userID] = cachedFeedList{loaded: now, feeds: feeds}
+	s.feedMu.Unlock()
+	return append([]domain.Feed(nil), feeds...), nil
 }
 
 func normalizeFeedURL(raw string) (string, error) {
@@ -416,21 +445,47 @@ func (s *server) decorateFeeds(ctx context.Context, userID string, feeds []domai
 	if err != nil {
 		return err
 	}
-	counts := make(map[string]int)
-	for _, item := range items {
-		counts[item.FeedID]++
-	}
+	decorateExtraction(feeds, items)
 	model, modelErr := s.store.Model(ctx, userID)
 	if modelErr != nil && !errors.Is(modelErr, score.ErrModelNotFound) {
 		return modelErr
 	}
 	for i := range feeds {
 		feeds[i] = publicFeed(s.store, feeds[i])
-		feeds[i].ItemCount = counts[feeds[i].FeedID]
 		if modelErr == nil {
 			feeds[i].Prior = model.FeedPrior[feeds[i].FeedID]
 			feeds[i].PriorSignals = model.FeedSignalCount[feeds[i].FeedID]
 		}
 	}
 	return nil
+}
+
+func decorateExtraction(feeds []domain.Feed, items []domain.Item) {
+	counts := make(map[string]int)
+	qualities := make(map[string][]float64)
+	successes := make(map[string]int)
+	bodyAttempts := make(map[string]int)
+	for _, item := range items {
+		counts[item.FeedID]++
+		bodyAttempts[item.FeedID]++
+		qualities[item.FeedID] = append(qualities[item.FeedID], item.ExtractQuality)
+		if item.HasBody {
+			successes[item.FeedID]++
+		}
+	}
+	for i := range feeds {
+		feeds[i].ItemCount = counts[feeds[i].FeedID]
+		feeds[i].ExtractionSample = bodyAttempts[feeds[i].FeedID]
+		if feeds[i].ExtractionSample >= 10 {
+			values := qualities[feeds[i].FeedID]
+			sort.Float64s(values)
+			rate := float64(successes[feeds[i].FeedID]) / float64(feeds[i].ExtractionSample)
+			median := values[len(values)/2]
+			if len(values)%2 == 0 {
+				median = (values[len(values)/2-1] + values[len(values)/2]) / 2
+			}
+			feeds[i].ExtractionRate = &rate
+			feeds[i].MedianQuality = &median
+		}
+	}
 }

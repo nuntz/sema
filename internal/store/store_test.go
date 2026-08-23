@@ -357,7 +357,10 @@ func TestReplayOverwriteIsIdempotent(t *testing.T) {
 		return &dynamodb.PutItemOutput{}, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	item := domain.Item{PK: "U#user", SK: "I#item", ItemID: "item", Score: 0.8, Size: "L"}
+	item := domain.Item{
+		PK: "U#user", SK: "I#item", ItemID: "item", Score: 0.8, Size: "L", Summary: "new summary", Vector: []byte{1, 2},
+		Read: true, Signal: -1, Hearted: true, ArchiveSK: "A#kept", HeartedTS: "2026-08-20T12:00:00Z",
+	}
 	if err := repository.OverwriteItem(context.Background(), item); err != nil {
 		t.Fatal(err)
 	}
@@ -366,6 +369,14 @@ func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	}
 	if len(writes) != 2 || writes[0]["score"].(*types.AttributeValueMemberN).Value != writes[1]["score"].(*types.AttributeValueMemberN).Value {
 		t.Fatalf("double replay writes = %#v", writes)
+	}
+	for _, transient := range []string{"read", "signal", "hearted"} {
+		if _, ok := writes[0][transient]; ok {
+			t.Fatalf("replay embedded separate %s state in item row: %#v", transient, writes[0])
+		}
+	}
+	if writes[0]["archive_sk"].(*types.AttributeValueMemberS).Value != "A#kept" || writes[0]["hearted_ts"].(*types.AttributeValueMemberS).Value != item.HeartedTS {
+		t.Fatalf("replay did not preserve heart pointer: %#v", writes[0])
 	}
 }
 

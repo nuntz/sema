@@ -44,7 +44,7 @@ rescore:
 replay:
 	replay_model_version='$(MODEL_VERSION)'; \
 	if [ -z "$$replay_model_version" ]; then replay_model_version=$$(cd infra && pulumi stack output modelVersion); fi; \
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay $(FLAGS)
 
 redrive:
 	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output feedsDlqArn)" --destination-arn "$$(cd infra && pulumi stack output feedsQueueArn)"

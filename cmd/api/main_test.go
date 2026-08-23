@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/store"
 )
@@ -20,6 +22,13 @@ type apiDynamo struct {
 	getItem  func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
 	query    func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
 	update   func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
+}
+
+type apiQueue struct{ input *sqs.SendMessageBatchInput }
+
+func (q *apiQueue) SendMessageBatch(_ context.Context, input *sqs.SendMessageBatchInput, _ ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
+	q.input = input
+	return &sqs.SendMessageBatchOutput{}, nil
 }
 
 func (f *apiDynamo) BatchGetItem(_ context.Context, input *dynamodb.BatchGetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
@@ -69,6 +78,24 @@ func TestNormalizeTagsAndFeedStatus(t *testing.T) {
 	}
 	if got := feedStatus(domain.Feed{Muted: true, ErrorCount: 3}); got != "muted" {
 		t.Fatalf("muted status = %q", got)
+	}
+}
+
+func TestDecorateExtractionComputesPerFeedDistribution(t *testing.T) {
+	feeds := []domain.Feed{{FeedID: "enough"}, {FeedID: "new"}}
+	items := make([]domain.Item, 0, 14)
+	for index := range 10 {
+		items = append(items, domain.Item{FeedID: "enough", HasBody: index < 8, ExtractQuality: float64(index+1) / 10})
+	}
+	for range 4 {
+		items = append(items, domain.Item{FeedID: "new", HasBody: true, ExtractQuality: 0.9})
+	}
+	decorateExtraction(feeds, items)
+	if feeds[0].ExtractionSample != 10 || feeds[0].ExtractionRate == nil || *feeds[0].ExtractionRate != 0.8 || feeds[0].MedianQuality == nil || *feeds[0].MedianQuality != 0.55 {
+		t.Fatalf("enough feed stats = %#v", feeds[0])
+	}
+	if feeds[1].ExtractionSample != 4 || feeds[1].ExtractionRate != nil || feeds[1].MedianQuality != nil {
+		t.Fatalf("new feed stats = %#v", feeds[1])
 	}
 }
 
@@ -162,5 +189,30 @@ func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
 	}
 	if value, ok := shareUpdate.ExpressionAttributeValues[":shared"].(*types.AttributeValueMemberBOOL); !ok || !value.Value {
 		t.Fatalf("share expression values = %#v", shareUpdate.ExpressionAttributeValues)
+	}
+}
+
+func TestRetryItemQueuesForcedExtractionAndSummary(t *testing.T) {
+	item, err := attributevalue.MarshalMap(domain.Item{
+		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", URL: "https://example.com/story", Title: "Title", PublishedTS: "2026-08-20T12:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &apiDynamo{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
+	}}
+	queue := &apiQueue{}
+	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue, itemsURL: "items-queue"}
+	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/retry", "")
+	if response.StatusCode != http.StatusAccepted || queue.input == nil || aws.ToString(queue.input.QueueUrl) != "items-queue" || len(queue.input.Entries) != 1 {
+		t.Fatalf("response = %d %s, queue = %#v", response.StatusCode, response.Body, queue.input)
+	}
+	var message domain.ItemMessage
+	if err := json.Unmarshal([]byte(aws.ToString(queue.input.Entries[0].MessageBody)), &message); err != nil {
+		t.Fatal(err)
+	}
+	if !message.Reprocess || !message.ForceExtract || !message.ForceSummary || message.ItemID != "item" {
+		t.Fatalf("retry message = %#v", message)
 	}
 }

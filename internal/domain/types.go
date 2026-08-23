@@ -28,30 +28,40 @@ type User struct {
 }
 
 type Feed struct {
-	PK             string   `dynamodbav:"PK" json:"-"`
-	SK             string   `dynamodbav:"SK" json:"-"`
-	GSI1PK         string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
-	FeedID         string   `dynamodbav:"feed_id" json:"feed_id"`
-	URL            string   `dynamodbav:"url" json:"url"`
-	SiteURL        string   `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
-	Title          string   `dynamodbav:"title,omitempty" json:"title,omitempty"`
-	CustomTitle    string   `dynamodbav:"custom_title,omitempty" json:"custom_title,omitempty"`
-	Tags           []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
-	Muted          bool     `dynamodbav:"muted,omitempty" json:"muted"`
-	FetchIntervalH int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
-	FaviconKey     string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
-	ETag           string   `dynamodbav:"etag,omitempty" json:"-"`
-	LastModified   string   `dynamodbav:"last_modified,omitempty" json:"-"`
-	LastFetchAt    string   `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
-	LastStatus     string   `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
-	LastError      string   `dynamodbav:"last_error,omitempty" json:"last_error,omitempty"`
-	ErrorCount     int      `dynamodbav:"error_count" json:"error_count"`
-	NextFetchAt    string   `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
-	Prior          float64  `dynamodbav:"-" json:"prior"`
-	PriorSignals   int      `dynamodbav:"-" json:"prior_signals"`
-	Status         string   `dynamodbav:"-" json:"status"`
-	ItemCount      int      `dynamodbav:"-" json:"item_count"`
+	PK               string   `dynamodbav:"PK" json:"-"`
+	SK               string   `dynamodbav:"SK" json:"-"`
+	GSI1PK           string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
+	FeedID           string   `dynamodbav:"feed_id" json:"feed_id"`
+	URL              string   `dynamodbav:"url" json:"url"`
+	SiteURL          string   `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
+	Title            string   `dynamodbav:"title,omitempty" json:"title,omitempty"`
+	CustomTitle      string   `dynamodbav:"custom_title,omitempty" json:"custom_title,omitempty"`
+	Tags             []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
+	Muted            bool     `dynamodbav:"muted,omitempty" json:"muted"`
+	AlwaysGenerate   bool     `dynamodbav:"always_generate,omitempty" json:"always_generate"`
+	FetchIntervalH   int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
+	FaviconKey       string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	ETag             string   `dynamodbav:"etag,omitempty" json:"-"`
+	LastModified     string   `dynamodbav:"last_modified,omitempty" json:"-"`
+	LastFetchAt      string   `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
+	LastStatus       string   `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
+	LastError        string   `dynamodbav:"last_error,omitempty" json:"last_error,omitempty"`
+	ErrorCount       int      `dynamodbav:"error_count" json:"error_count"`
+	NextFetchAt      string   `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
+	Prior            float64  `dynamodbav:"-" json:"prior"`
+	PriorSignals     int      `dynamodbav:"-" json:"prior_signals"`
+	Status           string   `dynamodbav:"-" json:"status"`
+	ItemCount        int      `dynamodbav:"-" json:"item_count"`
+	ExtractionRate   *float64 `dynamodbav:"-" json:"extraction_success_rate,omitempty"`
+	MedianQuality    *float64 `dynamodbav:"-" json:"median_extract_quality,omitempty"`
+	ExtractionSample int      `dynamodbav:"-" json:"extraction_sample"`
 }
+
+const (
+	SummarySourceFeed      = "feed"
+	SummarySourceBody      = "body"
+	SummarySourceGenerated = "generated"
+)
 
 type Why struct {
 	Title     string `dynamodbav:"title,omitempty" json:"title,omitempty"`
@@ -59,35 +69,38 @@ type Why struct {
 }
 
 type Item struct {
-	PK           string  `dynamodbav:"PK" json:"-"`
-	SK           string  `dynamodbav:"SK" json:"-"`
-	FeedPK       string  `dynamodbav:"feed_pk" json:"-"`
-	ItemID       string  `dynamodbav:"item_id" json:"item_id"`
-	FeedID       string  `dynamodbav:"feed_id" json:"feed_id"`
-	FeedTitle    string  `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
-	FaviconKey   string  `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
-	URL          string  `dynamodbav:"url" json:"url"`
-	Title        string  `dynamodbav:"title" json:"title"`
-	Summary      string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
-	Author       string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
-	PublishedTS  string  `dynamodbav:"published_ts" json:"published_ts"`
-	FetchedTS    string  `dynamodbav:"fetched_ts" json:"fetched_ts"`
-	MediaKey     string  `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
-	MediaW       int     `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
-	MediaH       int     `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
-	BodyKey      string  `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
-	HasBody      bool    `dynamodbav:"has_body" json:"has_body"`
-	Score        float64 `dynamodbav:"score" json:"score"`
-	Size         string  `dynamodbav:"size" json:"size"`
-	Vector       []byte  `dynamodbav:"vector,omitempty" json:"-"`
-	ModelVersion string  `dynamodbav:"model_version,omitempty" json:"-"`
-	Why          *Why    `dynamodbav:"why,omitempty" json:"why,omitempty"`
-	TTL          int64   `dynamodbav:"ttl,omitempty" json:"-"`
-	ArchiveSK    string  `dynamodbav:"archive_sk,omitempty" json:"-"`
-	HeartedTS    string  `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
-	Read         bool    `dynamodbav:"-" json:"read"`
-	Signal       int     `dynamodbav:"-" json:"signal"`
-	Hearted      bool    `dynamodbav:"-" json:"hearted"`
+	PK             string  `dynamodbav:"PK" json:"-"`
+	SK             string  `dynamodbav:"SK" json:"-"`
+	FeedPK         string  `dynamodbav:"feed_pk" json:"-"`
+	ItemID         string  `dynamodbav:"item_id" json:"item_id"`
+	FeedID         string  `dynamodbav:"feed_id" json:"feed_id"`
+	FeedTitle      string  `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
+	FaviconKey     string  `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	URL            string  `dynamodbav:"url" json:"url"`
+	Title          string  `dynamodbav:"title" json:"title"`
+	Summary        string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
+	SummarySource  string  `dynamodbav:"summary_source,omitempty" json:"summary_source"`
+	Author         string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
+	DisplayDate    string  `dynamodbav:"display_date,omitempty" json:"display_date,omitempty"`
+	PublishedTS    string  `dynamodbav:"published_ts" json:"published_ts"`
+	FetchedTS      string  `dynamodbav:"fetched_ts" json:"fetched_ts"`
+	MediaKey       string  `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
+	MediaW         int     `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
+	MediaH         int     `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
+	BodyKey        string  `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
+	HasBody        bool    `dynamodbav:"has_body" json:"has_body"`
+	ExtractQuality float64 `dynamodbav:"extract_quality" json:"extract_quality"`
+	Score          float64 `dynamodbav:"score" json:"score"`
+	Size           string  `dynamodbav:"size" json:"size"`
+	Vector         []byte  `dynamodbav:"vector,omitempty" json:"-"`
+	ModelVersion   string  `dynamodbav:"model_version,omitempty" json:"-"`
+	Why            *Why    `dynamodbav:"why,omitempty" json:"why,omitempty"`
+	TTL            int64   `dynamodbav:"ttl,omitempty" json:"-"`
+	ArchiveSK      string  `dynamodbav:"archive_sk,omitempty" json:"-"`
+	HeartedTS      string  `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
+	Read           bool    `dynamodbav:"-" json:"read"`
+	Signal         int     `dynamodbav:"-" json:"signal"`
+	Hearted        bool    `dynamodbav:"-" json:"hearted"`
 }
 
 type Signal struct {
@@ -184,6 +197,7 @@ type Entry struct {
 	ContentRaw   string
 	Author       string
 	Published    time.Time
+	DisplayDate  string
 	Enclosures   []Enclosure
 	PageHTMLHint string
 }
@@ -212,9 +226,11 @@ type ItemMessage struct {
 	ContentRaw    string      `json:"content_raw,omitempty"`
 	Author        string      `json:"author,omitempty"`
 	PublishedTS   string      `json:"published_ts"`
+	DisplayDate   string      `json:"display_date,omitempty"`
 	EnclosureURLs []Enclosure `json:"enclosure_urls,omitempty"`
 	Reprocess     bool        `json:"reprocess,omitempty"`
 	ForceExtract  bool        `json:"force_extract,omitempty"`
+	ForceSummary  bool        `json:"force_summary,omitempty"`
 }
 
 func UserPK(user string) string       { return "U#" + user }

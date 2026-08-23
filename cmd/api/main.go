@@ -40,14 +40,16 @@ type queueAPI interface {
 }
 
 type server struct {
-	store     *store.Store
-	queue     queueAPI
-	feedsURL  string
-	signer    *auth.CookieSigner
-	rescore   func(context.Context, string) error
-	discover  feedDiscoverer
-	feedMu    sync.Mutex
-	feedCache map[string]cachedFeedList
+	store           *store.Store
+	queue           queueAPI
+	feedsURL        string
+	itemsURL        string
+	signer          *auth.CookieSigner
+	rescore         func(context.Context, string) error
+	discover        feedDiscoverer
+	feedMu          sync.Mutex
+	feedCache       map[string]cachedFeedList
+	feedDetailCache map[string]cachedFeedList
 }
 
 type unsupportedFeed struct {
@@ -293,6 +295,29 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		return response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 	switch parts[1] {
+	case "retry":
+		item, err := s.store.Item(ctx, userID, itemID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+			}
+			return s.failure("get item for retry", err)
+		}
+		message := domain.ItemMessage{
+			User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL, Title: item.Title, Author: item.Author,
+			PublishedTS: item.PublishedTS, DisplayDate: item.DisplayDate, Reprocess: true, ForceExtract: true, ForceSummary: true,
+		}
+		encoded, _ := json.Marshal(message)
+		output, err := s.queue.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
+			QueueUrl: aws.String(s.itemsURL), Entries: []types.SendMessageBatchRequestEntry{{Id: aws.String("retry-" + item.ItemID), MessageBody: aws.String(string(encoded))}},
+		})
+		if err != nil || output == nil || len(output.Failed) > 0 {
+			if err == nil {
+				err = fmt.Errorf("item retry enqueue failed")
+			}
+			return s.failure("enqueue item retry", err)
+		}
+		return response(http.StatusAccepted, map[string]bool{"queued": true})
 	case "heart":
 		var input struct {
 			Hearted *bool `json:"hearted"`
@@ -412,11 +437,8 @@ func (s *server) readBatch(ctx context.Context, userID, body string) events.APIG
 }
 
 func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
-	feeds, err := s.store.Feeds(ctx, userID)
+	feeds, err := s.cachedDetailedFeeds(ctx, userID)
 	if err != nil {
-		return s.failure("list feeds", err)
-	}
-	if err := s.decorateFeeds(ctx, userID, feeds); err != nil {
 		return s.failure("decorate feeds", err)
 	}
 	return response(http.StatusOK, map[string]any{"feeds": feeds})
@@ -661,9 +683,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	queueURL := os.Getenv("FEEDS_QUEUE_URL")
+	queueURL, itemsURL := os.Getenv("FEEDS_QUEUE_URL"), os.Getenv("ITEMS_QUEUE_URL")
 	if queueURL == "" {
 		panic("FEEDS_QUEUE_URL is required")
+	}
+	if itemsURL == "" {
+		panic("ITEMS_QUEUE_URL is required")
 	}
 	signer, err := auth.NewCookieSigner(os.Getenv("CF_PRIVATE_KEY"), os.Getenv("CF_KEY_PAIR_ID"), time.Hour)
 	if err != nil {
@@ -676,7 +701,7 @@ func main() {
 	invoker := &lambdaInvoker{config: config, function: rescoreFunction, client: &http.Client{Timeout: 28 * time.Second}}
 	discoveryHTTP := httpx.New(4*time.Second, 5<<20)
 	lambda.Start((&server{
-		store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, signer: signer,
+		store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: rss.NewDiscoverer(discoveryHTTP), feedCache: make(map[string]cachedFeedList),
 	}).handle)
 }

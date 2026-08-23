@@ -5,6 +5,13 @@ import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
 import { hasLeadingImage } from "./reader-content";
+import {
+  beginSwipe,
+  lockSwipeAxis,
+  type SwipeGesture,
+  swipeCommand,
+  swipeOffset,
+} from "./touch-gestures";
 
 interface ReaderProps {
   item: Item;
@@ -21,6 +28,7 @@ interface ReaderProps {
   onHeart(): void;
   onCopy(): void;
   onOriginal(): void;
+  onRetry(): void;
   onDwell(itemID: string, dwellMS: number): void;
 }
 
@@ -29,12 +37,21 @@ export function Reader(props: ReaderProps) {
   const [body, setBody] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [progress, setProgress] = createSignal(0);
+  const [dragOffset, setDragOffset] = createSignal(0);
+  const [swiping, setSwiping] = createSignal(false);
   let trackedID = props.item.item_id;
   let dwellMS = 0;
   let activeSince = 0;
   let lastReported = 0;
   let thresholdReported = false;
   let dwellTimer: number | undefined;
+  let swipe: SwipeGesture | undefined;
+  let touchX = 0;
+
+  const originalReason = (): "extraction" | "titles-only" =>
+    !props.item.summary && props.item.extract_quality === 0
+      ? "titles-only"
+      : "extraction";
 
   const startDwell = () => {
     if (activeSince || document.visibilityState === "hidden") return;
@@ -67,6 +84,8 @@ export function Reader(props: ReaderProps) {
     lastReported = 0;
     thresholdReported = false;
     setProgress(0);
+    setDragOffset(0);
+    if (article) article.scrollTop = 0;
     startDwell();
   });
 
@@ -92,6 +111,47 @@ export function Reader(props: ReaderProps) {
   const updateProgress = () => {
     const range = article.scrollHeight - article.clientHeight;
     setProgress(range <= 0 ? 1 : article.scrollTop / range);
+  };
+
+  const onTouchStart = (event: TouchEvent) => {
+    if (event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    touchX = touch.clientX;
+    swipe = beginSwipe(
+      touch.clientX,
+      touch.clientY,
+      performance.now(),
+      window.innerWidth,
+    );
+  };
+
+  const onTouchMove = (event: TouchEvent) => {
+    if (!swipe || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    touchX = touch.clientX;
+    const axis = lockSwipeAxis(swipe, touch.clientX, touch.clientY);
+    if (axis !== "horizontal") return;
+    event.preventDefault();
+    setSwiping(true);
+    setDragOffset(
+      swipeOffset(swipe, touch.clientX, props.canPrevious, props.canNext),
+    );
+  };
+
+  const finishSwipe = () => {
+    if (!swipe) return;
+    const command = swipeCommand(swipe, touchX, performance.now());
+    swipe = undefined;
+    setSwiping(false);
+    setDragOffset(0);
+    if (command === "next" && props.canNext) props.onNext();
+    if (command === "previous" && props.canPrevious) props.onPrevious();
+  };
+
+  const cancelSwipe = () => {
+    swipe = undefined;
+    setSwiping(false);
+    setDragOffset(0);
   };
 
   const onKey = (event: KeyboardEvent) => {
@@ -151,6 +211,10 @@ export function Reader(props: ReaderProps) {
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibility);
     article.addEventListener("scroll", updateProgress, { passive: true });
+    article.addEventListener("touchstart", onTouchStart, { passive: true });
+    article.addEventListener("touchmove", onTouchMove, { passive: false });
+    article.addEventListener("touchend", finishSwipe, { passive: true });
+    article.addEventListener("touchcancel", cancelSwipe, { passive: true });
     onCleanup(() => {
       pauseAndReport();
       window.removeEventListener("keydown", onKey);
@@ -158,6 +222,10 @@ export function Reader(props: ReaderProps) {
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibility);
       article.removeEventListener("scroll", updateProgress);
+      article.removeEventListener("touchstart", onTouchStart);
+      article.removeEventListener("touchmove", onTouchMove);
+      article.removeEventListener("touchend", finishSwipe);
+      article.removeEventListener("touchcancel", cancelSwipe);
       window.clearInterval(dwellTimer);
     });
   });
@@ -183,7 +251,7 @@ export function Reader(props: ReaderProps) {
         </Show>
         <span class="reader-source">
           {props.item.feed_title || "Feed"} ·{" "}
-          {relativeTime(props.item.published_ts)} ago
+          {relativeTime(props.item.display_date || props.item.published_ts)} ago
         </span>
         <div class="reader-actions">
           <button
@@ -265,7 +333,12 @@ export function Reader(props: ReaderProps) {
       <div class="reader-progress">
         <i style={{ width: `${progress() * 100}%` }} />
       </div>
-      <div class="reader-scroll" ref={article}>
+      <div
+        class="reader-scroll"
+        classList={{ swiping: swiping() }}
+        style={{ transform: `translate3d(${dragOffset()}px, 0, 0)` }}
+        ref={article}
+      >
         <article class="article">
           <div class="article-kicker">
             ARTICLE ·{" "}
@@ -282,7 +355,18 @@ export function Reader(props: ReaderProps) {
             {props.item.author
               ? `By ${props.item.author}`
               : props.item.feed_title}
+            <Show when={props.item.display_date}>
+              {` · ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(props.item.display_date ?? ""))}`}
+            </Show>
           </p>
+          <Show when={props.item.summary}>
+            <div class="article-summary">
+              <Show when={props.item.summary_source === "generated"}>
+                <div class="summary-provenance">summary · generated</div>
+              </Show>
+              <p>{props.item.summary}</p>
+            </div>
+          </Show>
           <Show when={props.item.media_url && !hasLeadingImage(body())}>
             <img
               class="article-lead"
@@ -295,29 +379,25 @@ export function Reader(props: ReaderProps) {
           <Show
             when={body()}
             fallback={
-              <div class="article-fallback">
-                <Show when={loading()}>
-                  <p>Loading the extracted article…</p>
-                </Show>
-                <Show when={!loading()}>
-                  <p>
-                    {props.item.summary ||
-                      "Sema could not extract this article."}
+              <Show
+                when={!loading()}
+                fallback={
+                  <p class="extraction-loading">
+                    Loading the extracted article…
                   </p>
-                  <Show when={!props.archive}>
-                    <a
-                      class="original-cta"
-                      href={props.item.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={props.onOriginal}
-                    >
-                      Read the original
-                      <Icon name="open-original" />
-                    </a>
-                  </Show>
-                </Show>
-              </div>
+                }
+              >
+                <OriginalRequired
+                  reason={originalReason()}
+                  url={props.item.url}
+                  retry={
+                    !props.archive && originalReason() === "extraction"
+                      ? props.onRetry
+                      : undefined
+                  }
+                  onOriginal={props.onOriginal}
+                />
+              </Show>
             }
           >
             <div class="article-body" innerHTML={body()} />
@@ -420,5 +500,45 @@ export function Reader(props: ReaderProps) {
         </button>
       </nav>
     </section>
+  );
+}
+
+function OriginalRequired(props: {
+  reason: "extraction" | "titles-only" | "paywall";
+  url: string;
+  retry?: () => void;
+  onOriginal(): void;
+}) {
+  const sentence = () => {
+    if (props.reason === "titles-only")
+      return "This feed publishes titles only — there was never a body to fetch.";
+    if (props.reason === "paywall")
+      return "The publisher requires a subscription to read past the first paragraph.";
+    return "Sema couldn't extract a clean body from this page — the text is split across script-rendered sections.";
+  };
+  return (
+    <div class="original-required">
+      <p>{sentence()}</p>
+      <div>
+        <a
+          class="original-cta"
+          href={props.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={props.onOriginal}
+        >
+          Read the original
+          <Icon name="open-original" />
+        </a>
+        <Show when={props.retry}>
+          {(retry) => (
+            <button type="button" onClick={retry()}>
+              <Icon name="retry" />
+              Try again
+            </button>
+          )}
+        </Show>
+      </div>
+    </div>
   );
 }

@@ -210,7 +210,7 @@ export function App(props: { token: () => string; signOut(): void }) {
     }
   };
 
-  const pollNew = async () => {
+  const pollNew = async (insert = false): Promise<number> => {
     if (
       pollInFlight ||
       mode() === "archive" ||
@@ -218,22 +218,31 @@ export function App(props: { token: () => string; signOut(): void }) {
       !hasPage() ||
       document.visibilityState !== "visible"
     )
-      return;
+      return 0;
     const version = requestVersion;
     pollInFlight = true;
     try {
       const page = await api.items("chrono", "", false, selectedTag());
-      if (version !== requestVersion) return;
+      if (version !== requestVersion) return 0;
       const unseen = pollCandidates(
         items(),
         pendingNew(),
         page.items ?? [],
         unreadOnly(),
       );
-      if (unseen.length > 0)
+      if (insert) {
+        const incoming = [...pendingNew(), ...unseen].sort((left, right) =>
+          right.fetched_ts.localeCompare(left.fetched_ts),
+        );
+        return insertNewItems(incoming);
+      }
+      if (unseen.length > 0) {
         setPendingNew((current) => mergeNewItems(current, unseen));
+      }
+      return unseen.length;
     } catch (caught) {
       handleError(caught);
+      return 0;
     } finally {
       pollInFlight = false;
     }
@@ -523,13 +532,12 @@ export function App(props: { token: () => string; signOut(): void }) {
     void reload(order(), next);
   };
 
-  const insertPendingNew = () => {
-    const incoming = pendingNew();
-    if (incoming.length === 0) return;
+  const insertNewItems = (incoming: Item[]): number => {
+    if (incoming.length === 0) return 0;
     const known = new Set(items().map((item) => item.item_id));
     const added = incoming.filter((item) => !known.has(item.item_id));
     setPendingNew([]);
-    if (added.length === 0) return;
+    if (added.length === 0) return 0;
     setItems((current) => mergeNewItems(current, added));
     const visible = visibleItemIDs(added, unreadOnly());
     if (visible.length > 0) {
@@ -542,7 +550,10 @@ export function App(props: { token: () => string; signOut(): void }) {
       setLayoutVersion((value) => value + 1);
     }
     setScrollTopVersion((value) => value + 1);
+    return added.length;
   };
+
+  const insertPendingNew = () => insertNewItems(pendingNew());
 
   const toggleOrder = async () => {
     if (mode() === "archive") return;
@@ -731,15 +742,6 @@ export function App(props: { token: () => string; signOut(): void }) {
             </button>
           </div>
         </header>
-        <Show when={mode() === "live" && pendingNew().length > 0}>
-          <button
-            type="button"
-            class="new-items-pill"
-            onClick={insertPendingNew}
-          >
-            {pendingNew().length} new
-          </button>
-        </Show>
         <Show when={error()}>
           <div class="error-banner" role="alert">
             <span>{error()}</span>
@@ -789,6 +791,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               hasMore={cursor() !== ""}
               archive={mode() === "archive"}
               linkActionID={linkActionID()}
+              pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
               onOpen={markOpened}
               onSignal={setSignal}
@@ -802,6 +805,8 @@ export function App(props: { token: () => string; signOut(): void }) {
               onToggleOrder={toggleOrder}
               onToggleUnread={toggleUnread}
               onUndo={undoLast}
+              onInsertNew={insertPendingNew}
+              onRefresh={() => pollNew(true)}
             />
           </Show>
         </Show>
@@ -830,6 +835,12 @@ export function App(props: { token: () => string; signOut(): void }) {
                 mode() === "live" &&
                 queueEvent(item().item_id, { clicked_through: true })
               }
+              onRetry={() => {
+                api
+                  .retryItem(item().item_id)
+                  .then(() => showToast("success", "Extraction queued"))
+                  .catch(handleError);
+              }}
               onDwell={(itemID, dwellMS) =>
                 mode() === "live" && queueEvent(itemID, { dwell_ms: dwellMS })
               }

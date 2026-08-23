@@ -38,7 +38,9 @@ export interface Item {
   url: string;
   title: string;
   summary?: string;
+  summary_source: "feed" | "body" | "generated" | "";
   author?: string;
+  display_date?: string;
   published_ts: string;
   fetched_ts: string;
   media_url?: string;
@@ -46,6 +48,7 @@ export interface Item {
   media_h?: number;
   body_url?: string;
   has_body: boolean;
+  extract_quality: number;
   score: number;
   size: "S" | "M" | "L";
   why?: Why;
@@ -73,6 +76,7 @@ export interface Feed {
   custom_title?: string;
   tags: string[];
   muted: boolean;
+  always_generate: boolean;
   fetch_interval_h: 1 | 6 | 24;
   favicon_url?: string;
   last_fetch_at?: string;
@@ -84,6 +88,9 @@ export interface Feed {
   prior_signals: number;
   status: "ok" | "slowed" | "broken" | "muted";
   item_count: number;
+  extraction_success_rate?: number;
+  median_extract_quality?: number;
+  extraction_sample: number;
 }
 
 export interface FeedCandidate {

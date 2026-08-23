@@ -19,7 +19,7 @@ import {
 import { upsertFeed } from "./feed-list";
 import { relativeTime } from "./Grid";
 
-type FeedSort = "title" | "updated" | "errors" | "prior";
+type FeedSort = "title" | "updated" | "errors" | "prior" | "quality";
 
 export function Feeds(props: {
   api: APIClient;
@@ -81,6 +81,14 @@ export function Feeds(props: {
         case "prior":
           return (
             second.prior - first.prior ||
+            displayTitle(first).localeCompare(displayTitle(second))
+          );
+        case "quality":
+          return (
+            (first.extraction_success_rate ?? 2) -
+              (second.extraction_success_rate ?? 2) ||
+            (first.median_extract_quality ?? 2) -
+              (second.median_extract_quality ?? 2) ||
             displayTitle(first).localeCompare(displayTitle(second))
           );
         default:
@@ -150,9 +158,10 @@ export function Feeds(props: {
         tags: feed.tags,
         custom_title: feed.custom_title,
       });
-      if (feed.muted || feed.fetch_interval_h !== 1) {
+      if (feed.muted || feed.always_generate || feed.fetch_interval_h !== 1) {
         await props.api.patchFeed(restored.feed.feed_id, {
           muted: feed.muted,
+          always_generate: feed.always_generate,
           fetch_interval_h: feed.fetch_interval_h,
         });
       }
@@ -234,6 +243,7 @@ export function Feeds(props: {
               <option value="updated">Last update</option>
               <option value="errors">Errors first</option>
               <option value="prior">Prior</option>
+              <option value="quality">Extraction quality</option>
             </select>
             <Icon name="menu" class="sort-menu-icon" />
           </label>
@@ -414,7 +424,14 @@ function FeedDrawer(props: {
 
   const patch = async (
     value: Partial<
-      Pick<Feed, "custom_title" | "tags" | "muted" | "fetch_interval_h">
+      Pick<
+        Feed,
+        | "custom_title"
+        | "tags"
+        | "muted"
+        | "always_generate"
+        | "fetch_interval_h"
+      >
     >,
   ) => {
     setWorking(true);
@@ -547,6 +564,35 @@ function FeedDrawer(props: {
             </For>
           </div>
         </fieldset>
+        <section class="drawer-content">
+          <h3>CONTENT</h3>
+          <div class="content-row extraction-row">
+            <span>
+              <strong>Extraction</strong>
+              <small>Last 30 days</small>
+            </span>
+            <ExtractionQuality feed={props.feed} />
+          </div>
+          <label class="content-row generate-row">
+            <span>
+              <strong>Always generate summaries</strong>
+              <small>
+                {props.feed.always_generate
+                  ? "On for this feed · adds ~2s to first open"
+                  : "Even when the body extracts cleanly"}
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={props.feed.always_generate}
+              disabled={working()}
+              onChange={(event) =>
+                void patch({ always_generate: event.currentTarget.checked })
+              }
+            />
+            <i />
+          </label>
+        </section>
         <label class="mute-row">
           <Icon name="mute" />
           <span>
@@ -623,6 +669,32 @@ function FeedDrawer(props: {
           </Show>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function ExtractionQuality(props: { feed: Feed }) {
+  const available = () =>
+    props.feed.extraction_success_rate !== undefined &&
+    props.feed.median_extract_quality !== undefined;
+  const label = () => {
+    if (available())
+      return `${Math.round((props.feed.extraction_success_rate ?? 0) * 100)}% · ${(props.feed.median_extract_quality ?? 0).toFixed(2)}`;
+    if ((props.feed.extraction_sample ?? 0) > 0) return "not yet";
+    return "— · —";
+  };
+  return (
+    <div class="quality-value">
+      <Show when={available()}>
+        <i>
+          <b
+            style={{
+              width: `${Math.round((props.feed.extraction_success_rate ?? 0) * 100)}%`,
+            }}
+          />
+        </i>
+      </Show>
+      <span>{label()}</span>
     </div>
   );
 }

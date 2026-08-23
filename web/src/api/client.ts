@@ -128,6 +128,12 @@ export class APIClient {
     });
   }
 
+  retryItem(itemID: string): Promise<{ queued: boolean }> {
+    return this.request(`/items/${encodeURIComponent(itemID)}/retry`, {
+      method: "POST",
+    });
+  }
+
   recomputeRanking(): Promise<{
     model: import("../types").RankingModel;
     items_rescored?: number;
@@ -162,7 +168,14 @@ export class APIClient {
   patchFeed(
     feedID: string,
     patch: Partial<
-      Pick<Feed, "custom_title" | "tags" | "muted" | "fetch_interval_h">
+      Pick<
+        Feed,
+        | "custom_title"
+        | "tags"
+        | "muted"
+        | "always_generate"
+        | "fetch_interval_h"
+      >
     >,
   ): Promise<Feed> {
     return this.request(`/feeds/${encodeURIComponent(feedID)}`, {

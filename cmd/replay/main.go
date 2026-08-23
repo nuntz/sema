@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,11 +22,13 @@ import (
 )
 
 type replay struct {
-	store    *store.Store
-	queue    *sqs.Client
-	embedder embed.Embedder
-	queueURL string
-	version  string
+	store        *store.Store
+	queue        *sqs.Client
+	embedder     embed.Embedder
+	queueURL     string
+	version      string
+	forceExtract bool
+	forceSummary bool
 }
 
 func (r *replay) run(ctx context.Context) error {
@@ -70,20 +73,26 @@ func (r *replay) run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		messages := make([]domain.ItemMessage, 0, len(items))
-		for _, item := range items {
-			messages = append(messages, domain.ItemMessage{
-				User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL,
-				Title: item.Title, Author: item.Author, PublishedTS: item.PublishedTS, Reprocess: true,
-			})
-		}
+		messages := replayMessages(userID, items, r.forceExtract, r.forceSummary)
 		if err := r.enqueue(ctx, messages); err != nil {
 			return err
 		}
 		totalItems += len(messages)
 	}
-	slog.Info("replay queued", "users", len(users), "signals_reembedded", totalSignals, "items_queued", totalItems, "model_version", r.version)
+	slog.Info("replay queued", "users", len(users), "signals_reembedded", totalSignals, "items_queued", totalItems, "model_version", r.version, "force_extract", r.forceExtract, "force_summary", r.forceSummary)
 	return nil
+}
+
+func replayMessages(userID string, items []domain.Item, forceExtract, forceSummary bool) []domain.ItemMessage {
+	messages := make([]domain.ItemMessage, 0, len(items))
+	for _, item := range items {
+		messages = append(messages, domain.ItemMessage{
+			User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL,
+			Title: item.Title, Author: item.Author, PublishedTS: item.PublishedTS, DisplayDate: item.DisplayDate, Reprocess: true,
+			ForceExtract: forceExtract, ForceSummary: forceSummary,
+		})
+	}
+	return messages
 }
 
 func (r *replay) enqueue(ctx context.Context, messages []domain.ItemMessage) error {
@@ -103,6 +112,9 @@ func (r *replay) enqueue(ctx context.Context, messages []domain.ItemMessage) err
 		if err != nil {
 			return err
 		}
+		if output == nil {
+			return fmt.Errorf("enqueue replay items: empty SQS response")
+		}
 		if len(output.Failed) > 0 {
 			return fmt.Errorf("failed to enqueue %d replay items: %s", len(output.Failed), aws.ToString(output.Failed[0].Message))
 		}
@@ -119,6 +131,9 @@ func capRunes(value string, count int) string {
 }
 
 func main() {
+	forceExtract := flag.Bool("force-extract", false, "re-run extraction and media for every live item")
+	forceSummary := flag.Bool("force-summary", false, "re-run summary generation for every eligible live item")
+	flag.Parse()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	ctx := context.Background()
 	repository, config, err := store.FromEnv(ctx)
@@ -135,7 +150,7 @@ func main() {
 	}
 	command := &replay{
 		store: repository, queue: sqs.NewFromConfig(config), embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), version),
-		queueURL: queueURL, version: version,
+		queueURL: queueURL, version: version, forceExtract: *forceExtract, forceSummary: *forceSummary,
 	}
 	if err := command.run(ctx); err != nil {
 		panic(err)

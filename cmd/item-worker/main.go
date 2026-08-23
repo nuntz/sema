@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -25,13 +26,20 @@ import (
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
+	"github.com/nuntz/sema/internal/summarize"
+	bedrocksummary "github.com/nuntz/sema/internal/summarize/bedrock"
 )
+
+type httpClient interface {
+	Get(context.Context, string, http.Header) (httpx.Response, error)
+}
 
 type handler struct {
 	store          *store.Store
-	http           *httpx.Client
+	http           httpClient
 	media          *media.Processor
 	embedder       embed.Embedder
+	summarizer     summarize.Summarizer
 	models         *score.Cache
 	modelVersion   string
 	scoringVersion string
@@ -98,7 +106,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	processAssets := !message.Reprocess || message.ForceExtract
 	if message.Reprocess && !message.ForceExtract {
 		keys := []string{}
-		if existing.HasBody && existing.BodyKey != "" {
+		if existing.BodyKey != "" {
 			keys = append(keys, existing.BodyKey)
 		}
 		if existing.MediaKey != "" {
@@ -133,14 +141,32 @@ func (h *handler) process(ctx context.Context, body string) error {
 			article = extract.Result{}
 		}
 	}
-
-	summary := existing.Summary
-	if processAssets {
-		if refreshed := extract.Summary(message.SummaryRaw, article.FirstParagraph); refreshed != "" {
-			summary = refreshed
+	if message.ForceSummary && article.HTML == "" && existing.BodyKey != "" {
+		if storedBody, _, contentErr := h.store.Content(ctx, existing.BodyKey); contentErr == nil {
+			article = extract.Result{
+				HTML: string(storedBody), Text: extract.PlainText(string(storedBody)), FirstParagraph: extract.FirstParagraph(string(storedBody)), Quality: existing.ExtractQuality,
+			}
+		} else {
+			slog.Warn("body unavailable for forced summary", "user", message.User, "item_id", message.ItemID, "error", contentErr)
 		}
 	}
+
+	summary, summarySource := existing.Summary, existing.SummarySource
+	if summarySource == "" && summary != "" {
+		summarySource = domain.SummarySourceFeed
+	}
+	summaryMetrics := map[string]float64{}
+	if !message.Reprocess || message.ForceSummary {
+		fallbackRaw := message.SummaryRaw
+		force := feed.AlwaysGenerate
+		if message.ForceSummary {
+			fallbackRaw = existing.Summary
+			force = forceSummaryGeneration(feed.AlwaysGenerate, existing.SummarySource)
+		}
+		summary, summarySource, summaryMetrics = h.chooseSummary(ctx, message.Title, fallbackRaw, article, force)
+	}
 	mediaKey, mediaW, mediaH := existing.MediaKey, existing.MediaW, existing.MediaH
+	embedMediaSucceeded, embedMediaFailed := 0, 0
 	if processAssets {
 		feedURL, feedErr := url.Parse(feed.SiteURL)
 		if feedErr != nil || feedURL.Host == "" {
@@ -166,16 +192,41 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 			slog.Warn("media failed", attributes...)
 		}
+		var embedFailures []error
+		article.HTML, embedFailures = extract.ResolveMediaCards(article.HTML, func(card extract.MediaCard) (string, error) {
+			thumbnailURL, thumbnailErr := h.embedThumbnailURL(ctx, card)
+			if thumbnailErr != nil {
+				embedMediaFailed++
+				return "", thumbnailErr
+			}
+			thumbnail, mediaErr := h.media.FetchEmbed(ctx, thumbnailURL)
+			if mediaErr != nil {
+				embedMediaFailed++
+				return "", mediaErr
+			}
+			objectKey := store.EmbedMediaKey(message.User, message.ItemID, card.Index)
+			if err := h.store.PutContent(ctx, objectKey, thumbnail.ContentType, thumbnail.Bytes); err != nil {
+				embedMediaFailed++
+				return "", fmt.Errorf("store embed thumbnail: %w", err)
+			}
+			embedMediaSucceeded++
+			return h.store.ContentURL(objectKey), nil
+		})
+		for _, embedErr := range embedFailures {
+			slog.Warn("embed thumbnail failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", embedErr)
+		}
 	}
 	bodyKey, hasBody := existing.BodyKey, existing.HasBody
+	extractQuality := existing.ExtractQuality
 	if processAssets {
 		bodyKey, hasBody = "", false
+		extractQuality = article.Quality
 		if article.HTML != "" {
 			bodyKey = store.BodyKey(message.User, message.ItemID)
 			if err := h.store.PutContent(ctx, bodyKey, "text/html; charset=utf-8", []byte(article.HTML)); err != nil {
 				return fmt.Errorf("store body: %w", err)
 			}
-			hasBody = true
+			hasBody = extractQuality >= 0.3
 		}
 	}
 	embedTitle := message.Title
@@ -223,18 +274,32 @@ func (h *handler) process(ctx context.Context, body string) error {
 			why = score.Why(result, vector, feedTitle, liked)
 		}
 	}
+	author := strings.TrimSpace(message.Author)
+	if author == "" {
+		author = strings.TrimSpace(article.Author)
+	}
+	if author == "" {
+		author = existing.Author
+	}
+	displayDate := message.DisplayDate
+	if displayDate == "" && article.DisplayDate != "" {
+		displayDate = article.DisplayDate
+	}
+	if displayDate == "" {
+		displayDate = existing.DisplayDate
+	}
 	item := domain.Item{
 		PK: domain.UserPK(message.User), SK: domain.ItemSK(published, message.ItemID), FeedPK: "F#" + message.FeedID,
 		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feedTitle, FaviconKey: feed.FaviconKey,
-		URL: message.URL, Title: embedTitle, Summary: summary, Author: message.Author,
+		URL: message.URL, Title: embedTitle, Summary: summary, SummarySource: summarySource, Author: author, DisplayDate: displayDate,
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
-		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, BodyKey: bodyKey, HasBody: hasBody,
+		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
 		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
 	}
 	written := false
 	if message.Reprocess {
 		item.PK, item.SK, item.FeedPK = existing.PK, existing.SK, existing.FeedPK
-		item.URL, item.Author = existing.URL, existing.Author
+		item.URL = existing.URL
 		item.FetchedTS, item.TTL = existing.FetchedTS, existing.TTL
 		item.ArchiveSK, item.HeartedTS = existing.ArchiveSK, existing.HeartedTS
 		if err := h.store.OverwriteItem(ctx, item); err != nil {
@@ -247,8 +312,18 @@ func (h *handler) process(ctx context.Context, body string) error {
 			return err
 		}
 	}
-	slog.Info("item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "written", written, "has_body", hasBody, "has_media", mediaKey != "", "duration_ms", time.Since(started).Milliseconds())
+	slog.Info("item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "written", written, "has_body", hasBody, "extract_quality", extractQuality, "summary_source", summarySource, "has_media", mediaKey != "", "duration_ms", time.Since(started).Milliseconds())
 	metrics := map[string]float64{"ItemWorkerDurationMs": float64(time.Since(started).Milliseconds()), "BedrockLatencyMs": float64(time.Since(embedStarted).Milliseconds())}
+	for name, metric := range summaryMetrics {
+		metrics[name] = metric
+	}
+	metrics["ExtractionQuality"] = extractQuality
+	if embedMediaSucceeded > 0 {
+		metrics["EmbedMediaSucceeded"] = float64(embedMediaSucceeded)
+	}
+	if embedMediaFailed > 0 {
+		metrics["EmbedMediaFailed"] = float64(embedMediaFailed)
+	}
 	if written {
 		metrics["ItemsWritten"] = 1
 	} else {
@@ -266,6 +341,69 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	observability.Emit(metrics, nil)
 	return nil
+}
+
+func forceSummaryGeneration(alwaysGenerate bool, existingSource string) bool {
+	return alwaysGenerate || existingSource == domain.SummarySourceGenerated || existingSource == domain.SummarySourceBody
+}
+
+func (h *handler) embedThumbnailURL(ctx context.Context, card extract.MediaCard) (string, error) {
+	if card.ThumbnailURL != "" {
+		return card.ThumbnailURL, nil
+	}
+	if card.Provider != "Vimeo" || card.URL == "" {
+		return "", fmt.Errorf("%s embed has no thumbnail", card.Provider)
+	}
+	oembedURL := "https://vimeo.com/api/oembed.json?url=" + url.QueryEscape(card.URL)
+	response, err := h.http.Get(ctx, oembedURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("fetch Vimeo oEmbed: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return "", fmt.Errorf("fetch Vimeo oEmbed: HTTP status %d", response.StatusCode)
+	}
+	var metadata struct {
+		ThumbnailURL string `json:"thumbnail_url"`
+	}
+	if err := json.Unmarshal(response.Body, &metadata); err != nil {
+		return "", fmt.Errorf("decode Vimeo oEmbed: %w", err)
+	}
+	if strings.TrimSpace(metadata.ThumbnailURL) == "" {
+		return "", fmt.Errorf("Vimeo oEmbed returned no thumbnail")
+	}
+	return metadata.ThumbnailURL, nil
+}
+
+func (h *handler) chooseSummary(ctx context.Context, title, summaryRaw string, article extract.Result, force bool) (string, string, map[string]float64) {
+	metrics := map[string]float64{}
+	feedSummary := extract.Summary(summaryRaw, "")
+	if !summarize.IsJunk(summaryRaw, title, force) {
+		return feedSummary, domain.SummarySourceFeed, metrics
+	}
+	bodyFallback := extract.Summary("", article.FirstParagraph)
+	if bodyFallback == "" {
+		bodyFallback = extract.Summary("", article.Text)
+	}
+	if article.Quality < 0.3 || strings.TrimSpace(article.Text) == "" {
+		metrics["SummaryFallbackNoBody"] = 1
+		if feedSummary != "" {
+			return feedSummary, domain.SummarySourceFeed, metrics
+		}
+		return bodyFallback, domain.SummarySourceBody, metrics
+	}
+	started := time.Now()
+	if h.summarizer != nil {
+		if generated, err := h.summarizer.Summarize(ctx, title, article.Text); err == nil {
+			metrics["SummariesGenerated"] = 1
+			metrics["SummaryLatencyMs"] = float64(time.Since(started).Milliseconds())
+			return generated, domain.SummarySourceGenerated, metrics
+		} else {
+			slog.WarnContext(ctx, "summary generation failed", "error", err)
+		}
+	}
+	metrics["SummaryFallbackBody"] = 1
+	metrics["SummaryFallbackError"] = 1
+	return bodyFallback, domain.SummarySourceBody, metrics
 }
 
 func ingestSize(value float64, scoringVersion string, model domain.Model) string {
@@ -325,8 +463,14 @@ func main() {
 	if scoringVersion == "" {
 		scoringVersion = score.VersionV2
 	}
-	embedder := bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), modelVersion)
-	h := &handler{store: repository, http: articleHTTP, media: processor, embedder: embedder, modelVersion: modelVersion, scoringVersion: scoringVersion}
+	summaryModel := strings.TrimSpace(os.Getenv("SUMMARIZE_MODEL"))
+	if summaryModel == "" {
+		summaryModel = bedrocksummary.ModelID
+	}
+	runtime := bedrockruntime.NewFromConfig(config)
+	embedder := bedrockembed.NewWithModel(runtime, modelVersion)
+	summarizer := summarize.New(bedrocksummary.NewWithModel(runtime, summaryModel))
+	h := &handler{store: repository, http: articleHTTP, media: processor, embedder: embedder, summarizer: summarizer, modelVersion: modelVersion, scoringVersion: scoringVersion}
 	h.models = score.NewCache(repository, 5*time.Minute, modelVersion)
 	lambda.Start(h.run)
 }

@@ -6,6 +6,7 @@ import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
 import Clock from "lucide-solid/icons/clock";
 import Download from "lucide-solid/icons/download";
+import Ellipsis from "lucide-solid/icons/ellipsis";
 import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
 import Link from "lucide-solid/icons/link";
@@ -65,6 +66,7 @@ const glyphs = {
   "import-opml": Upload,
   keep: Heart,
   menu: ChevronDown,
+  more: Ellipsis,
   mute: Pause,
   "next-item": ChevronRight,
   "open-original": ExternalLink,

@@ -61,23 +61,27 @@ func (c *Connector) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchRe
 	}
 	for _, item := range parsed.Items {
 		published := time.Now().UTC()
+		displayDate := ""
 		if item.PublishedParsed != nil {
 			published = item.PublishedParsed.UTC()
+			displayDate = domain.Timestamp(published)
 		} else if item.UpdatedParsed != nil {
 			published = item.UpdatedParsed.UTC()
+			displayDate = domain.Timestamp(published)
 		}
 		author := ""
 		if item.Author != nil {
 			author = item.Author.Name
 		}
 		entry := domain.Entry{
-			GUID:       item.GUID,
-			URL:        resolve(baseURL, item.Link),
-			Title:      strings.TrimSpace(item.Title),
-			SummaryRaw: item.Description,
-			ContentRaw: item.Content,
-			Author:     author,
-			Published:  published,
+			GUID:        item.GUID,
+			URL:         resolve(baseURL, item.Link),
+			Title:       strings.TrimSpace(item.Title),
+			SummaryRaw:  item.Description,
+			ContentRaw:  item.Content,
+			Author:      author,
+			Published:   published,
+			DisplayDate: displayDate,
 		}
 		for _, enclosure := range item.Enclosures {
 			entry.Enclosures = append(entry.Enclosures, domain.Enclosure{

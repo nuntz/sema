@@ -10,6 +10,10 @@ func MediaKey(userID, itemID, extension string) string {
 	return fmt.Sprintf("media/%s/%s/lead%s", userID, itemID, extension)
 }
 
+func EmbedMediaKey(userID, itemID string, index int) string {
+	return fmt.Sprintf("media/%s/%s/embed-%d.webp", userID, itemID, index)
+}
+
 func FaviconKey(feedID string) string {
 	return fmt.Sprintf("favicons/%s.png", feedID)
 }

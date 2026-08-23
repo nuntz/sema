@@ -131,7 +131,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		messages = append(messages, domain.ItemMessage{
 			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, Title: entry.Title,
 			SummaryRaw: truncateBytes(entry.SummaryRaw, 20<<10), ContentRaw: truncateBytes(entry.ContentRaw, 200<<10),
-			Author: entry.Author, PublishedTS: domain.Timestamp(entry.Published), EnclosureURLs: entry.Enclosures,
+			Author: entry.Author, PublishedTS: domain.Timestamp(entry.Published), DisplayDate: entry.DisplayDate, EnclosureURLs: entry.Enclosures,
 		})
 	}
 	if err := h.enqueue(ctx, messages); err != nil {
@@ -180,6 +180,7 @@ func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain
 	fetched.CustomTitle = current.CustomTitle
 	fetched.Tags = current.Tags
 	fetched.Muted = current.Muted
+	fetched.AlwaysGenerate = current.AlwaysGenerate
 	if domain.FeedIntervalHours(current) != domain.FeedIntervalHours(fetched) && fetched.ErrorCount == 0 {
 		if lastFetch, parseErr := time.Parse(time.RFC3339Nano, fetched.LastFetchAt); parseErr == nil {
 			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(current)))

@@ -109,9 +109,11 @@ the on-demand rescore:
 ```sh
 cd infra
 pulumi config set sema:modelVersion amazon.titan-embed-text-v2:0
+pulumi config set sema:summarizeModel amazon.nova-micro-v1:0
 pulumi up
 cd ..
 make replay STACK=dev MODEL_VERSION=amazon.titan-embed-text-v2:0
+make replay STACK=dev FLAGS="--force-extract --force-summary"
 make rescore STACK=dev
 ```
 
@@ -121,7 +123,9 @@ replay start and target version; scheduled rescoring pauses for one hour while
 that marker is active. An on-demand rescore is allowed to complete the
 migration and clears the marker. Rows tagged with a different model version
 are never combined in a centroid. Stored titles are the replay fallback;
-archived bodies can be used by a future higher-fidelity migration command.
+archived bodies are deliberately not replayed: a kept body is frozen at heart
+time. Replay overwrites only live item rows and leaves read, signal, behaviour,
+heart, and `hearted_ts` state untouched.
 
 ## Runtime flow
 
