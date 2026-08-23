@@ -759,7 +759,7 @@ function ColdStart(props: { onImport(): void }) {
       <button type="button" onClick={props.onImport}>
         Import OPML
       </button>
-      <small>ranking activates at ~30 signals · 0 so far</small>
+      <small>ranking activates at ~10 signals · 0 so far</small>
     </section>
   );
 }
