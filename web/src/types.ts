@@ -11,6 +11,19 @@ export interface MeResponse {
   profile: Profile;
   signal_count: number;
   heart_count: number;
+  model: RankingModel;
+}
+
+export interface RankingModel {
+  explicit_count: number;
+  implicit_count: number;
+  computed_at?: string;
+  version?: string;
+}
+
+export interface Why {
+  title?: string;
+  feed_title?: string;
 }
 
 export interface Item {
@@ -31,6 +44,7 @@ export interface Item {
   has_body: boolean;
   score: number;
   size: "S" | "M" | "L";
+  why?: Why;
   read: boolean;
   signal: -1 | 0 | 1;
   hearted: boolean;
@@ -57,4 +71,6 @@ export interface Feed {
   last_status?: string;
   error_count: number;
   next_fetch_at: string;
+  prior: number;
+  prior_signals: number;
 }

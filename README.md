@@ -4,7 +4,7 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
 
 This repository contains the complete MVP stack:
 
-- four Go Lambda functions (`scheduler`, `feed-worker`, `item-worker`, and `api`);
+- five Go Lambda functions (`scheduler`, `feed-worker`, `item-worker`, `api`, and `rescore`);
 - RSS, Atom, JSON Feed, OPML, extraction, sanitization, media, embeddings, and scoring packages;
 - a SolidJS/TypeScript PWA with a virtualized justified grid and overlay reader;
 - one Pulumi Go project for DynamoDB, S3, CloudFront, SQS, API Gateway, IAM, EventBridge, and alarms.
@@ -26,7 +26,7 @@ make test
 make build
 ```
 
-`make build` creates four arm64 Lambda archives in `bin/` and the production SPA in `web/dist/`. The item worker uses the spec-approved JPEG q85 fallback because its image path is fully static and CGO-free; the object key and content type accurately use `.jpg`/`image/jpeg`.
+`make build` creates five arm64 Lambda archives in `bin/` and the production SPA in `web/dist/`. The item worker uses the spec-approved JPEG q85 fallback because its image path is fully static and CGO-free; the object key and content type accurately use `.jpg`/`image/jpeg`.
 
 Frontend-only commands:
 
@@ -57,6 +57,36 @@ Pulumi generates an RSA key in encrypted stack state, registers its public half 
 
 `pulumi up` runs the pinned Bun install and builds the Lambda archives and SPA before registering their assets, so a clean checkout does not need a separate build command. `make deploy` is an equivalent shortcut from the repository root.
 
+## Ranking maintenance
+
+The nightly `rescore` Lambda rebuilds each MODEL row from explicit and
+behaviour signals, then updates scores, size buckets, and explanations across
+the live seven-day window. It can be run on demand:
+
+```sh
+make rescore STACK=dev
+```
+
+For an embedding-model upgrade, set a new version and replay the window before
+the on-demand rescore:
+
+```sh
+cd infra
+pulumi config set sema:modelVersion amazon.titan-embed-text-v2:0
+pulumi up
+cd ..
+make replay STACK=dev MODEL_VERSION=amazon.titan-embed-text-v2:0
+make rescore STACK=dev
+```
+
+Replay re-embeds retained `S#` and `B#` rows from their stored titles before
+queueing every live item with `reprocess: true`. The MODEL row records the
+replay start and target version; scheduled rescoring pauses for one hour while
+that marker is active. An on-demand rescore is allowed to complete the
+migration and clears the marker. Rows tagged with a different model version
+are never combined in a centroid. Stored titles are the replay fallback;
+archived bodies can be used by a future higher-fidelity migration command.
+
 ## Runtime flow
 
 ```text
@@ -67,6 +97,8 @@ EventBridge -> scheduler -> feeds-q -> feed-worker -> items-q -> item-worker
 
 browser -> CloudFront -> S3 app/content
                     \-> HTTP API (Google JWT) -> api Lambda
+
+EventBridge (09:00 UTC) -> rescore Lambda -> MODEL + live item scores
 ```
 
 Feed and item queue consumers use partial-batch failure reporting. Fetches are bounded by time, redirect count, and body size. Item storage is deterministic and conditionally written, so SQS retries can safely repeat extraction and object uploads. DynamoDB TTL and prefix-scoped S3 lifecycle policies enforce the seven-day rolling window; archive and signal records intentionally have no TTL.

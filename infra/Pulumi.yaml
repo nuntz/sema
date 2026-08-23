@@ -4,3 +4,7 @@ description: Sema feed triage infrastructure
 config:
   sema:googleClientId:
     secret: true
+  sema:modelVersion:
+    default: amazon.titan-embed-text-v2:0
+  sema:scoringVersion:
+    default: "2"

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +122,26 @@ func TestDueFeedsQueriesSparseIndex(t *testing.T) {
 	}
 }
 
+func TestUserIDsCombineProfileMarkersAndLegacyFeeds(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		calls++
+		value := input.ExpressionAttributeValues[":index"].(*types.AttributeValueMemberS).Value
+		if calls == 1 && value != userIndexPK || calls == 2 && value != feedIndexPK {
+			t.Fatalf("index query %d = %q", calls, value)
+		}
+		items := []map[string]types.AttributeValue{{"PK": &types.AttributeValueMemberS{Value: "U#one"}}}
+		if value == feedIndexPK {
+			items = append(items, map[string]types.AttributeValue{"PK": &types.AttributeValueMemberS{Value: "U#two"}})
+		}
+		return &dynamodb.QueryOutput{Items: items}, nil
+	}}
+	users, err := New(db, nil, "table", "", "").UserIDs(context.Background())
+	if err != nil || calls != 2 || len(users) != 2 || users[0] != "one" || users[1] != "two" {
+		t.Fatalf("UserIDs = %#v, calls %d, %v", users, calls, err)
+	}
+}
+
 func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
 	var put *dynamodb.PutItemInput
 	var update *dynamodb.UpdateItemInput
@@ -148,6 +169,28 @@ func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
 	}
 	if aws.ToString(update.UpdateExpression) != "SET next_fetch_at = :next, gsi1pk = :feed" || update.ExpressionAttributeValues[":feed"].(*types.AttributeValueMemberS).Value != feedIndexPK {
 		t.Fatalf("schedule update = %#v", update)
+	}
+}
+
+func TestReplayOverwriteIsIdempotent(t *testing.T) {
+	var writes []map[string]types.AttributeValue
+	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		if input.ConditionExpression != nil {
+			t.Fatalf("replay overwrite retained dedupe condition %q", aws.ToString(input.ConditionExpression))
+		}
+		writes = append(writes, input.Item)
+		return &dynamodb.PutItemOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	item := domain.Item{PK: "U#user", SK: "I#item", ItemID: "item", Score: 0.8, Size: "L"}
+	if err := repository.OverwriteItem(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.OverwriteItem(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	if len(writes) != 2 || writes[0]["score"].(*types.AttributeValueMemberN).Value != writes[1]["score"].(*types.AttributeValueMemberN).Value {
+		t.Fatalf("double replay writes = %#v", writes)
 	}
 }
 
@@ -198,11 +241,65 @@ func TestSignalValuesSkipsEmptyBatch(t *testing.T) {
 	}
 }
 
+func TestBehaviourMergeIsMonotonic(t *testing.T) {
+	var updates []*dynamodb.UpdateItemInput
+	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		updates = append(updates, input)
+		return &dynamodb.UpdateItemOutput{}, nil
+	}}
+	dwell := int64(31_000)
+	item := domain.Item{ItemID: "item", FeedID: "feed", Title: "Title", Vector: []byte{1, 2}, ModelVersion: "v"}
+	err := New(db, nil, "table", "", "").RecordBehaviour(context.Background(), "user", item, BehaviourEvent{
+		Opened: true, DwellMS: &dwell, ClickedThrough: true, Shared: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("updates = %d, want metadata/flags plus dwell max", len(updates))
+	}
+	first := aws.ToString(updates[0].UpdateExpression)
+	for _, expression := range []string{
+		"opened_at = if_not_exists(opened_at, :opened)",
+		"#vector = if_not_exists(#vector, :vector)",
+		"#ttl = if_not_exists(#ttl, :ttl)",
+		"clicked_through = :clicked",
+		"#shared = :shared",
+	} {
+		if !strings.Contains(first, expression) {
+			t.Fatalf("first update %q lacks %q", first, expression)
+		}
+	}
+	if got := updates[0].ExpressionAttributeNames["#ttl"]; got != "ttl" {
+		t.Fatalf("ttl alias = %q, want ttl", got)
+	}
+	if got := updates[0].ExpressionAttributeNames["#shared"]; got != "shared" {
+		t.Fatalf("shared alias = %q, want shared", got)
+	}
+	if got := aws.ToString(updates[1].ConditionExpression); got != "attribute_not_exists(dwell_ms) OR dwell_ms < :dwell" {
+		t.Fatalf("dwell condition = %q", got)
+	}
+
+	updates = nil
+	if err := New(db, nil, "table", "", "").RecordBehaviour(context.Background(), "user", item, BehaviourEvent{Opened: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("open updates = %d, want one", len(updates))
+	}
+	if _, exists := updates[0].ExpressionAttributeNames["#shared"]; exists {
+		t.Fatal("non-share update includes unused #shared alias")
+	}
+}
+
 func TestSetSignalMaintainsProfileCount(t *testing.T) {
 	var signal map[string]types.AttributeValue
 	var deltas []string
 	db := &fakeDynamoDB{
 		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			if input.Item["SK"].(*types.AttributeValueMemberS).Value == "MODEL" {
+				return &dynamodb.PutItemOutput{}, nil
+			}
 			if input.ReturnValues != types.ReturnValueAllOld {
 				t.Fatalf("put return values = %q", input.ReturnValues)
 			}

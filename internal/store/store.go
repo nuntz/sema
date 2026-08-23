@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/score"
 )
 
 type dynamoAPI interface {
@@ -38,6 +39,7 @@ type s3API interface {
 	CopyObject(context.Context, *s3.CopyObjectInput, ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
 
@@ -49,7 +51,10 @@ type Store struct {
 	contentURL string
 }
 
-const feedIndexPK = "FEED"
+const (
+	feedIndexPK = "FEED"
+	userIndexPK = "USER"
+)
 
 func New(db dynamoAPI, objects s3API, table, bucket, contentURL string) *Store {
 	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/")}
@@ -61,13 +66,15 @@ func (s *Store) EnsureUser(ctx context.Context, userID, email string) error {
 		TableName: aws.String(s.table),
 		Key:       key(domain.UserPK(userID), "PROFILE"),
 		UpdateExpression: aws.String("SET email = if_not_exists(email, :email), created_at = if_not_exists(created_at, :now), " +
-			"order_pref = if_not_exists(order_pref, :order), heart_count = if_not_exists(heart_count, :zero), signal_count = if_not_exists(signal_count, :zero) REMOVE #read_boundary"),
+			"order_pref = if_not_exists(order_pref, :order), heart_count = if_not_exists(heart_count, :zero), signal_count = if_not_exists(signal_count, :zero), " +
+			"gsi1pk = :users, next_fetch_at = if_not_exists(next_fetch_at, :now) REMOVE #read_boundary"),
 		ExpressionAttributeNames: map[string]string{"#read_boundary": "read_boundary_ts"},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":email": &types.AttributeValueMemberS{Value: email},
 			":now":   &types.AttributeValueMemberS{Value: now},
 			":order": &types.AttributeValueMemberS{Value: string(domain.OrderChrono)},
 			":zero":  &types.AttributeValueMemberN{Value: "0"},
+			":users": &types.AttributeValueMemberS{Value: userIndexPK},
 		},
 	})
 	return err
@@ -223,6 +230,17 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 	return false, err
 }
 
+// OverwriteItem is reserved for replay: unlike PutItem it intentionally
+// replaces the existing live row at its stable key.
+func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
+	encoded, err := attributevalue.MarshalMap(item)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded})
+	return err
+}
+
 type cursor struct {
 	PK    string   `json:"p"`
 	SK    string   `json:"k"`
@@ -299,6 +317,139 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 	}
 	next, err := encodeCursor(last)
 	return items, next, err
+}
+
+func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, error) {
+	items := []domain.Item{}
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName:                aws.String(s.table),
+			KeyConditionExpression:   aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			FilterExpression:         aws.String("#ttl > :now"),
+			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
+				":prefix": &types.AttributeValueMemberS{Value: "I#"},
+				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+			},
+			ExclusiveStartKey: start,
+			ConsistentRead:    aws.Bool(true),
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Item
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		items = append(items, page...)
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return items, nil
+		}
+	}
+}
+
+func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
+	seen := make(map[string]bool)
+	users := []string{}
+	// FEED covers profiles created before the USER index marker was deployed.
+	for _, indexPK := range []string{userIndexPK, feedIndexPK} {
+		var start map[string]types.AttributeValue
+		for {
+			response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+				TableName: aws.String(s.table), IndexName: aws.String("by-next-fetch"),
+				KeyConditionExpression:    aws.String("gsi1pk = :index"),
+				ExpressionAttributeValues: map[string]types.AttributeValue{":index": &types.AttributeValueMemberS{Value: indexPK}},
+				ProjectionExpression:      aws.String("PK"), ExclusiveStartKey: start,
+			})
+			if err != nil {
+				return nil, err
+			}
+			for _, item := range response.Items {
+				pk, ok := item["PK"].(*types.AttributeValueMemberS)
+				if !ok || !strings.HasPrefix(pk.Value, "U#") {
+					continue
+				}
+				userID := strings.TrimPrefix(pk.Value, "U#")
+				if !seen[userID] {
+					seen[userID] = true
+					users = append(users, userID)
+				}
+			}
+			start = response.LastEvaluatedKey
+			if len(start) == 0 {
+				break
+			}
+		}
+	}
+	return users, nil
+}
+
+func (s *Store) ReplaceItems(ctx context.Context, items []domain.Item) error {
+	requests := make([]types.WriteRequest, 0, len(items))
+	for _, item := range items {
+		encoded, err := attributevalue.MarshalMap(item)
+		if err != nil {
+			return err
+		}
+		requests = append(requests, types.WriteRequest{PutRequest: &types.PutRequest{Item: encoded}})
+	}
+	for len(requests) > 0 {
+		count := min(25, len(requests))
+		pending := requests[:count]
+		for attempt := 0; len(pending) > 0 && attempt < 6; attempt++ {
+			response, err := s.db.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{RequestItems: map[string][]types.WriteRequest{s.table: pending}})
+			if err != nil {
+				return err
+			}
+			pending = response.UnprocessedItems[s.table]
+		}
+		if len(pending) > 0 {
+			return fmt.Errorf("%d rescore writes were throttled", len(pending))
+		}
+		requests = requests[count:]
+	}
+	return nil
+}
+
+func (s *Store) StartReplay(ctx context.Context, userID, version string, at time.Time) error {
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "MODEL"),
+		UpdateExpression: aws.String("SET replay_ts = :now, replay_version = :version"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":now":     &types.AttributeValueMemberS{Value: domain.Timestamp(at)},
+			":version": &types.AttributeValueMemberS{Value: version},
+		},
+	})
+	return err
+}
+
+func (s *Store) UpdateSignalEmbedding(ctx context.Context, userID, itemID string, vector []byte, version string) error {
+	return s.updateStoredEmbedding(ctx, userID, domain.SignalSK(itemID), vector, version)
+}
+
+func (s *Store) UpdateBehaviourEmbedding(ctx context.Context, userID, itemID string, vector []byte, version string) error {
+	return s.updateStoredEmbedding(ctx, userID, domain.BehaviourSK(itemID), vector, version)
+}
+
+func (s *Store) updateStoredEmbedding(ctx context.Context, userID, sk string, vector []byte, version string) error {
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
+		UpdateExpression:         aws.String("SET #vector = :vector, model_version = :version"),
+		ConditionExpression:      aws.String("attribute_exists(PK)"),
+		ExpressionAttributeNames: map[string]string{"#vector": "vector"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":vector":  &types.AttributeValueMemberB{Value: vector},
+			":version": &types.AttributeValueMemberS{Value: version},
+		},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil
+	}
+	return err
 }
 
 func itemPageKey(item map[string]types.AttributeValue, order domain.Order) map[string]types.AttributeValue {
@@ -508,7 +659,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	}
 	heartSignal, err := attributevalue.MarshalMap(domain.Signal{
 		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
-		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart",
+		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
 	})
 	if err != nil {
 		return "", 0, err
@@ -537,6 +688,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		TableName: aws.String(s.table), Item: heartSignal, ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
 	err = s.transact(ctx, withSignal)
+	signalCreated := err == nil
 	if isTransactionCanceled(err) {
 		// An existing explicit signal wins. The other conditions remain in the
 		// retry so the archive state still changes as one atomic unit.
@@ -551,6 +703,15 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 			return current.ArchiveSK, count, countErr
 		}
 		return "", 0, err
+	}
+	if signalCreated {
+		signal := domain.Signal{
+			PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
+			Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
+		}
+		if modelErr := s.applyExplicitModelUpdate(ctx, userID, nil, &signal, item.ModelVersion); modelErr != nil {
+			slog.ErrorContext(ctx, "increment heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
+		}
 	}
 	count, err := s.heartCount(ctx, userID)
 	return archiveSK, count, err
@@ -604,6 +765,7 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 		ExpressionAttributeValues: map[string]types.AttributeValue{":heart": &types.AttributeValueMemberS{Value: "heart"}},
 	}})
 	err = s.transact(ctx, withSignalDelete)
+	signalDeleted := err == nil
 	if isTransactionCanceled(err) {
 		// Missing or explicit signals must survive un-hearting.
 		err = s.transact(ctx, stateWrites)
@@ -614,6 +776,15 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 			return "", count, countErr
 		}
 		return "", 0, err
+	}
+	if signalDeleted {
+		old := domain.Signal{
+			PK: domain.UserPK(userID), SK: domain.SignalSK(itemID), ItemID: itemID, Value: 1,
+			Vector: archive.Vector, Title: archive.Title, FeedID: archive.FeedID, CreatedAt: archive.HeartedTS, Source: "heart", ModelVersion: archive.ModelVersion,
+		}
+		if modelErr := s.applyExplicitModelUpdate(ctx, userID, &old, nil, archive.ModelVersion); modelErr != nil {
+			slog.ErrorContext(ctx, "decrement heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
+		}
 	}
 	s.deleteArchiveContent(ctx, userID, itemID)
 	count, err := s.heartCount(ctx, userID)
@@ -675,7 +846,7 @@ func (s *Store) Signals(ctx context.Context, userID string) ([]domain.Signal, er
 			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "S#"},
-			}, ExclusiveStartKey: start,
+			}, ExclusiveStartKey: start, ConsistentRead: aws.Bool(true),
 		})
 		if err != nil {
 			return nil, err
@@ -690,6 +861,167 @@ func (s *Store) Signals(ctx context.Context, userID string) ([]domain.Signal, er
 			return result, nil
 		}
 	}
+}
+
+func (s *Store) Behaviours(ctx context.Context, userID string) ([]domain.Behaviour, error) {
+	result := []domain.Behaviour{}
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "B#"},
+			}, ExclusiveStartKey: start, ConsistentRead: aws.Bool(true),
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Behaviour
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		result = append(result, page...)
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return result, nil
+		}
+	}
+}
+
+func (s *Store) Behaviour(ctx context.Context, userID, itemID string) (domain.Behaviour, error) {
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.BehaviourSK(itemID)), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Behaviour{}, err
+	}
+	if len(response.Item) == 0 {
+		return domain.Behaviour{}, ErrNotFound
+	}
+	var row domain.Behaviour
+	return row, attributevalue.UnmarshalMap(response.Item, &row)
+}
+
+type BehaviourEvent struct {
+	Opened         bool
+	DwellMS        *int64
+	ClickedThrough bool
+	Shared         bool
+}
+
+// RecordBehaviour uses independent monotonic updates: flags only ever become
+// true, and the dwell update is conditional on increasing the stored maximum.
+func (s *Store) RecordBehaviour(ctx context.Context, userID string, item domain.Item, event BehaviourEvent) error {
+	now := time.Now().UTC()
+	names := map[string]string{
+		"#vector": "vector",
+		"#ttl":    "ttl",
+	}
+	values := map[string]types.AttributeValue{
+		":opened": &types.AttributeValueMemberS{Value: domain.Timestamp(now)},
+		":item":   &types.AttributeValueMemberS{Value: item.ItemID},
+		":feed":   &types.AttributeValueMemberS{Value: item.FeedID},
+		":title":  &types.AttributeValueMemberS{Value: item.Title},
+		":vector": &types.AttributeValueMemberB{Value: item.Vector},
+		":ttl":    &types.AttributeValueMemberN{Value: strconv.FormatInt(now.Add(90*24*time.Hour).Unix(), 10)},
+	}
+	sets := []string{
+		"opened_at = if_not_exists(opened_at, :opened)",
+		"item_id = if_not_exists(item_id, :item)",
+		"feed_id = if_not_exists(feed_id, :feed)",
+		"title = if_not_exists(title, :title)",
+		"#vector = if_not_exists(#vector, :vector)",
+		"#ttl = if_not_exists(#ttl, :ttl)",
+	}
+	if item.ModelVersion != "" {
+		values[":version"] = &types.AttributeValueMemberS{Value: item.ModelVersion}
+		sets = append(sets, "model_version = if_not_exists(model_version, :version)")
+	}
+	if event.Opened {
+		values[":open"] = &types.AttributeValueMemberBOOL{Value: true}
+		sets = append(sets, "opened = :open")
+	}
+	if event.ClickedThrough {
+		values[":clicked"] = &types.AttributeValueMemberBOOL{Value: true}
+		sets = append(sets, "clicked_through = :clicked")
+	}
+	if event.Shared {
+		names["#shared"] = "shared"
+		values[":shared"] = &types.AttributeValueMemberBOOL{Value: true}
+		sets = append(sets, "#shared = :shared")
+	}
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.BehaviourSK(item.ItemID)),
+		UpdateExpression: aws.String("SET " + strings.Join(sets, ", ")), ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+	})
+	if err != nil {
+		return err
+	}
+	if event.DwellMS == nil {
+		return nil
+	}
+	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.BehaviourSK(item.ItemID)),
+		UpdateExpression:          aws.String("SET dwell_ms = :dwell"),
+		ConditionExpression:       aws.String("attribute_not_exists(dwell_ms) OR dwell_ms < :dwell"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":dwell": &types.AttributeValueMemberN{Value: strconv.FormatInt(*event.DwellMS, 10)}},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil
+	}
+	return err
+}
+
+func (s *Store) Model(ctx context.Context, userID string) (domain.Model, error) {
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "MODEL"), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Model{}, err
+	}
+	if len(response.Item) == 0 {
+		return domain.Model{}, score.ErrModelNotFound
+	}
+	var model domain.Model
+	return model, attributevalue.UnmarshalMap(response.Item, &model)
+}
+
+func (s *Store) PutModel(ctx context.Context, model domain.Model) error {
+	encoded, err := attributevalue.MarshalMap(model)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded})
+	return err
+}
+
+func (s *Store) RecomputeModel(ctx context.Context, userID, version string) (domain.Model, error) {
+	for attempt := 0; attempt < 4; attempt++ {
+		previous, getErr := s.Model(ctx, userID)
+		if getErr != nil && !errors.Is(getErr, score.ErrModelNotFound) {
+			return domain.Model{}, getErr
+		}
+		signals, err := s.Signals(ctx, userID)
+		if err != nil {
+			return domain.Model{}, err
+		}
+		behaviours, err := s.Behaviours(ctx, userID)
+		if err != nil {
+			return domain.Model{}, err
+		}
+		model := score.BuildModel(userID, signals, behaviours, time.Now().UTC(), version)
+		if getErr == nil {
+			model.ReplayTS, model.ReplayVersion = previous.ReplayTS, previous.ReplayVersion
+		}
+		err = s.putModelIfUnchanged(ctx, model, previous.ComputedAt)
+		var conditional *types.ConditionalCheckFailedException
+		if errors.As(err, &conditional) {
+			continue
+		}
+		return model, err
+	}
+	return domain.Model{}, errors.New("ranking model changed too frequently")
 }
 
 func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []string) (map[string]int, error) {
@@ -745,12 +1077,19 @@ func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, 
 			if err != nil || len(response.Attributes) == 0 {
 				return err
 			}
-			return s.addSignalCount(ctx, userID, -1)
+			var old domain.Signal
+			if err := attributevalue.UnmarshalMap(response.Attributes, &old); err != nil {
+				return err
+			}
+			if err := s.addSignalCount(ctx, userID, -1); err != nil {
+				return err
+			}
+			return s.applyExplicitModelUpdate(ctx, userID, &old, nil, item.ModelVersion)
 		}
 	}
 	signal := domain.Signal{
 		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: value,
-		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(time.Now()),
+		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(time.Now()), ModelVersion: item.ModelVersion,
 	}
 	if heartSource {
 		signal.Source = "heart"
@@ -760,10 +1099,91 @@ func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, 
 		return err
 	}
 	response, err := s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded, ReturnValues: types.ReturnValueAllOld})
-	if err != nil || len(response.Attributes) > 0 {
+	if err != nil {
 		return err
 	}
-	return s.addSignalCount(ctx, userID, 1)
+	var old *domain.Signal
+	if len(response.Attributes) > 0 {
+		old = &domain.Signal{}
+		if err := attributevalue.UnmarshalMap(response.Attributes, old); err != nil {
+			return err
+		}
+	} else if err := s.addSignalCount(ctx, userID, 1); err != nil {
+		return err
+	}
+	return s.applyExplicitModelUpdate(ctx, userID, old, &signal, item.ModelVersion)
+}
+
+func (s *Store) applyExplicitModelUpdate(ctx context.Context, userID string, oldSignal, newSignal *domain.Signal, version string) error {
+	var behaviour *domain.Behaviour
+	if row, getErr := s.Behaviour(ctx, userID, firstSignalItemID(oldSignal, newSignal)); getErr == nil {
+		behaviour = &row
+	} else if !errors.Is(getErr, ErrNotFound) {
+		return getErr
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		model, err := s.Model(ctx, userID)
+		if err != nil {
+			if !errors.Is(err, score.ErrModelNotFound) {
+				return err
+			}
+			if version == "" {
+				version = score.LegacyEmbeddingVersion
+			}
+			_, err = s.RecomputeModel(ctx, userID, version)
+			return err
+		}
+		if version == "" {
+			version = model.Version
+		}
+		if model.Version != version && version != "" {
+			_, err = s.RecomputeModel(ctx, userID, version)
+			return err
+		}
+		previousComputedAt := model.ComputedAt
+		if !score.ApplyExplicit(&model, oldSignal, newSignal, behaviour, time.Now().UTC()) {
+			_, err = s.RecomputeModel(ctx, userID, version)
+			return err
+		}
+		err = s.putModelIfUnchanged(ctx, model, previousComputedAt)
+		var conditional *types.ConditionalCheckFailedException
+		if errors.As(err, &conditional) {
+			continue
+		}
+		return err
+	}
+	return errors.New("ranking model changed too frequently")
+}
+
+func (s *Store) putModelIfUnchanged(ctx context.Context, model domain.Model, previousComputedAt string) error {
+	encoded, err := attributevalue.MarshalMap(model)
+	if err != nil {
+		return err
+	}
+	input := &dynamodb.PutItemInput{
+		TableName: aws.String(s.table), Item: encoded,
+		ExpressionAttributeNames: map[string]string{"#computed": "computed_at"},
+	}
+	if previousComputedAt == "" {
+		input.ConditionExpression = aws.String("attribute_not_exists(#computed)")
+	} else {
+		input.ConditionExpression = aws.String("#computed = :previous")
+		input.ExpressionAttributeValues = map[string]types.AttributeValue{
+			":previous": &types.AttributeValueMemberS{Value: previousComputedAt},
+		}
+	}
+	_, err = s.db.PutItem(ctx, input)
+	return err
+}
+
+func firstSignalItemID(oldSignal, newSignal *domain.Signal) string {
+	if newSignal != nil {
+		return newSignal.ItemID
+	}
+	if oldSignal != nil {
+		return oldSignal.ItemID
+	}
+	return ""
 }
 
 func (s *Store) addSignalCount(ctx context.Context, userID string, delta int) error {
@@ -860,6 +1280,21 @@ func (s *Store) Content(ctx context.Context, objectKey string) ([]byte, string, 
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	return body, aws.ToString(response.ContentType), err
+}
+
+func (s *Store) ContentExists(ctx context.Context, objectKey string) (bool, error) {
+	if objectKey == "" {
+		return false, nil
+	}
+	_, err := s.s3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objectKey)})
+	if err == nil {
+		return true, nil
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "404") {
+		return false, nil
+	}
+	return false, err
 }
 
 func (s *Store) ContentURL(objectKey string) string {

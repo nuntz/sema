@@ -17,6 +17,7 @@ import {
   shouldMarkAtBottom,
   shouldShowEndCard,
 } from "../layout/read-state";
+import { whyText } from "../ranking-display";
 import type { Item } from "../types";
 import { HeartIcon } from "./HeartIcon";
 import { gridCommand } from "./keyboard";
@@ -37,6 +38,7 @@ interface GridProps {
   onHeart(item: Item): void;
   onToggleRead(item: Item): void;
   onCopy(item: Item): void;
+  onOriginal(item: Item): void;
   onMarkBelow(item: Item): void;
   onItemsPassed(ids: string[]): void;
   onLoadMore(): void;
@@ -363,7 +365,7 @@ export function Grid(props: GridProps) {
         if (item) props.onCopy(item);
         break;
       case "original":
-        if (item) window.open(item.url, "_blank", "noopener,noreferrer");
+        if (item) props.onOriginal(item);
         break;
       case "order":
         if (!props.archive) props.onToggleOrder();
@@ -458,13 +460,7 @@ export function Grid(props: GridProps) {
                             type="button"
                             aria-label="Open original"
                             title="Open original"
-                            onClick={() =>
-                              window.open(
-                                item().url,
-                                "_blank",
-                                "noopener,noreferrer",
-                              )
-                            }
+                            onClick={() => props.onOriginal(item())}
                           >
                             ↗
                           </button>
@@ -545,10 +541,25 @@ export function Grid(props: GridProps) {
                                   : ""}
                               </span>
                             </Show>
-                            <Show when={props.archive || !item().read}>
-                              <b>{Math.round(item().score * 100)}</b>
-                            </Show>
                           </div>
+                          <Show
+                            when={!props.archive && cell.effectiveSize === "L"}
+                          >
+                            <div class="why-hint why-l" title={whyText(item())}>
+                              {whyText(item())}
+                            </div>
+                          </Show>
+                          <Show
+                            when={
+                              !props.archive &&
+                              cell.effectiveSize === "M" &&
+                              whyText(item())
+                            }
+                          >
+                            <div class="why-hint why-m" title={whyText(item())}>
+                              {whyText(item())}
+                            </div>
+                          </Show>
                         </div>
                       </button>
                     </article>

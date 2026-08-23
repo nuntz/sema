@@ -1,0 +1,97 @@
+package rescore
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/score"
+)
+
+type fakeRepository struct {
+	model        domain.Model
+	signals      []domain.Signal
+	feeds        []domain.Feed
+	items        []domain.Item
+	recomputed   bool
+	replacements []domain.Item
+}
+
+func (f *fakeRepository) Model(context.Context, string) (domain.Model, error) {
+	if f.model.SK == "" {
+		return domain.Model{}, score.ErrModelNotFound
+	}
+	return f.model, nil
+}
+func (f *fakeRepository) PutModel(_ context.Context, model domain.Model) error {
+	f.model = model
+	return nil
+}
+func (f *fakeRepository) RecomputeModel(_ context.Context, userID, version string) (domain.Model, error) {
+	f.recomputed = true
+	f.model = score.BuildModel(userID, f.signals, nil, time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC), version)
+	return f.model, nil
+}
+func (f *fakeRepository) Signals(context.Context, string) ([]domain.Signal, error) {
+	return f.signals, nil
+}
+func (f *fakeRepository) Feeds(context.Context, string) ([]domain.Feed, error) {
+	return f.feeds, nil
+}
+func (f *fakeRepository) LiveItems(context.Context, string) ([]domain.Item, error) {
+	return append([]domain.Item(nil), f.items...), nil
+}
+func (f *fakeRepository) ReplaceItems(_ context.Context, items []domain.Item) error {
+	f.replacements = append([]domain.Item(nil), items...)
+	return nil
+}
+
+func TestGoldenRescoreUpdatesScoreSizeAndWhy(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	vector := score.EncodeVector([]float32{1, 0})
+	signals := make([]domain.Signal, 10)
+	for index := range signals {
+		signals[index] = domain.Signal{
+			ItemID: string(rune('a' + index)), Value: 1, Vector: vector, Title: "Liked story",
+			FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v",
+		}
+	}
+	repository := &fakeRepository{
+		model:   domain.Model{PK: "U#user", SK: "MODEL", Version: "v"},
+		signals: signals,
+		feeds:   []domain.Feed{{FeedID: "feed", Title: "Example Feed"}},
+		items: []domain.Item{{
+			PK: "U#user", SK: domain.ItemSK(now, "new"), ItemID: "new", FeedID: "feed", FeedTitle: "Example Feed",
+			PublishedTS: domain.Timestamp(now), Vector: vector, Score: 0.1, Size: "S", TTL: now.Add(time.Hour).Unix(),
+		}},
+	}
+	engine := Engine{Repository: repository, Version: "v", Now: func() time.Time { return now }}
+	result, err := engine.RunUser(context.Background(), "user", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ItemsRescored != 1 || len(repository.replacements) != 1 {
+		t.Fatalf("result = %#v, items = %#v", result, repository.replacements)
+	}
+	item := repository.replacements[0]
+	if item.Score < 0.99 || item.Size != "L" || item.Why == nil || item.Why.Title != "Liked story" {
+		t.Fatalf("rescored item = %#v", item)
+	}
+}
+
+func TestNightlyGuardrailHonoursRecentReplay(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{model: domain.Model{
+		PK: "U#user", SK: "MODEL", Version: "old", ReplayTS: domain.Timestamp(now.Add(-30 * time.Minute)),
+	}}
+	engine := Engine{Repository: repository, Version: "new", Now: func() time.Time { return now }}
+	_, err := engine.RunUser(context.Background(), "user", false)
+	if !errors.Is(err, ErrReplayActive) || repository.recomputed {
+		t.Fatalf("guard result = %v, recomputed %v", err, repository.recomputed)
+	}
+	if _, err := engine.RunUser(context.Background(), "user", true); err != nil {
+		t.Fatalf("on-demand rescore was blocked: %v", err)
+	}
+}

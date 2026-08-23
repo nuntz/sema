@@ -27,6 +27,14 @@ func main() {
 		stack := ctx.Stack()
 		cfg := config.New(ctx, "sema")
 		googleClientID := cfg.Require("googleClientId")
+		modelVersion := cfg.Get("modelVersion")
+		if modelVersion == "" {
+			modelVersion = "amazon.titan-embed-text-v2:0"
+		}
+		scoringVersion := cfg.Get("scoringVersion")
+		if scoringVersion == "" {
+			scoringVersion = "2"
+		}
 		if err := buildDeployAssets(googleClientID); err != nil {
 			return err
 		}
@@ -113,20 +121,27 @@ func main() {
 			return err
 		}
 
-		common := pulumi.StringMap{"TABLE_NAME": table.Name, "CONTENT_BUCKET": contentBucket.Bucket}
-		schedulerRole, err := lambdaRole(ctx, "scheduler", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, false)
+		common := pulumi.StringMap{
+			"TABLE_NAME": table.Name, "CONTENT_BUCKET": contentBucket.Bucket,
+			"MODEL_VERSION": pulumi.String(modelVersion), "SCORING_VERSION": pulumi.String(scoringVersion),
+		}
+		schedulerRole, err := lambdaRole(ctx, "scheduler", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, "")
 		if err != nil {
 			return err
 		}
-		feedRole, err := lambdaRole(ctx, "feed-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, false)
+		feedRole, err := lambdaRole(ctx, "feed-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, "")
 		if err != nil {
 			return err
 		}
-		itemRole, err := lambdaRole(ctx, "item-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, true)
+		itemRole, err := lambdaRole(ctx, "item-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, modelVersion)
 		if err != nil {
 			return err
 		}
-		apiRole, err := lambdaRole(ctx, "api", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, false)
+		apiRole, err := lambdaRole(ctx, "api", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, "")
+		if err != nil {
+			return err
+		}
+		rescoreRole, err := lambdaRole(ctx, "rescore", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, "")
 		if err != nil {
 			return err
 		}
@@ -143,8 +158,20 @@ func main() {
 		if err != nil {
 			return err
 		}
-		apiLambda, err := function(ctx, "api", apiRole, 256, 10, 0, merge(common, pulumi.StringMap{"FEEDS_QUEUE_URL": feedsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID()}))
+		rescoreLambda, err := function(ctx, "rescore", rescoreRole, 256, 300, 0, common)
 		if err != nil {
+			return err
+		}
+		apiLambda, err := function(ctx, "api", apiRole, 256, 29, 0, merge(common, pulumi.StringMap{
+			"FEEDS_QUEUE_URL": feedsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
+		}))
+		if err != nil {
+			return err
+		}
+		if _, err := iam.NewRolePolicy(ctx, "api-rescore-invoke", &iam.RolePolicyArgs{
+			Role:   apiRole.ID(),
+			Policy: pulumi.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"lambda:InvokeFunction","Resource":"%s"}]}`, rescoreLambda.Arn),
+		}); err != nil {
 			return err
 		}
 
@@ -170,6 +197,16 @@ func main() {
 		if _, err := awslambda.NewPermission(ctx, "scheduler-permission", &awslambda.PermissionArgs{Action: pulumi.String("lambda:InvokeFunction"), Function: scheduler.Name, Principal: pulumi.String("events.amazonaws.com"), SourceArn: rule.Arn}); err != nil {
 			return err
 		}
+		rescoreRule, err := cloudwatch.NewEventRule(ctx, "nightly-rescore", &cloudwatch.EventRuleArgs{ScheduleExpression: pulumi.String("cron(0 9 * * ? *)")})
+		if err != nil {
+			return err
+		}
+		if _, err := cloudwatch.NewEventTarget(ctx, "rescore-target", &cloudwatch.EventTargetArgs{Rule: rescoreRule.Name, Arn: rescoreLambda.Arn}); err != nil {
+			return err
+		}
+		if _, err := awslambda.NewPermission(ctx, "rescore-permission", &awslambda.PermissionArgs{Action: pulumi.String("lambda:InvokeFunction"), Function: rescoreLambda.Name, Principal: pulumi.String("events.amazonaws.com"), SourceArn: rescoreRule.Arn}); err != nil {
+			return err
+		}
 
 		httpAPI, err := apigatewayv2.NewApi(ctx, "api-gateway", &apigatewayv2.ApiArgs{ProtocolType: pulumi.String("HTTP")})
 		if err != nil {
@@ -183,7 +220,7 @@ func main() {
 			return err
 		}
 		integration, err := apigatewayv2.NewIntegration(ctx, "api-integration", &apigatewayv2.IntegrationArgs{
-			ApiId: httpAPI.ID(), IntegrationType: pulumi.String("AWS_PROXY"), IntegrationUri: apiLambda.Arn, PayloadFormatVersion: pulumi.String("2.0"), TimeoutMilliseconds: pulumi.Int(10000),
+			ApiId: httpAPI.ID(), IntegrationType: pulumi.String("AWS_PROXY"), IntegrationUri: apiLambda.Arn, PayloadFormatVersion: pulumi.String("2.0"), TimeoutMilliseconds: pulumi.Int(29000),
 		})
 		if err != nil {
 			return err
@@ -284,6 +321,9 @@ func main() {
 		ctx.Export("distributionId", distribution.ID())
 		ctx.Export("appBucket", appBucket.Bucket)
 		ctx.Export("contentBucket", contentBucket.Bucket)
+		ctx.Export("itemsQueueUrl", itemsQueue.Url)
+		ctx.Export("rescoreFunction", rescoreLambda.Name)
+		ctx.Export("modelVersion", pulumi.String(modelVersion))
 		ctx.Export("apiEndpoint", httpAPI.ApiEndpoint)
 		return nil
 	})
@@ -302,7 +342,7 @@ func queues(ctx *pulumi.Context, name string, visibility int) (*sqs.Queue, *sqs.
 	return dlq, queue, err
 }
 
-func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn, itemsArn pulumi.StringOutput, bedrock bool) (*iam.Role, error) {
+func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn, itemsArn pulumi.StringOutput, bedrockModel string) (*iam.Role, error) {
 	role, err := iam.NewRole(ctx, name+"-role", &iam.RoleArgs{AssumeRolePolicy: pulumi.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}`)})
 	if err != nil {
 		return nil, err
@@ -327,7 +367,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 		case "item-worker":
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"}, "Resource": tableResources},
-				map[string]any{"Effect": "Allow", "Action": "s3:PutObject", "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
+				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:GetObject"}, "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": queueConsume, "Resource": values[3].(string)},
 			)
 		case "api":
@@ -337,9 +377,13 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:DeleteObject"}, "Resource": values[1].(string) + "/archive/*"},
 				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": values[2].(string)},
 			)
+		case "rescore":
+			statements = append(statements,
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem"}, "Resource": tableResources},
+			)
 		}
-		if bedrock {
-			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "bedrock:InvokeModel", "Resource": "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0"})
+		if bedrockModel != "" {
+			statements = append(statements, map[string]any{"Effect": "Allow", "Action": "bedrock:InvokeModel", "Resource": "arn:aws:bedrock:us-east-1::foundation-model/" + bedrockModel})
 		}
 		encoded, err := json.Marshal(map[string]any{"Version": "2012-10-17", "Statement": statements})
 		return string(encoded), err

@@ -395,6 +395,13 @@ func (s *archiveObjectStore) GetObject(context.Context, *s3.GetObjectInput, ...f
 	return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader(""))}, nil
 }
 
+func (s *archiveObjectStore) HeadObject(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	if !s.objects[aws.ToString(input.Key)] {
+		return nil, &smithy.GenericAPIError{Code: "NotFound", Message: "missing"}
+	}
+	return &s3.HeadObjectOutput{}, nil
+}
+
 func (s *archiveObjectStore) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	s.objects[aws.ToString(input.Key)] = true
 	return &s3.PutObjectOutput{}, nil
@@ -431,6 +438,58 @@ func TestDynamoEmptyDatabase(t *testing.T) {
 
 	if _, err := repository.Item(ctx, "nobody", "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("item = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDynamoRecordBehaviourEvents(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	now := time.Now().UTC()
+	item := domain.Item{
+		ItemID:       "event-item",
+		FeedID:       "event-feed",
+		Title:        "Event item",
+		Vector:       []byte{1, 2, 3},
+		ModelVersion: "test-model",
+	}
+	dwell := int64(31_000)
+	if err := repository.RecordBehaviour(ctx, "reader", item, BehaviourEvent{
+		Opened: true, DwellMS: &dwell, ClickedThrough: true, Shared: true,
+	}); err != nil {
+		t.Fatalf("record all behaviour events: %v", err)
+	}
+
+	row, err := repository.Behaviour(ctx, "reader", item.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.Opened || !row.ClickedThrough || !row.Shared {
+		t.Fatalf("behaviour flags = opened:%t clicked:%t shared:%t", row.Opened, row.ClickedThrough, row.Shared)
+	}
+	if row.DwellMS != dwell {
+		t.Fatalf("dwell_ms = %d, want %d", row.DwellMS, dwell)
+	}
+	if row.ItemID != item.ItemID || row.FeedID != item.FeedID || row.Title != item.Title || row.ModelVersion != item.ModelVersion {
+		t.Fatalf("behaviour metadata = %#v", row)
+	}
+	if string(row.Vector) != string(item.Vector) {
+		t.Fatalf("vector = %v, want %v", row.Vector, item.Vector)
+	}
+	if row.TTL < now.Add(89*24*time.Hour).Unix() {
+		t.Fatalf("ttl = %d, want roughly 90 days from now", row.TTL)
+	}
+
+	// A later partial event cannot clear flags or reduce dwell time. It also
+	// exercises the common non-share expression, where #shared must be absent.
+	lowerDwell := int64(10_000)
+	if err := repository.RecordBehaviour(ctx, "reader", item, BehaviourEvent{DwellMS: &lowerDwell}); err != nil {
+		t.Fatalf("record lower dwell: %v", err)
+	}
+	row, err = repository.Behaviour(ctx, "reader", item.ItemID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.DwellMS != dwell || !row.Opened || !row.ClickedThrough || !row.Shared {
+		t.Fatalf("behaviour merge was not monotonic: %#v", row)
 	}
 }
 

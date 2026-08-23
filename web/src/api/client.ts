@@ -108,6 +108,30 @@ export class APIClient {
     });
   }
 
+  events(
+    itemID: string,
+    event: {
+      opened?: true;
+      dwell_ms?: number;
+      clicked_through?: true;
+      shared?: true;
+    },
+    keepalive = false,
+  ): Promise<void> {
+    return this.request(`/items/${encodeURIComponent(itemID)}/events`, {
+      method: "POST",
+      body: JSON.stringify(event),
+      keepalive,
+    });
+  }
+
+  recomputeRanking(): Promise<{
+    model: import("../types").RankingModel;
+    items_rescored?: number;
+  }> {
+    return this.request("/ranking/recompute", { method: "POST" });
+  }
+
   feeds(): Promise<Feed[]> {
     return this.request<{ feeds: Feed[] }>("/feeds").then(
       (payload) => payload.feeds,

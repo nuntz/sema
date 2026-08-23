@@ -3,14 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,11 +24,13 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/connector/rss"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 )
 
@@ -37,6 +43,7 @@ type server struct {
 	queue    queueAPI
 	feedsURL string
 	signer   *auth.CookieSigner
+	rescore  func(context.Context, string) error
 }
 
 type unsupportedFeed struct {
@@ -75,6 +82,8 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result = s.getItems(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
 		result = s.readBatch(ctx, claims.Subject, request.Body)
+	case method == http.MethodPost && path == "/ranking/recompute":
+		result = s.recomputeRanking(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/archive":
 		result = s.getArchive(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodGet && strings.HasPrefix(path, "/archive/"):
@@ -103,7 +112,25 @@ func (s *server) getMe(ctx context.Context, userID string) events.APIGatewayV2HT
 	if err != nil {
 		return s.failure("get profile", err)
 	}
-	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": user.SignalCount, "heart_count": user.HeartCount})
+	model, modelErr := s.store.Model(ctx, userID)
+	if modelErr != nil && !errors.Is(modelErr, score.ErrModelNotFound) {
+		return s.failure("get ranking model", modelErr)
+	}
+	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": user.SignalCount, "heart_count": user.HeartCount, "model": model})
+}
+
+func (s *server) recomputeRanking(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
+	if s.rescore == nil {
+		return s.failure("recompute ranking", errors.New("ranking service is not configured"))
+	}
+	if err := s.rescore(ctx, userID); err != nil {
+		return s.failure("recompute ranking", err)
+	}
+	model, err := s.store.Model(ctx, userID)
+	if err != nil {
+		return s.failure("load recomputed ranking", err)
+	}
+	return response(http.StatusOK, map[string]any{"model": model})
 }
 
 func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
@@ -296,6 +323,37 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if err := s.store.SetRead(ctx, userID, []string{itemID}, input.Read); err != nil {
 			return s.failure("set read state", err)
 		}
+	case "events":
+		item, err := s.store.Item(ctx, userID, itemID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+			}
+			return s.failure("get item for behaviour event", err)
+		}
+		var input struct {
+			Opened         bool   `json:"opened"`
+			DwellMS        *int64 `json:"dwell_ms"`
+			ClickedThrough bool   `json:"clicked_through"`
+			Shared         bool   `json:"shared"`
+		}
+		if err := decodeJSON(body, &input); err != nil {
+			return badRequest(err)
+		}
+		if !input.Opened && input.DwellMS == nil && !input.ClickedThrough && !input.Shared {
+			return badRequest(errors.New("at least one behaviour event is required"))
+		}
+		if input.DwellMS != nil && (*input.DwellMS < 0 || *input.DwellMS > int64((24*time.Hour)/time.Millisecond)) {
+			return badRequest(errors.New("dwell_ms must be between 0 and 86400000"))
+		}
+		if len(item.Vector) == 0 {
+			return response(http.StatusConflict, map[string]string{"error": "item has no embedding"})
+		}
+		if err := s.store.RecordBehaviour(ctx, userID, item, store.BehaviourEvent{
+			Opened: input.Opened, DwellMS: input.DwellMS, ClickedThrough: input.ClickedThrough, Shared: input.Shared,
+		}); err != nil {
+			return s.failure("record behaviour event", err)
+		}
 	default:
 		return response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
@@ -330,6 +388,14 @@ func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV
 	}
 	for i := range feeds {
 		feeds[i].FaviconKey = s.store.ContentURL(feeds[i].FaviconKey)
+	}
+	if model, modelErr := s.store.Model(ctx, userID); modelErr == nil {
+		for i := range feeds {
+			feeds[i].Prior = model.FeedPrior[feeds[i].FeedID]
+			feeds[i].PriorSignals = model.FeedSignalCount[feeds[i].FeedID]
+		}
+	} else if !errors.Is(modelErr, score.ErrModelNotFound) {
+		return s.failure("get feed ranking priors", modelErr)
 	}
 	return response(http.StatusOK, map[string]any{"feeds": feeds})
 }
@@ -483,6 +549,56 @@ func response(status int, body any) events.APIGatewayV2HTTPResponse {
 	}
 }
 
+type lambdaInvoker struct {
+	config   aws.Config
+	function string
+	client   *http.Client
+}
+
+func (i *lambdaInvoker) invokeRescore(ctx context.Context, userID string) error {
+	payload, err := json.Marshal(map[string]any{"user": userID, "on_demand": true})
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf(
+		"https://lambda.%s.amazonaws.com/2015-03-31/functions/%s/invocations",
+		i.config.Region,
+		url.PathEscape(i.function),
+	)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("content-type", "application/json")
+	request.Header.Set("x-amz-invocation-type", "RequestResponse")
+	credentials, err := i.config.Credentials.Retrieve(ctx)
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(payload)
+	if err := v4.NewSigner().SignHTTP(
+		ctx, credentials, request, hex.EncodeToString(hash[:]), "lambda", i.config.Region, time.Now().UTC(),
+	); err != nil {
+		return err
+	}
+	output, err := i.client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer output.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(output.Body, 1<<20))
+	if readErr != nil {
+		return readErr
+	}
+	if output.StatusCode < 200 || output.StatusCode >= 300 {
+		return fmt.Errorf("rescore Lambda returned %s: %s", output.Status, strings.TrimSpace(string(body)))
+	}
+	if functionError := output.Header.Get("x-amz-function-error"); functionError != "" {
+		return fmt.Errorf("rescore Lambda failed (%s): %s", functionError, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	repository, config, err := store.FromEnv(context.Background())
@@ -497,5 +613,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	lambda.Start((&server{store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, signer: signer}).handle)
+	rescoreFunction := strings.TrimSpace(os.Getenv("RESCORE_FUNCTION_NAME"))
+	if rescoreFunction == "" {
+		panic("RESCORE_FUNCTION_NAME is required")
+	}
+	invoker := &lambdaInvoker{config: config, function: rescoreFunction, client: &http.Client{Timeout: 28 * time.Second}}
+	lambda.Start((&server{store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, signer: signer, rescore: invoker.invokeRescore}).handle)
 }

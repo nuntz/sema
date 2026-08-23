@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -17,6 +18,8 @@ type apiDynamo struct {
 	*dynamodb.Client
 	batchGet func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error)
 	getItem  func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
+	query    func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
+	update   func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
 }
 
 func (f *apiDynamo) BatchGetItem(_ context.Context, input *dynamodb.BatchGetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
@@ -25,6 +28,14 @@ func (f *apiDynamo) BatchGetItem(_ context.Context, input *dynamodb.BatchGetItem
 
 func (f *apiDynamo) GetItem(_ context.Context, input *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	return f.getItem(input)
+}
+
+func (f *apiDynamo) Query(_ context.Context, input *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
+	return f.query(input)
+}
+
+func (f *apiDynamo) UpdateItem(_ context.Context, input *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	return f.update(input)
 }
 
 func TestParseIncludeRead(t *testing.T) {
@@ -98,5 +109,34 @@ func TestGetMeUsesProfileSignalCount(t *testing.T) {
 	}
 	if body.SignalCount != 12 || body.Profile.SignalCount != 12 || body.HeartCount != 3 {
 		t.Fatalf("profile response = %#v", body)
+	}
+}
+
+func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
+	item, err := attributevalue.MarshalMap(domain.Item{
+		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "Title",
+		Vector: []byte{1, 2, 3}, TTL: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := 0
+	db := &apiDynamo{
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
+		},
+		update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			updates++
+			return &dynamodb.UpdateItemOutput{}, nil
+		},
+	}
+	server := &server{store: store.New(db, nil, "table", "", "")}
+	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
+	if response.StatusCode != http.StatusOK || updates != 2 {
+		t.Fatalf("events response = %d %s, updates %d", response.StatusCode, response.Body, updates)
+	}
+	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{}`)
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty event status = %d, body %s", response.StatusCode, response.Body)
 	}
 }

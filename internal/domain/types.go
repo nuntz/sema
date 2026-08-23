@@ -27,62 +27,115 @@ type User struct {
 }
 
 type Feed struct {
-	PK           string `dynamodbav:"PK" json:"-"`
-	SK           string `dynamodbav:"SK" json:"-"`
-	GSI1PK       string `dynamodbav:"gsi1pk,omitempty" json:"-"`
-	FeedID       string `dynamodbav:"feed_id" json:"feed_id"`
-	URL          string `dynamodbav:"url" json:"url"`
-	SiteURL      string `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
-	Title        string `dynamodbav:"title,omitempty" json:"title,omitempty"`
-	FaviconKey   string `dynamodbav:"favicon_key,omitempty" json:"favicon_key,omitempty"`
-	ETag         string `dynamodbav:"etag,omitempty" json:"-"`
-	LastModified string `dynamodbav:"last_modified,omitempty" json:"-"`
-	LastFetchAt  string `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
-	LastStatus   string `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
-	ErrorCount   int    `dynamodbav:"error_count" json:"error_count"`
-	NextFetchAt  string `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
+	PK           string  `dynamodbav:"PK" json:"-"`
+	SK           string  `dynamodbav:"SK" json:"-"`
+	GSI1PK       string  `dynamodbav:"gsi1pk,omitempty" json:"-"`
+	FeedID       string  `dynamodbav:"feed_id" json:"feed_id"`
+	URL          string  `dynamodbav:"url" json:"url"`
+	SiteURL      string  `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
+	Title        string  `dynamodbav:"title,omitempty" json:"title,omitempty"`
+	FaviconKey   string  `dynamodbav:"favicon_key,omitempty" json:"favicon_key,omitempty"`
+	ETag         string  `dynamodbav:"etag,omitempty" json:"-"`
+	LastModified string  `dynamodbav:"last_modified,omitempty" json:"-"`
+	LastFetchAt  string  `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
+	LastStatus   string  `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
+	ErrorCount   int     `dynamodbav:"error_count" json:"error_count"`
+	NextFetchAt  string  `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
+	Prior        float64 `dynamodbav:"-" json:"prior"`
+	PriorSignals int     `dynamodbav:"-" json:"prior_signals"`
+}
+
+type Why struct {
+	Title     string `dynamodbav:"title,omitempty" json:"title,omitempty"`
+	FeedTitle string `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
 }
 
 type Item struct {
-	PK          string  `dynamodbav:"PK" json:"-"`
-	SK          string  `dynamodbav:"SK" json:"-"`
-	FeedPK      string  `dynamodbav:"feed_pk" json:"-"`
-	ItemID      string  `dynamodbav:"item_id" json:"item_id"`
-	FeedID      string  `dynamodbav:"feed_id" json:"feed_id"`
-	FeedTitle   string  `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
-	FaviconKey  string  `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
-	URL         string  `dynamodbav:"url" json:"url"`
-	Title       string  `dynamodbav:"title" json:"title"`
-	Summary     string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
-	Author      string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
-	PublishedTS string  `dynamodbav:"published_ts" json:"published_ts"`
-	FetchedTS   string  `dynamodbav:"fetched_ts" json:"fetched_ts"`
-	MediaKey    string  `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
-	MediaW      int     `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
-	MediaH      int     `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
-	BodyKey     string  `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
-	HasBody     bool    `dynamodbav:"has_body" json:"has_body"`
-	Score       float64 `dynamodbav:"score" json:"score"`
-	Size        string  `dynamodbav:"size" json:"size"`
-	Vector      []byte  `dynamodbav:"vector,omitempty" json:"-"`
-	TTL         int64   `dynamodbav:"ttl,omitempty" json:"-"`
-	ArchiveSK   string  `dynamodbav:"archive_sk,omitempty" json:"-"`
-	HeartedTS   string  `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
-	Read        bool    `dynamodbav:"-" json:"read"`
-	Signal      int     `dynamodbav:"-" json:"signal"`
-	Hearted     bool    `dynamodbav:"-" json:"hearted"`
+	PK           string  `dynamodbav:"PK" json:"-"`
+	SK           string  `dynamodbav:"SK" json:"-"`
+	FeedPK       string  `dynamodbav:"feed_pk" json:"-"`
+	ItemID       string  `dynamodbav:"item_id" json:"item_id"`
+	FeedID       string  `dynamodbav:"feed_id" json:"feed_id"`
+	FeedTitle    string  `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
+	FaviconKey   string  `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	URL          string  `dynamodbav:"url" json:"url"`
+	Title        string  `dynamodbav:"title" json:"title"`
+	Summary      string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
+	Author       string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
+	PublishedTS  string  `dynamodbav:"published_ts" json:"published_ts"`
+	FetchedTS    string  `dynamodbav:"fetched_ts" json:"fetched_ts"`
+	MediaKey     string  `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
+	MediaW       int     `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
+	MediaH       int     `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
+	BodyKey      string  `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
+	HasBody      bool    `dynamodbav:"has_body" json:"has_body"`
+	Score        float64 `dynamodbav:"score" json:"score"`
+	Size         string  `dynamodbav:"size" json:"size"`
+	Vector       []byte  `dynamodbav:"vector,omitempty" json:"-"`
+	ModelVersion string  `dynamodbav:"model_version,omitempty" json:"-"`
+	Why          *Why    `dynamodbav:"why,omitempty" json:"why,omitempty"`
+	TTL          int64   `dynamodbav:"ttl,omitempty" json:"-"`
+	ArchiveSK    string  `dynamodbav:"archive_sk,omitempty" json:"-"`
+	HeartedTS    string  `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
+	Read         bool    `dynamodbav:"-" json:"read"`
+	Signal       int     `dynamodbav:"-" json:"signal"`
+	Hearted      bool    `dynamodbav:"-" json:"hearted"`
 }
 
 type Signal struct {
-	PK        string `dynamodbav:"PK"`
-	SK        string `dynamodbav:"SK"`
-	ItemID    string `dynamodbav:"item_id"`
-	Value     int    `dynamodbav:"value"`
-	Vector    []byte `dynamodbav:"vector"`
-	Title     string `dynamodbav:"title"`
-	FeedID    string `dynamodbav:"feed_id"`
-	CreatedAt string `dynamodbav:"created_at"`
-	Source    string `dynamodbav:"source,omitempty"`
+	PK           string `dynamodbav:"PK"`
+	SK           string `dynamodbav:"SK"`
+	ItemID       string `dynamodbav:"item_id"`
+	Value        int    `dynamodbav:"value"`
+	Vector       []byte `dynamodbav:"vector"`
+	Title        string `dynamodbav:"title"`
+	FeedID       string `dynamodbav:"feed_id"`
+	CreatedAt    string `dynamodbav:"created_at"`
+	Source       string `dynamodbav:"source,omitempty"`
+	ModelVersion string `dynamodbav:"model_version,omitempty"`
+}
+
+type Behaviour struct {
+	PK             string `dynamodbav:"PK"`
+	SK             string `dynamodbav:"SK"`
+	ItemID         string `dynamodbav:"item_id"`
+	OpenedAt       string `dynamodbav:"opened_at"`
+	Opened         bool   `dynamodbav:"opened,omitempty"`
+	DwellMS        int64  `dynamodbav:"dwell_ms,omitempty"`
+	ClickedThrough bool   `dynamodbav:"clicked_through,omitempty"`
+	Shared         bool   `dynamodbav:"shared,omitempty"`
+	Vector         []byte `dynamodbav:"vector"`
+	Title          string `dynamodbav:"title"`
+	FeedID         string `dynamodbav:"feed_id"`
+	ModelVersion   string `dynamodbav:"model_version,omitempty"`
+	TTL            int64  `dynamodbav:"ttl"`
+}
+
+// Model is the persisted ranking snapshot. The sum and per-feed count fields
+// are internal bookkeeping that makes explicit-signal updates exact without a
+// partition-wide recompute; the normalized centroids and public counts are the
+// observable model described by the product contract.
+type Model struct {
+	PK               string             `dynamodbav:"PK" json:"-"`
+	SK               string             `dynamodbav:"SK" json:"-"`
+	LikedCentroid    []byte             `dynamodbav:"liked_centroid,omitempty" json:"-"`
+	DislikedCentroid []byte             `dynamodbav:"disliked_centroid,omitempty" json:"-"`
+	FeedPrior        map[string]float64 `dynamodbav:"feed_prior,omitempty" json:"-"`
+	FeedSignalCount  map[string]int     `dynamodbav:"feed_signal_count,omitempty" json:"-"`
+	ExplicitCount    int                `dynamodbav:"explicit_count" json:"explicit_count"`
+	ImplicitCount    int                `dynamodbav:"implicit_count" json:"implicit_count"`
+	ComputedAt       string             `dynamodbav:"computed_at" json:"computed_at"`
+	Version          string             `dynamodbav:"version" json:"version"`
+	ReplayTS         string             `dynamodbav:"replay_ts,omitempty" json:"-"`
+	ReplayVersion    string             `dynamodbav:"replay_version,omitempty" json:"-"`
+
+	LikedSum       []byte         `dynamodbav:"liked_sum,omitempty" json:"-"`
+	DislikedSum    []byte         `dynamodbav:"disliked_sum,omitempty" json:"-"`
+	LikedWeight    float64        `dynamodbav:"liked_weight,omitempty" json:"-"`
+	DislikedWeight float64        `dynamodbav:"disliked_weight,omitempty" json:"-"`
+	FeedLikes      map[string]int `dynamodbav:"feed_likes,omitempty" json:"-"`
+	FeedDislikes   map[string]int `dynamodbav:"feed_dislikes,omitempty" json:"-"`
+	FeedImplicit   map[string]int `dynamodbav:"feed_implicit,omitempty" json:"-"`
 }
 
 type Read struct {
@@ -135,12 +188,15 @@ type ItemMessage struct {
 	Author        string      `json:"author,omitempty"`
 	PublishedTS   string      `json:"published_ts"`
 	EnclosureURLs []Enclosure `json:"enclosure_urls,omitempty"`
+	Reprocess     bool        `json:"reprocess,omitempty"`
+	ForceExtract  bool        `json:"force_extract,omitempty"`
 }
 
-func UserPK(user string) string { return "U#" + user }
-func FeedSK(id string) string   { return "F#" + id }
-func SignalSK(id string) string { return "S#" + id }
-func ReadSK(id string) string   { return "R#" + id }
+func UserPK(user string) string    { return "U#" + user }
+func FeedSK(id string) string      { return "F#" + id }
+func SignalSK(id string) string    { return "S#" + id }
+func BehaviourSK(id string) string { return "B#" + id }
+func ReadSK(id string) string      { return "R#" + id }
 
 func ArchiveSK(hearted time.Time, id string) string {
 	return "A#" + Timestamp(hearted) + "#" + id

@@ -1,6 +1,7 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
 import { shouldConfirmArchiveRemoval, updateHeartState } from "./archive";
+import { type BehaviourEvent, mergeBehaviourEvent } from "./behaviour-events";
 import {
   mergeNewItems,
   pollCandidates,
@@ -60,6 +61,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   let toastTimer: number | undefined;
   let toastID = 0;
   const pendingRead = new Set<string>();
+  const pendingEvents = new Map<string, BehaviourEvent>();
   const heartsInFlight = new Set<string>();
 
   const handleError = (caught: unknown) => {
@@ -79,6 +81,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const copyLink = async (item: Item) => {
+    const recordBehaviour = mode() === "live";
     try {
       const action = await copyOriginalLink({
         url: item.url,
@@ -88,6 +91,11 @@ export function App(props: { token: () => string; signOut(): void }) {
       setLinkActionID(item.item_id);
       linkActionTimer = window.setTimeout(() => setLinkActionID(""), 900);
       showToast("success", action === "shared" ? "Link shared" : "Link copied");
+      if (recordBehaviour)
+        queueEvent(item.item_id, {
+          clicked_through: true,
+          shared: action === "shared" ? true : undefined,
+        });
     } catch (caught) {
       if (isCancelledShare(caught)) return;
       const message =
@@ -218,7 +226,7 @@ export function App(props: { token: () => string; signOut(): void }) {
 
   onMount(() => {
     bootstrap();
-    const flush = () => void flushRead(true);
+    const flush = () => void flushPending(true);
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
       else void pollNew();
@@ -260,6 +268,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       window.clearInterval(pollTimer);
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
+      void flushPending(true);
     });
   });
 
@@ -378,7 +387,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       return;
     }
     window.clearTimeout(readTimer);
-    readTimer = window.setTimeout(() => void flushRead(), 5_000);
+    readTimer = window.setTimeout(() => void flushPending(), 5_000);
   };
 
   const flushRead = (keepalive = false) => {
@@ -391,7 +400,30 @@ export function App(props: { token: () => string; signOut(): void }) {
     return writeReadBatch(ids, true, keepalive).catch(handleError);
   };
 
+  const queueEvent = (itemID: string, event: BehaviourEvent) => {
+    const current = pendingEvents.get(itemID) ?? {};
+    pendingEvents.set(itemID, mergeBehaviourEvent(current, event));
+    window.clearTimeout(readTimer);
+    readTimer = window.setTimeout(() => void flushPending(), 5_000);
+  };
+
+  const flushEvents = (keepalive = false) => {
+    const events = [...pendingEvents.entries()];
+    pendingEvents.clear();
+    return Promise.all(
+      events.map(([itemID, event]) => api.events(itemID, event, keepalive)),
+    ).catch(handleError);
+  };
+
+  const flushPending = (keepalive = false) => {
+    window.clearTimeout(readTimer);
+    readTimer = undefined;
+    return Promise.all([flushRead(keepalive), flushEvents(keepalive)]);
+  };
+
   const markOpened = (item: Item) => {
+    if (mode() === "live")
+      api.events(item.item_id, { opened: true }).catch(handleError);
     if (mode() === "live" && !item.read) {
       replaceItem(item.item_id, { read: true });
       api.read(item.item_id, true).catch((caught) => {
@@ -400,6 +432,11 @@ export function App(props: { token: () => string; signOut(): void }) {
       });
     }
     setReaderID(item.item_id);
+  };
+
+  const openOriginal = (item: Item) => {
+    if (mode() === "live") queueEvent(item.item_id, { clicked_through: true });
+    window.open(item.url, "_blank", "noopener,noreferrer");
   };
 
   const toggleRead = (item: Item) => {
@@ -533,6 +570,7 @@ export function App(props: { token: () => string; signOut(): void }) {
             onBack={() => setView("grid")}
             onKeys={() => setKeysOpen(true)}
             onSignOut={props.signOut}
+            onToast={showToast}
           />
           <Show when={keysOpen()}>
             <KeyboardMap onClose={() => setKeysOpen(false)} />
@@ -681,6 +719,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               onHeart={toggleHeart}
               onToggleRead={toggleRead}
               onCopy={copyLink}
+              onOriginal={openOriginal}
               onMarkBelow={markBelow}
               onItemsPassed={queueRead}
               onLoadMore={loadMore}
@@ -711,6 +750,13 @@ export function App(props: { token: () => string; signOut(): void }) {
               onSignal={(value) => setSignal(item(), value)}
               onHeart={() => toggleHeart(item())}
               onCopy={() => copyLink(item())}
+              onOriginal={() =>
+                mode() === "live" &&
+                queueEvent(item().item_id, { clicked_through: true })
+              }
+              onDwell={(itemID, dwellMS) =>
+                mode() === "live" && queueEvent(itemID, { dwell_ms: dwellMS })
+              }
             />
           )}
         </Show>

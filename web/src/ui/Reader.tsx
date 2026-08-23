@@ -21,6 +21,8 @@ interface ReaderProps {
   onSignal(value: -1 | 0 | 1): void;
   onHeart(): void;
   onCopy(): void;
+  onOriginal(): void;
+  onDwell(itemID: string, dwellMS: number): void;
 }
 
 export function Reader(props: ReaderProps) {
@@ -28,6 +30,46 @@ export function Reader(props: ReaderProps) {
   const [body, setBody] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [progress, setProgress] = createSignal(0);
+  let trackedID = props.item.item_id;
+  let dwellMS = 0;
+  let activeSince = 0;
+  let lastReported = 0;
+  let thresholdReported = false;
+  let dwellTimer: number | undefined;
+
+  const startDwell = () => {
+    if (activeSince || document.visibilityState === "hidden") return;
+    activeSince = performance.now();
+  };
+
+  const pauseDwell = () => {
+    if (!activeSince) return;
+    dwellMS += performance.now() - activeSince;
+    activeSince = 0;
+  };
+
+  const currentDwell = () =>
+    dwellMS + (activeSince ? performance.now() - activeSince : 0);
+
+  const reportDwell = () => {
+    const elapsed = Math.round(currentDwell());
+    if (elapsed <= lastReported) return;
+    lastReported = elapsed;
+    props.onDwell(trackedID, elapsed);
+  };
+
+  createEffect(() => {
+    const itemID = props.item.item_id;
+    if (itemID === trackedID) return;
+    pauseDwell();
+    reportDwell();
+    trackedID = itemID;
+    dwellMS = 0;
+    lastReported = 0;
+    thresholdReported = false;
+    setProgress(0);
+    startDwell();
+  });
 
   createEffect(() => {
     const url = props.item.body_url;
@@ -78,6 +120,7 @@ export function Reader(props: ReaderProps) {
         props.onCopy();
         break;
       case "original":
+        props.onOriginal();
         window.open(props.item.url, "_blank", "noopener,noreferrer");
         break;
       default:
@@ -87,11 +130,36 @@ export function Reader(props: ReaderProps) {
   };
 
   onMount(() => {
+    const pauseAndReport = () => {
+      pauseDwell();
+      reportDwell();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") pauseAndReport();
+      else startDwell();
+    };
+    const onFocus = () => startDwell();
+    const onBlur = () => pauseAndReport();
+    startDwell();
+    dwellTimer = window.setInterval(() => {
+      if (!thresholdReported && currentDwell() >= 30_000) {
+        thresholdReported = true;
+        reportDwell();
+      }
+    }, 1_000);
     window.addEventListener("keydown", onKey);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
     article.addEventListener("scroll", updateProgress, { passive: true });
     onCleanup(() => {
+      pauseAndReport();
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
       article.removeEventListener("scroll", updateProgress);
+      window.clearInterval(dwellTimer);
     });
   });
 
@@ -152,7 +220,12 @@ export function Reader(props: ReaderProps) {
             copy link
           </button>
           <i />
-          <a href={props.item.url} target="_blank" rel="noopener noreferrer">
+          <a
+            href={props.item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={props.onOriginal}
+          >
             original ↗
           </a>
           <button
@@ -219,6 +292,7 @@ export function Reader(props: ReaderProps) {
                       href={props.item.url}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={props.onOriginal}
                     >
                       Read the original ↗
                     </a>
@@ -244,6 +318,7 @@ export function Reader(props: ReaderProps) {
                 href={props.item.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={props.onOriginal}
               >
                 Open original ↗
               </a>
