@@ -12,11 +12,13 @@ import { justify, totalHeight, visibleRows } from "../layout/justified";
 import {
   fullyPassedRows,
   intersectingRowIDs,
+  readStateEnabled,
   shouldLoadNextPage,
   shouldMarkAtBottom,
   shouldShowEndCard,
 } from "../layout/read-state";
 import type { Item } from "../types";
+import { HeartIcon } from "./HeartIcon";
 import { gridCommand } from "./keyboard";
 import { LinkIcon } from "./LinkIcon";
 
@@ -27,7 +29,7 @@ interface GridProps {
   focusedID: string;
   active: boolean;
   hasMore: boolean;
-  hearted: Set<string>;
+  archive: boolean;
   linkActionID: string;
   onFocus(id: string): void;
   onOpen(item: Item): void;
@@ -110,7 +112,11 @@ export function Grid(props: GridProps) {
     const top = scroller.scrollTop;
     setScrollTop(top);
     const ids = new Set<string>();
-    if (userScrolling && !programmaticScrolling) {
+    if (
+      readStateEnabled(props.archive) &&
+      userScrolling &&
+      !programmaticScrolling
+    ) {
       const passed = fullyPassedRows(rows(), -1, top);
       for (const row of passed.rows) {
         for (const cell of row.cells) {
@@ -319,19 +325,21 @@ export function Grid(props: GridProps) {
         if (item) props.onOpen(item);
         break;
       case "like":
-        if (item) props.onSignal(item, item.signal === 1 ? 0 : 1);
+        if (item && !props.archive)
+          props.onSignal(item, item.signal === 1 ? 0 : 1);
         break;
       case "dislike":
-        if (item) props.onSignal(item, item.signal === -1 ? 0 : -1);
+        if (item && !props.archive)
+          props.onSignal(item, item.signal === -1 ? 0 : -1);
         break;
       case "heart":
         if (item) props.onHeart(item);
         break;
       case "read":
-        if (item) props.onToggleRead(item);
+        if (item && !props.archive) props.onToggleRead(item);
         break;
       case "mark-below":
-        if (item) props.onMarkBelow(item);
+        if (item && !props.archive) props.onMarkBelow(item);
         break;
       case "end":
         goEnd();
@@ -349,7 +357,7 @@ export function Grid(props: GridProps) {
         }
         break;
       case "undo":
-        props.onUndo();
+        if (!props.archive) props.onUndo();
         break;
       case "copy":
         if (item) props.onCopy(item);
@@ -358,10 +366,10 @@ export function Grid(props: GridProps) {
         if (item) window.open(item.url, "_blank", "noopener,noreferrer");
         break;
       case "order":
-        props.onToggleOrder();
+        if (!props.archive) props.onToggleOrder();
         break;
       case "unread":
-        props.onToggleUnread();
+        if (!props.archive) props.onToggleUnread();
         break;
     }
     event.preventDefault();
@@ -389,7 +397,8 @@ export function Grid(props: GridProps) {
                       class="grid-cell"
                       classList={{
                         focused: item().item_id === props.focusedID,
-                        read: item().read,
+                        read: readStateEnabled(props.archive) && item().read,
+                        "archive-cell": props.archive,
                         "text-cell": !item().media_url,
                         [`size-${cell.effectiveSize.toLowerCase()}`]: true,
                       }}
@@ -408,41 +417,73 @@ export function Grid(props: GridProps) {
                         />
                       </Show>
                       <div class="cell-scrim" />
+                      <Show when={props.archive}>
+                        <span class="kept-marker">
+                          <HeartIcon filled={true} />
+                        </span>
+                      </Show>
                       <div class="cell-actions">
-                        <button
-                          type="button"
-                          classList={{ selected: item().signal === 1 }}
-                          aria-label="Thumbs up"
-                          onClick={() =>
-                            props.onSignal(item(), item().signal === 1 ? 0 : 1)
-                          }
-                        >
-                          ↑
-                        </button>
-                        <button
-                          type="button"
-                          classList={{ selected: item().signal === -1 }}
-                          aria-label="Thumbs down"
-                          onClick={() =>
-                            props.onSignal(
-                              item(),
-                              item().signal === -1 ? 0 : -1,
-                            )
-                          }
-                        >
-                          ↓
-                        </button>
-                        <button
-                          type="button"
-                          class="heart"
-                          classList={{
-                            selected: props.hearted.has(item().item_id),
-                          }}
-                          aria-label="Heart"
-                          onClick={() => props.onHeart(item())}
-                        >
-                          ♥
-                        </button>
+                        <Show when={!props.archive}>
+                          <button
+                            type="button"
+                            class="thumb-up"
+                            classList={{ selected: item().signal === 1 }}
+                            aria-label="Thumbs up"
+                            onClick={() =>
+                              props.onSignal(
+                                item(),
+                                item().signal === 1 ? 0 : 1,
+                              )
+                            }
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            class="thumb-down"
+                            classList={{ selected: item().signal === -1 }}
+                            aria-label="Thumbs down"
+                            onClick={() =>
+                              props.onSignal(
+                                item(),
+                                item().signal === -1 ? 0 : -1,
+                              )
+                            }
+                          >
+                            ↓
+                          </button>
+                        </Show>
+                        <Show when={props.archive}>
+                          <button
+                            type="button"
+                            aria-label="Open original"
+                            title="Open original"
+                            onClick={() =>
+                              window.open(
+                                item().url,
+                                "_blank",
+                                "noopener,noreferrer",
+                              )
+                            }
+                          >
+                            ↗
+                          </button>
+                        </Show>
+                        <Show when={!props.archive}>
+                          <button
+                            type="button"
+                            class="heart"
+                            classList={{ selected: item().hearted }}
+                            aria-label={
+                              item().hearted
+                                ? "Remove from archive"
+                                : "Keep in archive"
+                            }
+                            onClick={() => props.onHeart(item())}
+                          >
+                            <HeartIcon filled={item().hearted} />
+                          </button>
+                        </Show>
                         <button
                           type="button"
                           class="copy-link"
@@ -460,6 +501,17 @@ export function Grid(props: GridProps) {
                             ✓
                           </Show>
                         </button>
+                        <Show when={props.archive}>
+                          <button
+                            type="button"
+                            class="heart"
+                            classList={{ selected: item().hearted }}
+                            aria-label="Remove from archive"
+                            onClick={() => props.onHeart(item())}
+                          >
+                            <HeartIcon filled={item().hearted} />
+                          </button>
+                        </Show>
                       </div>
                       <button
                         type="button"
@@ -473,12 +525,27 @@ export function Grid(props: GridProps) {
                             <p>{item().summary}</p>
                           </Show>
                           <div class="cell-meta">
+                            <Show when={props.archive && !item().has_body}>
+                              <em>text only</em>
+                            </Show>
                             <Favicon item={item()} />
-                            <span>
-                              {item().feed_title || "Feed"} ·{" "}
-                              {relativeTime(item().published_ts)}
-                            </span>
-                            <Show when={!item().read}>
+                            <Show
+                              when={props.archive}
+                              fallback={
+                                <span>
+                                  {item().feed_title || "Feed"} ·{" "}
+                                  {relativeTime(item().published_ts)}
+                                </span>
+                              }
+                            >
+                              <span title={publishedDate(item().published_ts)}>
+                                kept {relativeTime(item().hearted_ts || "")} ago
+                                {item().feed_title
+                                  ? ` · ${item().feed_title}`
+                                  : ""}
+                              </span>
+                            </Show>
+                            <Show when={props.archive || !item().read}>
                               <b>{Math.round(item().score * 100)}</b>
                             </Show>
                           </div>
@@ -500,11 +567,33 @@ export function Grid(props: GridProps) {
             }}
           >
             <div>
-              <h2>You&apos;re all caught up</h2>
-              <p>Everything currently loaded is behind you.</p>
-              <button ref={endButton} type="button" onClick={markRemaining}>
-                Mark remaining {unreadIDs().length} as read
-              </button>
+              <Show
+                when={props.archive}
+                fallback={
+                  <>
+                    <h2>You&apos;re all caught up</h2>
+                    <p>Everything currently loaded is behind you.</p>
+                    <button
+                      ref={endButton}
+                      type="button"
+                      onClick={markRemaining}
+                    >
+                      Mark remaining {unreadIDs().length} as read
+                    </button>
+                  </>
+                }
+              >
+                <small>END OF ARCHIVE</small>
+                <h2>That&apos;s everything you&apos;ve kept</h2>
+                <p>
+                  {props.items.length}{" "}
+                  {props.items.length === 1 ? "item" : "items"}
+                  {oldestHeartMonth(props.items)
+                    ? `, oldest kept in ${oldestHeartMonth(props.items)}`
+                    : ""}
+                  . Nothing here expires.
+                </p>
+              </Show>
             </div>
           </section>
         </Show>
@@ -540,4 +629,18 @@ export function relativeTime(value: string): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
   return `${Math.floor(seconds / 86400)}d`;
+}
+
+function publishedDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+    new Date(value),
+  );
+}
+
+function oldestHeartMonth(items: Item[]): string {
+  const value = items.at(-1)?.hearted_ts;
+  if (!value) return "";
+  return new Intl.DateTimeFormat(undefined, { month: "long" }).format(
+    new Date(value),
+  );
 }

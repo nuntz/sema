@@ -1,6 +1,8 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { isOlderThanThirtyDays } from "../archive";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
+import { HeartIcon } from "./HeartIcon";
 import { readerCommand } from "./keyboard";
 import { LinkIcon } from "./LinkIcon";
 import { hasLeadingImage } from "./reader-content";
@@ -8,6 +10,7 @@ import { hasLeadingImage } from "./reader-content";
 interface ReaderProps {
   item: Item;
   active: boolean;
+  archive: boolean;
   hearted: boolean;
   linkActionActive: boolean;
   canPrevious: boolean;
@@ -136,7 +139,8 @@ export function Reader(props: ReaderProps) {
             classList={{ selected: props.hearted }}
             onClick={props.onHeart}
           >
-            ♥ keep
+            <HeartIcon filled={props.hearted} />
+            {props.hearted ? "kept" : "keep"}
           </button>
           <button
             type="button"
@@ -209,22 +213,44 @@ export function Reader(props: ReaderProps) {
                     {props.item.summary ||
                       "Sema could not extract this article."}
                   </p>
-                  <a
-                    class="original-cta"
-                    href={props.item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Read the original ↗
-                  </a>
+                  <Show when={!props.archive}>
+                    <a
+                      class="original-cta"
+                      href={props.item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Read the original ↗
+                    </a>
+                  </Show>
                 </Show>
               </div>
             }
           >
             <div class="article-body" innerHTML={body()} />
           </Show>
+          <Show when={props.archive}>
+            <div class="archive-original">
+              <Show when={isOlderThanThirtyDays(props.item.published_ts)}>
+                <p class="archive-stale-note">
+                  <b>!</b>
+                  <span>
+                    Published over 30 days ago; the original may have moved.
+                  </span>
+                </p>
+              </Show>
+              <a
+                class="original-cta"
+                href={props.item.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open original ↗
+              </a>
+            </div>
+          </Show>
           <footer class="article-next">
-            <span>NEXT UNREAD</span>
+            <span>{props.archive ? "NEXT KEPT" : "NEXT UNREAD"}</span>
             <button
               type="button"
               onClick={props.onNext}
@@ -258,7 +284,7 @@ export function Reader(props: ReaderProps) {
           classList={{ selected: props.hearted }}
           onClick={props.onHeart}
         >
-          ♥
+          <HeartIcon filled={props.hearted} />
         </button>
         <button
           type="button"

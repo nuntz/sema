@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/nuntz/sema/internal/domain"
 )
 
@@ -29,9 +32,12 @@ type dynamoAPI interface {
 	Query(context.Context, *dynamodb.QueryInput, ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error)
 	Scan(context.Context, *dynamodb.ScanInput, ...func(*dynamodb.Options)) (*dynamodb.ScanOutput, error)
 	UpdateItem(context.Context, *dynamodb.UpdateItemInput, ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error)
+	TransactWriteItems(context.Context, *dynamodb.TransactWriteItemsInput, ...func(*dynamodb.Options)) (*dynamodb.TransactWriteItemsOutput, error)
 }
 
 type s3API interface {
+	CopyObject(context.Context, *s3.CopyObjectInput, ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
+	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 }
@@ -54,12 +60,13 @@ func (s *Store) EnsureUser(ctx context.Context, userID, email string) error {
 		TableName: aws.String(s.table),
 		Key:       key(domain.UserPK(userID), "PROFILE"),
 		UpdateExpression: aws.String("SET email = if_not_exists(email, :email), created_at = if_not_exists(created_at, :now), " +
-			"order_pref = if_not_exists(order_pref, :order) REMOVE #read_boundary"),
+			"order_pref = if_not_exists(order_pref, :order), heart_count = if_not_exists(heart_count, :zero) REMOVE #read_boundary"),
 		ExpressionAttributeNames: map[string]string{"#read_boundary": "read_boundary_ts"},
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":email": &types.AttributeValueMemberS{Value: email},
 			":now":   &types.AttributeValueMemberS{Value: now},
 			":order": &types.AttributeValueMemberS{Value: string(domain.OrderChrono)},
+			":zero":  &types.AttributeValueMemberN{Value: "0"},
 		},
 	})
 	return err
@@ -304,6 +311,7 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
 			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 			FilterExpression: aws.String("item_id = :id AND #ttl > :now"), Limit: aws.Int32(100), ExclusiveStartKey: start,
+			ConsistentRead:           aws.Bool(true),
 			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 			ExpressionAttributeValues: map[string]types.AttributeValue{
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"}, ":id": &types.AttributeValueMemberS{Value: itemID},
@@ -320,6 +328,330 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 		start = response.LastEvaluatedKey
 		if len(start) == 0 {
 			return domain.Item{}, ErrNotFound
+		}
+	}
+}
+
+// Archives lists permanent copies newest-heart-first. Archive rows deliberately
+// have no ttl attribute and do not resolve read state.
+func (s *Store) Archives(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error) {
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+	start, err := decodeCursor(encodedCursor)
+	if err != nil {
+		return nil, "", err
+	}
+	if len(start) > 0 {
+		pk, pkOK := start["PK"].(*types.AttributeValueMemberS)
+		sk, skOK := start["SK"].(*types.AttributeValueMemberS)
+		_, hasScore := start["score"]
+		if !pkOK || pk.Value != domain.UserPK(userID) || !skOK || !strings.HasPrefix(sk.Value, "A#") || hasScore {
+			return nil, "", ErrInvalidCursor
+		}
+	}
+	response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+		TableName:              aws.String(s.table),
+		KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
+			":prefix": &types.AttributeValueMemberS{Value: "A#"},
+		},
+		ExclusiveStartKey: start,
+		Limit:             aws.Int32(int32(limit)),
+		ScanIndexForward:  aws.Bool(false),
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	items := []domain.Item{}
+	if err := attributevalue.UnmarshalListOfMaps(response.Items, &items); err != nil {
+		return nil, "", err
+	}
+	for i := range items {
+		items[i].ArchiveSK = items[i].SK
+		items[i].Hearted = true
+		items[i].Read = false
+	}
+	next, err := encodeCursor(response.LastEvaluatedKey)
+	return items, next, err
+}
+
+// ArchiveItem finds an archived item by item_id. The query is intentionally a
+// partition scan; archive sizes are expected to remain small for this drop.
+func (s *Store) ArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.table),
+			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			FilterExpression:       aws.String("item_id = :id"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
+				":prefix": &types.AttributeValueMemberS{Value: "A#"},
+				":id":     &types.AttributeValueMemberS{Value: itemID},
+			},
+			ExclusiveStartKey: start,
+			Limit:             aws.Int32(100),
+			ConsistentRead:    aws.Bool(true),
+		})
+		if err != nil {
+			return domain.Item{}, err
+		}
+		if len(response.Items) > 0 {
+			var item domain.Item
+			if err := attributevalue.UnmarshalMap(response.Items[0], &item); err != nil {
+				return domain.Item{}, err
+			}
+			item.ArchiveSK = item.SK
+			item.Hearted = true
+			return item, nil
+		}
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return domain.Item{}, ErrNotFound
+		}
+	}
+}
+
+func (s *Store) archiveItemBySK(ctx context.Context, userID, archiveSK string) (domain.Item, error) {
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName:      aws.String(s.table),
+		Key:            key(domain.UserPK(userID), archiveSK),
+		ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if len(response.Item) == 0 {
+		return domain.Item{}, ErrNotFound
+	}
+	var item domain.Item
+	if err := attributevalue.UnmarshalMap(response.Item, &item); err != nil {
+		return domain.Item{}, err
+	}
+	item.ArchiveSK = item.SK
+	item.Hearted = true
+	return item, nil
+}
+
+// SetHeart synchronously copies durable content and atomically changes the
+// archive row, live item pointer, profile count, and implied ranking signal.
+func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error) {
+	if !hearted {
+		return s.removeHeart(ctx, userID, itemID)
+	}
+	item, err := s.Item(ctx, userID, itemID)
+	if err != nil {
+		return "", 0, err
+	}
+	if item.ArchiveSK != "" {
+		count, countErr := s.heartCount(ctx, userID)
+		return item.ArchiveSK, count, countErr
+	}
+
+	now := time.Now().UTC()
+	archiveSK := domain.ArchiveSK(now, item.ItemID)
+	archive := item
+	archive.SK = archiveSK
+	archive.TTL = 0
+	archive.ArchiveSK = ""
+	archive.HeartedTS = domain.Timestamp(now)
+	archive.Read = false
+	archive.Signal = 0
+	archive.Hearted = false
+
+	archive.BodyKey = ""
+	if item.HasBody {
+		source := item.BodyKey
+		if source == "" {
+			source = BodyKey(userID, item.ItemID)
+		}
+		destination := ArchiveBodyKey(userID, item.ItemID)
+		copied, copyErr := s.copyContent(ctx, source, destination)
+		if copyErr != nil {
+			return "", 0, copyErr
+		}
+		archive.HasBody = copied
+		if copied {
+			archive.BodyKey = destination
+		}
+	} else {
+		archive.HasBody = false
+	}
+
+	archive.MediaKey = ""
+	if item.MediaKey != "" {
+		destination := ArchiveMediaKey(userID, item.ItemID)
+		copied, copyErr := s.copyContent(ctx, item.MediaKey, destination)
+		if copyErr != nil {
+			return "", 0, copyErr
+		}
+		if copied {
+			archive.MediaKey = destination
+		} else {
+			archive.MediaW = 0
+			archive.MediaH = 0
+		}
+	} else {
+		archive.MediaW = 0
+		archive.MediaH = 0
+	}
+
+	encodedArchive, err := attributevalue.MarshalMap(archive)
+	if err != nil {
+		return "", 0, err
+	}
+	heartSignal, err := attributevalue.MarshalMap(domain.Signal{
+		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
+		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart",
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	values := map[string]types.AttributeValue{
+		":archive": &types.AttributeValueMemberS{Value: archiveSK},
+		":one":     &types.AttributeValueMemberN{Value: "1"},
+	}
+	baseWrites := []types.TransactWriteItem{
+		{Put: &types.Put{TableName: aws.String(s.table), Item: encodedArchive, ConditionExpression: aws.String("attribute_not_exists(SK)")}},
+		{Update: &types.Update{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), item.SK),
+			UpdateExpression:          aws.String("SET archive_sk = :archive REMOVE hearted"),
+			ConditionExpression:       aws.String("attribute_exists(PK) AND attribute_not_exists(archive_sk)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": values[":archive"]},
+		}},
+		{Update: &types.Update{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+			UpdateExpression: aws.String("ADD heart_count :one"), ExpressionAttributeValues: map[string]types.AttributeValue{":one": values[":one"]},
+		}},
+	}
+	withSignal := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Put: &types.Put{
+		TableName: aws.String(s.table), Item: heartSignal, ConditionExpression: aws.String("attribute_not_exists(SK)"),
+	}})
+	err = s.transact(ctx, withSignal)
+	if isTransactionCanceled(err) {
+		// An existing explicit signal wins. The other conditions remain in the
+		// retry so the archive state still changes as one atomic unit.
+		err = s.transact(ctx, baseWrites)
+	}
+	if err != nil {
+		// A concurrent identical heart may have won between the read and the
+		// transaction. Report that durable state as the idempotent result.
+		current, currentErr := s.Item(ctx, userID, itemID)
+		if currentErr == nil && current.ArchiveSK != "" {
+			count, countErr := s.heartCount(ctx, userID)
+			return current.ArchiveSK, count, countErr
+		}
+		return "", 0, err
+	}
+	count, err := s.heartCount(ctx, userID)
+	return archiveSK, count, err
+}
+
+func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string, int, error) {
+	item, itemErr := s.Item(ctx, userID, itemID)
+	var archive domain.Item
+	var err error
+	if itemErr == nil && item.ArchiveSK != "" {
+		archive, err = s.archiveItemBySK(ctx, userID, item.ArchiveSK)
+	} else {
+		archive, err = s.ArchiveItem(ctx, userID, itemID)
+	}
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			count, countErr := s.heartCount(ctx, userID)
+			return "", count, countErr
+		}
+		return "", 0, err
+	}
+
+	minusOne := &types.AttributeValueMemberN{Value: "-1"}
+	baseWrites := []types.TransactWriteItem{
+		{Delete: &types.Delete{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), archive.SK),
+			ConditionExpression: aws.String("attribute_exists(SK)"),
+		}},
+	}
+	if itemErr == nil {
+		baseWrites = append(baseWrites, types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), item.SK),
+			UpdateExpression:          aws.String("REMOVE archive_sk, hearted"),
+			ConditionExpression:       aws.String("archive_sk = :archive"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": &types.AttributeValueMemberS{Value: archive.SK}},
+		}})
+	}
+	baseWrites = append(baseWrites, types.TransactWriteItem{Update: &types.Update{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+		UpdateExpression:          aws.String("ADD heart_count :minus_one"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":minus_one": minusOne},
+	}})
+	withSignalDelete := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Delete: &types.Delete{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
+		ConditionExpression:       aws.String("#source = :heart"),
+		ExpressionAttributeNames:  map[string]string{"#source": "source"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":heart": &types.AttributeValueMemberS{Value: "heart"}},
+	}})
+	err = s.transact(ctx, withSignalDelete)
+	if isTransactionCanceled(err) {
+		// Missing or explicit signals must survive un-hearting.
+		err = s.transact(ctx, baseWrites)
+	}
+	if err != nil {
+		if _, currentErr := s.ArchiveItem(ctx, userID, itemID); errors.Is(currentErr, ErrNotFound) {
+			count, countErr := s.heartCount(ctx, userID)
+			return "", count, countErr
+		}
+		return "", 0, err
+	}
+	s.deleteArchiveContent(ctx, userID, itemID)
+	count, err := s.heartCount(ctx, userID)
+	return "", count, err
+}
+
+func (s *Store) transact(ctx context.Context, writes []types.TransactWriteItem) error {
+	_, err := s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: writes})
+	return err
+}
+
+func isTransactionCanceled(err error) bool {
+	var canceled *types.TransactionCanceledException
+	return errors.As(err, &canceled)
+}
+
+func (s *Store) heartCount(ctx context.Context, userID string) (int, error) {
+	user, err := s.User(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return user.HeartCount, nil
+}
+
+func (s *Store) copyContent(ctx context.Context, source, destination string) (bool, error) {
+	if s.s3 == nil || s.bucket == "" {
+		return false, fmt.Errorf("content storage is not configured")
+	}
+	_, err := s.s3.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(destination),
+		CopySource: aws.String(url.PathEscape(s.bucket + "/" + strings.TrimLeft(source, "/"))),
+	})
+	if err == nil {
+		return true, nil
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "404") {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s *Store) deleteArchiveContent(ctx context.Context, userID, itemID string) {
+	if s.s3 == nil || s.bucket == "" {
+		return
+	}
+	for _, objectKey := range []string{ArchiveBodyKey(userID, itemID), ArchiveMediaKey(userID, itemID)} {
+		if _, err := s.s3.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objectKey)}); err != nil {
+			slog.ErrorContext(ctx, "delete archived content", "key", objectKey, "error", err)
 		}
 	}
 }
@@ -350,13 +682,22 @@ func (s *Store) Signals(ctx context.Context, userID string) ([]domain.Signal, er
 }
 
 func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
+	heartSource := false
 	if value == 0 {
-		_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID))})
-		return err
+		if item.ArchiveSK != "" {
+			value = 1
+			heartSource = true
+		} else {
+			_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID))})
+			return err
+		}
 	}
 	signal := domain.Signal{
 		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: value,
 		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(time.Now()),
+	}
+	if heartSource {
+		signal.Source = "heart"
 	}
 	encoded, err := attributevalue.MarshalMap(signal)
 	if err != nil {
@@ -461,6 +802,7 @@ func (s *Store) ContentURL(objectKey string) string {
 }
 
 func (s *Store) PublicItem(item domain.Item) domain.Item {
+	item.Hearted = item.ArchiveSK != "" || item.HeartedTS != ""
 	item.MediaKey = s.ContentURL(item.MediaKey)
 	item.BodyKey = s.ContentURL(item.BodyKey)
 	item.FaviconKey = s.ContentURL(item.FaviconKey)

@@ -1,5 +1,9 @@
 import type { LayoutRow } from "./justified";
 
+export function readStateEnabled(archive: boolean): boolean {
+  return !archive;
+}
+
 export function fullyPassedRows(
   rows: LayoutRow[],
   previousIndex: number,

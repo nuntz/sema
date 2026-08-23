@@ -75,6 +75,10 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result = s.getItems(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
 		result = s.readBatch(ctx, claims.Subject, request.Body)
+	case method == http.MethodGet && path == "/archive":
+		result = s.getArchive(ctx, claims.Subject, request.QueryStringParameters)
+	case method == http.MethodGet && strings.HasPrefix(path, "/archive/"):
+		result = s.getArchiveItem(ctx, claims.Subject, strings.TrimPrefix(path, "/archive/"))
 	case strings.HasPrefix(path, "/items/"):
 		result = s.itemRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
@@ -103,7 +107,7 @@ func (s *server) getMe(ctx context.Context, userID string) events.APIGatewayV2HT
 	if err != nil {
 		return s.failure("get signals", err)
 	}
-	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": len(signals)})
+	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": len(signals), "heart_count": user.HeartCount})
 }
 
 func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
@@ -143,9 +147,49 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 		return s.failure("list items", err)
 	}
+	if err := s.prepareItems(ctx, userID, items); err != nil {
+		return s.failure("prepare items", err)
+	}
+	return response(http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+}
+
+func (s *server) getArchive(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	limit, _ := strconv.Atoi(query["limit"])
+	items, next, err := s.store.Archives(ctx, userID, query["cursor"], limit)
+	if err != nil {
+		if errors.Is(err, store.ErrInvalidCursor) {
+			return badRequest(err)
+		}
+		return s.failure("list archive", err)
+	}
+	if err := s.prepareItems(ctx, userID, items); err != nil {
+		return s.failure("prepare archive", err)
+	}
+	return response(http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+}
+
+func (s *server) getArchiveItem(ctx context.Context, userID, itemID string) events.APIGatewayV2HTTPResponse {
+	if itemID == "" || strings.Contains(itemID, "/") {
+		return response(http.StatusNotFound, map[string]string{"error": "archive item not found"})
+	}
+	item, err := s.store.ArchiveItem(ctx, userID, itemID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return response(http.StatusNotFound, map[string]string{"error": "archive item not found"})
+		}
+		return s.failure("get archive item", err)
+	}
+	items := []domain.Item{item}
+	if err := s.prepareItems(ctx, userID, items); err != nil {
+		return s.failure("prepare archive item", err)
+	}
+	return response(http.StatusOK, items[0])
+}
+
+func (s *server) prepareItems(ctx context.Context, userID string, items []domain.Item) error {
 	signals, err := s.store.Signals(ctx, userID)
 	if err != nil {
-		return s.failure("get item signals", err)
+		return err
 	}
 	byID := make(map[string]int, len(signals))
 	for _, signal := range signals {
@@ -155,7 +199,7 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		items[i].Signal = byID[items[i].ItemID]
 		items[i] = s.store.PublicItem(items[i])
 	}
-	return response(http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+	return nil
 }
 
 func parseIncludeRead(value string) (bool, error) {
@@ -172,29 +216,59 @@ func parseIncludeRead(value string) (bool, error) {
 func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body string) events.APIGatewayV2HTTPResponse {
 	parts := strings.Split(suffix, "/")
 	itemID := parts[0]
-	if itemID == "" {
+	if itemID == "" || len(parts) > 2 {
 		return response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
-	item, err := s.store.Item(ctx, userID, itemID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return response(http.StatusNotFound, map[string]string{"error": "item not found"})
-		}
-		return s.failure("get item", err)
-	}
 	if method == http.MethodGet && len(parts) == 1 {
+		item, err := s.store.Item(ctx, userID, itemID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+			}
+			return s.failure("get item", err)
+		}
 		items := []domain.Item{item}
 		if err := s.store.ResolveRead(ctx, userID, items); err != nil {
 			return s.failure("resolve read state", err)
 		}
-		item = items[0]
-		return response(http.StatusOK, s.store.PublicItem(item))
+		if err := s.prepareItems(ctx, userID, items); err != nil {
+			return s.failure("prepare item", err)
+		}
+		return response(http.StatusOK, items[0])
 	}
 	if method != http.MethodPost || len(parts) != 2 {
 		return response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 	switch parts[1] {
+	case "heart":
+		var input struct {
+			Hearted *bool `json:"hearted"`
+		}
+		if err := decodeJSON(body, &input); err != nil {
+			return badRequest(err)
+		}
+		if input.Hearted == nil {
+			return badRequest(errors.New("hearted is required"))
+		}
+		archiveSK, heartCount, err := s.store.SetHeart(ctx, userID, itemID, *input.Hearted)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+			}
+			return s.failure("set heart", err)
+		}
+		return response(http.StatusOK, map[string]any{"archive_sk": archiveSK, "heart_count": heartCount})
 	case "signal":
+		item, err := s.store.Item(ctx, userID, itemID)
+		if errors.Is(err, store.ErrNotFound) {
+			item, err = s.store.ArchiveItem(ctx, userID, itemID)
+		}
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+			}
+			return s.failure("get item for signal", err)
+		}
 		var input struct {
 			Value int `json:"value"`
 		}
@@ -211,6 +285,12 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 			return s.failure("set signal", err)
 		}
 	case "read":
+		if _, err := s.store.Item(ctx, userID, itemID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+			}
+			return s.failure("get item for read state", err)
+		}
 		var input struct {
 			Read bool `json:"read"`
 		}

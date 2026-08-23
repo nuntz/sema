@@ -56,4 +56,9 @@ describe("keyboard map", () => {
     expect(appCommand("Escape")).toBe("close-help");
     expect(gridCommand("?")).toBeUndefined();
   });
+
+  it("maps shift+A to the archive at the app level", () => {
+    expect(appCommand("A")).toBe("toggle-archive");
+    expect(appCommand("a")).toBeUndefined();
+  });
 });

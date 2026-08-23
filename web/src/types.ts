@@ -4,11 +4,13 @@ export interface Profile {
   email: string;
   created_at: string;
   order_pref: Order;
+  heart_count: number;
 }
 
 export interface MeResponse {
   profile: Profile;
   signal_count: number;
+  heart_count: number;
 }
 
 export interface Item {
@@ -31,11 +33,18 @@ export interface Item {
   size: "S" | "M" | "L";
   read: boolean;
   signal: -1 | 0 | 1;
+  hearted: boolean;
+  hearted_ts?: string;
 }
 
 export interface ItemsResponse {
   items: Item[];
   next_cursor: string | null;
+}
+
+export interface HeartResponse {
+  archive_sk: string;
+  heart_count: number;
 }
 
 export interface Feed {

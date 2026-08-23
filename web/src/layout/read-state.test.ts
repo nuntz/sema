@@ -4,6 +4,7 @@ import { justify } from "./justified";
 import {
   fullyPassedRows,
   intersectingRowIDs,
+  readStateEnabled,
   shouldLoadNextPage,
   shouldMarkAtBottom,
   shouldShowEndCard,
@@ -21,9 +22,15 @@ const make = (id: number): Item => ({
   size: "S",
   read: false,
   signal: 0,
+  hearted: false,
 });
 
 describe("read state", () => {
+  it("is completely disabled in the archive", () => {
+    expect(readStateEnabled(false)).toBe(true);
+    expect(readStateEnabled(true)).toBe(false);
+  });
+
   it("only returns newly fully-passed rows", () => {
     const rows = justify(
       Array.from({ length: 18 }, (_, i) => make(i)),

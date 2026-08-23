@@ -20,6 +20,7 @@ const make = (itemID: string): Item => ({
   size: "M",
   read: false,
   signal: 0,
+  hearted: false,
 });
 
 describe("item list", () => {

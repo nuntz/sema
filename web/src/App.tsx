@@ -1,5 +1,6 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
+import { shouldConfirmArchiveRemoval, updateHeartState } from "./archive";
 import {
   mergeNewItems,
   pollCandidates,
@@ -13,8 +14,10 @@ import {
   LinkActionFailure,
 } from "./link-action";
 import type { Item, Order, Profile } from "./types";
+import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
+import { HeartIcon } from "./ui/HeartIcon";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
@@ -26,6 +29,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   const api = new APIClient(props.token);
   const [profile, setProfile] = createSignal<Profile>();
   const [signalCount, setSignalCount] = createSignal(0);
+  const [heartCount, setHeartCount] = createSignal(0);
   const [order, setOrder] = createSignal<Order>("chrono");
   const [items, setItems] = createSignal<Item[]>([]);
   const [gridIDs, setGridIDs] = createSignal<string[]>([]);
@@ -40,7 +44,8 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [unreadOnly, setUnreadOnly] = createSignal(true);
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
-  const [hearted, setHearted] = createSignal(new Set<string>());
+  const [mode, setMode] = createSignal<"live" | "archive">("live");
+  const [confirmRemove, setConfirmRemove] = createSignal<Item>();
   const [keysOpen, setKeysOpen] = createSignal(false);
   const [linkActionID, setLinkActionID] = createSignal("");
   const [toast, setToast] = createSignal<Toast>();
@@ -55,6 +60,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   let toastTimer: number | undefined;
   let toastID = 0;
   const pendingRead = new Set<string>();
+  const heartsInFlight = new Set<string>();
 
   const handleError = (caught: unknown) => {
     if (caught instanceof UnauthorizedError) {
@@ -99,6 +105,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       const me = await api.me();
       setProfile(me.profile);
       setSignalCount(me.signal_count);
+      setHeartCount(me.heart_count ?? me.profile.heart_count ?? 0);
       setOrder(me.profile.order_pref || "chrono");
       await reload(me.profile.order_pref || "chrono");
     } catch (caught) {
@@ -108,7 +115,11 @@ export function App(props: { token: () => string; signOut(): void }) {
     }
   };
 
-  const reload = async (nextOrder = order(), nextUnreadOnly = unreadOnly()) => {
+  const reload = async (
+    nextOrder = order(),
+    nextUnreadOnly = unreadOnly(),
+    nextMode = mode(),
+  ) => {
     const version = ++requestVersion;
     setLoading(true);
     setHasPage(false);
@@ -117,16 +128,23 @@ export function App(props: { token: () => string; signOut(): void }) {
     setPendingNew([]);
     setCursor("");
     try {
-      const page = await api.items(nextOrder, "", !nextUnreadOnly);
+      const page =
+        nextMode === "archive"
+          ? await api.archive()
+          : await api.items(nextOrder, "", !nextUnreadOnly);
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
       setItems(pageItems);
-      setGridIDs(visibleItemIDs(pageItems, nextUnreadOnly));
+      const visibleIDs =
+        nextMode === "archive"
+          ? pageItems.map((item) => item.item_id)
+          : visibleItemIDs(pageItems, nextUnreadOnly);
+      setGridIDs(visibleIDs);
       setLayoutVersion((value) => value + 1);
       setScrollTopVersion((value) => value + 1);
       setCursor(page.next_cursor ?? "");
       setHasPage(true);
-      setFocusedID(visibleItemIDs(pageItems, nextUnreadOnly)[0] ?? "");
+      setFocusedID(visibleIDs[0] ?? "");
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -140,7 +158,10 @@ export function App(props: { token: () => string; signOut(): void }) {
     const nextCursor = cursor();
     let continueLoading = false;
     try {
-      const page = await api.items(order(), nextCursor, !unreadOnly());
+      const page =
+        mode() === "archive"
+          ? await api.archive(nextCursor)
+          : await api.items(order(), nextCursor, !unreadOnly());
       if (nextCursor !== cursor()) return;
       let added: Item[] = [];
       setItems((current) => {
@@ -148,7 +169,10 @@ export function App(props: { token: () => string; signOut(): void }) {
         added = (page.items ?? []).filter((item) => !seen.has(item.item_id));
         return added.length > 0 ? [...current, ...added] : current;
       });
-      const visible = visibleItemIDs(added, unreadOnly());
+      const visible =
+        mode() === "archive"
+          ? added.map((item) => item.item_id)
+          : visibleItemIDs(added, unreadOnly());
       if (visible.length > 0) {
         setGridIDs((current) => [...current, ...visible]);
         setLayoutVersion((value) => value + 1);
@@ -166,6 +190,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   const pollNew = async () => {
     if (
       pollInFlight ||
+      mode() === "archive" ||
       loading() ||
       !hasPage() ||
       document.visibilityState !== "visible"
@@ -216,7 +241,12 @@ export function App(props: { token: () => string; signOut(): void }) {
       )
         return;
       event.preventDefault();
-      setKeysOpen((open) => (command === "toggle-help" ? !open : false));
+      if (command === "toggle-archive") {
+        setKeysOpen(false);
+        void toggleArchive();
+      } else {
+        setKeysOpen((open) => (command === "toggle-help" ? !open : false));
+      }
     };
     pollTimer = window.setInterval(() => void pollNew(), 60_000);
     document.addEventListener("visibilitychange", onVisibility);
@@ -257,12 +287,14 @@ export function App(props: { token: () => string; signOut(): void }) {
 
   const setSignal = (item: Item, value: -1 | 0 | 1) => {
     const previous = item.signal;
-    replaceItem(item.item_id, { signal: value });
+    const effective = item.hearted && value === 0 ? 1 : value;
+    replaceItem(item.item_id, { signal: effective });
     api
       .signal(item.item_id, value)
       .then(() => {
-        if (previous === 0 && value !== 0) setSignalCount((count) => count + 1);
-        if (previous !== 0 && value === 0)
+        if (previous === 0 && effective !== 0)
+          setSignalCount((count) => count + 1);
+        if (previous !== 0 && effective === 0)
           setSignalCount((count) => Math.max(0, count - 1));
       })
       .catch((caught) => {
@@ -271,13 +303,51 @@ export function App(props: { token: () => string; signOut(): void }) {
       });
   };
 
-  const toggleHeart = (item: Item) =>
-    setHearted((current) => {
-      const next = new Set(current);
-      if (next.has(item.item_id)) next.delete(item.item_id);
-      else next.add(item.item_id);
-      return next;
-    });
+  const performHeart = async (item: Item) => {
+    if (heartsInFlight.has(item.item_id)) return;
+    heartsInFlight.add(item.item_id);
+    const previous = item.hearted;
+    const next = !previous;
+    setItems((current) => updateHeartState(current, item.item_id, next));
+    try {
+      const result = await api.heart(item.item_id, next);
+      setHeartCount(result.heart_count);
+      setProfile((current) =>
+        current ? { ...current, heart_count: result.heart_count } : current,
+      );
+      if (mode() === "archive" && !next) {
+        const remainingIDs = gridIDs().filter((id) => id !== item.item_id);
+        setItems((current) =>
+          current.filter((candidate) => candidate.item_id !== item.item_id),
+        );
+        setGridIDs(remainingIDs);
+        setReaderID((current) => (current === item.item_id ? "" : current));
+        setFocusedID((current) =>
+          current === item.item_id ? (remainingIDs[0] ?? "") : current,
+        );
+        setLayoutVersion((value) => value + 1);
+        showToast("success", "Removed from archive");
+      }
+    } catch (caught) {
+      setItems((current) => updateHeartState(current, item.item_id, previous));
+      if (caught instanceof UnauthorizedError) props.signOut();
+      else
+        showToast(
+          "error",
+          next ? "Couldn’t keep this item" : "Couldn’t remove this item",
+        );
+    } finally {
+      heartsInFlight.delete(item.item_id);
+    }
+  };
+
+  const toggleHeart = (item: Item) => {
+    if (shouldConfirmArchiveRemoval(mode() === "archive", item.hearted)) {
+      setConfirmRemove(item);
+      return;
+    }
+    void performHeart(item);
+  };
 
   const writeReadBatch = (ids: string[], read: boolean, keepalive = false) =>
     Promise.all(
@@ -291,6 +361,7 @@ export function App(props: { token: () => string; signOut(): void }) {
     );
 
   const queueRead = (ids: string[]) => {
+    if (mode() === "archive") return;
     const requested = new Set(ids);
     const alreadyRead = new Set(
       items()
@@ -321,7 +392,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const markOpened = (item: Item) => {
-    if (!item.read) {
+    if (mode() === "live" && !item.read) {
       replaceItem(item.item_id, { read: true });
       api.read(item.item_id, true).catch((caught) => {
         replaceItem(item.item_id, { read: false });
@@ -332,6 +403,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const toggleRead = (item: Item) => {
+    if (mode() === "archive") return;
     pendingRead.delete(item.item_id);
     if (pendingRead.size === 0) {
       window.clearTimeout(readTimer);
@@ -361,7 +433,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const markBelow = async (item: Item) => {
-    if (markBelowInFlight) return;
+    if (mode() === "archive" || markBelowInFlight) return;
     markBelowInFlight = true;
     const version = requestVersion;
     const markOrder = order();
@@ -387,6 +459,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const toggleUnread = async () => {
+    if (mode() === "archive") return;
     await flushRead();
     const next = !unreadOnly();
     setUnreadOnly(next);
@@ -415,6 +488,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const toggleOrder = async () => {
+    if (mode() === "archive") return;
     await flushRead();
     const next: Order = order() === "chrono" ? "interest" : "chrono";
     setOrder(next);
@@ -424,6 +498,16 @@ export function App(props: { token: () => string; signOut(): void }) {
     );
     api.patchMe({ order_pref: next }).catch(handleError);
     await reload(next);
+  };
+
+  const toggleArchive = async () => {
+    await flushRead();
+    const next = mode() === "live" ? "archive" : "live";
+    setMode(next);
+    setView("grid");
+    setReaderID("");
+    setConfirmRemove();
+    await reload(order(), unreadOnly(), next);
   };
 
   const moveReader = (delta: number) => {
@@ -445,6 +529,7 @@ export function App(props: { token: () => string; signOut(): void }) {
         <>
           <Feeds
             api={api}
+            heartCount={heartCount()}
             onBack={() => setView("grid")}
             onKeys={() => setKeysOpen(true)}
             onSignOut={props.signOut}
@@ -460,45 +545,69 @@ export function App(props: { token: () => string; signOut(): void }) {
           <button
             type="button"
             class="wordmark"
+            classList={{ quiet: mode() === "archive" }}
             onClick={() => setView("grid")}
           >
             Sema
           </button>
-          <fieldset class="order-toggle" aria-label="Item order">
-            <button
-              type="button"
-              classList={{ active: order() === "chrono" }}
-              onClick={() => order() !== "chrono" && toggleOrder()}
-            >
-              CHRONO
-            </button>
-            <button
-              type="button"
-              classList={{ active: order() === "interest" }}
-              onClick={() => order() !== "interest" && toggleOrder()}
-            >
-              INTEREST
-            </button>
-          </fieldset>
-          <span class="status-line">
-            {items().filter((item) => !item.read).length} unread ·{" "}
-            {order() === "interest"
-              ? `ranked from ${signalCount()} signals`
-              : `${items().length} recent items`}
-          </span>
-          <span class="mobile-status">
-            {items().filter((item) => !item.read).length} unread
-          </span>
+          <Show
+            when={mode() === "live"}
+            fallback={
+              <span class="archive-eyebrow">ARCHIVE · {heartCount()} KEPT</span>
+            }
+          >
+            <fieldset class="order-toggle" aria-label="Item order">
+              <button
+                type="button"
+                classList={{ active: order() === "chrono" }}
+                onClick={() => order() !== "chrono" && toggleOrder()}
+              >
+                CHRONO
+              </button>
+              <button
+                type="button"
+                classList={{ active: order() === "interest" }}
+                onClick={() => order() !== "interest" && toggleOrder()}
+              >
+                INTEREST
+              </button>
+            </fieldset>
+            <span class="status-line">
+              {items().filter((item) => !item.read).length} unread ·{" "}
+              {order() === "interest"
+                ? `ranked from ${signalCount()} signals`
+                : `${items().length} recent items`}
+            </span>
+            <span class="mobile-status">
+              {items().filter((item) => !item.read).length} unread
+            </span>
+          </Show>
           <div class="topbar-right">
-            <label class="unread-toggle">
-              unread only{" "}
-              <input
-                type="checkbox"
-                checked={unreadOnly()}
-                onChange={toggleUnread}
-              />
-              <i />
-            </label>
+            <Show when={mode() === "live"}>
+              <label class="unread-toggle">
+                unread only{" "}
+                <input
+                  type="checkbox"
+                  checked={unreadOnly()}
+                  onChange={toggleUnread}
+                />
+                <i />
+              </label>
+            </Show>
+            <button
+              type="button"
+              class="archive-toggle"
+              classList={{ active: mode() === "archive" }}
+              aria-pressed={mode() === "archive"}
+              aria-label={
+                mode() === "archive" ? "Return to live feed" : "Open archive"
+              }
+              onClick={() => void toggleArchive()}
+            >
+              <HeartIcon filled={mode() === "archive"} />
+              <span>archive</span>
+              <small>{heartCount()}</small>
+            </button>
             <button
               type="button"
               class="keys-chip"
@@ -517,7 +626,7 @@ export function App(props: { token: () => string; signOut(): void }) {
             </button>
           </div>
         </header>
-        <Show when={pendingNew().length > 0}>
+        <Show when={mode() === "live" && pendingNew().length > 0}>
           <button
             type="button"
             class="new-items-pill"
@@ -539,22 +648,32 @@ export function App(props: { token: () => string; signOut(): void }) {
           fallback={
             <div class="loading-screen">
               <i />
-              <span>Loading your feed…</span>
+              <span>
+                {mode() === "archive"
+                  ? "Loading your archive…"
+                  : "Loading your feed…"}
+              </span>
             </div>
           }
         >
           <Show
             when={items().length > 0}
-            fallback={<ColdStart onImport={() => setView("feeds")} />}
+            fallback={
+              mode() === "archive" ? (
+                <ArchiveEmpty />
+              ) : (
+                <ColdStart onImport={() => setView("feeds")} />
+              )
+            }
           >
             <Grid
               items={gridItems()}
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}
               focusedID={focusedID()}
-              active={!readerID() && !keysOpen()}
+              active={!readerID() && !keysOpen() && !confirmRemove()}
               hasMore={cursor() !== ""}
-              hearted={hearted()}
+              archive={mode() === "archive"}
               linkActionID={linkActionID()}
               onFocus={setFocusedID}
               onOpen={markOpened}
@@ -578,8 +697,9 @@ export function App(props: { token: () => string; signOut(): void }) {
           {(item) => (
             <Reader
               item={item()}
-              active={!keysOpen()}
-              hearted={hearted().has(item().item_id)}
+              active={!keysOpen() && !confirmRemove()}
+              archive={mode() === "archive"}
+              hearted={item().hearted}
               linkActionActive={linkActionID() === item().item_id}
               canPrevious={selectedIndex() > 0}
               canNext={
@@ -596,6 +716,17 @@ export function App(props: { token: () => string; signOut(): void }) {
         </Show>
         <Show when={keysOpen()}>
           <KeyboardMap onClose={() => setKeysOpen(false)} />
+        </Show>
+        <Show when={confirmRemove()}>
+          {(item) => (
+            <ConfirmRemove
+              onCancel={() => setConfirmRemove()}
+              onConfirm={() => {
+                setConfirmRemove();
+                void performHeart(item());
+              }}
+            />
+          )}
         </Show>
         <Show when={toast()} keyed>
           {(notice) => (
@@ -629,6 +760,19 @@ function ColdStart(props: { onImport(): void }) {
         Import OPML
       </button>
       <small>ranking activates at ~30 signals · 0 so far</small>
+    </section>
+  );
+}
+
+function ArchiveEmpty() {
+  return (
+    <section class="archive-empty">
+      <HeartIcon filled={false} />
+      <h1>Nothing kept yet</h1>
+      <p>
+        Heart an item and it lands here permanently. Everything else in the feed
+        expires after seven days; kept items don&apos;t.
+      </p>
     </section>
   );
 }

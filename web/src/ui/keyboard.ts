@@ -17,7 +17,7 @@ export type GridCommand =
   | "original"
   | "order"
   | "unread";
-export type AppCommand = "toggle-help" | "close-help";
+export type AppCommand = "toggle-help" | "close-help" | "toggle-archive";
 export type ReaderCommand =
   | "close"
   | "next"
@@ -60,6 +60,7 @@ const gridBindings: Record<string, GridCommand> = {
 const appBindings: Record<string, AppCommand> = {
   "?": "toggle-help",
   Escape: "close-help",
+  A: "toggle-archive",
 };
 
 const readerBindings: Record<string, ReaderCommand> = {

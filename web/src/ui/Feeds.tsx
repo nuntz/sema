@@ -1,9 +1,11 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import type { APIClient } from "../api/client";
+import { archiveSize } from "../archive";
 import { relativeTime } from "./Grid";
 
 export function Feeds(props: {
   api: APIClient;
+  heartCount: number;
   onBack(): void;
   onKeys(): void;
   onSignOut(): void;
@@ -59,6 +61,19 @@ export function Feeds(props: {
         </button>
       </header>
       <section class="feeds-content">
+        <div class="settings-group">
+          <h2>STORAGE</h2>
+          <div class="settings-row">
+            <span>
+              <strong>Kept</strong>
+              <small>Archived permanently, exempt from the 7-day expiry</small>
+            </span>
+            <b>
+              {props.heartCount} {props.heartCount === 1 ? "item" : "items"} · ~
+              {archiveSize(props.heartCount)}
+            </b>
+          </div>
+        </div>
         <div class="import-row">
           <div>
             <strong>Import your subscriptions</strong>

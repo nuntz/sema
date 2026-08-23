@@ -22,6 +22,7 @@ type User struct {
 	CreatedAt        string `dynamodbav:"created_at" json:"created_at"`
 	OrderPref        Order  `dynamodbav:"order_pref" json:"order_pref"`
 	InterestPosition string `dynamodbav:"interest_position,omitempty" json:"interest_position,omitempty"`
+	HeartCount       int    `dynamodbav:"heart_count" json:"heart_count"`
 }
 
 type Feed struct {
@@ -62,9 +63,12 @@ type Item struct {
 	Score       float64 `dynamodbav:"score" json:"score"`
 	Size        string  `dynamodbav:"size" json:"size"`
 	Vector      []byte  `dynamodbav:"vector,omitempty" json:"-"`
-	TTL         int64   `dynamodbav:"ttl" json:"-"`
+	TTL         int64   `dynamodbav:"ttl,omitempty" json:"-"`
+	ArchiveSK   string  `dynamodbav:"archive_sk,omitempty" json:"-"`
+	HeartedTS   string  `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
 	Read        bool    `dynamodbav:"-" json:"read"`
 	Signal      int     `dynamodbav:"-" json:"signal"`
+	Hearted     bool    `dynamodbav:"-" json:"hearted"`
 }
 
 type Signal struct {
@@ -76,6 +80,7 @@ type Signal struct {
 	Title     string `dynamodbav:"title"`
 	FeedID    string `dynamodbav:"feed_id"`
 	CreatedAt string `dynamodbav:"created_at"`
+	Source    string `dynamodbav:"source,omitempty"`
 }
 
 type Read struct {
@@ -134,6 +139,10 @@ func UserPK(user string) string { return "U#" + user }
 func FeedSK(id string) string   { return "F#" + id }
 func SignalSK(id string) string { return "S#" + id }
 func ReadSK(id string) string   { return "R#" + id }
+
+func ArchiveSK(hearted time.Time, id string) string {
+	return "A#" + Timestamp(hearted) + "#" + id
+}
 
 func ItemSK(published time.Time, id string) string {
 	return "I#" + Timestamp(published) + "#" + id

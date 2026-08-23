@@ -19,6 +19,7 @@ const bindings = [
   ["V", "open original"],
   ["T", "toggle order"],
   ["A", "toggle all items"],
+  ["⇧ A", "toggle archive"],
   ["ESC", "close reader"],
   ["?", "this map"],
 ];

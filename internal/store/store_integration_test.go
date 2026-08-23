@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +17,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/nuntz/sema/internal/domain"
 )
 
@@ -160,6 +165,216 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if err != nil || len(signals) != 1 || signals[0].Value != 1 {
 		t.Fatalf("signals = %#v, %v", signals, err)
 	}
+}
+
+func TestHeartArchiveLifecycle(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	objects := &archiveObjectStore{objects: map[string]bool{}}
+	repository.s3 = objects
+	repository.bucket = "content"
+	repository.contentURL = "/content"
+	now := time.Now().UTC()
+	item := domain.Item{
+		PK: domain.UserPK("keeper"), SK: domain.ItemSK(now, "kept"), FeedPK: "F#feed", ItemID: "kept", FeedID: "feed",
+		FeedTitle: "A Feed", FaviconKey: FaviconKey("feed"), URL: "https://example.com/kept", Title: "Kept",
+		Summary: "A summary", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+		BodyKey: BodyKey("keeper", "kept"), HasBody: true, MediaKey: MediaKey("keeper", "kept", ".webp"), MediaW: 1200, MediaH: 800,
+		Score: 0.7, Size: "L", Vector: []byte{1, 2, 3}, TTL: now.Add(domain.Retention).Unix(),
+	}
+	objects.objects[item.BodyKey] = true
+	objects.objects[item.MediaKey] = true
+	if written, err := repository.PutItem(ctx, item); err != nil || !written {
+		t.Fatalf("put item = %v, %v", written, err)
+	}
+
+	archiveSK, count, err := repository.SetHeart(ctx, "keeper", item.ItemID, true)
+	if err != nil || archiveSK == "" || count != 1 {
+		t.Fatalf("heart = %q, %d, %v", archiveSK, count, err)
+	}
+	if !objects.objects[ArchiveBodyKey("keeper", "kept")] || !objects.objects[ArchiveMediaKey("keeper", "kept")] {
+		t.Fatalf("archive objects = %#v", objects.objects)
+	}
+	archived, err := repository.ArchiveItem(ctx, "keeper", item.ItemID)
+	if err != nil || archived.SK != archiveSK || archived.TTL != 0 || !archived.HasBody || archived.BodyKey != ArchiveBodyKey("keeper", "kept") || archived.MediaKey != ArchiveMediaKey("keeper", "kept") {
+		t.Fatalf("archive item = %#v, %v", archived, err)
+	}
+	raw, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(repository.table), Key: key(domain.UserPK("keeper"), archiveSK)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hasTTL := raw.Item["ttl"]; hasTTL {
+		t.Fatal("archive row unexpectedly has ttl")
+	}
+	if _, err := repository.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(repository.table), Key: key(domain.UserPK("keeper"), item.SK),
+		UpdateExpression:          aws.String("SET #ttl = :expired"),
+		ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":expired": &types.AttributeValueMemberN{Value: fmt.Sprint(now.Add(-time.Hour).Unix())}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Item(ctx, "keeper", item.ItemID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expired live item = %v", err)
+	}
+	if durable, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); err != nil || durable.BodyKey != ArchiveBodyKey("keeper", "kept") {
+		t.Fatalf("archive after live expiry = %#v, %v", durable, err)
+	}
+	if _, err := repository.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(repository.table), Key: key(domain.UserPK("keeper"), item.SK),
+		UpdateExpression:          aws.String("SET #ttl = :active"),
+		ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":active": &types.AttributeValueMemberN{Value: fmt.Sprint(item.TTL)}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	live, err := repository.Item(ctx, "keeper", item.ItemID)
+	if err != nil || live.ArchiveSK != archiveSK {
+		t.Fatalf("live archive pointer = %#v, %v", live, err)
+	}
+	signals, err := repository.Signals(ctx, "keeper")
+	if err != nil || len(signals) != 1 || signals[0].Value != 1 || signals[0].Source != "heart" {
+		t.Fatalf("heart signals = %#v, %v", signals, err)
+	}
+	if err := repository.SetSignal(ctx, "keeper", live, 1); err != nil {
+		t.Fatal(err)
+	}
+	signals, err = repository.Signals(ctx, "keeper")
+	if err != nil || len(signals) != 1 || signals[0].Source != "" {
+		t.Fatalf("explicit signal did not replace heart source = %#v, %v", signals, err)
+	}
+	if err := repository.SetSignal(ctx, "keeper", live, 0); err != nil {
+		t.Fatal(err)
+	}
+	signals, err = repository.Signals(ctx, "keeper")
+	if err != nil || len(signals) != 1 || signals[0].Value != 1 || signals[0].Source != "heart" {
+		t.Fatalf("cleared explicit signal did not restore heart = %#v, %v", signals, err)
+	}
+	secondSK, count, err := repository.SetHeart(ctx, "keeper", item.ItemID, true)
+	if err != nil || secondSK != archiveSK || count != 1 {
+		t.Fatalf("second heart = %q, %d, %v", secondSK, count, err)
+	}
+
+	if err := repository.SetSignal(ctx, "keeper", item, -1); err != nil {
+		t.Fatal(err)
+	}
+	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
+		t.Fatalf("unheart = %d, %v", count, err)
+	}
+	if _, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("archive after unheart = %v", err)
+	}
+	if objects.objects[ArchiveBodyKey("keeper", "kept")] || objects.objects[ArchiveMediaKey("keeper", "kept")] {
+		t.Fatalf("objects survived unheart = %#v", objects.objects)
+	}
+	live, err = repository.Item(ctx, "keeper", item.ItemID)
+	if err != nil || live.ArchiveSK != "" {
+		t.Fatalf("live pointer after unheart = %#v, %v", live, err)
+	}
+	signals, err = repository.Signals(ctx, "keeper")
+	if err != nil || len(signals) != 1 || signals[0].Value != -1 || signals[0].Source != "" {
+		t.Fatalf("explicit signal after unheart = %#v, %v", signals, err)
+	}
+	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
+		t.Fatalf("second unheart = %d, %v", count, err)
+	}
+}
+
+func TestHeartToleratesMissingContentAndRejectsExpiredItem(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	repository.s3 = &archiveObjectStore{objects: map[string]bool{}}
+	repository.bucket = "content"
+	now := time.Now().UTC()
+	missing := domain.Item{
+		PK: domain.UserPK("keeper"), SK: domain.ItemSK(now, "missing"), FeedPK: "F#feed", ItemID: "missing", FeedID: "feed",
+		URL: "https://example.com/missing", Title: "Missing", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+		BodyKey: BodyKey("keeper", "missing"), HasBody: true, MediaKey: MediaKey("keeper", "missing", ".webp"),
+		Score: 0.2, Size: "S", TTL: now.Add(domain.Retention).Unix(),
+	}
+	if written, err := repository.PutItem(ctx, missing); err != nil || !written {
+		t.Fatalf("put missing item = %v, %v", written, err)
+	}
+	if _, _, err := repository.SetHeart(ctx, "keeper", missing.ItemID, true); err != nil {
+		t.Fatal(err)
+	}
+	archived, err := repository.ArchiveItem(ctx, "keeper", missing.ItemID)
+	if err != nil || archived.HasBody || archived.BodyKey != "" || archived.MediaKey != "" {
+		t.Fatalf("missing-content archive = %#v, %v", archived, err)
+	}
+
+	expired := missing
+	expired.ItemID = "expired"
+	expired.SK = domain.ItemSK(now.Add(-8*24*time.Hour), expired.ItemID)
+	expired.TTL = now.Add(-time.Hour).Unix()
+	if written, err := repository.PutItem(ctx, expired); err != nil || !written {
+		t.Fatalf("put expired item = %v, %v", written, err)
+	}
+	if _, _, err := repository.SetHeart(ctx, "keeper", expired.ItemID, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("heart expired item = %v", err)
+	}
+}
+
+func TestArchivePaginationIsNewestHeartFirst(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	for index, id := range []string{"first", "second", "third"} {
+		published := now.Add(time.Duration(index) * time.Second)
+		item := domain.Item{
+			PK: domain.UserPK("keeper"), SK: domain.ItemSK(published, id), FeedPK: "F#feed", ItemID: id, FeedID: "feed",
+			URL: "https://example.com/" + id, Title: id, PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(now),
+			Score: 0.5, Size: "M", TTL: now.Add(domain.Retention).Unix(),
+		}
+		if written, err := repository.PutItem(ctx, item); err != nil || !written {
+			t.Fatalf("put %s = %v, %v", id, written, err)
+		}
+		if _, _, err := repository.SetHeart(ctx, "keeper", id, true); err != nil {
+			t.Fatalf("heart %s: %v", id, err)
+		}
+	}
+	first, cursor, err := repository.Archives(ctx, "keeper", "", 2)
+	if err != nil || len(first) != 2 || first[0].ItemID != "third" || first[1].ItemID != "second" || cursor == "" {
+		t.Fatalf("first archive page = %#v, cursor %q, %v", first, cursor, err)
+	}
+	second, cursor, err := repository.Archives(ctx, "keeper", cursor, 2)
+	if err != nil || len(second) != 1 || second[0].ItemID != "first" || cursor != "" {
+		t.Fatalf("second archive page = %#v, cursor %q, %v", second, cursor, err)
+	}
+}
+
+type archiveObjectStore struct {
+	objects map[string]bool
+}
+
+func (s *archiveObjectStore) CopyObject(_ context.Context, input *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	copySource, _ := url.PathUnescape(aws.ToString(input.CopySource))
+	source := strings.TrimPrefix(copySource, aws.ToString(input.Bucket)+"/")
+	if !s.objects[source] {
+		return nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "missing"}
+	}
+	s.objects[aws.ToString(input.Key)] = true
+	return &s3.CopyObjectOutput{}, nil
+}
+
+func (s *archiveObjectStore) DeleteObject(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	delete(s.objects, aws.ToString(input.Key))
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+func (s *archiveObjectStore) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func (s *archiveObjectStore) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	s.objects[aws.ToString(input.Key)] = true
+	return &s3.PutObjectOutput{}, nil
 }
 
 // A table with no rows must still produce empty JSON arrays. The API encodes

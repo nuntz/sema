@@ -14,6 +14,7 @@ const item = (index: number, size: Item["size"], ratio = 1.5): Item => ({
   size,
   read: false,
   signal: 0,
+  hearted: false,
   media_w: ratio * 100,
   media_h: 100,
 });

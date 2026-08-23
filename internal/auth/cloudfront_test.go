@@ -25,11 +25,11 @@ func TestCookieSignerScopesCookiesToUserPrefixes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cookies) != 8 {
-		t.Fatalf("got %d cookies, want 8", len(cookies))
+	if len(cookies) != 12 {
+		t.Fatalf("got %d cookies, want 12", len(cookies))
 	}
 	joined := strings.Join(cookies, "\n")
-	for _, expected := range []string{"Path=/bodies/google-sub/", "Path=/media/google-sub/", "CloudFront-Key-Pair-Id=K123", "CloudFront-Hash-Algorithm=SHA256", "HttpOnly"} {
+	for _, expected := range []string{"Path=/bodies/google-sub/", "Path=/media/google-sub/", "Path=/archive/google-sub/", "CloudFront-Key-Pair-Id=K123", "CloudFront-Hash-Algorithm=SHA256", "HttpOnly"} {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("cookies do not contain %q", expected)
 		}

@@ -45,7 +45,7 @@ func (s *CookieSigner) Cookies(userID string, now time.Time) ([]string, error) {
 		return nil, nil
 	}
 	var cookies []string
-	for _, prefix := range []string{"bodies", "media"} {
+	for _, prefix := range []string{"bodies", "media", "archive"} {
 		path := fmt.Sprintf("/%s/%s/", prefix, userID)
 		policy, err := s.policy("https://*"+path+"*", now.Add(s.maxAge))
 		if err != nil {

@@ -1,4 +1,11 @@
-import type { Feed, ItemsResponse, MeResponse, Order, Profile } from "../types";
+import type {
+  Feed,
+  HeartResponse,
+  ItemsResponse,
+  MeResponse,
+  Order,
+  Profile,
+} from "../types";
 
 export interface FeedImportResult {
   imported: number;
@@ -58,6 +65,25 @@ export class APIClient {
     return this.request<import("../types").Item>(
       `/items/${encodeURIComponent(itemID)}`,
     );
+  }
+
+  archive(cursor = ""): Promise<ItemsResponse> {
+    const params = new URLSearchParams({ limit: "100" });
+    if (cursor) params.set("cursor", cursor);
+    return this.request(`/archive?${params}`);
+  }
+
+  archiveItem(itemID: string) {
+    return this.request<import("../types").Item>(
+      `/archive/${encodeURIComponent(itemID)}`,
+    );
+  }
+
+  heart(itemID: string, hearted: boolean): Promise<HeartResponse> {
+    return this.request(`/items/${encodeURIComponent(itemID)}/heart`, {
+      method: "POST",
+      body: JSON.stringify({ hearted }),
+    });
   }
 
   signal(itemID: string, value: -1 | 0 | 1): Promise<void> {
