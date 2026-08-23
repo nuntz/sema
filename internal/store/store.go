@@ -197,6 +197,27 @@ func (s *Store) ScheduleFeed(ctx context.Context, userID, feedID string, next ti
 	return err
 }
 
+func (s *Store) ClaimFeed(ctx context.Context, userID, feedID string, due, next time.Time) (bool, error) {
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID)),
+		UpdateExpression:    aws.String("SET next_fetch_at = :next, gsi1pk = :feed"),
+		ConditionExpression: aws.String("next_fetch_at <= :due"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":due":  &types.AttributeValueMemberS{Value: domain.Timestamp(due)},
+			":next": &types.AttributeValueMemberS{Value: domain.Timestamp(next)},
+			":feed": &types.AttributeValueMemberS{Value: feedIndexPK},
+		},
+	})
+	if err == nil {
+		return true, nil
+	}
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return false, nil
+	}
+	return false, err
+}
+
 func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) error {
 	_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID))})
 	return err

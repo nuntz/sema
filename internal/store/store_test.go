@@ -172,6 +172,36 @@ func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
 	}
 }
 
+func TestClaimFeedConditionallyLeasesDueFeed(t *testing.T) {
+	now := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
+	next := now.Add(5 * time.Minute)
+	calls := 0
+	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		calls++
+		if aws.ToString(input.UpdateExpression) != "SET next_fetch_at = :next, gsi1pk = :feed" || aws.ToString(input.ConditionExpression) != "next_fetch_at <= :due" {
+			t.Fatalf("claim update = %#v", input)
+		}
+		values := input.ExpressionAttributeValues
+		if values[":due"].(*types.AttributeValueMemberS).Value != domain.Timestamp(now) || values[":next"].(*types.AttributeValueMemberS).Value != domain.Timestamp(next) || values[":feed"].(*types.AttributeValueMemberS).Value != feedIndexPK {
+			t.Fatalf("claim values = %#v", values)
+		}
+		if calls == 2 {
+			return nil, &types.ConditionalCheckFailedException{}
+		}
+		return &dynamodb.UpdateItemOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+
+	claimed, err := repository.ClaimFeed(context.Background(), "user", "feed", now, next)
+	if err != nil || !claimed {
+		t.Fatalf("first claim = %v, %v", claimed, err)
+	}
+	claimed, err = repository.ClaimFeed(context.Background(), "user", "feed", now, next)
+	if err != nil || claimed {
+		t.Fatalf("stale claim = %v, %v", claimed, err)
+	}
+}
+
 func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	var writes []map[string]types.AttributeValue
 	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {

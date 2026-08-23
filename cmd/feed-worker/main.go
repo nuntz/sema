@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +26,11 @@ import (
 	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/store"
+)
+
+const (
+	defaultRateLimitDelay = 15 * time.Minute
+	rateLimitJitterWindow = 5 * time.Minute
 )
 
 type handler struct {
@@ -79,19 +87,24 @@ func (h *handler) process(ctx context.Context, body string) error {
 		feed.ErrorCount++
 		feed.LastFetchAt = domain.Timestamp(started)
 		feed.LastStatus = truncate(err.Error(), 240)
-		feed.NextFetchAt = domain.Timestamp(started.Add(time.Duration(1<<min(feed.ErrorCount, 4)) * time.Hour))
+		next, rateLimited := nextFetchAfterError(feed, started, err)
+		feed.NextFetchAt = domain.Timestamp(next)
 		if storeErr := h.store.PutFeed(ctx, feed); storeErr != nil {
 			return fmt.Errorf("fetch: %v; update failure: %w", err, storeErr)
 		}
 		slog.WarnContext(ctx, "feed fetch failed", "user", message.User, "feed_id", message.FeedID, "error", err, "next_fetch_at", feed.NextFetchAt)
-		observability.Emit(map[string]float64{"FeedsFailed": 1}, nil)
+		metrics := map[string]float64{"FeedsFailed": 1}
+		if rateLimited {
+			metrics["FeedsRateLimited"] = 1
+		}
+		observability.Emit(metrics, nil)
 		return nil
 	}
 	if result.NotModified {
 		feed.LastFetchAt = domain.Timestamp(started)
 		feed.LastStatus = "304"
 		feed.ErrorCount = 0
-		feed.NextFetchAt = domain.Timestamp(started.Add(time.Hour))
+		feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started))
 		observability.Emit(map[string]float64{"FeedsNotModified": 1}, nil)
 		return h.store.PutFeed(ctx, feed)
 	}
@@ -141,10 +154,39 @@ func (h *handler) process(ctx context.Context, body string) error {
 	feed.LastFetchAt = domain.Timestamp(started)
 	feed.LastStatus = "200"
 	feed.ErrorCount = 0
-	feed.NextFetchAt = domain.Timestamp(started.Add(time.Hour))
+	feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started))
 	slog.Info("feed fetched", "user", message.User, "feed_id", message.FeedID, "items_enqueued", len(messages))
 	observability.Emit(map[string]float64{"FeedsFetched": 1, "ItemsEnqueued": float64(len(messages))}, nil)
 	return h.store.PutFeed(ctx, feed)
+}
+
+func feedScheduleKey(feed domain.Feed) string {
+	return feed.PK + "#" + feed.FeedID
+}
+
+func nextFetchAfterError(feed domain.Feed, started time.Time, err error) (time.Time, bool) {
+	var statusErr *connector.HTTPStatusError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusTooManyRequests {
+		return started.Add(time.Duration(1<<min(feed.ErrorCount, 4)) * time.Hour), false
+	}
+
+	next := started.Add(defaultRateLimitDelay)
+	if retryAt, ok := parseRetryAfter(statusErr.Header.Get("Retry-After"), started); ok {
+		next = retryAt
+	}
+	next = next.Add(domain.StableOffset(feedScheduleKey(feed), rateLimitJitterWindow))
+	return next, true
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
+		return now.Add(time.Duration(seconds) * time.Second), true
+	}
+	if retryAt, err := http.ParseTime(value); err == nil && !retryAt.Before(now) {
+		return retryAt.UTC(), true
+	}
+	return time.Time{}, false
 }
 
 func (h *handler) enqueue(ctx context.Context, messages []domain.ItemMessage) error {

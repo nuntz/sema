@@ -11,6 +11,7 @@ import (
 
 	"github.com/mmcdole/gofeed"
 	ext "github.com/mmcdole/gofeed/extensions"
+	"github.com/nuntz/sema/internal/connector"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 )
@@ -44,7 +45,7 @@ func (c *Connector) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchRe
 		return domain.FetchResult{NotModified: true, ETag: feed.ETag, Modified: feed.LastModified}, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return domain.FetchResult{}, fmt.Errorf("feed returned HTTP %d", response.StatusCode)
+		return domain.FetchResult{}, &connector.HTTPStatusError{StatusCode: response.StatusCode, Header: response.Header.Clone()}
 	}
 	parsed, err := c.parser.Parse(bytes.NewReader(response.Body))
 	if err != nil {

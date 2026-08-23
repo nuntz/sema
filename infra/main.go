@@ -197,7 +197,7 @@ func main() {
 		}
 
 		// Keep the old Pulumi name to avoid replacing the rule.
-		rule, err := cloudwatch.NewEventRule(ctx, "hourly", &cloudwatch.EventRuleArgs{ScheduleExpression: pulumi.String("rate(15 minutes)")})
+		rule, err := cloudwatch.NewEventRule(ctx, "hourly", &cloudwatch.EventRuleArgs{ScheduleExpression: pulumi.String("rate(1 minute)")})
 		if err != nil {
 			return err
 		}

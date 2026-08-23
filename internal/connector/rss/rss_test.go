@@ -2,11 +2,13 @@ package rss
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/nuntz/sema/internal/connector"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 )
@@ -97,6 +99,23 @@ func TestConditionalFetch(t *testing.T) {
 	}
 	if !result.NotModified {
 		t.Fatal("expected a not-modified result")
+	}
+}
+
+func TestFetchPreservesHTTPStatusMetadata(t *testing.T) {
+	headers := make(http.Header)
+	headers.Set("Retry-After", "120")
+	feedConnector := &Connector{client: fakeFetcher{
+		response: httpx.Response{StatusCode: http.StatusTooManyRequests, Header: headers},
+	}, parser: gofeed.NewParser()}
+
+	_, err := feedConnector.Fetch(context.Background(), domain.Feed{URL: "https://example.com/feed"})
+	var statusErr *connector.HTTPStatusError
+	if !errors.As(err, &statusErr) {
+		t.Fatalf("error = %v, want HTTPStatusError", err)
+	}
+	if statusErr.StatusCode != http.StatusTooManyRequests || statusErr.Header.Get("Retry-After") != "120" || statusErr.Error() != "feed returned HTTP 429" {
+		t.Fatalf("status error = %#v", statusErr)
 	}
 }
 
