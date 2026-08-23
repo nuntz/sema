@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeBehaviourEvent } from "./behaviour-events";
+import { linkBehaviourEvent, mergeBehaviourEvent } from "./behaviour-events";
 
 describe("behaviour event batching", () => {
   it("keeps dwell and flags monotonic across a debounce window", () => {
@@ -9,6 +9,15 @@ describe("behaviour event batching", () => {
     );
     expect(openedLater).toEqual({
       dwell_ms: 31_000,
+      clicked_through: true,
+      shared: true,
+    });
+  });
+});
+
+describe("link behaviour", () => {
+  it("marks both copied and natively shared links as shared", () => {
+    expect(linkBehaviourEvent()).toEqual({
       clicked_through: true,
       shared: true,
     });

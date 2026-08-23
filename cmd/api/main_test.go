@@ -120,23 +120,34 @@ func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updates := 0
+	var updateInputs []*dynamodb.UpdateItemInput
 	db := &apiDynamo{
 		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
 		},
-		update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-			updates++
+		update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			updateInputs = append(updateInputs, input)
 			return &dynamodb.UpdateItemOutput{}, nil
 		},
 	}
 	server := &server{store: store.New(db, nil, "table", "", "")}
 	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
-	if response.StatusCode != http.StatusOK || updates != 2 {
-		t.Fatalf("events response = %d %s, updates %d", response.StatusCode, response.Body, updates)
+	if response.StatusCode != http.StatusOK || len(updateInputs) != 2 {
+		t.Fatalf("events response = %d %s, updates %d", response.StatusCode, response.Body, len(updateInputs))
 	}
 	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{}`)
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("empty event status = %d, body %s", response.StatusCode, response.Body)
+	}
+	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"shared":true}`)
+	if response.StatusCode != http.StatusOK || len(updateInputs) != 3 {
+		t.Fatalf("share event response = %d %s, updates %d", response.StatusCode, response.Body, len(updateInputs))
+	}
+	shareUpdate := updateInputs[2]
+	if shareUpdate.ExpressionAttributeNames["#shared"] != "shared" {
+		t.Fatalf("share expression names = %#v", shareUpdate.ExpressionAttributeNames)
+	}
+	if value, ok := shareUpdate.ExpressionAttributeValues[":shared"].(*types.AttributeValueMemberBOOL); !ok || !value.Value {
+		t.Fatalf("share expression values = %#v", shareUpdate.ExpressionAttributeValues)
 	}
 }

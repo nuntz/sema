@@ -186,6 +186,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	vector = score.Normalize(vector)
 	value, why := 0.0, (*domain.Why)(nil)
+	model := domain.Model{}
 	if h.scoringVersion == "1" {
 		rows, loadErr := h.store.Signals(ctx, message.User)
 		if loadErr != nil {
@@ -197,10 +198,11 @@ func (h *handler) process(ctx context.Context, body string) error {
 		}
 		value = score.LegacyCalculate(vector, legacy, mediaKey != "", published, started)
 	} else {
-		model, loadErr := h.models.Get(ctx, message.User)
+		loadedModel, loadErr := h.models.Get(ctx, message.User)
 		if loadErr != nil {
 			return loadErr
 		}
+		model = loadedModel
 		result := score.Calculate(vector, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
 		value = result.Score
 		if result.Base > 0.6 {
@@ -223,7 +225,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		URL: message.URL, Title: embedTitle, Summary: summary, Author: message.Author,
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
 		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, BodyKey: bodyKey, HasBody: hasBody,
-		Score: value, Size: score.Size(value), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
+		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
 	}
 	written := false
 	if message.Reprocess {
@@ -260,6 +262,13 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	observability.Emit(metrics, nil)
 	return nil
+}
+
+func ingestSize(value float64, scoringVersion string, model domain.Model) string {
+	if scoringVersion == "1" {
+		return score.Size(value, domain.Model{})
+	}
+	return score.Size(value, model)
 }
 
 func articleContent(rawContent, itemURL, siteURL string, pageURL *url.URL, pageHTML []byte) (extract.Result, error) {

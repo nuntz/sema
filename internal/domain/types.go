@@ -111,6 +111,11 @@ type Behaviour struct {
 	TTL            int64  `dynamodbav:"ttl"`
 }
 
+type SizeCutoffs struct {
+	P60 float64 `dynamodbav:"p60" json:"p60"`
+	P90 float64 `dynamodbav:"p90" json:"p90"`
+}
+
 // Model is the persisted ranking snapshot. The sum and per-feed count fields
 // are internal bookkeeping that makes explicit-signal updates exact without a
 // partition-wide recompute; the normalized centroids and public counts are the
@@ -123,7 +128,10 @@ type Model struct {
 	FeedPrior        map[string]float64 `dynamodbav:"feed_prior,omitempty" json:"-"`
 	FeedSignalCount  map[string]int     `dynamodbav:"feed_signal_count,omitempty" json:"-"`
 	ExplicitCount    int                `dynamodbav:"explicit_count" json:"explicit_count"`
+	LikedCount       int                `dynamodbav:"liked_count" json:"liked_count"`
+	DislikedCount    int                `dynamodbav:"disliked_count" json:"disliked_count"`
 	ImplicitCount    int                `dynamodbav:"implicit_count" json:"implicit_count"`
+	SizeCutoffs      *SizeCutoffs       `dynamodbav:"size_cutoffs,omitempty" json:"size_cutoffs,omitempty"`
 	ComputedAt       string             `dynamodbav:"computed_at" json:"computed_at"`
 	Version          string             `dynamodbav:"version" json:"version"`
 	ReplayTS         string             `dynamodbav:"replay_ts,omitempty" json:"-"`

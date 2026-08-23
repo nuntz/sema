@@ -72,6 +72,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err != nil {
 		return Result{}, err
 	}
+	scores := make([]float64, len(items))
 	for index := range items {
 		published, parseErr := time.Parse(time.RFC3339Nano, items[index].PublishedTS)
 		if parseErr != nil {
@@ -80,8 +81,12 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		vector := score.DecodeVector(items[index].Vector)
 		calculated := score.Calculate(vector, model, items[index].FeedID, items[index].MediaKey != "", started.Sub(published).Hours())
 		items[index].Score = calculated.Score
-		items[index].Size = score.Size(calculated.Score)
+		scores[index] = calculated.Score
 		items[index].Why = score.Why(calculated, vector, items[index].FeedTitle, candidates)
+	}
+	model.SizeCutoffs = score.QuantileCutoffs(scores)
+	for index := range items {
+		items[index].Size = score.Size(items[index].Score, model)
 	}
 	if err := e.Repository.ReplaceItems(ctx, items); err != nil {
 		return Result{}, err

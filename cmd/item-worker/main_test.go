@@ -4,7 +4,19 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/nuntz/sema/internal/domain"
 )
+
+func TestIngestSizeUsesStoredCutoffs(t *testing.T) {
+	model := domain.Model{ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 0.6, P90: 0.8}}
+	if got := ingestSize(0.5, "2", model); got != "S" {
+		t.Fatalf("ingest size = %s, want stored-cutoff S", got)
+	}
+	if got := ingestSize(0.5, "1", model); got != "M" {
+		t.Fatalf("legacy ingest size = %s, want fixed-threshold M", got)
+	}
+}
 
 func TestArticleContentDecision(t *testing.T) {
 	shortCommentary := `<p>` + strings.Repeat("feed-commentary ", 45) + `<a href="/foo">source</a></p>`

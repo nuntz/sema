@@ -4,6 +4,10 @@ export type BehaviourEvent = {
   shared?: true;
 };
 
+export function linkBehaviourEvent(): BehaviourEvent {
+  return { clicked_through: true, shared: true };
+}
+
 export function mergeBehaviourEvent(
   current: BehaviourEvent,
   next: BehaviourEvent,

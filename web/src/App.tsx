@@ -1,7 +1,11 @@
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
 import { shouldConfirmArchiveRemoval, updateHeartState } from "./archive";
-import { type BehaviourEvent, mergeBehaviourEvent } from "./behaviour-events";
+import {
+  type BehaviourEvent,
+  linkBehaviourEvent,
+  mergeBehaviourEvent,
+} from "./behaviour-events";
 import {
   mergeNewItems,
   pollCandidates,
@@ -91,11 +95,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       setLinkActionID(item.item_id);
       linkActionTimer = window.setTimeout(() => setLinkActionID(""), 900);
       showToast("success", action === "shared" ? "Link shared" : "Link copied");
-      if (recordBehaviour)
-        queueEvent(item.item_id, {
-          clicked_through: true,
-          shared: action === "shared" ? true : undefined,
-        });
+      if (recordBehaviour) queueEvent(item.item_id, linkBehaviourEvent());
     } catch (caught) {
       if (isCancelledShare(caught)) return;
       const message =

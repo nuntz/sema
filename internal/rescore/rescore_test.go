@@ -3,6 +3,7 @@ package rescore
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -93,5 +94,44 @@ func TestNightlyGuardrailHonoursRecentReplay(t *testing.T) {
 	}
 	if _, err := engine.RunUser(context.Background(), "user", true); err != nil {
 		t.Fatalf("on-demand rescore was blocked: %v", err)
+	}
+}
+
+func TestRescoreDerivesCutoffsFromFreshScoresBeforeBucketing(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	vector := score.EncodeVector([]float32{1, 0})
+	signals := make([]domain.Signal, 10)
+	items := make([]domain.Item, 10)
+	for index := range signals {
+		signals[index] = domain.Signal{
+			ItemID: string(rune('a' + index)), Value: 1, Vector: vector, FeedID: "feed",
+			CreatedAt: domain.Timestamp(now), ModelVersion: "v",
+		}
+		published := now.Add(-time.Duration(index) * time.Hour)
+		items[index] = domain.Item{
+			PK: "U#user", SK: domain.ItemSK(published, string(rune('k'+index))), ItemID: string(rune('k' + index)),
+			FeedID: "feed", PublishedTS: domain.Timestamp(published), Vector: vector, Score: 99, Size: "L",
+		}
+	}
+	repository := &fakeRepository{
+		model: domain.Model{PK: "U#user", SK: "MODEL", Version: "v"}, signals: signals, items: items,
+	}
+	engine := Engine{Repository: repository, Version: "v", Now: func() time.Time { return now }}
+	if _, err := engine.RunUser(context.Background(), "user", true); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	fresh := make([]float64, len(repository.replacements))
+	for index, item := range repository.replacements {
+		fresh[index] = item.Score
+		counts[item.Size]++
+	}
+	want := score.QuantileCutoffs(fresh)
+	got := repository.model.SizeCutoffs
+	if got == nil || math.Abs(got.P60-want.P60) > 1e-12 || math.Abs(got.P90-want.P90) > 1e-12 {
+		t.Fatalf("stored cutoffs = %#v, want %#v from fresh scores", got, want)
+	}
+	if counts["S"] != 6 || counts["M"] != 3 || counts["L"] != 1 {
+		t.Fatalf("bucket counts = %#v, want S=6 M=3 L=1", counts)
 	}
 }

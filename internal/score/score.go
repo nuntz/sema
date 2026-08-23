@@ -3,6 +3,7 @@ package score
 import (
 	"encoding/binary"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,7 +38,14 @@ type Candidate struct {
 func Calculate(vector []float32, model domain.Model, feedID string, hasMedia bool, ageHours float64) Result {
 	base, taste := 0.5, 0.0
 	if model.ExplicitCount >= 10 {
-		taste = Dot(vector, DecodeVector(model.LikedCentroid)) - Dot(vector, DecodeVector(model.DislikedCentroid))
+		simLiked, simDisliked := 0.0, 0.0
+		if model.LikedCount >= 5 {
+			simLiked = Dot(vector, DecodeVector(model.LikedCentroid))
+		}
+		if model.DislikedCount >= 5 {
+			simDisliked = Dot(vector, DecodeVector(model.DislikedCentroid))
+		}
+		taste = simLiked - simDisliked
 		base = clamp(0.5+0.8*taste, 0, 1)
 	}
 	prior := model.FeedPrior[feedID]
@@ -118,6 +126,11 @@ func BuildModel(userID string, signals []domain.Signal, behaviours []domain.Beha
 	for _, signal := range signals {
 		model.ExplicitCount++
 		explicit[signal.ItemID] = true
+		if signal.Value > 0 {
+			model.LikedCount++
+		} else if signal.Value < 0 {
+			model.DislikedCount++
+		}
 		if CompatibleVersion(signal.ModelVersion, version) {
 			vector := Normalize(DecodeVector(signal.Vector))
 			if signal.Value > 0 {
@@ -180,6 +193,9 @@ func ApplyExplicit(model *domain.Model, oldSignal, newSignal *domain.Signal, beh
 	if model == nil || model.FeedLikes == nil || model.FeedDislikes == nil || model.FeedImplicit == nil {
 		return false
 	}
+	if model.ExplicitCount != model.LikedCount+model.DislikedCount {
+		return false
+	}
 	likedSum := DecodeVector(model.LikedSum)
 	dislikedSum := DecodeVector(model.DislikedSum)
 	if (model.LikedWeight > 0 && len(likedSum) == 0) || (model.DislikedWeight > 0 && len(dislikedSum) == 0) {
@@ -194,9 +210,11 @@ func ApplyExplicit(model *domain.Model, oldSignal, newSignal *domain.Signal, beh
 		if signal.Value > 0 {
 			likedSum = addWeighted(likedSum, vector, direction)
 			model.LikedWeight += direction
+			model.LikedCount += int(direction)
 		} else if signal.Value < 0 {
 			dislikedSum = addWeighted(dislikedSum, vector, direction)
 			model.DislikedWeight += direction
+			model.DislikedCount += int(direction)
 		}
 		model.ExplicitCount += int(direction)
 		if within(signal.CreatedAt, cutoff) {
@@ -254,14 +272,40 @@ func recomputePriors(model *domain.Model) {
 	}
 }
 
-func Size(value float64) string {
-	if value >= 0.75 {
+func Size(value float64, model domain.Model) string {
+	p60, p90 := 0.45, 0.75
+	if model.ExplicitCount >= 10 && model.SizeCutoffs != nil {
+		p60, p90 = model.SizeCutoffs.P60, model.SizeCutoffs.P90
+	}
+	if value >= p90 {
 		return "L"
 	}
-	if value >= 0.45 {
+	if value >= p60 {
 		return "M"
 	}
 	return "S"
+}
+
+// QuantileCutoffs uses linearly interpolated sample quantiles. Interpolation
+// keeps a unique ten-item distribution at one item (10%) in the large bucket.
+func QuantileCutoffs(values []float64) *domain.SizeCutoffs {
+	if len(values) == 0 {
+		return nil
+	}
+	sorted := append([]float64(nil), values...)
+	sort.Float64s(sorted)
+	return &domain.SizeCutoffs{P60: quantile(sorted, 0.60), P90: quantile(sorted, 0.90)}
+}
+
+func quantile(sorted []float64, percentile float64) float64 {
+	position := percentile * float64(len(sorted)-1)
+	lower := int(math.Floor(position))
+	upper := int(math.Ceil(position))
+	if lower == upper {
+		return sorted[lower]
+	}
+	weight := position - float64(lower)
+	return sorted[lower] + weight*(sorted[upper]-sorted[lower])
 }
 
 func Dot(a, b []float32) float64 {

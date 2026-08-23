@@ -387,6 +387,7 @@ export function Grid(props: GridProps) {
               style={{
                 top: `${row.top + 14}px`,
                 height: `${row.height}px`,
+                gap: `${row.gap}px`,
               }}
             >
               <For each={row.cells}>
@@ -540,6 +541,9 @@ export function Grid(props: GridProps) {
                                   ? ` · ${item().feed_title}`
                                   : ""}
                               </span>
+                            </Show>
+                            <Show when={!props.archive}>
+                              <b>{item().score.toFixed(2)}</b>
                             </Show>
                           </div>
                           <Show

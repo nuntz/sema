@@ -16,7 +16,10 @@ export interface MeResponse {
 
 export interface RankingModel {
   explicit_count: number;
+  liked_count: number;
+  disliked_count: number;
   implicit_count: number;
+  size_cutoffs?: { p60: number; p90: number };
   computed_at?: string;
   version?: string;
 }

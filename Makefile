@@ -5,6 +5,7 @@ GO_MOD_CACHE ?= /tmp/sema-go-mod
 LAMBDAS := scheduler feed-worker item-worker api rescore
 GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
 STACK ?= dev
+AWS_REGION ?= us-east-1
 
 .PHONY: all test build lambdas web infra preview deploy rescore replay clean
 
@@ -37,12 +38,12 @@ preview:
 deploy: infra
 
 rescore:
-	aws lambda invoke --function-name sema-$(STACK)-rescore --cli-binary-format raw-in-base64-out --payload '{"on_demand":true}' /tmp/sema-rescore.json
+	aws lambda invoke --region $(AWS_REGION) --function-name sema-$(STACK)-rescore --cli-binary-format raw-in-base64-out --payload '{"on_demand":true}' /tmp/sema-rescore.json
 
 replay:
 	replay_model_version='$(MODEL_VERSION)'; \
 	if [ -z "$$replay_model_version" ]; then replay_model_version=$$(cd infra && pulumi stack output modelVersion); fi; \
-	TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay
 
 clean:
 	rm -rf bin web/dist

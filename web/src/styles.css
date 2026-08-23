@@ -71,6 +71,8 @@ button:disabled { cursor: default; opacity: 0.38; }
   position: relative; min-width: 0; height: 100%; overflow: hidden; border: 1px solid var(--hairline); border-radius: 6px;
   background: var(--surface); transition: opacity 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
 }
+.grid-cell.size-l:not(.text-cell) { background: #20242b; }
+.grid-cell.size-m:not(.text-cell) { background: #1c1f25; }
 .grid-cell > img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; animation: image-in 120ms ease-out forwards; }
 @keyframes image-in { to { opacity: 1; } }
 .grid-cell.read { opacity: 0.34; border-color: rgba(255, 255, 255, 0.05); }
@@ -286,7 +288,7 @@ button:disabled { cursor: default; opacity: 0.38; }
   .archive-toggle span, .archive-toggle small { display: none; }
   .unread-toggle, .keys-chip { display: none; }
   .avatar { width: 26px; height: 26px; border-radius: 13px; }
-  .grid-row { left: 14px; right: 14px; gap: 10px; }
+  .grid-row { left: 14px; right: 14px; gap: 8px; }
   .end-of-feed { left: 14px; right: 14px; }
   .grid-cell { border-radius: 8px; }
   .cell-actions { top: 5px; right: 5px; gap: 4px; }

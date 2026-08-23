@@ -20,10 +20,10 @@ func TestCalculateV2(t *testing.T) {
 	}{
 		{name: "cold start", model: domain.Model{}, want: 0.5},
 		{name: "cold start media", model: domain.Model{}, media: true, want: 0.55},
-		{name: "taste only", model: domain.Model{ExplicitCount: 10, LikedCentroid: EncodeVector(unitX)}, want: 1},
-		{name: "disliked cap", model: domain.Model{ExplicitCount: 10, DislikedCentroid: EncodeVector(unitX)}, want: 0},
+		{name: "taste only", model: domain.Model{ExplicitCount: 10, LikedCount: 5, LikedCentroid: EncodeVector(unitX)}, want: 1},
+		{name: "disliked cap", model: domain.Model{ExplicitCount: 10, DislikedCount: 5, DislikedCentroid: EncodeVector(unitX)}, want: 0},
 		{name: "prior only", model: domain.Model{ExplicitCount: 10, FeedPrior: map[string]float64{"feed": 0.1}}, want: 0.6},
-		{name: "taste and prior cap", model: domain.Model{ExplicitCount: 10, LikedCentroid: EncodeVector(unitX), DislikedCentroid: EncodeVector(unitY), FeedPrior: map[string]float64{"feed": 0.15}}, want: 1},
+		{name: "taste and prior cap", model: domain.Model{ExplicitCount: 10, LikedCount: 5, DislikedCount: 5, LikedCentroid: EncodeVector(unitX), DislikedCentroid: EncodeVector(unitY), FeedPrior: map[string]float64{"feed": 0.15}}, want: 1},
 		{name: "old item", model: domain.Model{}, age: 96, want: 0.5 * (0.7 + 0.3*math.Exp(-2))},
 	}
 	for _, test := range tests {
@@ -31,6 +31,29 @@ func TestCalculateV2(t *testing.T) {
 			got := Calculate(unitX, test.model, "feed", test.media, test.age).Score
 			if math.Abs(got-test.want) > 0.0001 {
 				t.Fatalf("Calculate() = %f, want %f", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCalculatePolarityGateAtFiveSignals(t *testing.T) {
+	vector := []float32{1, 0}
+	centroid := EncodeVector(vector)
+	tests := []struct {
+		name  string
+		model domain.Model
+		want  float64
+	}{
+		{name: "liked off at four", model: domain.Model{ExplicitCount: 10, LikedCount: 4, LikedCentroid: centroid}, want: 0},
+		{name: "liked on at five", model: domain.Model{ExplicitCount: 10, LikedCount: 5, LikedCentroid: centroid}, want: 1},
+		{name: "disliked off at four", model: domain.Model{ExplicitCount: 10, DislikedCount: 4, DislikedCentroid: centroid}, want: 0},
+		{name: "disliked on at five", model: domain.Model{ExplicitCount: 10, DislikedCount: 5, DislikedCentroid: centroid}, want: -1},
+		{name: "twenty one up two down ignores disliked centroid", model: domain.Model{ExplicitCount: 23, LikedCount: 21, DislikedCount: 2, LikedCentroid: centroid, DislikedCentroid: centroid}, want: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := Calculate(vector, test.model, "", false, 0).Taste; got != test.want {
+				t.Fatalf("taste = %f, want %f", got, test.want)
 			}
 		})
 	}
@@ -48,8 +71,8 @@ func TestBuildModelCentroidsPriorsAndExplicitSupersedesImplicit(t *testing.T) {
 		{ItemID: "implicit", OpenedAt: domain.Timestamp(now), Opened: true, ClickedThrough: true, Vector: y, FeedID: "feed", ModelVersion: "v"},
 	}
 	model := BuildModel("user", signals, behaviours, now, "v")
-	if model.ExplicitCount != 2 || model.ImplicitCount != 2 {
-		t.Fatalf("counts = explicit %d implicit %d", model.ExplicitCount, model.ImplicitCount)
+	if model.ExplicitCount != 2 || model.LikedCount != 1 || model.DislikedCount != 1 || model.ImplicitCount != 2 {
+		t.Fatalf("counts = explicit %d liked %d disliked %d implicit %d", model.ExplicitCount, model.LikedCount, model.DislikedCount, model.ImplicitCount)
 	}
 	if got := Dot(DecodeVector(model.LikedCentroid), []float32{0, 1}); math.Abs(got-1) > 0.0001 {
 		t.Fatalf("liked centroid = %v", DecodeVector(model.LikedCentroid))
@@ -105,7 +128,7 @@ func TestIncrementalExplicitUpdateMatchesFullRecompute(t *testing.T) {
 			t.Fatalf("%s centroid = %v, want %v", comparison.name, DecodeVector(comparison.got), DecodeVector(comparison.want))
 		}
 	}
-	if model.ExplicitCount != full.ExplicitCount || model.ImplicitCount != full.ImplicitCount ||
+	if model.ExplicitCount != full.ExplicitCount || model.LikedCount != full.LikedCount || model.DislikedCount != full.DislikedCount || model.ImplicitCount != full.ImplicitCount ||
 		math.Abs(model.FeedPrior["feed"]-full.FeedPrior["feed"]) > 0.000001 {
 		t.Fatalf("incremental model = %#v; full = %#v", model, full)
 	}
@@ -140,9 +163,31 @@ func TestWhyChoosesLikedItemOrFeed(t *testing.T) {
 
 func TestSize(t *testing.T) {
 	for value, want := range map[float64]string{0.1: "S", 0.449: "S", 0.45: "M", 0.749: "M", 0.75: "L"} {
-		if got := Size(value); got != want {
+		if got := Size(value, domain.Model{}); got != want {
 			t.Errorf("Size(%f) = %s, want %s", value, got, want)
 		}
+	}
+}
+
+func TestQuantileSizeBucketsTightDistribution(t *testing.T) {
+	values := []float64{0.5000, 0.5001, 0.5002, 0.5003, 0.5004, 0.5005, 0.5006, 0.5007, 0.5008, 0.5009}
+	model := domain.Model{ExplicitCount: 10, SizeCutoffs: QuantileCutoffs(values)}
+	counts := map[string]int{}
+	for _, value := range values {
+		counts[Size(value, model)]++
+	}
+	if counts["S"] != 6 || counts["M"] != 3 || counts["L"] != 1 {
+		t.Fatalf("bucket counts = %#v, want S=6 M=3 L=1", counts)
+	}
+}
+
+func TestSizeFallsBackToFixedThresholds(t *testing.T) {
+	cutoffs := &domain.SizeCutoffs{P60: 0.1, P90: 0.2}
+	if got := Size(0.3, domain.Model{ExplicitCount: 9, SizeCutoffs: cutoffs}); got != "S" {
+		t.Fatalf("low-signal size = %s, want fixed-threshold S", got)
+	}
+	if got := Size(0.5, domain.Model{ExplicitCount: 10}); got != "M" {
+		t.Fatalf("missing-cutoff size = %s, want fixed-threshold M", got)
 	}
 }
 
