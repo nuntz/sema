@@ -1,5 +1,6 @@
 import type {
   Feed,
+  FeedCandidate,
   HeartResponse,
   ItemsResponse,
   MeResponse,
@@ -40,7 +41,7 @@ export class APIClient {
   }
 
   patchMe(
-    patch: Partial<Pick<Profile, "order_pref">>,
+    patch: Partial<Pick<Profile, "order_pref" | "tag_pref">>,
     keepalive = false,
   ): Promise<void> {
     return this.request("/me", {
@@ -54,10 +55,12 @@ export class APIClient {
     order: Order,
     cursor = "",
     includeRead = false,
+    tag = "",
   ): Promise<ItemsResponse> {
     const params = new URLSearchParams({ order, limit: "100" });
     if (cursor) params.set("cursor", cursor);
     if (includeRead) params.set("include_read", "true");
+    if (tag) params.set("tag", tag === "untagged" ? "__untagged" : tag);
     return this.request(`/items?${params}`);
   }
 
@@ -136,6 +139,52 @@ export class APIClient {
     return this.request<{ feeds: Feed[] }>("/feeds").then(
       (payload) => payload.feeds,
     );
+  }
+
+  discoverFeed(url: string): Promise<FeedCandidate[]> {
+    return this.request<{ candidates: FeedCandidate[] }>("/feeds/discover", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }).then((payload) => payload.candidates);
+  }
+
+  addFeed(input: {
+    feed_url: string;
+    tags?: string[];
+    custom_title?: string;
+  }): Promise<{ feed: Feed; created: boolean }> {
+    return this.request("/feeds", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  patchFeed(
+    feedID: string,
+    patch: Partial<
+      Pick<Feed, "custom_title" | "tags" | "muted" | "fetch_interval_h">
+    >,
+  ): Promise<Feed> {
+    return this.request(`/feeds/${encodeURIComponent(feedID)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  retryFeed(feedID: string): Promise<Feed> {
+    return this.request(`/feeds/${encodeURIComponent(feedID)}/retry`, {
+      method: "POST",
+    });
+  }
+
+  async exportOPML(): Promise<Blob> {
+    const response = await fetch("/api/feeds/export.opml", {
+      headers: { Authorization: `Bearer ${this.token()}` },
+    });
+    if (response.status === 401)
+      throw new UnauthorizedError("Your Google session expired.");
+    if (!response.ok) throw new Error(`Export failed (${response.status})`);
+    return response.blob();
   }
 
   importOPML(file: File): Promise<FeedImportResult> {

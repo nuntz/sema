@@ -9,12 +9,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	awsprovider "github.com/pulumi/pulumi-aws/sdk/v7/go/aws"
+	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/acm"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/apigatewayv2"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/cloudfront"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/cloudwatch"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/dynamodb"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/iam"
 	awslambda "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/lambda"
+	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/route53"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/s3"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/sns"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/sqs"
@@ -28,6 +31,11 @@ func main() {
 		stack := ctx.Stack()
 		cfg := config.New(ctx, "sema")
 		googleClientID := cfg.Require("googleClientId")
+		domainName := strings.TrimSpace(cfg.Get("domain"))
+		route53ZoneID := strings.TrimSpace(cfg.Get("route53ZoneId"))
+		if route53ZoneID == "" {
+			route53ZoneID = strings.TrimSpace(cfg.Get("zoneId"))
+		}
 		modelVersion := cfg.Get("modelVersion")
 		if modelVersion == "" {
 			modelVersion = "amazon.titan-embed-text-v2:0"
@@ -269,8 +277,47 @@ func main() {
 		defaultBehavior.FunctionAssociations = cloudfront.DistributionDefaultCacheBehaviorFunctionAssociationArray{
 			&cloudfront.DistributionDefaultCacheBehaviorFunctionAssociationArgs{EventType: pulumi.String("viewer-request"), FunctionArn: spaRewrite.Arn},
 		}
+		aliases := pulumi.StringArray{}
+		viewerCertificate := &cloudfront.DistributionViewerCertificateArgs{CloudfrontDefaultCertificate: pulumi.Bool(true), MinimumProtocolVersion: pulumi.String("TLSv1.2_2021")}
+		var certificateValidationName, certificateValidationValue pulumi.StringOutput
+		if domainName != "" {
+			usEast1, providerErr := awsprovider.NewProvider(ctx, "acm-us-east-1", &awsprovider.ProviderArgs{Region: pulumi.String("us-east-1")})
+			if providerErr != nil {
+				return providerErr
+			}
+			certificate, certificateErr := acm.NewCertificate(ctx, "domain-certificate", &acm.CertificateArgs{
+				DomainName: pulumi.String(domainName), ValidationMethod: pulumi.String("DNS"),
+			}, pulumi.Provider(usEast1))
+			if certificateErr != nil {
+				return certificateErr
+			}
+			validationOption := certificate.DomainValidationOptions.Index(pulumi.Int(0))
+			certificateValidationName = requiredString(validationOption.ResourceRecordName())
+			certificateValidationValue = requiredString(validationOption.ResourceRecordValue())
+			var validationFQDNs pulumi.StringArray
+			if route53ZoneID != "" {
+				validationRecord, recordErr := route53.NewRecord(ctx, "domain-certificate-validation", &route53.RecordArgs{
+					ZoneId: pulumi.String(route53ZoneID), Name: certificateValidationName, Type: pulumi.String("CNAME"),
+					Ttl: pulumi.Int(300), Records: pulumi.StringArray{certificateValidationValue}, AllowOverwrite: pulumi.Bool(true),
+				})
+				if recordErr != nil {
+					return recordErr
+				}
+				validationFQDNs = pulumi.StringArray{validationRecord.Fqdn}
+			}
+			validated, validationErr := acm.NewCertificateValidation(ctx, "domain-certificate-validation-waiter", &acm.CertificateValidationArgs{
+				CertificateArn: certificate.Arn, ValidationRecordFqdns: validationFQDNs,
+			}, pulumi.Provider(usEast1))
+			if validationErr != nil {
+				return validationErr
+			}
+			aliases = pulumi.StringArray{pulumi.String(domainName)}
+			viewerCertificate = &cloudfront.DistributionViewerCertificateArgs{
+				AcmCertificateArn: validated.CertificateArn, SslSupportMethod: pulumi.String("sni-only"), MinimumProtocolVersion: pulumi.String("TLSv1.2_2021"),
+			}
+		}
 		distribution, err := cloudfront.NewDistribution(ctx, "cdn", &cloudfront.DistributionArgs{
-			Enabled: pulumi.Bool(true), IsIpv6Enabled: pulumi.Bool(true), DefaultRootObject: pulumi.String("index.html"), PriceClass: pulumi.String("PriceClass_100"),
+			Enabled: pulumi.Bool(true), IsIpv6Enabled: pulumi.Bool(true), DefaultRootObject: pulumi.String("index.html"), PriceClass: pulumi.String("PriceClass_100"), Aliases: aliases,
 			Origins: cloudfront.DistributionOriginArray{
 				&cloudfront.DistributionOriginArgs{DomainName: appBucket.BucketRegionalDomainName, OriginId: pulumi.String("app"), OriginAccessControlId: oac.ID(), S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
 				&cloudfront.DistributionOriginArgs{DomainName: contentBucket.BucketRegionalDomainName, OriginId: pulumi.String("content"), OriginAccessControlId: oac.ID(), S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
@@ -281,10 +328,20 @@ func main() {
 				contentBehavior("/bodies/*", "content", keyGroup.ID()), contentBehavior("/media/*", "content", keyGroup.ID()), contentBehavior("/archive/*", "content", keyGroup.ID()), contentBehavior("/favicons/*", "content", nil), apiBehavior("/api/*", "api"),
 			},
 			Restrictions:      &cloudfront.DistributionRestrictionsArgs{GeoRestriction: &cloudfront.DistributionRestrictionsGeoRestrictionArgs{RestrictionType: pulumi.String("none")}},
-			ViewerCertificate: &cloudfront.DistributionViewerCertificateArgs{CloudfrontDefaultCertificate: pulumi.Bool(true), MinimumProtocolVersion: pulumi.String("TLSv1.2_2021")},
+			ViewerCertificate: viewerCertificate,
 		})
 		if err != nil {
 			return err
+		}
+		if domainName != "" && route53ZoneID != "" {
+			for _, recordType := range []string{"A", "AAAA"} {
+				if _, err := route53.NewRecord(ctx, "domain-"+strings.ToLower(recordType), &route53.RecordArgs{
+					ZoneId: pulumi.String(route53ZoneID), Name: pulumi.String(domainName), Type: pulumi.String(recordType),
+					Aliases: route53.RecordAliasArray{&route53.RecordAliasArgs{Name: distribution.DomainName, ZoneId: distribution.HostedZoneId, EvaluateTargetHealth: pulumi.Bool(false)}},
+				}); err != nil {
+					return err
+				}
+			}
 		}
 		for name, bucket := range map[string]*s3.Bucket{"app": appBucket, "content": contentBucket} {
 			policy := pulumi.All(bucket.Arn, distribution.Arn).ApplyT(func(values []any) (string, error) {
@@ -330,16 +387,38 @@ func main() {
 			return err
 		}
 
-		ctx.Export("url", pulumi.Sprintf("https://%s", distribution.DomainName))
+		cloudfrontURL := pulumi.Sprintf("https://%s", distribution.DomainName)
+		ctx.Export("cloudfrontUrl", cloudfrontURL)
+		if domainName != "" {
+			ctx.Export("url", pulumi.String("https://"+domainName))
+			ctx.Export("dnsCnameTarget", distribution.DomainName)
+			ctx.Export("certificateValidationName", certificateValidationName)
+			ctx.Export("certificateValidationValue", certificateValidationValue)
+		} else {
+			ctx.Export("url", cloudfrontURL)
+		}
 		ctx.Export("distributionId", distribution.ID())
 		ctx.Export("appBucket", appBucket.Bucket)
 		ctx.Export("contentBucket", contentBucket.Bucket)
 		ctx.Export("itemsQueueUrl", itemsQueue.Url)
+		ctx.Export("feedsQueueArn", feedsQueue.Arn)
+		ctx.Export("feedsDlqArn", feedsDLQ.Arn)
+		ctx.Export("itemsQueueArn", itemsQueue.Arn)
+		ctx.Export("itemsDlqArn", itemsDLQ.Arn)
 		ctx.Export("rescoreFunction", rescoreLambda.Name)
 		ctx.Export("modelVersion", pulumi.String(modelVersion))
 		ctx.Export("apiEndpoint", httpAPI.ApiEndpoint)
 		return nil
 	})
+}
+
+func requiredString(value pulumi.StringPtrOutput) pulumi.StringOutput {
+	return value.ApplyT(func(pointer *string) string {
+		if pointer == nil {
+			return ""
+		}
+		return *pointer
+	}).(pulumi.StringOutput)
 }
 
 func schedulerSilentAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
@@ -395,7 +474,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 			)
 		case "item-worker":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query"}, "Resource": tableResources},
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:TransactWriteItems"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:GetObject"}, "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": queueConsume, "Resource": values[3].(string)},
 			)
@@ -475,13 +554,23 @@ func uploadWeb(ctx *pulumi.Context, bucket *s3.Bucket) error {
 		relative, _ := filepath.Rel(directory, path)
 		name := "app-" + strings.NewReplacer("/", "-", ".", "-").Replace(relative)
 		contentType := mime.TypeByExtension(filepath.Ext(path))
-		cacheControl := "public,max-age=31536000,immutable"
-		if relative == "index.html" || relative == "sw.js" || relative == "manifest.webmanifest" {
-			cacheControl = "no-cache"
-		}
+		cacheControl := webCacheControl(relative)
 		_, err = s3.NewBucketObject(ctx, name, &s3.BucketObjectArgs{Bucket: bucket.ID(), Key: pulumi.String(filepath.ToSlash(relative)), Source: pulumi.NewFileAsset(path), ContentType: pulumi.String(contentType), CacheControl: pulumi.String(cacheControl)})
 		return err
 	})
+}
+
+func webCacheControl(relative string) string {
+	switch filepath.ToSlash(relative) {
+	case "index.html", "sw.js":
+		return "no-cache"
+	case "manifest.webmanifest":
+		return "public,max-age=300,must-revalidate"
+	case "icon-192.png", "icon-512.png", "apple-touch-icon.png", "favicon.ico", "favicon.svg":
+		return "public,max-age=86400"
+	default:
+		return "public,max-age=31536000,immutable"
+	}
 }
 
 func buildDeployAssets(googleClientID string) error {

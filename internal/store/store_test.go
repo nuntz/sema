@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,143 @@ func TestDueFeedsQueriesSparseIndex(t *testing.T) {
 	}
 }
 
+func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
+	marshal := func(id, feedID string, published time.Time) map[string]types.AttributeValue {
+		item, err := attributevalue.MarshalMap(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(published, id), ItemID: id,
+			FeedID: feedID, PublishedTS: domain.Timestamp(published), TTL: time.Now().Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	now := time.Now().UTC()
+	pages := [][]map[string]types.AttributeValue{
+		{marshal("skip-1", "muted", now), marshal("skip-2", "other", now.Add(-time.Minute))},
+		{marshal("keep-1", "dev", now.Add(-2*time.Minute)), marshal("keep-1", "dev", now.Add(-3*time.Minute)), marshal("keep-2", "dev", now.Add(-4*time.Minute))},
+	}
+	calls := 0
+	db := &fakeDynamoDB{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		page := pages[calls]
+		calls++
+		output := &dynamodb.QueryOutput{Items: page}
+		if calls == 1 {
+			output.LastEvaluatedKey = key(domain.UserPK("user"), "I#continue")
+		}
+		return output, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	items, cursor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, map[string]bool{"dev": true})
+	if err != nil || cursor != "" || calls != 2 || len(items) != 2 || items[0].FeedID != "dev" || items[1].FeedID != "dev" {
+		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
+	}
+}
+
+func TestResolveReadDeduplicatesKeysAndFansOutState(t *testing.T) {
+	batchCalls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		batchCalls++
+		request := input.RequestItems["table"]
+		if len(request.Keys) != 1 {
+			t.Fatalf("read keys = %#v", request.Keys)
+		}
+		if got := request.Keys[0]["SK"].(*types.AttributeValueMemberS).Value; got != domain.ReadSK("same") {
+			t.Fatalf("read key = %q", got)
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {
+			{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("same")}},
+		}}}, nil
+	}}
+	items := []domain.Item{{ItemID: "same"}, {ItemID: "same"}}
+	if err := New(db, nil, "table", "", "").ResolveRead(context.Background(), "user", items); err != nil {
+		t.Fatal(err)
+	}
+	if batchCalls != 1 || !items[0].Read || !items[1].Read {
+		t.Fatalf("batch calls = %d, items = %#v", batchCalls, items)
+	}
+}
+
+func TestPutItemEnforcesStableIdentityAcrossPublishedTimestamps(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		calls++
+		if len(input.TransactItems) != 2 {
+			t.Fatalf("transaction = %#v", input.TransactItems)
+		}
+		identity := input.TransactItems[0].Put.Item
+		if got := identity["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {
+			t.Fatalf("identity key = %q", got)
+		}
+		if calls == 2 {
+			return nil, &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{
+				{Code: aws.String("ConditionalCheckFailed")}, {Code: aws.String("None")},
+			}}
+		}
+		return &dynamodb.TransactWriteItemsOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	first := domain.Item{PK: domain.UserPK("user"), SK: domain.ItemSK(time.Now(), "same"), ItemID: "same", TTL: time.Now().Add(time.Hour).Unix()}
+	written, err := repository.PutItem(context.Background(), first)
+	if err != nil || !written {
+		t.Fatalf("first put = %v, %v", written, err)
+	}
+	second := first
+	second.SK = domain.ItemSK(time.Now().Add(time.Minute), "same")
+	written, err = repository.PutItem(context.Background(), second)
+	if err != nil || written {
+		t.Fatalf("republished put = %v, %v", written, err)
+	}
+}
+
+func TestItemExistsReadsStableIdentityMarker(t *testing.T) {
+	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		if got := input.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {
+			t.Fatalf("identity key = %q", got)
+		}
+		return &dynamodb.GetItemOutput{Item: map[string]types.AttributeValue{
+			"PK":  &types.AttributeValueMemberS{Value: domain.UserPK("user")},
+			"SK":  &types.AttributeValueMemberS{Value: domain.ItemIdentitySK("same")},
+			"ttl": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)},
+		}}, nil
+	}}
+	exists, err := New(db, nil, "table", "", "").ItemExists(context.Background(), "user", "same")
+	if err != nil || !exists {
+		t.Fatalf("ItemExists = %v, %v", exists, err)
+	}
+}
+
+func TestReconcileItemIdentityPreservesArchiveAndDeletesDuplicate(t *testing.T) {
+	var transaction *dynamodb.TransactWriteItemsInput
+	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		transaction = input
+		return &dynamodb.TransactWriteItemsOutput{}, nil
+	}}
+	canonical := domain.Item{
+		PK: domain.UserPK("user"), SK: "I#new", ItemID: "same", TTL: time.Now().Add(time.Hour).Unix(),
+	}
+	duplicate := domain.Item{
+		PK: domain.UserPK("user"), SK: "I#old", ItemID: "same", ArchiveSK: "A#kept",
+	}
+	if err := New(db, nil, "table", "", "").ReconcileItemIdentity(context.Background(), "user", canonical, []domain.Item{duplicate}); err != nil {
+		t.Fatal(err)
+	}
+	if transaction == nil || len(transaction.TransactItems) != 3 {
+		t.Fatalf("transaction = %#v", transaction)
+	}
+	marker := transaction.TransactItems[0].Put.Item
+	if got := marker["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {
+		t.Fatalf("marker key = %q", got)
+	}
+	if got := transaction.TransactItems[1].Delete.Key["SK"].(*types.AttributeValueMemberS).Value; got != "I#old" {
+		t.Fatalf("deleted key = %q", got)
+	}
+	update := transaction.TransactItems[2].Update
+	if aws.ToString(update.UpdateExpression) != "SET archive_sk = :archive" || update.ExpressionAttributeValues[":archive"].(*types.AttributeValueMemberS).Value != "A#kept" {
+		t.Fatalf("canonical update = %#v", update)
+	}
+}
+
 func TestUserIDsCombineProfileMarkersAndLegacyFeeds(t *testing.T) {
 	calls := 0
 	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
@@ -163,6 +301,13 @@ func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
 	if put.Item["gsi1pk"].(*types.AttributeValueMemberS).Value != feedIndexPK {
 		t.Fatalf("put gsi1pk = %#v", put.Item["gsi1pk"])
 	}
+	feed.Muted = true
+	if err := repository.PutFeed(context.Background(), feed); err != nil {
+		t.Fatal(err)
+	}
+	if _, indexed := put.Item["gsi1pk"]; indexed {
+		t.Fatalf("muted feed retained sparse index: %#v", put.Item["gsi1pk"])
+	}
 	next := time.Date(2026, 8, 22, 13, 0, 0, 0, time.UTC)
 	if err := repository.ScheduleFeed(context.Background(), "user", "feed", next); err != nil {
 		t.Fatal(err)
@@ -178,11 +323,11 @@ func TestClaimFeedConditionallyLeasesDueFeed(t *testing.T) {
 	calls := 0
 	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 		calls++
-		if aws.ToString(input.UpdateExpression) != "SET next_fetch_at = :next, gsi1pk = :feed" || aws.ToString(input.ConditionExpression) != "next_fetch_at <= :due" {
+		if aws.ToString(input.UpdateExpression) != "SET next_fetch_at = :next, gsi1pk = :feed" || aws.ToString(input.ConditionExpression) != "next_fetch_at <= :due AND (attribute_not_exists(muted) OR muted = :false)" {
 			t.Fatalf("claim update = %#v", input)
 		}
 		values := input.ExpressionAttributeValues
-		if values[":due"].(*types.AttributeValueMemberS).Value != domain.Timestamp(now) || values[":next"].(*types.AttributeValueMemberS).Value != domain.Timestamp(next) || values[":feed"].(*types.AttributeValueMemberS).Value != feedIndexPK {
+		if values[":due"].(*types.AttributeValueMemberS).Value != domain.Timestamp(now) || values[":next"].(*types.AttributeValueMemberS).Value != domain.Timestamp(next) || values[":feed"].(*types.AttributeValueMemberS).Value != feedIndexPK || values[":false"].(*types.AttributeValueMemberBOOL).Value {
 			t.Fatalf("claim values = %#v", values)
 		}
 		if calls == 2 {

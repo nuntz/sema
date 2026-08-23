@@ -59,6 +59,19 @@ func TestParseIncludeRead(t *testing.T) {
 	}
 }
 
+func TestNormalizeTagsAndFeedStatus(t *testing.T) {
+	tags, err := normalizeTags([]string{" Dev ", "dev", "ニュース"})
+	if err != nil || len(tags) != 2 || tags[0] != "dev" || tags[1] != "ニュース" {
+		t.Fatalf("tags = %#v, err = %v", tags, err)
+	}
+	if got := feedStatus(domain.Feed{ErrorCount: 3}); got != "broken" {
+		t.Fatalf("broken status = %q", got)
+	}
+	if got := feedStatus(domain.Feed{Muted: true, ErrorCount: 3}); got != "muted" {
+		t.Fatalf("muted status = %q", got)
+	}
+}
+
 func TestPrepareItemsLoadsOnlyPageSignals(t *testing.T) {
 	db := &apiDynamo{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
 		request := input.RequestItems["table"]

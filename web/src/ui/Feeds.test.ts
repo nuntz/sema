@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { archiveSize } from "../archive";
 import { formatPrior, whyText } from "../ranking-display";
-import type { Item } from "../types";
+import type { Feed, FeedCandidate, Item } from "../types";
+import { discoveredCandidateState } from "./feed-discovery";
+import { upsertFeed } from "./feed-list";
 
 describe("archive storage estimate", () => {
   it("uses the specified 300 KB per kept item estimate", () => {
@@ -25,5 +27,36 @@ describe("ranking diagnostics", () => {
     expect(whyText(item)).toBe("You often like Example");
     item.why = undefined;
     expect(whyText(item)).toBe("");
+  });
+});
+
+describe("add-feed discovery picker", () => {
+  const candidate = { feed_url: "https://example.com/feed" } as FeedCandidate;
+
+  it("distinguishes single, multiple, no-result, and error states", () => {
+    expect(discoveredCandidateState([candidate])).toBe("single");
+    expect(discoveredCandidateState([candidate, candidate])).toBe("multiple");
+    expect(discoveredCandidateState([])).toBe("none");
+    expect(discoveredCandidateState([], true)).toBe("error");
+  });
+});
+
+describe("feed list updates", () => {
+  const feed = (feedID: string, title: string) =>
+    ({ feed_id: feedID, title }) as Feed;
+
+  it("adds the feed returned by the create request immediately", () => {
+    const current = [feed("existing", "Existing")];
+    const added = feed("new", "New feed");
+
+    expect(upsertFeed(current, added)).toEqual([...current, added]);
+  });
+
+  it("updates an existing feed without duplicating it", () => {
+    const current = [feed("same", "Old title")];
+
+    expect(upsertFeed(current, feed("same", "New title"))).toEqual([
+      feed("same", "New title"),
+    ]);
   });
 });

@@ -16,14 +16,14 @@ func TestParseOPML(t *testing.T) {
 	}
 }
 
-func TestUnsupportedReason(t *testing.T) {
+func TestYouTubeFeedsAreSupported(t *testing.T) {
 	for _, feedURL := range []string{
 		"https://www.youtube.com/feeds/videos.xml?channel_id=UC123",
 		"https://youtube.com/feeds/videos.xml?playlist_id=PL123",
 		"https://M.YOUTUBE.COM/feeds/videos.xml/?user=example",
 	} {
-		if reason := UnsupportedReason(feedURL); reason != YouTubeUnsupportedReason {
-			t.Errorf("UnsupportedReason(%q) = %q", feedURL, reason)
+		if reason := UnsupportedReason(feedURL); reason != "" {
+			t.Errorf("UnsupportedReason(%q) = %q, want empty", feedURL, reason)
 		}
 	}
 	for _, feedURL := range []string{
@@ -34,5 +34,20 @@ func TestUnsupportedReason(t *testing.T) {
 		if reason := UnsupportedReason(feedURL); reason != "" {
 			t.Errorf("UnsupportedReason(%q) = %q, want empty", feedURL, reason)
 		}
+	}
+}
+
+func TestOPMLRoundTripPreservesSemaFeedMetadata(t *testing.T) {
+	want := []Subscription{{Title: "Café 世界", URL: "https://example.com/feed.xml", Tags: []string{"dev", "longform"}, Muted: true, IntervalH: 6}}
+	encoded, err := ExportOPML(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseOPML(strings.NewReader(string(encoded)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Title != want[0].Title || got[0].URL != want[0].URL || !got[0].Muted || got[0].IntervalH != 6 || strings.Join(got[0].Tags, ",") != "dev,longform" {
+		t.Fatalf("round trip = %#v\n%s", got, encoded)
 	}
 }

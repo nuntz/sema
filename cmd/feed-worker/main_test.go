@@ -27,7 +27,7 @@ func (f *fakeFeedStore) PutFeed(_ context.Context, feed domain.Feed) error {
 	return f.putErr
 }
 
-func (*fakeFeedStore) ItemExists(context.Context, string, string, time.Time) (bool, error) {
+func (*fakeFeedStore) ItemExists(context.Context, string, string) (bool, error) {
 	return false, nil
 }
 
@@ -135,5 +135,25 @@ func TestNonRateLimitKeepsExponentialBackoff(t *testing.T) {
 	next, rateLimited := nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusServiceUnavailable})
 	if rateLimited || next != started.Add(8*time.Hour) {
 		t.Fatalf("next = %s, rate limited = %v", next, rateLimited)
+	}
+}
+
+func TestErrorBackoffCapsAtTwentyFourHours(t *testing.T) {
+	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
+	feed := domain.Feed{ErrorCount: 12, FetchIntervalH: 24}
+	next, rateLimited := nextFetchAfterError(feed, started, errors.New("offline"))
+	if rateLimited || next != started.Add(24*time.Hour) {
+		t.Fatalf("next = %s, rate limited = %v", next, rateLimited)
+	}
+}
+
+func TestMutedFeedIsConsumedWithoutFetching(t *testing.T) {
+	store := &fakeFeedStore{feed: domain.Feed{PK: "U#user", FeedID: "feed", Muted: true}}
+	handler := &handler{store: store, connector: failingConnector{err: errors.New("must not fetch")}}
+	if err := handler.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.putFeeds) != 0 {
+		t.Fatalf("muted feed writes = %d", len(store.putFeeds))
 	}
 }

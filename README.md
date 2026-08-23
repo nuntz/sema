@@ -51,7 +51,24 @@ pulumi up
 
 `Pulumi.dev.yaml` and `Pulumi.prod.yaml` are checked in with `aws:region: us-east-1`, so the client ID is the only configuration a new stack needs. `Pulumi.yaml` declares `sema:googleClientId` as a secret, so set it with `--secret`.
 
-The stack exports `url`, `distributionId`, `appBucket`, `contentBucket`, and `apiEndpoint`. Add the `url` HTTPS origin to the Google OAuth client's authorized JavaScript origins before signing in; sign-in fails until that origin is registered. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build automatically.
+The stack exports `url`, `cloudfrontUrl`, `distributionId`, `appBucket`, `contentBucket`, and `apiEndpoint`. Add the `url` HTTPS origin to the Google OAuth client's authorized JavaScript origins before signing in; sign-in fails until that origin is registered. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build automatically.
+
+### Custom domain
+
+Set the hostname and, when the zone is in Route 53, its hosted-zone ID:
+
+```sh
+cd infra
+pulumi config set sema:domain reader.example.com
+pulumi config set sema:route53ZoneId Z0123456789ABCDEF
+pulumi up
+```
+
+Pulumi requests and DNS-validates an ACM certificate in `us-east-1`, attaches it as a CloudFront alias, and creates A and AAAA alias records. The default `*.cloudfront.net` hostname remains active and is exported as `cloudfrontUrl`.
+
+When DNS is hosted elsewhere, omit `sema:route53ZoneId`. Run a targeted update for `domain-certificate` first, publish the exported `certificateValidationName` / `certificateValidationValue` CNAME at the DNS provider, then run the full update. Point the app hostname at the exported `dnsCnameTarget`. Apex domains need an ALIAS/ANAME-style record from the DNS provider; ordinary subdomains can use CNAME.
+
+After the domain resolves, add `https://reader.example.com` (using your configured name) to the Google OAuth web client’s **Authorized JavaScript origins**. If the GIS client is separately origin-restricted, update that configuration too. Keep the CloudFront origin registered until every installed PWA has moved to the custom origin.
 
 Pulumi generates an RSA key in encrypted stack state, registers its public half with CloudFront, and supplies the secret half only to the API Lambda. Authenticated API responses refresh one-hour signed cookies scoped to `/bodies/<sub>/`, `/media/<sub>/`, and `/archive/<sub>/`, which are also the object keys in the content bucket; favicons are shared public assets. S3 itself remains private behind origin access control.
 
@@ -62,6 +79,19 @@ Pulumi generates an RSA key in encrypted stack state, registers its public half 
 - Any new index or key attribute ships in two deploys: deploy writers, create the index, and run the backfill first; switch readers only after the backfill is verified.
 - Every backfill is a one-off idempotent command under `cmd/` (for example, `cmd/backfill-<name>`) that dry-runs by default, prints affected and total row counts, and applies changes only with `--apply`.
 - Each such change includes a test, written alongside the change, proving that the reader path still handles rows missing the new attribute.
+
+### Item identity marker rollout
+
+Live item sort keys include their publication timestamp, so Sema also keeps a TTL-backed `D#<item_id>` marker to enforce stable identity when a feed republishes an entry with a changed date. Before deploying the marker-aware item worker over a stack with existing items, create markers and reconcile duplicate live rows:
+
+```sh
+make backfill-item-identities STACK=prod
+make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
+make deploy
+make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
+```
+
+The command is a read-only dry run unless `--apply` is supplied. It keeps the newest live row for each `item_id`, preserves any archive pointer on that row, creates or refreshes its identity marker, and deletes older duplicate live rows atomically. The second applied run closes the small window in which the old worker may have written an unmarked item during deployment. Read, signal, behaviour, and archive rows are already keyed by `item_id` and are not removed.
 
 ## Ranking maintenance
 
@@ -108,6 +138,14 @@ EventBridge (09:00 UTC) -> rescore Lambda -> MODEL + live item scores
 ```
 
 Feed and item queue consumers use partial-batch failure reporting. Fetches are bounded by time, redirect count, and body size. Item storage is deterministic and conditionally written, so SQS retries can safely repeat extraction and object uploads. DynamoDB TTL and prefix-scoped S3 lifecycle policies enforce the seven-day rolling window; archive and signal records intentionally have no TTL.
+
+To move all messages from both dead-letter queues back to their source queues without opening the AWS console:
+
+```sh
+make redrive STACK=dev
+```
+
+The command starts one SQS `StartMessageMoveTask` for `feeds-dlq` and one for `items-dlq`. Use the target stack’s AWS credentials and region.
 
 ## Tests
 

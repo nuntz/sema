@@ -4,6 +4,7 @@ export interface Profile {
   email: string;
   created_at: string;
   order_pref: Order;
+  tag_pref?: string;
   heart_count: number;
 }
 
@@ -69,11 +70,26 @@ export interface Feed {
   url: string;
   site_url?: string;
   title?: string;
+  custom_title?: string;
+  tags: string[];
+  muted: boolean;
+  fetch_interval_h: 1 | 6 | 24;
   favicon_url?: string;
   last_fetch_at?: string;
   last_status?: string;
+  last_error?: string;
   error_count: number;
   next_fetch_at: string;
   prior: number;
   prior_signals: number;
+  status: "ok" | "slowed" | "broken" | "muted";
+  item_count: number;
+}
+
+export interface FeedCandidate {
+  feed_url: string;
+  title: string;
+  type: "rss" | "atom" | "json" | string;
+  item_count: number;
+  newest_item_ts?: string;
 }

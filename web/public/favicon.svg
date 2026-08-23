@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 76" width="100" height="76" role="img" aria-label="Sema">
+<style>
+  .a { fill: #0b0c0e; }
+  .b { fill: #0b0c0e; fill-opacity: .55; }
+  @media (prefers-color-scheme: dark) {
+    .a, .b { fill: #e8e6e1; }
+  }
+</style>
+<rect class="a" x="0" y="0" width="62" height="30" rx="4"></rect>
+<rect class="b" x="70" y="0" width="30" height="30" rx="4"></rect>
+<rect class="b" x="0" y="38" width="36" height="18" rx="4"></rect>
+<rect class="a" x="44" y="38" width="56" height="18" rx="4"></rect>
+<rect class="b" x="0" y="64" width="62" height="12" rx="4"></rect>
+</svg>

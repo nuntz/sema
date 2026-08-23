@@ -92,8 +92,8 @@ func (s *Store) User(ctx context.Context, userID string) (domain.User, error) {
 	return user, attributevalue.UnmarshalMap(response.Item, &user)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Order, position *string) error {
-	sets := make([]string, 0, 2)
+func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Order, position, tag *string) error {
+	sets := make([]string, 0, 3)
 	values := make(map[string]types.AttributeValue)
 	if order != nil {
 		sets = append(sets, "order_pref = :order")
@@ -102,6 +102,10 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 	if position != nil {
 		sets = append(sets, "interest_position = :position")
 		values[":position"] = &types.AttributeValueMemberS{Value: *position}
+	}
+	if tag != nil {
+		sets = append(sets, "tag_pref = :tag")
+		values[":tag"] = &types.AttributeValueMemberS{Value: *tag}
 	}
 	if len(sets) == 0 {
 		return nil
@@ -114,7 +118,14 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 }
 
 func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
-	feed.GSI1PK = feedIndexPK
+	if feed.FetchIntervalH == 0 {
+		feed.FetchIntervalH = 1
+	}
+	if feed.Muted {
+		feed.GSI1PK = ""
+	} else {
+		feed.GSI1PK = feedIndexPK
+	}
 	item, err := attributevalue.MarshalMap(feed)
 	if err != nil {
 		return err
@@ -132,7 +143,13 @@ func (s *Store) Feed(ctx context.Context, userID, feedID string) (domain.Feed, e
 		return domain.Feed{}, ErrNotFound
 	}
 	var feed domain.Feed
-	return feed, attributevalue.UnmarshalMap(response.Item, &feed)
+	if err := attributevalue.UnmarshalMap(response.Item, &feed); err != nil {
+		return domain.Feed{}, err
+	}
+	if feed.FetchIntervalH == 0 {
+		feed.FetchIntervalH = 1
+	}
+	return feed, nil
 }
 
 func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error) {
@@ -151,6 +168,14 @@ func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 		var page []domain.Feed
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, err
+		}
+		for i := range page {
+			if page[i].FetchIntervalH == 0 {
+				page[i].FetchIntervalH = 1
+			}
+			if page[i].Tags == nil {
+				page[i].Tags = []string{}
+			}
 		}
 		feeds = append(feeds, page...)
 		start = response.LastEvaluatedKey
@@ -178,7 +203,15 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, err
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, err
 		}
-		result = append(result, page...)
+		for i := range page {
+			if page[i].Muted {
+				continue
+			}
+			if page[i].FetchIntervalH == 0 {
+				page[i].FetchIntervalH = 1
+			}
+			result = append(result, page[i])
+		}
 		start = response.LastEvaluatedKey
 		if len(start) == 0 {
 			return result, nil
@@ -201,11 +234,12 @@ func (s *Store) ClaimFeed(ctx context.Context, userID, feedID string, due, next 
 	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID)),
 		UpdateExpression:    aws.String("SET next_fetch_at = :next, gsi1pk = :feed"),
-		ConditionExpression: aws.String("next_fetch_at <= :due"),
+		ConditionExpression: aws.String("next_fetch_at <= :due AND (attribute_not_exists(muted) OR muted = :false)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":due":  &types.AttributeValueMemberS{Value: domain.Timestamp(due)},
-			":next": &types.AttributeValueMemberS{Value: domain.Timestamp(next)},
-			":feed": &types.AttributeValueMemberS{Value: feedIndexPK},
+			":due":   &types.AttributeValueMemberS{Value: domain.Timestamp(due)},
+			":next":  &types.AttributeValueMemberS{Value: domain.Timestamp(next)},
+			":feed":  &types.AttributeValueMemberS{Value: feedIndexPK},
+			":false": &types.AttributeValueMemberBOOL{Value: false},
 		},
 	})
 	if err == nil {
@@ -223,14 +257,22 @@ func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) error {
 	return err
 }
 
-func (s *Store) ItemExists(ctx context.Context, userID, itemID string, published time.Time) (bool, error) {
+func (s *Store) ItemExists(ctx context.Context, userID, itemID string) (bool, error) {
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemSK(published, itemID)), ProjectionExpression: aws.String("PK"),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)),
+		ProjectionExpression: aws.String("PK, #ttl"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 	})
 	if err != nil {
 		return false, err
 	}
-	return len(response.Item) > 0, nil
+	if len(response.Item) == 0 {
+		return false, nil
+	}
+	var identity domain.ItemIdentity
+	if err := attributevalue.UnmarshalMap(response.Item, &identity); err != nil {
+		return false, err
+	}
+	return identity.TTL == 0 || identity.TTL > time.Now().Unix(), nil
 }
 
 func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
@@ -238,17 +280,89 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{
-		TableName: aws.String(s.table), Item: encoded, ConditionExpression: aws.String("attribute_not_exists(SK)"),
+	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: item.PK, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL,
 	})
+	if err != nil {
+		return false, err
+	}
+	now := &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)}
+	_, err = s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
+		{Put: &types.Put{
+			TableName: aws.String(s.table), Item: identity, ConditionExpression: aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
+			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
+		}},
+		{Put: &types.Put{
+			TableName: aws.String(s.table), Item: encoded, ConditionExpression: aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
+			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
+		}},
+	}})
 	if err == nil {
 		return true, nil
 	}
-	var conditional *types.ConditionalCheckFailedException
-	if errors.As(err, &conditional) {
+	if transactionConditionFailed(err) {
 		return false, nil
 	}
 	return false, err
+}
+
+// ReconcileItemIdentity creates or refreshes the stable identity marker and
+// removes known duplicate live rows as one operation. The caller chooses the
+// canonical row; read, signal, behaviour, and archive state are all keyed by
+// item_id and therefore remain shared by every duplicate.
+func (s *Store) ReconcileItemIdentity(ctx context.Context, userID string, canonical domain.Item, duplicates []domain.Item) error {
+	if canonical.ItemID == "" || canonical.PK != domain.UserPK(userID) {
+		return errors.New("invalid canonical item identity")
+	}
+	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: canonical.PK, SK: domain.ItemIdentitySK(canonical.ItemID), ItemSK: canonical.SK, TTL: canonical.TTL,
+	})
+	if err != nil {
+		return err
+	}
+	writes := []types.TransactWriteItem{{Put: &types.Put{TableName: aws.String(s.table), Item: identity}}}
+
+	archiveSK, heartedTS := canonical.ArchiveSK, canonical.HeartedTS
+	for _, duplicate := range duplicates {
+		if duplicate.ItemID != canonical.ItemID || duplicate.PK != canonical.PK || duplicate.SK == canonical.SK {
+			return errors.New("invalid duplicate item identity")
+		}
+		if archiveSK == "" && duplicate.ArchiveSK != "" {
+			archiveSK = duplicate.ArchiveSK
+		}
+		if heartedTS == "" && duplicate.HeartedTS != "" {
+			heartedTS = duplicate.HeartedTS
+		}
+		writes = append(writes, types.TransactWriteItem{Delete: &types.Delete{
+			TableName: aws.String(s.table), Key: key(duplicate.PK, duplicate.SK),
+			ConditionExpression: aws.String("item_id = :item_id"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":item_id": &types.AttributeValueMemberS{Value: canonical.ItemID},
+			},
+		}})
+	}
+	if archiveSK != canonical.ArchiveSK || heartedTS != canonical.HeartedTS {
+		sets := make([]string, 0, 2)
+		values := map[string]types.AttributeValue{":item_id": &types.AttributeValueMemberS{Value: canonical.ItemID}}
+		if archiveSK != "" {
+			sets = append(sets, "archive_sk = :archive")
+			values[":archive"] = &types.AttributeValueMemberS{Value: archiveSK}
+		}
+		if heartedTS != "" {
+			sets = append(sets, "hearted_ts = :hearted")
+			values[":hearted"] = &types.AttributeValueMemberS{Value: heartedTS}
+		}
+		writes = append(writes, types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(s.table), Key: key(canonical.PK, canonical.SK),
+			UpdateExpression:    aws.String("SET " + strings.Join(sets, ", ")),
+			ConditionExpression: aws.String("item_id = :item_id"), ExpressionAttributeValues: values,
+		}})
+	}
+	if len(writes) > 100 {
+		return fmt.Errorf("item %s has too many duplicate rows to reconcile atomically", canonical.ItemID)
+	}
+	_, err = s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: writes})
+	return err
 }
 
 // OverwriteItem is reserved for replay: unlike PutItem it intentionally
@@ -269,6 +383,13 @@ type cursor struct {
 }
 
 func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
+	return s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, nil)
+}
+
+// ItemsForFeeds fills a page after applying read-state and feed membership.
+// A nil allowedFeedIDs map disables feed filtering; an empty map returns no
+// items while still walking the underlying pages to a stable end cursor.
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs map[string]bool) ([]domain.Item, string, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
@@ -299,6 +420,7 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 		delete(input.ExpressionAttributeValues, ":prefix")
 	}
 	items := []domain.Item{}
+	seenItemIDs := make(map[string]bool)
 	var last map[string]types.AttributeValue
 	for len(items) < limit {
 		input.Limit = aws.Int32(100)
@@ -317,6 +439,13 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 			if !includeRead && item.Read {
 				continue
 			}
+			if allowedFeedIDs != nil && !allowedFeedIDs[item.FeedID] {
+				continue
+			}
+			if seenItemIDs[item.ItemID] {
+				continue
+			}
+			seenItemIDs[item.ItemID] = true
 			items = append(items, item)
 			if len(items) == limit {
 				if i < len(page)-1 {
@@ -822,6 +951,19 @@ func isTransactionCanceled(err error) bool {
 	return errors.As(err, &canceled)
 }
 
+func transactionConditionFailed(err error) bool {
+	var canceled *types.TransactionCanceledException
+	if !errors.As(err, &canceled) {
+		return false
+	}
+	for _, reason := range canceled.CancellationReasons {
+		if aws.ToString(reason.Code) == "ConditionalCheckFailed" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) heartCount(ctx context.Context, userID string) (int, error) {
 	user, err := s.User(ctx, userID)
 	if err != nil {
@@ -1220,9 +1362,14 @@ func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.I
 	if len(items) == 0 {
 		return nil
 	}
-	keys := make([]map[string]types.AttributeValue, len(items))
-	for i, item := range items {
-		keys[i] = key(domain.UserPK(userID), domain.ReadSK(item.ItemID))
+	keys := make([]map[string]types.AttributeValue, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		if seen[item.ItemID] {
+			continue
+		}
+		seen[item.ItemID] = true
+		keys = append(keys, key(domain.UserPK(userID), domain.ReadSK(item.ItemID)))
 	}
 	read := make(map[string]bool)
 	pending := keys

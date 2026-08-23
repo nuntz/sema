@@ -30,6 +30,7 @@ import (
 	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/connector/rss"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 )
@@ -39,11 +40,14 @@ type queueAPI interface {
 }
 
 type server struct {
-	store    *store.Store
-	queue    queueAPI
-	feedsURL string
-	signer   *auth.CookieSigner
-	rescore  func(context.Context, string) error
+	store     *store.Store
+	queue     queueAPI
+	feedsURL  string
+	signer    *auth.CookieSigner
+	rescore   func(context.Context, string) error
+	discover  feedDiscoverer
+	feedMu    sync.Mutex
+	feedCache map[string]cachedFeedList
 }
 
 type unsupportedFeed struct {
@@ -92,10 +96,16 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result = s.itemRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
 		result = s.getFeeds(ctx, claims.Subject)
+	case method == http.MethodGet && path == "/feeds/export.opml":
+		result = s.exportFeeds(ctx, claims.Subject)
+	case method == http.MethodPost && path == "/feeds/discover":
+		result = s.discoverFeeds(ctx, request.Body)
+	case method == http.MethodPost && path == "/feeds":
+		result = s.addFeed(ctx, claims.Subject, request.Body)
 	case method == http.MethodPost && path == "/feeds/import":
 		result = s.importFeeds(ctx, claims.Subject, request)
-	case method == http.MethodDelete && strings.HasPrefix(path, "/feeds/"):
-		result = s.deleteFeed(ctx, claims.Subject, strings.TrimPrefix(path, "/feeds/"))
+	case strings.HasPrefix(path, "/feeds/"):
+		result = s.feedRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
 	default:
 		result = response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
@@ -137,6 +147,7 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 	var input struct {
 		OrderPref        *domain.Order `json:"order_pref"`
 		InterestPosition *string       `json:"interest_position"`
+		TagPref          *string       `json:"tag_pref"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
@@ -144,7 +155,13 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 	if input.OrderPref != nil && *input.OrderPref != domain.OrderChrono && *input.OrderPref != domain.OrderInterest {
 		return badRequest(errors.New("order_pref must be chrono or interest"))
 	}
-	if err := s.store.UpdateUser(ctx, userID, input.OrderPref, input.InterestPosition); err != nil {
+	if input.TagPref != nil {
+		*input.TagPref = strings.ToLower(strings.TrimSpace(*input.TagPref))
+		if len([]rune(*input.TagPref)) > 32 {
+			return badRequest(errors.New("tag_pref must be at most 32 characters"))
+		}
+	}
+	if err := s.store.UpdateUser(ctx, userID, input.OrderPref, input.InterestPosition, input.TagPref); err != nil {
 		return s.failure("update profile", err)
 	}
 	return response(http.StatusOK, map[string]bool{"ok": true})
@@ -163,12 +180,22 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		return badRequest(err)
 	}
 	limit, _ := strconv.Atoi(query["limit"])
-	items, next, err := s.store.Items(ctx, userID, order, query["cursor"], limit, includeRead)
+	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"])
+	if err != nil {
+		if errors.Is(err, errInvalidFeedTag) {
+			return badRequest(err)
+		}
+		return s.failure("load feeds for item filtering", err)
+	}
+	items, next, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, allowed)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
 		}
 		return s.failure("list items", err)
+	}
+	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+		return s.failure("apply feed presentation", err)
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
 		return s.failure("prepare items", err)
@@ -184,6 +211,9 @@ func (s *server) getArchive(ctx context.Context, userID string, query map[string
 			return badRequest(err)
 		}
 		return s.failure("list archive", err)
+	}
+	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+		return s.failure("apply archive feed presentation", err)
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
 		return s.failure("prepare archive", err)
@@ -386,16 +416,8 @@ func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV
 	if err != nil {
 		return s.failure("list feeds", err)
 	}
-	for i := range feeds {
-		feeds[i].FaviconKey = s.store.ContentURL(feeds[i].FaviconKey)
-	}
-	if model, modelErr := s.store.Model(ctx, userID); modelErr == nil {
-		for i := range feeds {
-			feeds[i].Prior = model.FeedPrior[feeds[i].FeedID]
-			feeds[i].PriorSignals = model.FeedSignalCount[feeds[i].FeedID]
-		}
-	} else if !errors.Is(modelErr, score.ErrModelNotFound) {
-		return s.failure("get feed ranking priors", modelErr)
+	if err := s.decorateFeeds(ctx, userID, feeds); err != nil {
+		return s.failure("decorate feeds", err)
 	}
 	return response(http.StatusOK, map[string]any{"feeds": feeds})
 }
@@ -448,10 +470,27 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	if len(subscriptions) == 0 {
 		return response(http.StatusAccepted, importFeedsResult{Unsupported: unsupported})
 	}
+	for index := range subscriptions {
+		feedURL, normalizeErr := normalizeFeedURL(subscriptions[index].URL)
+		if normalizeErr != nil {
+			return badRequest(fmt.Errorf("invalid OPML feed URL %q", subscriptions[index].URL))
+		}
+		tags, tagsErr := normalizeTags(subscriptions[index].Tags)
+		if tagsErr != nil {
+			return badRequest(tagsErr)
+		}
+		title, titleErr := normalizeTitle(subscriptions[index].Title)
+		if titleErr != nil {
+			return badRequest(titleErr)
+		}
+		subscriptions[index].URL = feedURL
+		subscriptions[index].Tags = tags
+		subscriptions[index].Title = title
+	}
 	now := time.Now().UTC()
 	messages := make([]domain.FeedMessage, len(subscriptions))
 	semaphore := make(chan struct{}, 20)
-	errors := make(chan error, len(subscriptions))
+	writeErrors := make(chan error, len(subscriptions))
 	var group sync.WaitGroup
 	for index, subscription := range subscriptions {
 		group.Add(1)
@@ -462,27 +501,43 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 			feedID := domain.FeedID(subscription.URL)
 			feed := domain.Feed{
 				PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, URL: subscription.URL,
-				Title: subscription.Title, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
+				CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
+				FetchIntervalH: subscription.IntervalH, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
 			}
 			if existing, getErr := s.store.Feed(ctx, userID, feedID); getErr == nil {
 				feed = existing
+				merged, mergeErr := normalizeTags(append(append([]string{}, feed.Tags...), subscription.Tags...))
+				if mergeErr != nil {
+					writeErrors <- mergeErr
+					return
+				}
+				feed.Tags = merged
+				if feed.CustomTitle == "" {
+					feed.CustomTitle = subscription.Title
+				}
+				feed.Muted = subscription.Muted
+				feed.FetchIntervalH = subscription.IntervalH
 				feed.NextFetchAt = domain.Timestamp(now)
+			} else if !errors.Is(getErr, store.ErrNotFound) {
+				writeErrors <- getErr
+				return
 			}
 			if err := s.store.PutFeed(ctx, feed); err != nil {
-				errors <- err
+				writeErrors <- err
 				return
 			}
 			messages[index] = domain.FeedMessage{User: userID, FeedID: feedID}
 		}(index, subscription)
 	}
 	group.Wait()
-	close(errors)
-	if err := <-errors; err != nil {
+	close(writeErrors)
+	if err := <-writeErrors; err != nil {
 		return s.failure("store imported feed", err)
 	}
 	if err := s.enqueueFeeds(ctx, messages); err != nil {
 		return s.failure("enqueue imported feeds", err)
 	}
+	s.invalidateFeeds(userID)
 	return response(http.StatusAccepted, importFeedsResult{Imported: len(messages), Unsupported: unsupported})
 }
 
@@ -521,6 +576,7 @@ func (s *server) deleteFeed(ctx context.Context, userID, feedID string) events.A
 	if err := s.store.DeleteFeed(ctx, userID, feedID); err != nil {
 		return s.failure("delete feed", err)
 	}
+	s.invalidateFeeds(userID)
 	return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusNoContent}
 }
 
@@ -618,5 +674,9 @@ func main() {
 		panic("RESCORE_FUNCTION_NAME is required")
 	}
 	invoker := &lambdaInvoker{config: config, function: rescoreFunction, client: &http.Client{Timeout: 28 * time.Second}}
-	lambda.Start((&server{store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, signer: signer, rescore: invoker.invokeRescore}).handle)
+	discoveryHTTP := httpx.New(4*time.Second, 5<<20)
+	lambda.Start((&server{
+		store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, signer: signer,
+		rescore: invoker.invokeRescore, discover: rss.NewDiscoverer(discoveryHTTP), feedCache: make(map[string]cachedFeedList),
+	}).handle)
 }

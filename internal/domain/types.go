@@ -21,28 +21,36 @@ type User struct {
 	Email            string `dynamodbav:"email,omitempty" json:"email"`
 	CreatedAt        string `dynamodbav:"created_at" json:"created_at"`
 	OrderPref        Order  `dynamodbav:"order_pref" json:"order_pref"`
+	TagPref          string `dynamodbav:"tag_pref,omitempty" json:"tag_pref,omitempty"`
 	InterestPosition string `dynamodbav:"interest_position,omitempty" json:"interest_position,omitempty"`
 	HeartCount       int    `dynamodbav:"heart_count" json:"heart_count"`
 	SignalCount      int    `dynamodbav:"signal_count" json:"signal_count"`
 }
 
 type Feed struct {
-	PK           string  `dynamodbav:"PK" json:"-"`
-	SK           string  `dynamodbav:"SK" json:"-"`
-	GSI1PK       string  `dynamodbav:"gsi1pk,omitempty" json:"-"`
-	FeedID       string  `dynamodbav:"feed_id" json:"feed_id"`
-	URL          string  `dynamodbav:"url" json:"url"`
-	SiteURL      string  `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
-	Title        string  `dynamodbav:"title,omitempty" json:"title,omitempty"`
-	FaviconKey   string  `dynamodbav:"favicon_key,omitempty" json:"favicon_key,omitempty"`
-	ETag         string  `dynamodbav:"etag,omitempty" json:"-"`
-	LastModified string  `dynamodbav:"last_modified,omitempty" json:"-"`
-	LastFetchAt  string  `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
-	LastStatus   string  `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
-	ErrorCount   int     `dynamodbav:"error_count" json:"error_count"`
-	NextFetchAt  string  `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
-	Prior        float64 `dynamodbav:"-" json:"prior"`
-	PriorSignals int     `dynamodbav:"-" json:"prior_signals"`
+	PK             string   `dynamodbav:"PK" json:"-"`
+	SK             string   `dynamodbav:"SK" json:"-"`
+	GSI1PK         string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
+	FeedID         string   `dynamodbav:"feed_id" json:"feed_id"`
+	URL            string   `dynamodbav:"url" json:"url"`
+	SiteURL        string   `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
+	Title          string   `dynamodbav:"title,omitempty" json:"title,omitempty"`
+	CustomTitle    string   `dynamodbav:"custom_title,omitempty" json:"custom_title,omitempty"`
+	Tags           []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
+	Muted          bool     `dynamodbav:"muted,omitempty" json:"muted"`
+	FetchIntervalH int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
+	FaviconKey     string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	ETag           string   `dynamodbav:"etag,omitempty" json:"-"`
+	LastModified   string   `dynamodbav:"last_modified,omitempty" json:"-"`
+	LastFetchAt    string   `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
+	LastStatus     string   `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
+	LastError      string   `dynamodbav:"last_error,omitempty" json:"last_error,omitempty"`
+	ErrorCount     int      `dynamodbav:"error_count" json:"error_count"`
+	NextFetchAt    string   `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
+	Prior          float64  `dynamodbav:"-" json:"prior"`
+	PriorSignals   int      `dynamodbav:"-" json:"prior_signals"`
+	Status         string   `dynamodbav:"-" json:"status"`
+	ItemCount      int      `dynamodbav:"-" json:"item_count"`
 }
 
 type Why struct {
@@ -153,6 +161,15 @@ type Read struct {
 	TTL    int64  `dynamodbav:"ttl"`
 }
 
+// ItemIdentity makes item_id, rather than the timestamp-bearing live-item key,
+// the uniqueness boundary for the rolling window.
+type ItemIdentity struct {
+	PK     string `dynamodbav:"PK"`
+	SK     string `dynamodbav:"SK"`
+	ItemSK string `dynamodbav:"item_sk"`
+	TTL    int64  `dynamodbav:"ttl"`
+}
+
 type Enclosure struct {
 	URL    string `json:"url"`
 	Type   string `json:"type,omitempty"`
@@ -200,11 +217,12 @@ type ItemMessage struct {
 	ForceExtract  bool        `json:"force_extract,omitempty"`
 }
 
-func UserPK(user string) string    { return "U#" + user }
-func FeedSK(id string) string      { return "F#" + id }
-func SignalSK(id string) string    { return "S#" + id }
-func BehaviourSK(id string) string { return "B#" + id }
-func ReadSK(id string) string      { return "R#" + id }
+func UserPK(user string) string       { return "U#" + user }
+func FeedSK(id string) string         { return "F#" + id }
+func SignalSK(id string) string       { return "S#" + id }
+func BehaviourSK(id string) string    { return "B#" + id }
+func ReadSK(id string) string         { return "R#" + id }
+func ItemIdentitySK(id string) string { return "D#" + id }
 
 func ArchiveSK(hearted time.Time, id string) string {
 	return "A#" + Timestamp(hearted) + "#" + id

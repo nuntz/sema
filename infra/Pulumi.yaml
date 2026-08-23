@@ -10,3 +10,9 @@ config:
     default: "2"
   sema:alarmTopicName:
     default: NotifyMe
+  sema:domain:
+    type: string
+    description: Optional custom hostname for the CloudFront distribution
+  sema:route53ZoneId:
+    type: string
+    description: Optional Route 53 hosted-zone ID for automatic certificate and alias records

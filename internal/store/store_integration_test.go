@@ -121,6 +121,12 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if written, err := repository.PutItem(ctx, items[0]); err != nil || written {
 		t.Fatalf("conditional dedupe = %v, %v", written, err)
 	}
+	republished := items[0]
+	republished.SK = domain.ItemSK(now.Add(30*time.Second), republished.ItemID)
+	republished.PublishedTS = domain.Timestamp(now.Add(30 * time.Second))
+	if written, err := repository.PutItem(ctx, republished); err != nil || written {
+		t.Fatalf("stable identity dedupe = %v, %v", written, err)
+	}
 	chrono, _, err := repository.Items(ctx, "user", domain.OrderChrono, "", 100, true)
 	if err != nil || len(chrono) != 2 || chrono[0].ItemID != "new" {
 		t.Fatalf("chrono = %#v, %v", chrono, err)

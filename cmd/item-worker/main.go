@@ -91,6 +91,10 @@ func (h *handler) process(ctx context.Context, body string) error {
 		}
 		feed = domain.Feed{FeedID: existing.FeedID, Title: existing.FeedTitle, FaviconKey: existing.FaviconKey}
 	}
+	feedTitle := feed.Title
+	if feed.CustomTitle != "" {
+		feedTitle = feed.CustomTitle
+	}
 	processAssets := !message.Reprocess || message.ForceExtract
 	if message.Reprocess && !message.ForceExtract {
 		keys := []string{}
@@ -216,12 +220,12 @@ func (h *handler) process(ctx context.Context, body string) error {
 					liked = append(liked, score.Candidate{Title: row.Title, Vector: score.DecodeVector(row.Vector)})
 				}
 			}
-			why = score.Why(result, vector, feed.Title, liked)
+			why = score.Why(result, vector, feedTitle, liked)
 		}
 	}
 	item := domain.Item{
 		PK: domain.UserPK(message.User), SK: domain.ItemSK(published, message.ItemID), FeedPK: "F#" + message.FeedID,
-		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feed.Title, FaviconKey: feed.FaviconKey,
+		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feedTitle, FaviconKey: feed.FaviconKey,
 		URL: message.URL, Title: embedTitle, Summary: summary, Author: message.Author,
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
 		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, BodyKey: bodyKey, HasBody: hasBody,

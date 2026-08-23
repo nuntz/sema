@@ -26,6 +26,25 @@ func TestSchedulerSilentAlarmMetric(t *testing.T) {
 	}
 }
 
+func TestWebCacheControl(t *testing.T) {
+	tests := map[string]string{
+		"index.html":           "no-cache",
+		"sw.js":                "no-cache",
+		"manifest.webmanifest": "public,max-age=300,must-revalidate",
+		"icon-192.png":         "public,max-age=86400",
+		"icon-512.png":         "public,max-age=86400",
+		"apple-touch-icon.png": "public,max-age=86400",
+		"favicon.ico":          "public,max-age=86400",
+		"favicon.svg":          "public,max-age=86400",
+		"assets/app-abc.js":    "public,max-age=31536000,immutable",
+	}
+	for path, want := range tests {
+		if got := webCacheControl(path); got != want {
+			t.Errorf("webCacheControl(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
 func assertPulumiString(t *testing.T, name string, input pulumi.StringPtrInput, want string) {
 	t.Helper()
 	got, ok := input.(pulumi.String)

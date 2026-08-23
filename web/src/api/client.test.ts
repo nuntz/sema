@@ -30,3 +30,35 @@ describe("behaviour event client", () => {
     );
   });
 });
+
+describe("feed management client", () => {
+  it("wires feed detail edits to the encoded PATCH route", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ feed_id: "feed/id" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", request);
+
+    await new APIClient(() => "token").patchFeed("feed/id", {
+      custom_title: "Custom",
+      tags: ["dev"],
+      muted: true,
+      fetch_interval_h: 6,
+    });
+
+    const [path, init] = request.mock.calls[0];
+    expect(path).toBe("/api/feeds/feed%2Fid");
+    expect(init?.method).toBe("PATCH");
+    expect(init?.body).toBe(
+      JSON.stringify({
+        custom_title: "Custom",
+        tags: ["dev"],
+        muted: true,
+        fetch_interval_h: 6,
+      }),
+    );
+  });
+});

@@ -6,20 +6,36 @@ import (
 )
 
 const (
-	feedFetchPeriod = time.Hour
-	minFeedDelay    = 30 * time.Minute
+	defaultFeedFetchPeriod = time.Hour
+	minFeedDelay           = 30 * time.Minute
 )
 
 // NextFeedFetch assigns each feed a stable phase within the hour. Requiring the
 // next occurrence to be at least 30 minutes away prevents an early scheduler
 // invocation from selecting the phase that the current fetch is satisfying.
-func NextFeedFetch(key string, after time.Time) time.Time {
+func NextFeedFetch(key string, after time.Time, intervalHours ...int) time.Time {
 	after = after.UTC()
-	next := after.Truncate(feedFetchPeriod).Add(StableOffset(key, feedFetchPeriod))
+	period := defaultFeedFetchPeriod
+	if len(intervalHours) > 0 {
+		switch intervalHours[0] {
+		case 6, 24:
+			period = time.Duration(intervalHours[0]) * time.Hour
+		}
+	}
+	next := after.Truncate(period).Add(StableOffset(key, period))
 	for next.Before(after.Add(minFeedDelay)) {
-		next = next.Add(feedFetchPeriod)
+		next = next.Add(period)
 	}
 	return next
+}
+
+func FeedIntervalHours(feed Feed) int {
+	switch feed.FetchIntervalH {
+	case 6, 24:
+		return feed.FetchIntervalH
+	default:
+		return 1
+	}
 }
 
 // StableOffset returns a deterministic offset in [0, window) for key.

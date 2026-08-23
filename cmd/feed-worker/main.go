@@ -44,7 +44,7 @@ type handler struct {
 type feedStore interface {
 	Feed(context.Context, string, string) (domain.Feed, error)
 	PutFeed(context.Context, domain.Feed) error
-	ItemExists(context.Context, string, string, time.Time) (bool, error)
+	ItemExists(context.Context, string, string) (bool, error)
 	PutContent(context.Context, string, string, []byte) error
 }
 
@@ -81,15 +81,20 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if err != nil {
 		return err
 	}
+	if feed.Muted {
+		slog.InfoContext(ctx, "skipping muted feed", "user", message.User, "feed_id", message.FeedID)
+		return nil
+	}
 	started := time.Now().UTC()
 	result, err := h.connector.Fetch(ctx, feed)
 	if err != nil {
 		feed.ErrorCount++
 		feed.LastFetchAt = domain.Timestamp(started)
 		feed.LastStatus = truncate(err.Error(), 240)
+		feed.LastError = truncate(err.Error(), 200)
 		next, rateLimited := nextFetchAfterError(feed, started, err)
 		feed.NextFetchAt = domain.Timestamp(next)
-		if storeErr := h.store.PutFeed(ctx, feed); storeErr != nil {
+		if storeErr := h.persistFeed(ctx, message.User, feed); storeErr != nil {
 			return fmt.Errorf("fetch: %v; update failure: %w", err, storeErr)
 		}
 		slog.WarnContext(ctx, "feed fetch failed", "user", message.User, "feed_id", message.FeedID, "error", err, "next_fetch_at", feed.NextFetchAt)
@@ -104,9 +109,10 @@ func (h *handler) process(ctx context.Context, body string) error {
 		feed.LastFetchAt = domain.Timestamp(started)
 		feed.LastStatus = "304"
 		feed.ErrorCount = 0
-		feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started))
+		feed.LastError = ""
+		feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started, domain.FeedIntervalHours(feed)))
 		observability.Emit(map[string]float64{"FeedsNotModified": 1}, nil)
-		return h.store.PutFeed(ctx, feed)
+		return h.persistFeed(ctx, message.User, feed)
 	}
 
 	messages := make([]domain.ItemMessage, 0, len(result.Entries))
@@ -115,7 +121,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			continue
 		}
 		itemID := domain.ItemID(feed.FeedID, entry.GUID, entry.URL)
-		exists, err := h.store.ItemExists(ctx, message.User, itemID, entry.Published)
+		exists, err := h.store.ItemExists(ctx, message.User, itemID)
 		if err != nil {
 			return err
 		}
@@ -154,10 +160,33 @@ func (h *handler) process(ctx context.Context, body string) error {
 	feed.LastFetchAt = domain.Timestamp(started)
 	feed.LastStatus = "200"
 	feed.ErrorCount = 0
-	feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started))
+	feed.LastError = ""
+	feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started, domain.FeedIntervalHours(feed)))
 	slog.Info("feed fetched", "user", message.User, "feed_id", message.FeedID, "items_enqueued", len(messages))
 	observability.Emit(map[string]float64{"FeedsFetched": 1, "ItemsEnqueued": float64(len(messages))}, nil)
-	return h.store.PutFeed(ctx, feed)
+	return h.persistFeed(ctx, message.User, feed)
+}
+
+// persistFeed keeps user-managed fields from a concurrent drawer edit. It also
+// prevents a fetch that was already in flight from recreating a removed feed.
+func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain.Feed) error {
+	current, err := h.store.Feed(ctx, userID, fetched.FeedID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	fetched.CustomTitle = current.CustomTitle
+	fetched.Tags = current.Tags
+	fetched.Muted = current.Muted
+	if domain.FeedIntervalHours(current) != domain.FeedIntervalHours(fetched) && fetched.ErrorCount == 0 {
+		if lastFetch, parseErr := time.Parse(time.RFC3339Nano, fetched.LastFetchAt); parseErr == nil {
+			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(current)))
+		}
+	}
+	fetched.FetchIntervalH = current.FetchIntervalH
+	return h.store.PutFeed(ctx, fetched)
 }
 
 func feedScheduleKey(feed domain.Feed) string {
@@ -165,9 +194,11 @@ func feedScheduleKey(feed domain.Feed) string {
 }
 
 func nextFetchAfterError(feed domain.Feed, started time.Time, err error) (time.Time, bool) {
+	maximum := time.Duration(max(24, domain.FeedIntervalHours(feed))) * time.Hour
 	var statusErr *connector.HTTPStatusError
 	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusTooManyRequests {
-		return started.Add(time.Duration(1<<min(feed.ErrorCount, 4)) * time.Hour), false
+		delay := time.Duration(1<<min(feed.ErrorCount, 5)) * time.Hour
+		return started.Add(min(delay, maximum)), false
 	}
 
 	next := started.Add(defaultRateLimitDelay)
@@ -175,6 +206,9 @@ func nextFetchAfterError(feed domain.Feed, started time.Time, err error) (time.T
 		next = retryAt
 	}
 	next = next.Add(domain.StableOffset(feedScheduleKey(feed), rateLimitJitterWindow))
+	if capAt := started.Add(maximum); next.After(capAt) {
+		next = capAt
+	}
 	return next, true
 }
 

@@ -39,6 +39,9 @@ func (h *handler) run(ctx context.Context) error {
 		var group sync.WaitGroup
 		errors := make(chan error, end-offset)
 		for _, feed := range feeds[offset:end] {
+			if feed.Muted {
+				continue
+			}
 			group.Add(1)
 			go func(feed domain.Feed) {
 				defer group.Done()

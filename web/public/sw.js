@@ -1,5 +1,14 @@
-const CACHE = "sema-shell-v3";
-const SHELL = ["/", "/index.html", "/manifest.webmanifest"];
+const CACHE = "sema-shell-v4";
+const SHELL = [
+  "/",
+  "/index.html",
+  "/manifest.webmanifest",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/apple-touch-icon.png",
+  "/favicon.ico",
+  "/favicon.svg",
+];
 const NETWORK_ONLY_PREFIXES = ["/api/", "/bodies/", "/media/", "/favicons/"];
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

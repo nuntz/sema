@@ -18,7 +18,7 @@ import {
   isCancelledShare,
   LinkActionFailure,
 } from "./link-action";
-import type { Item, Order, Profile } from "./types";
+import type { Feed, Item, Order, Profile } from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
@@ -26,6 +26,7 @@ import { HeartIcon } from "./ui/HeartIcon";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
+import { TagFilter } from "./ui/TagFilter";
 
 type Undo = { ids: string[] };
 type Toast = { id: number; kind: "success" | "error"; message: string };
@@ -36,6 +37,8 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [signalCount, setSignalCount] = createSignal(0);
   const [heartCount, setHeartCount] = createSignal(0);
   const [order, setOrder] = createSignal<Order>("chrono");
+  const [selectedTag, setSelectedTag] = createSignal("");
+  const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [items, setItems] = createSignal<Item[]>([]);
   const [gridIDs, setGridIDs] = createSignal<string[]>([]);
   const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
@@ -115,7 +118,18 @@ export function App(props: { token: () => string; signOut(): void }) {
       setSignalCount(me.signal_count);
       setHeartCount(me.heart_count ?? me.profile.heart_count ?? 0);
       setOrder(me.profile.order_pref || "chrono");
-      await reload(me.profile.order_pref || "chrono");
+      const profileTag = me.profile.tag_pref || "";
+      setSelectedTag(profileTag);
+      const [availableFeeds] = await Promise.all([
+        api.feeds(),
+        reload(
+          me.profile.order_pref || "chrono",
+          unreadOnly(),
+          "live",
+          profileTag,
+        ),
+      ]);
+      setFeedFilters(availableFeeds);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -127,6 +141,7 @@ export function App(props: { token: () => string; signOut(): void }) {
     nextOrder = order(),
     nextUnreadOnly = unreadOnly(),
     nextMode = mode(),
+    nextTag = selectedTag(),
   ) => {
     const version = ++requestVersion;
     setLoading(true);
@@ -139,7 +154,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       const page =
         nextMode === "archive"
           ? await api.archive()
-          : await api.items(nextOrder, "", !nextUnreadOnly);
+          : await api.items(nextOrder, "", !nextUnreadOnly, nextTag);
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
       setItems(pageItems);
@@ -169,7 +184,7 @@ export function App(props: { token: () => string; signOut(): void }) {
       const page =
         mode() === "archive"
           ? await api.archive(nextCursor)
-          : await api.items(order(), nextCursor, !unreadOnly());
+          : await api.items(order(), nextCursor, !unreadOnly(), selectedTag());
       if (nextCursor !== cursor()) return;
       let added: Item[] = [];
       setItems((current) => {
@@ -207,7 +222,7 @@ export function App(props: { token: () => string; signOut(): void }) {
     const version = requestVersion;
     pollInFlight = true;
     try {
-      const page = await api.items("chrono");
+      const page = await api.items("chrono", "", false, selectedTag());
       if (version !== requestVersion) return;
       const unseen = pollCandidates(
         items(),
@@ -478,7 +493,12 @@ export function App(props: { token: () => string; signOut(): void }) {
     let nextCursor = cursor();
     try {
       while (nextCursor !== "") {
-        const page = await api.items(markOrder, nextCursor, !unreadOnly());
+        const page = await api.items(
+          markOrder,
+          nextCursor,
+          !unreadOnly(),
+          selectedTag(),
+        );
         if (version !== requestVersion || markOrder !== order()) return;
         ids.push(
           ...(page.items ?? [])
@@ -537,6 +557,45 @@ export function App(props: { token: () => string; signOut(): void }) {
     await reload(next);
   };
 
+  const applyTag = async (tag: string) => {
+    if (mode() === "archive" || tag === selectedTag()) return;
+    await flushRead();
+    setSelectedTag(tag);
+    setReaderID("");
+    setProfile((current) =>
+      current ? { ...current, tag_pref: tag } : current,
+    );
+    api.patchMe({ tag_pref: tag }).catch(handleError);
+    await reload(order(), unreadOnly(), "live", tag);
+  };
+
+  const refreshFeedFilters = async () => {
+    try {
+      const latest = await api.feeds();
+      setFeedFilters(latest);
+      const activeTag = selectedTag();
+      if (
+        activeTag &&
+        activeTag !== "untagged" &&
+        !latest.some((feed) => feed.tags?.includes(activeTag))
+      ) {
+        setSelectedTag("");
+        setProfile((current) =>
+          current ? { ...current, tag_pref: "" } : current,
+        );
+        api.patchMe({ tag_pref: "" }).catch(handleError);
+      }
+    } catch (caught) {
+      handleError(caught);
+    }
+  };
+
+  const returnFromFeeds = async () => {
+    setView("grid");
+    await refreshFeedFilters();
+    await reload();
+  };
+
   const toggleArchive = async () => {
     await flushRead();
     const next = mode() === "live" ? "archive" : "live";
@@ -567,9 +626,10 @@ export function App(props: { token: () => string; signOut(): void }) {
           <Feeds
             api={api}
             heartCount={heartCount()}
-            onBack={() => setView("grid")}
+            onBack={() => void returnFromFeeds()}
             onKeys={() => setKeysOpen(true)}
             onSignOut={props.signOut}
+            onFeedsChanged={() => void refreshFeedFilters()}
             onToast={showToast}
           />
           <Show when={keysOpen()}>
@@ -610,6 +670,13 @@ export function App(props: { token: () => string; signOut(): void }) {
                 INTEREST
               </button>
             </fieldset>
+            <span class="tag-filter-divider" aria-hidden="true" />
+            <TagFilter
+              feeds={feedFilters()}
+              value={selectedTag()}
+              active={!readerID() && !keysOpen() && !confirmRemove()}
+              onChange={(tag) => void applyTag(tag)}
+            />
             <span class="status-line">
               {items().filter((item) => !item.read).length} unread ·{" "}
               {order() === "interest"
@@ -699,6 +766,11 @@ export function App(props: { token: () => string; signOut(): void }) {
             fallback={
               mode() === "archive" ? (
                 <ArchiveEmpty />
+              ) : selectedTag() ? (
+                <FilteredEmpty
+                  tag={selectedTag()}
+                  onClear={() => void applyTag("")}
+                />
               ) : (
                 <ColdStart onImport={() => setView("feeds")} />
               )
@@ -819,6 +891,18 @@ function ArchiveEmpty() {
         Heart an item and it lands here permanently. Everything else in the feed
         expires after seven days; kept items don&apos;t.
       </p>
+    </section>
+  );
+}
+
+function FilteredEmpty(props: { tag: string; onClear(): void }) {
+  return (
+    <section class="archive-empty">
+      <h1>No items in #{props.tag}</h1>
+      <p>This tag has no visible items in the current seven-day window.</p>
+      <button type="button" class="original-cta" onClick={props.onClear}>
+        Show all feeds
+      </button>
     </section>
   );
 }

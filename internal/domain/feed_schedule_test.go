@@ -29,6 +29,18 @@ func TestNextFeedFetchDoesNotImmediatelyRepeatEarlyFetch(t *testing.T) {
 	}
 }
 
+func TestNextFeedFetchRespectsConfiguredInterval(t *testing.T) {
+	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
+	first := NextFeedFetch("six-hour-feed", started, 6)
+	second := NextFeedFetch("six-hour-feed", first.Add(time.Minute), 6)
+	if second.Sub(first) != 6*time.Hour {
+		t.Fatalf("six-hour phase moved: first %s, second %s", first, second)
+	}
+	if got := FeedIntervalHours(Feed{}); got != 1 {
+		t.Fatalf("default interval = %d, want 1", got)
+	}
+}
+
 func TestStableOffset(t *testing.T) {
 	const window = 5 * time.Minute
 	first := StableOffset("feed", window)
