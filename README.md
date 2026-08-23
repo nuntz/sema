@@ -57,6 +57,12 @@ Pulumi generates an RSA key in encrypted stack state, registers its public half 
 
 `pulumi up` runs the pinned Bun install and builds the Lambda archives and SPA before registering their assets, so a clean checkout does not need a separate build command. `make deploy` is an equivalent shortcut from the repository root.
 
+## Schema changes
+
+- Any new index or key attribute ships in two deploys: deploy writers, create the index, and run the backfill first; switch readers only after the backfill is verified.
+- Every backfill is a one-off idempotent command under `cmd/` (for example, `cmd/backfill-<name>`) that dry-runs by default, prints affected and total row counts, and applies changes only with `--apply`.
+- Each such change includes a test, written alongside the change, proving that the reader path still handles rows missing the new attribute.
+
 ## Ranking maintenance
 
 The nightly `rescore` Lambda rebuilds each MODEL row from explicit and

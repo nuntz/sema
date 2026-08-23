@@ -16,6 +16,7 @@ import (
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/iam"
 	awslambda "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/lambda"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/s3"
+	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/sns"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/sqs"
 	"github.com/pulumi/pulumi-tls/sdk/v5/go/tls"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -35,6 +36,15 @@ func main() {
 		if scoringVersion == "" {
 			scoringVersion = "2"
 		}
+		alarmTopicName := cfg.Get("alarmTopicName")
+		if alarmTopicName == "" {
+			alarmTopicName = "NotifyMe"
+		}
+		alarmTopic, err := sns.LookupTopic(ctx, &sns.LookupTopicArgs{Name: alarmTopicName})
+		if err != nil {
+			return fmt.Errorf("look up alarm topic %q: %w", alarmTopicName, err)
+		}
+		alarmActions := pulumi.Array{pulumi.String(alarmTopic.Arn)}
 		if err := buildDeployAssets(googleClientID); err != nil {
 			return err
 		}
@@ -306,6 +316,9 @@ func main() {
 		}); err != nil {
 			return err
 		}
+		if _, err := cloudwatch.NewMetricAlarm(ctx, "scheduler-silent", schedulerSilentAlarmArgs(alarmActions)); err != nil {
+			return err
+		}
 		if _, err := cloudwatch.NewMetricAlarm(ctx, "item-worker-errors", &cloudwatch.MetricAlarmArgs{
 			EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(0.05), TreatMissingData: pulumi.String("notBreaching"),
 			MetricQueries: cloudwatch.MetricAlarmMetricQueryArray{
@@ -327,6 +340,22 @@ func main() {
 		ctx.Export("apiEndpoint", httpAPI.ApiEndpoint)
 		return nil
 	})
+}
+
+func schedulerSilentAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
+	return &cloudwatch.MetricAlarmArgs{
+		Namespace:          pulumi.String("Sema"),
+		MetricName:         pulumi.String("FeedsEnqueued"),
+		Statistic:          pulumi.String("Sum"),
+		Period:             pulumi.Int(3600),
+		EvaluationPeriods:  pulumi.Int(4),
+		DatapointsToAlarm:  pulumi.Int(4),
+		ComparisonOperator: pulumi.String("LessThanThreshold"),
+		Threshold:          pulumi.Float64(1),
+		TreatMissingData:   pulumi.String("breaching"),
+		AlarmActions:       alarmActions,
+		AlarmDescription:   pulumi.String("scheduler enqueued no feeds for four consecutive hourly periods"),
+	}
 }
 
 func queues(ctx *pulumi.Context, name string, visibility int) (*sqs.Queue, *sqs.Queue, error) {
