@@ -21,7 +21,6 @@ describe("keyboard map", () => {
     ["m", "read"],
     ["M", "mark-below"],
     ["End", "end"],
-    ["G", "end"],
     ["Home", "home"],
     ["g", "go-prefix"],
     ["u", "undo"],
@@ -60,6 +59,11 @@ describe("keyboard map", () => {
 
   it("maps shift+A to the archive at the app level", () => {
     expect(appCommand("A")).toBe("toggle-archive");
+  });
+
+  it("maps G to feeds and settings at the app level", () => {
+    expect(appCommand("G")).toBe("open-settings");
+    expect(gridCommand("G")).toBeUndefined();
   });
 
   it("maps unread globally so it remains available without a mounted grid", () => {

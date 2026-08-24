@@ -9,6 +9,7 @@ import {
 } from "solid-js";
 import type { APIClient } from "../api/client";
 import { archiveSize } from "../archive";
+import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
 import { formatPrior } from "../ranking-display";
 import type { Feed, FeedCandidate } from "../types";
@@ -205,10 +206,8 @@ export function Feeds(props: {
   return (
     <main class="feeds-view">
       <header class="feeds-header">
-        <button type="button" class="wordmark" onClick={props.onBack}>
-          Sema
-        </button>
-        <span>/ feeds</span>
+        <AppMark onActivate={props.onBack} />
+        <span>/ feeds &amp; settings</span>
         <span class="feeds-summary">
           {feeds()?.length ?? 0} feeds · {attention()} need attention
         </span>
@@ -256,7 +255,7 @@ export function Feeds(props: {
               <option value="prior">Prior</option>
               <option value="quality">Extraction quality</option>
             </select>
-            <Icon name="menu" class="sort-menu-icon" />
+            <Icon name="chevron-down" class="sort-menu-icon" />
           </label>
           <button
             type="button"

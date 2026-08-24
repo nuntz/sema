@@ -7,6 +7,7 @@ import {
   Show,
 } from "solid-js";
 import { isOlderThanThirtyDays } from "../archive";
+import { AppMark } from "../components/AppMark";
 import { Icon } from "../components/Icon";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
@@ -34,6 +35,7 @@ interface ReaderProps {
   canPrevious: boolean;
   canNext: boolean;
   onClose(): void;
+  onHome(): void;
   onPrevious(): void;
   onNext(): void;
   onSignal(value: -1 | 0 | 1): void;
@@ -254,6 +256,7 @@ export function Reader(props: ReaderProps) {
       aria-label={props.item.title}
     >
       <header class="reader-bar">
+        <AppMark onActivate={props.onHome} />
         <button
           type="button"
           class="reader-back"

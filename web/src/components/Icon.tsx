@@ -10,11 +10,14 @@ import Ellipsis from "lucide-solid/icons/ellipsis";
 import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
 import Link from "lucide-solid/icons/link";
+import Menu from "lucide-solid/icons/menu";
 import Pause from "lucide-solid/icons/pause";
 import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import Search from "lucide-solid/icons/search";
+import Settings from "lucide-solid/icons/settings";
+import Tag from "lucide-solid/icons/tag";
 import ThumbsDown from "lucide-solid/icons/thumbs-down";
 import ThumbsUp from "lucide-solid/icons/thumbs-up";
 import Trash2 from "lucide-solid/icons/trash-2";
@@ -66,7 +69,8 @@ const glyphs = {
   "feed-fallback": SemaRows,
   "import-opml": Upload,
   keep: Heart,
-  menu: ChevronDown,
+  "chevron-down": ChevronDown,
+  menu: Menu,
   more: Ellipsis,
   mute: Pause,
   "next-item": ChevronRight,
@@ -76,11 +80,13 @@ const glyphs = {
   "remove-feed": Trash2,
   retry: RotateCw,
   search: Search,
+  settings: Settings,
   sort: ArrowUpDown,
   "status-broken": Unplug,
   "status-muted": Pause,
   "status-ok": Check,
   "status-slowed": Clock,
+  tag: Tag,
   "thumbs-down": ThumbsDown,
   "thumbs-up": ThumbsUp,
 } as const;

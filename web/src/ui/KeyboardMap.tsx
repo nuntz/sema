@@ -12,7 +12,7 @@ const bindings = [
   ["F", "toggle heart"],
   ["M", "toggle read"],
   ["⇧ M", "mark all below read"],
-  ["End / ⇧ G", "go to caught-up card"],
+  ["End", "go to caught-up card"],
   ["Home / G G", "return to top"],
   ["U", "undo last read batch"],
   ["C", "copy or share original link"],
@@ -20,6 +20,7 @@ const bindings = [
   ["T", "toggle order"],
   ["A", "toggle all items"],
   ["⇧ A", "toggle archive"],
+  ["⇧ G", "feeds & settings"],
   ["ESC", "close reader"],
   ["?", "this map"],
 ];

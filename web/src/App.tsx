@@ -13,7 +13,9 @@ import {
   linkBehaviourEvent,
   mergeBehaviourEvent,
 } from "./behaviour-events";
+import { AppMark } from "./components/AppMark";
 import { Icon } from "./components/Icon";
+import { Tooltip } from "./components/Tooltip";
 import {
   mergeNewItems,
   pollCandidates,
@@ -40,13 +42,13 @@ import { TagFilter } from "./ui/TagFilter";
 
 type Undo = { ids: string[] };
 type Toast = { id: number; kind: "success" | "error"; message: string };
+type HeaderMenu = "order" | "unread" | "combined" | "overflow";
 
 export function App(props: { token: () => string; signOut(): void }) {
   const api = new APIClient(props.token);
-  const [profile, setProfile] = createSignal<Profile>();
-  const [signalCount, setSignalCount] = createSignal(0);
+  const [, setProfile] = createSignal<Profile>();
   const [heartCount, setHeartCount] = createSignal(0);
-  const [order, setOrder] = createSignal<Order>("chrono");
+  const [order, setOrder] = createSignal<Order>("interest");
   const [selectedTag, setSelectedTag] = createSignal("");
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [items, setItems] = createSignal<Item[]>([]);
@@ -78,6 +80,9 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [relatedItems, setRelatedItems] = createSignal<Item[]>([]);
   const [relatedLoading, setRelatedLoading] = createSignal(false);
   const [readerArchive, setReaderArchive] = createSignal(false);
+  const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
+  const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
+  const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
   let searchVersion = 0;
   let relatedVersion = 0;
@@ -93,6 +98,16 @@ export function App(props: { token: () => string; signOut(): void }) {
   const pendingEvents = new Map<string, BehaviourEvent>();
   const heartsInFlight = new Set<string>();
   const searchActive = createMemo(() => [...searchQuery().trim()].length >= 2);
+  const searchOpen = createMemo(
+    () => searchFocused() || searchQuery().length > 0,
+  );
+  const headerTooltipDisabled = createMemo(
+    () => searchOpen() || tagFilterOpen() || Boolean(headerMenu()),
+  );
+  const orderLabel = createMemo(() =>
+    order() === "interest" ? "Front page" : "Latest",
+  );
+  const unreadLabel = createMemo(() => (unreadOnly() ? "Unread" : "All"));
 
   const handleError = (caught: unknown) => {
     if (caught instanceof UnauthorizedError) {
@@ -138,15 +153,14 @@ export function App(props: { token: () => string; signOut(): void }) {
     try {
       const me = await api.me();
       setProfile(me.profile);
-      setSignalCount(me.signal_count);
       setHeartCount(me.heart_count ?? me.profile.heart_count ?? 0);
-      setOrder(me.profile.order_pref || "chrono");
+      setOrder(me.profile.order_pref || "interest");
       const profileTag = me.profile.tag_pref || "";
       setSelectedTag(profileTag);
       const [availableFeeds] = await Promise.all([
         api.feeds(),
         reload(
-          me.profile.order_pref || "chrono",
+          me.profile.order_pref || "interest",
           unreadOnly(),
           "live",
           profileTag,
@@ -316,6 +330,15 @@ export function App(props: { token: () => string; signOut(): void }) {
     searchInput?.blur();
   };
 
+  const focusSearch = () => {
+    setHeaderMenu();
+    setSearchFocused(true);
+    queueMicrotask(() => {
+      searchInput?.focus();
+      searchInput?.select();
+    });
+  };
+
   onMount(() => {
     bootstrap();
     const flush = () => void flushPending(true);
@@ -336,8 +359,12 @@ export function App(props: { token: () => string; signOut(): void }) {
         )
       ) {
         event.preventDefault();
-        searchInput.focus();
-        searchInput.select();
+        focusSearch();
+        return;
+      }
+      if (event.key === "Escape" && headerMenu()) {
+        event.preventDefault();
+        setHeaderMenu();
         return;
       }
       const command = appCommand(event.key);
@@ -373,6 +400,8 @@ export function App(props: { token: () => string; signOut(): void }) {
         void toggleArchive();
       } else if (command === "toggle-unread") {
         void toggleUnread();
+      } else if (command === "open-settings") {
+        openFeedsAndSettings();
       } else {
         setKeysOpen((open) => (command === "toggle-help" ? !open : false));
       }
@@ -472,18 +501,10 @@ export function App(props: { token: () => string; signOut(): void }) {
     const previous = item.signal;
     const effective = item.hearted && value === 0 ? 1 : value;
     replaceItem(item.item_id, { signal: effective });
-    api
-      .signal(item.item_id, value)
-      .then(() => {
-        if (previous === 0 && effective !== 0)
-          setSignalCount((count) => count + 1);
-        if (previous !== 0 && effective === 0)
-          setSignalCount((count) => Math.max(0, count - 1));
-      })
-      .catch((caught) => {
-        replaceItem(item.item_id, { signal: previous });
-        handleError(caught);
-      });
+    api.signal(item.item_id, value).catch((caught) => {
+      replaceItem(item.item_id, { signal: previous });
+      handleError(caught);
+    });
   };
 
   const performHeart = async (item: Item) => {
@@ -687,13 +708,14 @@ export function App(props: { token: () => string; signOut(): void }) {
     }
   };
 
-  const toggleUnread = async () => {
-    if (mode() === "archive") return;
+  const selectUnread = async (next: boolean) => {
+    if (mode() === "archive" || next === unreadOnly()) return;
     await flushRead();
-    const next = !unreadOnly();
     setUnreadOnly(next);
     void reload(order(), next);
   };
+
+  const toggleUnread = () => selectUnread(!unreadOnly());
 
   const insertNewItems = (incoming: Item[]): number => {
     if (incoming.length === 0) return 0;
@@ -718,10 +740,9 @@ export function App(props: { token: () => string; signOut(): void }) {
 
   const insertPendingNew = () => insertNewItems(pendingNew());
 
-  const toggleOrder = async () => {
-    if (mode() === "archive") return;
+  const selectOrder = async (next: Order) => {
+    if (mode() === "archive" || next === order()) return;
     await flushRead();
-    const next: Order = order() === "chrono" ? "interest" : "chrono";
     setOrder(next);
     setReaderID("");
     setProfile((current) =>
@@ -730,6 +751,9 @@ export function App(props: { token: () => string; signOut(): void }) {
     api.patchMe({ order_pref: next }).catch(handleError);
     await reload(next);
   };
+
+  const toggleOrder = () =>
+    selectOrder(order() === "chrono" ? "interest" : "chrono");
 
   const applyTag = async (tag: string) => {
     if (mode() === "archive" || tag === selectedTag()) return;
@@ -764,10 +788,30 @@ export function App(props: { token: () => string; signOut(): void }) {
     }
   };
 
-  const returnFromFeeds = async () => {
+  const backToTop = async () => {
+    const wasFeeds = view() === "feeds";
+    const wasArchive = mode() === "archive";
+    setHeaderMenu();
+    setKeysOpen(false);
+    setRelatedSource();
+    setReaderID("");
+    setReaderArchive(false);
+    clearSearch();
+    setMode("live");
     setView("grid");
-    await refreshFeedFilters();
-    await reload();
+    setScrollTopVersion((value) => value + 1);
+    if (wasFeeds) await refreshFeedFilters();
+    if (wasFeeds || wasArchive)
+      await reload(order(), unreadOnly(), "live", selectedTag());
+  };
+
+  const openFeedsAndSettings = () => {
+    setHeaderMenu();
+    setKeysOpen(false);
+    setRelatedSource();
+    setReaderID("");
+    clearSearch();
+    setView("feeds");
   };
 
   const toggleArchive = async () => {
@@ -785,13 +829,6 @@ export function App(props: { token: () => string; signOut(): void }) {
     if (next) markOpened(next);
   };
 
-  const initials = () =>
-    (profile()?.email || "SE")
-      .split(/[@._-]/)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join("");
-
   return (
     <Show
       when={view() === "grid"}
@@ -800,7 +837,7 @@ export function App(props: { token: () => string; signOut(): void }) {
           <Feeds
             api={api}
             heartCount={heartCount()}
-            onBack={() => void returnFromFeeds()}
+            onBack={() => void backToTop()}
             onKeys={() => setKeysOpen(true)}
             onSignOut={props.signOut}
             onFeedsChanged={() => void refreshFeedFilters()}
@@ -817,144 +854,400 @@ export function App(props: { token: () => string; signOut(): void }) {
         classList={{
           searching: searchActive(),
           "search-focused": searchFocused(),
+          "search-open": searchOpen(),
+          "tag-filter-open": tagFilterOpen(),
         }}
       >
         <header class="topbar">
-          <button
-            type="button"
-            class="wordmark"
-            classList={{ quiet: mode() === "archive" }}
-            onClick={() => setView("grid")}
-          >
-            Sema
-          </button>
-          <Show
-            when={mode() === "live"}
-            fallback={
-              <span class="archive-eyebrow">ARCHIVE · {heartCount()} KEPT</span>
-            }
-          >
-            <fieldset class="order-toggle" aria-label="Item order">
+          <AppMark
+            onActivate={() => void backToTop()}
+            tooltipDisabled={headerTooltipDisabled()}
+          />
+          <Show when={mode() === "live"}>
+            <div class="header-display-controls">
+              <div class="header-segments">
+                <fieldset class="segmented-control" aria-label="Item order">
+                  <button
+                    type="button"
+                    classList={{ active: order() === "interest" }}
+                    aria-pressed={order() === "interest"}
+                    onClick={() => void selectOrder("interest")}
+                  >
+                    Front page
+                  </button>
+                  <button
+                    type="button"
+                    classList={{ active: order() === "chrono" }}
+                    aria-pressed={order() === "chrono"}
+                    onClick={() => void selectOrder("chrono")}
+                  >
+                    Latest
+                  </button>
+                </fieldset>
+                <fieldset class="segmented-control" aria-label="Items shown">
+                  <button
+                    type="button"
+                    classList={{ active: unreadOnly() }}
+                    aria-pressed={unreadOnly()}
+                    onClick={() => void selectUnread(true)}
+                  >
+                    Unread
+                  </button>
+                  <button
+                    type="button"
+                    classList={{ active: !unreadOnly() }}
+                    aria-pressed={!unreadOnly()}
+                    onClick={() => void selectUnread(false)}
+                  >
+                    All
+                  </button>
+                </fieldset>
+              </div>
+
+              <div class="header-value-controls">
+                <div class="header-value-control">
+                  <button
+                    type="button"
+                    class="value-button"
+                    aria-haspopup="menu"
+                    aria-expanded={headerMenu() === "order"}
+                    onClick={() =>
+                      setHeaderMenu((current) =>
+                        current === "order" ? undefined : "order",
+                      )
+                    }
+                  >
+                    <span>{orderLabel()}</span>
+                    <Icon name="chevron-down" size={13} />
+                  </button>
+                  <Show when={headerMenu() === "order"}>
+                    <div class="header-popover" role="menu">
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={order() === "interest"}
+                        classList={{ active: order() === "interest" }}
+                        onClick={() => {
+                          setHeaderMenu();
+                          void selectOrder("interest");
+                        }}
+                      >
+                        Front page
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={order() === "chrono"}
+                        classList={{ active: order() === "chrono" }}
+                        onClick={() => {
+                          setHeaderMenu();
+                          void selectOrder("chrono");
+                        }}
+                      >
+                        Latest
+                      </button>
+                    </div>
+                  </Show>
+                </div>
+                <div class="header-value-control">
+                  <button
+                    type="button"
+                    class="value-button"
+                    aria-haspopup="menu"
+                    aria-expanded={headerMenu() === "unread"}
+                    onClick={() =>
+                      setHeaderMenu((current) =>
+                        current === "unread" ? undefined : "unread",
+                      )
+                    }
+                  >
+                    <span>{unreadLabel()}</span>
+                    <Icon name="chevron-down" size={13} />
+                  </button>
+                  <Show when={headerMenu() === "unread"}>
+                    <div class="header-popover" role="menu">
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={unreadOnly()}
+                        classList={{ active: unreadOnly() }}
+                        onClick={() => {
+                          setHeaderMenu();
+                          void selectUnread(true);
+                        }}
+                      >
+                        Unread
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={!unreadOnly()}
+                        classList={{ active: !unreadOnly() }}
+                        onClick={() => {
+                          setHeaderMenu();
+                          void selectUnread(false);
+                        }}
+                      >
+                        All
+                      </button>
+                    </div>
+                  </Show>
+                </div>
+              </div>
+
               <button
                 type="button"
-                classList={{ active: order() === "chrono" }}
-                onClick={() => order() !== "chrono" && toggleOrder()}
+                class="value-button header-merged-control"
+                aria-haspopup="dialog"
+                aria-expanded={headerMenu() === "combined"}
+                onClick={() =>
+                  setHeaderMenu((current) =>
+                    current === "combined" ? undefined : "combined",
+                  )
+                }
               >
-                CHRONO
+                <span>
+                  {orderLabel()} · {unreadLabel()}
+                </span>
+                <Icon name="chevron-down" size={13} />
               </button>
-              <button
-                type="button"
-                classList={{ active: order() === "interest" }}
-                onClick={() => order() !== "interest" && toggleOrder()}
-              >
-                INTEREST
-              </button>
-            </fieldset>
-            <span class="tag-filter-divider" aria-hidden="true" />
+            </div>
+          </Show>
+
+          <div class="header-spacer" />
+          <div class="header-tools">
             <TagFilter
               feeds={feedFilters()}
               value={selectedTag()}
-              active={!readerID() && !keysOpen() && !confirmRemove()}
+              active={
+                !readerID() && !keysOpen() && !confirmRemove() && !headerMenu()
+              }
+              openRequest={tagOpenRequest()}
+              tooltipDisabled={headerTooltipDisabled()}
+              onOpenChange={setTagFilterOpen}
               onChange={(tag) => void applyTag(tag)}
             />
-            <span class="status-line">
-              {items().filter((item) => !item.read).length} unread ·{" "}
-              {order() === "interest"
-                ? `ranked from ${signalCount()} signals`
-                : `${items().length} recent items`}
-            </span>
-            <span class="mobile-status">
-              {items().filter((item) => !item.read).length} unread
-            </span>
-          </Show>
-          <div class="search-slot">
-            <label
-              class="search-field"
-              classList={{
-                focused: searchFocused(),
-                typing: searchQuery().length > 0,
-              }}
-            >
+            <div class="search-slot" classList={{ open: searchOpen() }}>
               <Show
-                when={!searchLoading()}
-                fallback={<i class="search-ring" />}
-              >
-                <Icon name="search" size={14} />
-              </Show>
-              <input
-                ref={searchInput}
-                type="search"
-                value={searchQuery()}
-                placeholder={
-                  searchFocused() ? "Search or describe a topic" : "Search"
+                when={searchOpen()}
+                fallback={
+                  <Tooltip
+                    name="Search"
+                    shortcut="/"
+                    disabled={headerTooltipDisabled()}
+                  >
+                    <button
+                      type="button"
+                      class="header-icon-button search-trigger"
+                      aria-label="Search"
+                      onClick={focusSearch}
+                    >
+                      <Icon name="search" size={18} />
+                    </button>
+                  </Tooltip>
                 }
-                aria-label="Search window and archive"
-                onFocus={() => setSearchFocused(true)}
-                onBlur={() => setSearchFocused(false)}
-                onInput={(event) => setSearchQuery(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    clearSearch();
-                  }
-                }}
-              />
-              <Show when={searchQuery()} fallback={<kbd>/</kbd>}>
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  onClick={clearSearch}
+              >
+                <label
+                  class="search-field"
+                  classList={{
+                    focused: searchFocused(),
+                    typing: searchQuery().length > 0,
+                  }}
                 >
-                  <Icon name="close" size={14} />
-                </button>
+                  <Show
+                    when={!searchLoading()}
+                    fallback={<i class="search-ring" />}
+                  >
+                    <Icon name="search" size={14} />
+                  </Show>
+                  <input
+                    ref={searchInput}
+                    type="search"
+                    value={searchQuery()}
+                    placeholder="Search or describe a topic"
+                    aria-label="Search window and archive"
+                    onFocus={() => setSearchFocused(true)}
+                    onBlur={() => setSearchFocused(false)}
+                    onInput={(event) =>
+                      setSearchQuery(event.currentTarget.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        clearSearch();
+                      }
+                    }}
+                  />
+                  <Show when={searchQuery()} fallback={<kbd>esc</kbd>}>
+                    <button
+                      type="button"
+                      aria-label="Clear search"
+                      onClick={clearSearch}
+                    >
+                      <Icon name="close" size={14} />
+                    </button>
+                  </Show>
+                </label>
               </Show>
-            </label>
-          </div>
-          <div class="topbar-right">
-            <Show when={mode() === "live"}>
-              <label class="unread-toggle">
-                unread only{" "}
-                <input
-                  type="checkbox"
-                  checked={unreadOnly()}
-                  onChange={toggleUnread}
-                />
-                <i />
-              </label>
-            </Show>
+            </div>
+            <Tooltip
+              name="Archive"
+              shortcut="⇧A"
+              disabled={headerTooltipDisabled()}
+            >
+              <button
+                type="button"
+                class="header-icon-button archive-toggle"
+                classList={{ active: mode() === "archive" }}
+                aria-pressed={mode() === "archive"}
+                aria-label="Archive"
+                onClick={() => void toggleArchive()}
+              >
+                <Icon name="archive" size={18} />
+              </button>
+            </Tooltip>
+            <span class="header-tools-divider" aria-hidden="true" />
+            <Tooltip
+              name="Feeds & settings"
+              shortcut="G"
+              disabled={headerTooltipDisabled()}
+              align="end"
+            >
+              <button
+                type="button"
+                class="header-icon-button settings-trigger"
+                aria-label="Feeds & settings"
+                onClick={openFeedsAndSettings}
+              >
+                <Icon name="settings" size={18} />
+              </button>
+            </Tooltip>
             <button
               type="button"
-              class="archive-toggle"
-              classList={{ active: mode() === "archive" }}
-              aria-pressed={mode() === "archive"}
-              aria-label={
-                mode() === "archive" ? "Return to live feed" : "Open archive"
+              class="header-icon-button mobile-overflow-trigger"
+              aria-label="More"
+              aria-haspopup="dialog"
+              aria-expanded={headerMenu() === "overflow"}
+              onClick={() =>
+                setHeaderMenu((current) =>
+                  current === "overflow" ? undefined : "overflow",
+                )
               }
-              onClick={() => void toggleArchive()}
             >
-              <Icon name="archive" />
-              <span>archive</span>
-              <small>{heartCount()}</small>
-            </button>
-            <button
-              type="button"
-              class="keys-chip"
-              onClick={() => setKeysOpen(true)}
-            >
-              {" "}
-              ? keys
-            </button>
-            <button
-              type="button"
-              class="avatar"
-              onClick={() => setView("feeds")}
-              aria-label="Open feeds and account"
-            >
-              {initials()}
+              <Icon name="menu" size={18} />
             </button>
           </div>
         </header>
+        <Show when={headerMenu() === "order" || headerMenu() === "unread"}>
+          <div
+            class="header-menu-dismiss"
+            aria-hidden="true"
+            onPointerDown={() => setHeaderMenu()}
+          />
+        </Show>
+        <Show when={headerMenu() === "combined"}>
+          <div class="header-sheet-layer">
+            <button
+              type="button"
+              class="header-sheet-backdrop"
+              aria-label="Close feed view menu"
+              onClick={() => setHeaderMenu()}
+            />
+            <section
+              class="header-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Feed view"
+            >
+              <div class="header-sheet-row">
+                <span>Order</span>
+                <fieldset aria-label="Item order">
+                  <button
+                    type="button"
+                    classList={{ active: order() === "interest" }}
+                    onClick={() => void selectOrder("interest")}
+                  >
+                    Front page
+                  </button>
+                  <button
+                    type="button"
+                    classList={{ active: order() === "chrono" }}
+                    onClick={() => void selectOrder("chrono")}
+                  >
+                    Latest
+                  </button>
+                </fieldset>
+              </div>
+              <div class="header-sheet-row">
+                <span>Items</span>
+                <fieldset aria-label="Items shown">
+                  <button
+                    type="button"
+                    classList={{ active: unreadOnly() }}
+                    onClick={() => void selectUnread(true)}
+                  >
+                    Unread
+                  </button>
+                  <button
+                    type="button"
+                    classList={{ active: !unreadOnly() }}
+                    onClick={() => void selectUnread(false)}
+                  >
+                    All
+                  </button>
+                </fieldset>
+              </div>
+            </section>
+          </div>
+        </Show>
+        <Show when={headerMenu() === "overflow"}>
+          <div class="header-sheet-layer">
+            <button
+              type="button"
+              class="header-sheet-backdrop"
+              aria-label="Close more options"
+              onClick={() => setHeaderMenu()}
+            />
+            <section
+              class="header-sheet header-overflow-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-label="More options"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderMenu();
+                  setTagOpenRequest((value) => value + 1);
+                }}
+              >
+                <Icon name="tag" size={18} />
+                <span>Filter by tag</span>
+                <Show when={selectedTag()}>
+                  {(tag) => <span class="mobile-active-tag">#{tag()}</span>}
+                </Show>
+              </button>
+              <button
+                type="button"
+                classList={{ active: mode() === "archive" }}
+                aria-pressed={mode() === "archive"}
+                onClick={() => {
+                  setHeaderMenu();
+                  void toggleArchive();
+                }}
+              >
+                <Icon name="archive" size={18} />
+                <span>Archive</span>
+              </button>
+              <button type="button" onClick={openFeedsAndSettings}>
+                <Icon name="settings" size={18} />
+                <span>Feeds &amp; settings</span>
+                <kbd>G</kbd>
+              </button>
+            </section>
+          </div>
+        </Show>
         <Show when={error()}>
           <div class="error-banner" role="alert">
             <span>{error()}</span>
@@ -1064,6 +1357,7 @@ export function App(props: { token: () => string; signOut(): void }) {
                 selectedIndex() >= 0 && selectedIndex() < gridItems().length - 1
               }
               onClose={() => setReaderID("")}
+              onHome={() => void backToTop()}
               onPrevious={() => moveReader(-1)}
               onNext={() => moveReader(1)}
               onSignal={(value) => setSignal(item(), value)}
@@ -1188,7 +1482,7 @@ function ColdStart(props: { onImport(): void }) {
   return (
     <section class="cold-start">
       <div class="cold-mark">
-        <Icon name="back-to-grid" size={24} class="icon-quiet" />
+        <img src="/sema-mark.svg" alt="" aria-hidden="true" />
       </div>
       <h1>Nothing scored yet.</h1>
       <p>

@@ -1,4 +1,5 @@
 import {
+  createEffect,
   createMemo,
   createSignal,
   For,
@@ -7,6 +8,7 @@ import {
   Show,
 } from "solid-js";
 import { Icon } from "../components/Icon";
+import { Tooltip } from "../components/Tooltip";
 import type { Feed } from "../types";
 import { feedTagOptions } from "./tag-options";
 
@@ -14,12 +16,16 @@ export function TagFilter(props: {
   feeds: Feed[];
   value: string;
   active: boolean;
+  openRequest?: number;
+  tooltipDisabled?: boolean;
+  onOpenChange?(open: boolean): void;
   onChange(tag: string): void;
 }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [highlight, setHighlight] = createSignal(0);
   let input!: HTMLInputElement;
+  let previousOpenRequest = props.openRequest;
 
   const options = createMemo(() => feedTagOptions(props.feeds));
   const matches = createMemo(() => {
@@ -40,6 +46,13 @@ export function TagFilter(props: {
   };
   const clear = () => apply("");
 
+  createEffect(() => props.onOpenChange?.(open()));
+  createEffect(() => {
+    const request = props.openRequest;
+    if (request !== undefined && request !== previousOpenRequest) begin();
+    previousOpenRequest = request;
+  });
+
   onMount(() => {
     const keydown = (event: KeyboardEvent) => {
       if (
@@ -59,6 +72,9 @@ export function TagFilter(props: {
       if (event.key === "#") {
         event.preventDefault();
         begin();
+      } else if (event.key === "Escape" && props.value && !open()) {
+        event.preventDefault();
+        clear();
       }
     };
     window.addEventListener("keydown", keydown);
@@ -89,38 +105,66 @@ export function TagFilter(props: {
       }
     } else if (event.key === "Escape") {
       event.preventDefault();
-      clear();
+      event.stopPropagation();
+      setOpen(false);
+      setQuery("");
+      input?.blur();
     } else if (event.key === "Backspace" && !query()) {
       clear();
     }
   };
 
   return (
-    <div class="grid-tag-filter">
+    <div class="grid-tag-filter" classList={{ "is-open": open() }}>
       <Show
         when={open()}
         fallback={
-          <button
-            type="button"
-            classList={{ active: Boolean(props.value) }}
-            aria-label={
-              props.value
-                ? `Filter by #${props.value}; clear filter`
-                : "Filter by tag"
+          <Show
+            when={props.value}
+            fallback={
+              <Tooltip
+                name="Filter by tag"
+                shortcut="#"
+                disabled={props.tooltipDisabled}
+              >
+                <button
+                  type="button"
+                  class="header-icon-button tag-trigger"
+                  aria-label="Filter by tag"
+                  onClick={begin}
+                >
+                  <Icon name="tag" size={18} />
+                </button>
+              </Tooltip>
             }
-            onClick={() => (props.value ? clear() : begin())}
           >
-            #{props.value || "all"}
-            <Show when={props.value}>
-              <Icon name="close" size={14} />
-            </Show>
-          </button>
+            {(value) => {
+              const label = () => `Clear tag filter: #${value()}`;
+              return (
+                <Tooltip name={label()} disabled={props.tooltipDisabled}>
+                  <button
+                    type="button"
+                    class="active-tag-chip"
+                    aria-label={label()}
+                    onClick={clear}
+                  >
+                    <span class="tag-chip-hash">#</span>
+                    <span class="tag-chip-name">{value()}</span>
+                    <span class="tag-chip-close" aria-hidden="true">
+                      <Icon name="close" size={13} />
+                    </span>
+                  </button>
+                </Tooltip>
+              );
+            }}
+          </Show>
         }
       >
         <div class="tag-combobox">
           <span>#</span>
           <input
             ref={input}
+            aria-label="Filter by tag"
             role="combobox"
             aria-expanded="true"
             aria-controls="grid-tag-options"
@@ -157,7 +201,7 @@ export function TagFilter(props: {
                   onMouseEnter={() => setHighlight(index())}
                   onClick={() => apply(option.tag)}
                 >
-                  <span>#{option.tag}</span>
+                  <span>{option.tag}</span>
                   <small>{option.count}</small>
                 </button>
               )}

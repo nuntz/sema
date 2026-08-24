@@ -637,7 +637,7 @@ func webCacheControl(relative string) string {
 		return "no-cache"
 	case "manifest.webmanifest":
 		return "public,max-age=300,must-revalidate"
-	case "icon-192.png", "icon-512.png", "apple-touch-icon.png", "favicon.ico", "favicon.svg":
+	case "icon-192.png", "icon-512.png", "apple-touch-icon.png", "sema-mark.svg", "sema-mark-small.svg", "favicon.ico", "favicon.svg", "favicon-32.png", "favicon-16.png":
 		return "public,max-age=86400"
 	default:
 		return "public,max-age=31536000,immutable"

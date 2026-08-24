@@ -1,4 +1,4 @@
-const CACHE = "sema-shell-v4";
+const CACHE = "sema-shell-v5";
 const SHELL = [
   "/",
   "/index.html",
@@ -6,8 +6,12 @@ const SHELL = [
   "/icon-192.png",
   "/icon-512.png",
   "/apple-touch-icon.png",
+  "/sema-mark.svg",
+  "/sema-mark-small.svg",
   "/favicon.ico",
   "/favicon.svg",
+  "/favicon-32.png",
+  "/favicon-16.png",
 ];
 const NETWORK_ONLY_PREFIXES = ["/api/", "/bodies/", "/media/", "/favicons/"];
 self.addEventListener("install", (event) => {

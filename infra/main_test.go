@@ -34,8 +34,12 @@ func TestWebCacheControl(t *testing.T) {
 		"icon-192.png":         "public,max-age=86400",
 		"icon-512.png":         "public,max-age=86400",
 		"apple-touch-icon.png": "public,max-age=86400",
+		"sema-mark.svg":        "public,max-age=86400",
+		"sema-mark-small.svg":  "public,max-age=86400",
 		"favicon.ico":          "public,max-age=86400",
 		"favicon.svg":          "public,max-age=86400",
+		"favicon-32.png":       "public,max-age=86400",
+		"favicon-16.png":       "public,max-age=86400",
 		"assets/app-abc.js":    "public,max-age=31536000,immutable",
 	}
 	for path, want := range tests {

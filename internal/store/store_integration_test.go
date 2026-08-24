@@ -103,7 +103,7 @@ func TestDynamoAccessPatterns(t *testing.T) {
 		t.Fatal("read_boundary_ts was not removed from profile")
 	}
 	user, err := repository.User(ctx, "user")
-	if err != nil || user.OrderPref != domain.OrderChrono {
+	if err != nil || user.OrderPref != domain.OrderInterest {
 		t.Fatalf("profile = %#v, %v", user, err)
 	}
 	now := time.Now().UTC()

@@ -21,7 +21,8 @@ export type AppCommand =
   | "toggle-help"
   | "close-help"
   | "toggle-archive"
-  | "toggle-unread";
+  | "toggle-unread"
+  | "open-settings";
 export type ReaderCommand =
   | "close"
   | "next"
@@ -52,7 +53,6 @@ const gridBindings: Record<string, GridCommand> = {
   m: "read",
   M: "mark-below",
   End: "end",
-  G: "end",
   Home: "home",
   g: "go-prefix",
   u: "undo",
@@ -66,6 +66,7 @@ const appBindings: Record<string, AppCommand> = {
   "?": "toggle-help",
   Escape: "close-help",
   A: "toggle-archive",
+  G: "open-settings",
   a: "toggle-unread",
 };
 

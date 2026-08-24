@@ -72,7 +72,7 @@ func (s *Store) EnsureUser(ctx context.Context, userID, email string) error {
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":email": &types.AttributeValueMemberS{Value: email},
 			":now":   &types.AttributeValueMemberS{Value: now},
-			":order": &types.AttributeValueMemberS{Value: string(domain.OrderChrono)},
+			":order": &types.AttributeValueMemberS{Value: string(domain.OrderInterest)},
 			":zero":  &types.AttributeValueMemberN{Value: "0"},
 			":users": &types.AttributeValueMemberS{Value: userIndexPK},
 		},
