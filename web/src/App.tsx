@@ -1,6 +1,13 @@
-import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
-import { shouldConfirmArchiveRemoval, updateHeartState } from "./archive";
+import { shouldConfirmArchiveRemoval } from "./archive";
 import {
   type BehaviourEvent,
   linkBehaviourEvent,
@@ -19,13 +26,16 @@ import {
   isCancelledShare,
   LinkActionFailure,
 } from "./link-action";
-import type { Feed, Item, Order, Profile } from "./types";
+import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
+import type { Feed, Item, Order, Profile, SearchResponse } from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
+import { RelatedPanel } from "./ui/RelatedPanel";
+import { SearchResults } from "./ui/SearchResults";
 import { TagFilter } from "./ui/TagFilter";
 
 type Undo = { ids: string[] };
@@ -59,7 +69,18 @@ export function App(props: { token: () => string; signOut(): void }) {
   const [toast, setToast] = createSignal<Toast>();
   const [view, setView] = createSignal<"grid" | "feeds">("grid");
   const [undo, setUndo] = createSignal<Undo>();
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchResponse, setSearchResponse] = createSignal<SearchResponse>();
+  const [searchLoading, setSearchLoading] = createSignal(false);
+  const [searchFocused, setSearchFocused] = createSignal(false);
+  const [searchFocusedID, setSearchFocusedID] = createSignal("");
+  const [relatedSource, setRelatedSource] = createSignal<Item>();
+  const [relatedItems, setRelatedItems] = createSignal<Item[]>([]);
+  const [relatedLoading, setRelatedLoading] = createSignal(false);
+  const [readerArchive, setReaderArchive] = createSignal(false);
   let requestVersion = 0;
+  let searchVersion = 0;
+  let relatedVersion = 0;
   let readTimer: number | undefined;
   let pollTimer: number | undefined;
   let pollInFlight = false;
@@ -67,9 +88,11 @@ export function App(props: { token: () => string; signOut(): void }) {
   let linkActionTimer: number | undefined;
   let toastTimer: number | undefined;
   let toastID = 0;
+  let searchInput!: HTMLInputElement;
   const pendingRead = new Set<string>();
   const pendingEvents = new Map<string, BehaviourEvent>();
   const heartsInFlight = new Set<string>();
+  const searchActive = createMemo(() => [...searchQuery().trim()].length >= 2);
 
   const handleError = (caught: unknown) => {
     if (caught instanceof UnauthorizedError) {
@@ -88,7 +111,7 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const copyLink = async (item: Item) => {
-    const recordBehaviour = mode() === "live";
+    const recordBehaviour = !item.archived;
     try {
       const action = await copyOriginalLink({
         url: item.url,
@@ -248,6 +271,51 @@ export function App(props: { token: () => string; signOut(): void }) {
     }
   };
 
+  createEffect(() => {
+    const query = searchQuery().trim();
+    const version = ++searchVersion;
+    if ([...query].length < 2) {
+      setSearchResponse();
+      setSearchFocusedID("");
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    const timer = window.setTimeout(() => {
+      api
+        .search(query)
+        .then((result) => {
+          if (version !== searchVersion) return;
+          const normalized = normalizeSearchResponse(result);
+          setSearchResponse(normalized);
+          const first = [
+            ...normalized.matches.window,
+            ...normalized.matches.archive,
+            ...normalized.related.window,
+            ...normalized.related.archive,
+          ][0];
+          setSearchFocusedID(first?.item_id ?? "");
+        })
+        .catch((caught) => {
+          if (version === searchVersion) handleError(caught);
+        })
+        .finally(() => {
+          if (version === searchVersion) setSearchLoading(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+
+  const clearSearch = () => {
+    searchVersion++;
+    setSearchQuery("");
+    setSearchResponse();
+    setSearchLoading(false);
+    setSearchFocusedID("");
+    setSearchFocused(false);
+    searchInput?.blur();
+  };
+
   onMount(() => {
     bootstrap();
     const flush = () => void flushPending(true);
@@ -256,6 +324,22 @@ export function App(props: { token: () => string; signOut(): void }) {
       else void pollNew();
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        event.key === "/" &&
+        !readerID() &&
+        !relatedSource() &&
+        !(
+          target instanceof HTMLElement &&
+          (target.isContentEditable ||
+            target.matches("input, textarea, select"))
+        )
+      ) {
+        event.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+        return;
+      }
       const command = appCommand(event.key);
       if (
         event.repeat ||
@@ -266,7 +350,6 @@ export function App(props: { token: () => string; signOut(): void }) {
         (command === "close-help" && !keysOpen())
       )
         return;
-      const target = event.target;
       if (
         target instanceof HTMLElement &&
         (target.isContentEditable || target.matches("input, textarea, select"))
@@ -303,9 +386,26 @@ export function App(props: { token: () => string; signOut(): void }) {
       return item ? [item] : [];
     });
   });
-  const selected = createMemo(() =>
-    items().find((item) => item.item_id === readerID()),
-  );
+  const searchItems = createMemo(() => {
+    const result = searchResponse();
+    const normalized = normalizeSearchResponse(result);
+    return result
+      ? [
+          ...normalized.matches.window,
+          ...normalized.matches.archive,
+          ...normalized.related.window,
+          ...normalized.related.archive,
+        ]
+      : [];
+  });
+  const selected = createMemo(() => {
+    const id = readerID();
+    return (
+      items().find((item) => item.item_id === id) ??
+      searchItems().find((item) => item.item_id === id) ??
+      relatedItems().find((item) => item.item_id === id)
+    );
+  });
   const selectedIndex = createMemo(() =>
     gridItems().findIndex((item) => item.item_id === readerID()),
   );
@@ -316,6 +416,42 @@ export function App(props: { token: () => string; signOut(): void }) {
         item.item_id === itemID ? { ...item, ...patch } : item,
       ),
     );
+    setSearchResponse((current) =>
+      current ? mapSearchItems(current, itemID, patch) : current,
+    );
+    setRelatedItems((current) =>
+      current.map((item) =>
+        item.item_id === itemID ? { ...item, ...patch } : item,
+      ),
+    );
+    setRelatedSource((current) =>
+      current?.item_id === itemID ? { ...current, ...patch } : current,
+    );
+  };
+
+  const openRelated = (item: Item) => {
+    const version = ++relatedVersion;
+    setRelatedSource(item);
+    setRelatedItems([]);
+    setRelatedLoading(true);
+    api
+      .similar(item.item_id)
+      .then((result) => {
+        if (version === relatedVersion) setRelatedItems(result.items ?? []);
+      })
+      .catch((caught) => {
+        if (version === relatedVersion) handleError(caught);
+      })
+      .finally(() => {
+        if (version === relatedVersion) setRelatedLoading(false);
+      });
+  };
+
+  const closeRelated = () => {
+    relatedVersion++;
+    setRelatedSource();
+    setRelatedItems([]);
+    setRelatedLoading(false);
   };
 
   const setSignal = (item: Item, value: -1 | 0 | 1) => {
@@ -341,7 +477,7 @@ export function App(props: { token: () => string; signOut(): void }) {
     heartsInFlight.add(item.item_id);
     const previous = item.hearted;
     const next = !previous;
-    setItems((current) => updateHeartState(current, item.item_id, next));
+    replaceItem(item.item_id, { hearted: next });
     try {
       const result = await api.heart(item.item_id, next);
       setHeartCount(result.heart_count);
@@ -361,8 +497,16 @@ export function App(props: { token: () => string; signOut(): void }) {
         setLayoutVersion((value) => value + 1);
         showToast("success", "Removed from archive");
       }
+      if (item.archived && !next) {
+        setSearchResponse((current) =>
+          current ? removeSearchItem(current, item.item_id) : current,
+        );
+        setRelatedItems((current) =>
+          current.filter((candidate) => candidate.item_id !== item.item_id),
+        );
+      }
     } catch (caught) {
-      setItems((current) => updateHeartState(current, item.item_id, previous));
+      replaceItem(item.item_id, { hearted: previous });
       if (caught instanceof UnauthorizedError) props.signOut();
       else
         showToast(
@@ -375,7 +519,12 @@ export function App(props: { token: () => string; signOut(): void }) {
   };
 
   const toggleHeart = (item: Item) => {
-    if (shouldConfirmArchiveRemoval(mode() === "archive", item.hearted)) {
+    if (
+      shouldConfirmArchiveRemoval(
+        mode() === "archive" || item.archived === true,
+        item.hearted,
+      )
+    ) {
       setConfirmRemove(item);
       return;
     }
@@ -445,21 +594,21 @@ export function App(props: { token: () => string; signOut(): void }) {
     return Promise.all([flushRead(keepalive), flushEvents(keepalive)]);
   };
 
-  const markOpened = (item: Item) => {
-    if (mode() === "live")
-      api.events(item.item_id, { opened: true }).catch(handleError);
-    if (mode() === "live" && !item.read) {
+  const markOpened = (item: Item, archive = item.archived === true) => {
+    if (!archive) api.events(item.item_id, { opened: true }).catch(handleError);
+    if (!archive && !item.read) {
       replaceItem(item.item_id, { read: true });
       api.read(item.item_id, true).catch((caught) => {
         replaceItem(item.item_id, { read: false });
         handleError(caught);
       });
     }
+    setReaderArchive(archive);
     setReaderID(item.item_id);
   };
 
   const openOriginal = (item: Item) => {
-    if (mode() === "live") queueEvent(item.item_id, { clicked_through: true });
+    if (!item.archived) queueEvent(item.item_id, { clicked_through: true });
     window.open(item.url, "_blank", "noopener,noreferrer");
   };
 
@@ -649,7 +798,13 @@ export function App(props: { token: () => string; signOut(): void }) {
         </>
       }
     >
-      <main class="app-shell">
+      <main
+        class="app-shell"
+        classList={{
+          searching: searchActive(),
+          "search-focused": searchFocused(),
+        }}
+      >
         <header class="topbar">
           <button
             type="button"
@@ -698,6 +853,50 @@ export function App(props: { token: () => string; signOut(): void }) {
               {items().filter((item) => !item.read).length} unread
             </span>
           </Show>
+          <div class="search-slot">
+            <label
+              class="search-field"
+              classList={{
+                focused: searchFocused(),
+                typing: searchQuery().length > 0,
+              }}
+            >
+              <Show
+                when={!searchLoading()}
+                fallback={<i class="search-ring" />}
+              >
+                <Icon name="search" size={14} />
+              </Show>
+              <input
+                ref={searchInput}
+                type="search"
+                value={searchQuery()}
+                placeholder={
+                  searchFocused() ? "Search or describe a topic" : "Search"
+                }
+                aria-label="Search window and archive"
+                onFocus={() => setSearchFocused(true)}
+                onBlur={() => setSearchFocused(false)}
+                onInput={(event) => setSearchQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    clearSearch();
+                  }
+                }}
+              />
+              <Show when={searchQuery()} fallback={<kbd>/</kbd>}>
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={clearSearch}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              </Show>
+            </label>
+          </div>
           <div class="topbar-right">
             <Show when={mode() === "live"}>
               <label class="unread-toggle">
@@ -787,7 +986,13 @@ export function App(props: { token: () => string; signOut(): void }) {
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}
               focusedID={focusedID()}
-              active={!readerID() && !keysOpen() && !confirmRemove()}
+              active={
+                !readerID() &&
+                !keysOpen() &&
+                !confirmRemove() &&
+                !searchActive() &&
+                !relatedSource()
+              }
               hasMore={cursor() !== ""}
               archive={mode() === "archive"}
               linkActionID={linkActionID()}
@@ -799,6 +1004,7 @@ export function App(props: { token: () => string; signOut(): void }) {
               onToggleRead={toggleRead}
               onCopy={copyLink}
               onOriginal={openOriginal}
+              onRelated={openRelated}
               onMarkBelow={markBelow}
               onItemsPassed={queueRead}
               onLoadMore={loadMore}
@@ -813,12 +1019,31 @@ export function App(props: { token: () => string; signOut(): void }) {
         <Show when={loadingMore()}>
           <div class="page-loader">fetching more…</div>
         </Show>
+        <Show when={searchActive()}>
+          <SearchResults
+            query={searchQuery().trim()}
+            response={searchResponse()}
+            loading={searchLoading()}
+            focusedID={searchFocusedID()}
+            active={
+              !readerID() && !relatedSource() && !keysOpen() && !confirmRemove()
+            }
+            linkActionID={linkActionID()}
+            onFocus={setSearchFocusedID}
+            onOpen={(item, archive) => markOpened(item, archive)}
+            onSignal={setSignal}
+            onHeart={toggleHeart}
+            onCopy={copyLink}
+            onRelated={openRelated}
+            onEscape={clearSearch}
+          />
+        </Show>
         <Show when={selected()}>
           {(item) => (
             <Reader
               item={item()}
-              active={!keysOpen() && !confirmRemove()}
-              archive={mode() === "archive"}
+              active={!keysOpen() && !confirmRemove() && !relatedSource()}
+              archive={readerArchive()}
               hearted={item().hearted}
               linkActionActive={linkActionID() === item().item_id}
               canPrevious={selectedIndex() > 0}
@@ -832,9 +1057,10 @@ export function App(props: { token: () => string; signOut(): void }) {
               onHeart={() => toggleHeart(item())}
               onCopy={() => copyLink(item())}
               onOriginal={() =>
-                mode() === "live" &&
+                !readerArchive() &&
                 queueEvent(item().item_id, { clicked_through: true })
               }
+              onRelated={() => openRelated(item())}
               onRetry={() => {
                 api
                   .retryItem(item().item_id)
@@ -842,8 +1068,28 @@ export function App(props: { token: () => string; signOut(): void }) {
                   .catch(handleError);
               }}
               onDwell={(itemID, dwellMS) =>
-                mode() === "live" && queueEvent(itemID, { dwell_ms: dwellMS })
+                !readerArchive() && queueEvent(itemID, { dwell_ms: dwellMS })
               }
+            />
+          )}
+        </Show>
+        <Show when={relatedSource()}>
+          {(source) => (
+            <RelatedPanel
+              source={source()}
+              items={relatedItems()}
+              loading={relatedLoading()}
+              active={!keysOpen() && !confirmRemove()}
+              linkActionID={linkActionID()}
+              onClose={closeRelated}
+              onWalk={openRelated}
+              onOpen={(item) => {
+                closeRelated();
+                markOpened(item, item.archived === true);
+              }}
+              onSignal={setSignal}
+              onHeart={toggleHeart}
+              onCopy={copyLink}
             />
           )}
         </Show>
@@ -880,6 +1126,49 @@ export function App(props: { token: () => string; signOut(): void }) {
       </main>
     </Show>
   );
+}
+
+function mapSearchItems(
+  response: SearchResponse,
+  itemID: string,
+  patch: Partial<Item>,
+): SearchResponse {
+  response = normalizeSearchResponse(response);
+  const map = (items: Item[]) =>
+    items.map((item) =>
+      item.item_id === itemID ? { ...item, ...patch } : item,
+    );
+  return {
+    ...response,
+    matches: {
+      window: map(response.matches.window),
+      archive: map(response.matches.archive),
+    },
+    related: {
+      window: map(response.related.window),
+      archive: map(response.related.archive),
+    },
+  };
+}
+
+function removeSearchItem(
+  response: SearchResponse,
+  itemID: string,
+): SearchResponse {
+  response = normalizeSearchResponse(response);
+  const filter = (items: Item[]) =>
+    items.filter((item) => item.item_id !== itemID);
+  return {
+    ...response,
+    matches: {
+      window: filter(response.matches.window),
+      archive: filter(response.matches.archive),
+    },
+    related: {
+      window: filter(response.related.window),
+      archive: filter(response.related.archive),
+    },
+  };
 }
 
 function ColdStart(props: { onImport(): void }) {

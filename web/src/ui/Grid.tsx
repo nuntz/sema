@@ -48,6 +48,7 @@ interface GridProps {
   onToggleRead(item: Item): void;
   onCopy(item: Item): void;
   onOriginal(item: Item): void;
+  onRelated(item: Item): void;
   onMarkBelow(item: Item): void;
   onItemsPassed(ids: string[]): void;
   onLoadMore(): void;
@@ -535,6 +536,9 @@ export function Grid(props: GridProps) {
       case "original":
         if (item) props.onOriginal(item);
         break;
+      case "related":
+        if (item) props.onRelated(item);
+        break;
       case "order":
         if (!props.archive) props.onToggleOrder();
         break;
@@ -859,6 +863,13 @@ export function Grid(props: GridProps) {
                   }
                 >
                   <Icon name="thumbs-up" size={20} filled={item.signal === 1} />
+                  Thumbs up
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runSheetAction(() => props.onRelated(item))}
+                >
+                  <Icon name="search" size={20} />
                   More like this
                 </button>
                 <button

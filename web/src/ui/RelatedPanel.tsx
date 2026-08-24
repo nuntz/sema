@@ -1,0 +1,245 @@
+import {
+  createEffect,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
+import { Icon } from "../components/Icon";
+import type { Item } from "../types";
+import { relativeTime } from "./Grid";
+
+export function RelatedPanel(props: {
+  source: Item;
+  items: Item[];
+  loading: boolean;
+  active: boolean;
+  linkActionID: string;
+  onClose(): void;
+  onWalk(item: Item): void;
+  onOpen(item: Item): void;
+  onSignal(item: Item, value: -1 | 0 | 1): void;
+  onHeart(item: Item): void;
+  onCopy(item: Item): void;
+}) {
+  let body!: HTMLDivElement;
+  const [focusedID, setFocusedID] = createSignal("");
+
+  createEffect(() => {
+    props.source.item_id;
+    setFocusedID(props.items[0]?.item_id ?? "");
+    if (body) body.scrollTop = 0;
+  });
+
+  const move = (delta: number) => {
+    if (props.items.length === 0) return;
+    const current = Math.max(
+      0,
+      props.items.findIndex((item) => item.item_id === focusedID()),
+    );
+    const next =
+      props.items[
+        Math.max(0, Math.min(props.items.length - 1, current + delta))
+      ];
+    setFocusedID(next.item_id);
+    requestAnimationFrame(() =>
+      body
+        .querySelector<HTMLElement>(
+          `[data-related-id="${CSS.escape(next.item_id)}"]`,
+        )
+        ?.focus({ preventScroll: true }),
+    );
+  };
+
+  const onKey = (event: KeyboardEvent) => {
+    if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
+    const item = props.items.find(
+      (candidate) => candidate.item_id === focusedID(),
+    );
+    if (event.key === "Escape") props.onClose();
+    else if (event.key === "ArrowRight" || event.key === "j") move(1);
+    else if (event.key === "ArrowLeft" || event.key === "k") move(-1);
+    else if (event.key === "ArrowDown") move(2);
+    else if (event.key === "ArrowUp") move(-2);
+    else if (event.key === "r" && item) props.onWalk(item);
+    else if (event.key === "Enter" && item) props.onOpen(item);
+    else return;
+    event.preventDefault();
+  };
+
+  onMount(() => window.addEventListener("keydown", onKey));
+  onCleanup(() => window.removeEventListener("keydown", onKey));
+
+  return (
+    <div
+      class="related-layer"
+      role="presentation"
+      onPointerDown={(event) =>
+        event.target === event.currentTarget && props.onClose()
+      }
+    >
+      <aside
+        class="related-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`More like ${props.source.title}`}
+      >
+        <i class="related-grabber" />
+        <header>
+          <div>
+            <small>MORE LIKE</small>
+            <h2>{props.source.title}</h2>
+          </div>
+          <button
+            type="button"
+            aria-label="Close related items"
+            onClick={props.onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </header>
+        <div class="related-body" ref={body}>
+          <Show
+            when={!props.loading}
+            fallback={
+              <div class="related-placeholders">
+                <i />
+                <i />
+                <i />
+                <i />
+              </div>
+            }
+          >
+            <Show
+              when={props.items.length > 0}
+              fallback={
+                <div class="related-empty">
+                  <h3>Nothing close yet.</h3>
+                  <p>
+                    Sema needs a few more items in this topic before it can find
+                    neighbours.
+                  </p>
+                </div>
+              }
+            >
+              <div class="related-grid">
+                <For each={props.items}>
+                  {(item) => (
+                    <article
+                      class="related-cell"
+                      classList={{
+                        focused: item.item_id === focusedID(),
+                        kept: item.hearted,
+                      }}
+                      tabindex="-1"
+                      data-related-id={item.item_id}
+                      onFocus={() => setFocusedID(item.item_id)}
+                      onMouseEnter={() => setFocusedID(item.item_id)}
+                      onClick={() => props.onWalk(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          props.onWalk(item);
+                        }
+                      }}
+                    >
+                      <Show when={item.media_url}>
+                        <img src={item.media_url} alt="" />
+                      </Show>
+                      <div class="related-cell-scrim" />
+                      <Show
+                        when={item.hearted}
+                        fallback={
+                          <span class="similarity">≈{item.similarity}</span>
+                        }
+                      >
+                        <span class="related-kept">
+                          <Icon name="keep" size={14} filled={true} />
+                        </span>
+                      </Show>
+                      <div class="related-actions">
+                        <button
+                          type="button"
+                          aria-label="Thumb up"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onSignal(item, item.signal === 1 ? 0 : 1);
+                          }}
+                        >
+                          <Icon
+                            name="thumbs-up"
+                            size={14}
+                            filled={item.signal === 1}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Thumb down"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onSignal(item, item.signal === -1 ? 0 : -1);
+                          }}
+                        >
+                          <Icon
+                            name="thumbs-down"
+                            size={14}
+                            filled={item.signal === -1}
+                          />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Keep"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onHeart(item);
+                          }}
+                        >
+                          <Icon name="keep" size={14} filled={item.hearted} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Copy link"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onCopy(item);
+                          }}
+                        >
+                          <Icon
+                            name={
+                              props.linkActionID === item.item_id
+                                ? "check"
+                                : "copy-link"
+                            }
+                            size={14}
+                          />
+                        </button>
+                      </div>
+                      <div class="related-copy">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onOpen(item);
+                          }}
+                        >
+                          {item.title}
+                        </button>
+                        <span>
+                          {item.feed_title || "Feed"} ·{" "}
+                          {item.hearted
+                            ? `kept ${relativeTime(item.hearted_ts || item.published_ts)} · ≈${item.similarity}`
+                            : relativeTime(item.published_ts)}
+                        </span>
+                      </div>
+                    </article>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </Show>
+        </div>
+      </aside>
+    </div>
+  );
+}

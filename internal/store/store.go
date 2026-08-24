@@ -501,6 +501,167 @@ func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, er
 	}
 }
 
+// ArchiveItems returns every permanent archive row for schema backfills and
+// vector indexing. It intentionally has no public cursor or page-size cap.
+func (s *Store) ArchiveItems(ctx context.Context, userID string) ([]domain.Item, error) {
+	items := []domain.Item{}
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "A#"},
+			},
+			ExclusiveStartKey: start, ConsistentRead: aws.Bool(true), ScanIndexForward: aws.Bool(false),
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Item
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		items = append(items, page...)
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return items, nil
+		}
+	}
+}
+
+// UpdateSearchText rewrites only the derived search attribute, preserving all
+// mutable item state accumulated since ingest.
+func (s *Store) UpdateSearchText(ctx context.Context, item domain.Item) error {
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+		UpdateExpression:    aws.String("SET search_text = :search"),
+		ConditionExpression: aws.String("attribute_exists(PK) AND item_id = :item"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":search": &types.AttributeValueMemberS{Value: domain.DeriveSearchText(item.Title, item.Summary)},
+			":item":   &types.AttributeValueMemberS{Value: item.ItemID},
+		},
+	})
+	return err
+}
+
+// SearchItems page-fills after DynamoDB applies the multi-term contains
+// post-filter. Results retain partition order (newest publication/heart first).
+func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int) ([]domain.Item, error) {
+	if prefix != "I#" && prefix != "A#" {
+		return nil, errors.New("search prefix must be I# or A#")
+	}
+	if limit < 1 || limit > 30 {
+		limit = 30
+	}
+	values := map[string]types.AttributeValue{
+		":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: prefix},
+	}
+	filters := make([]string, 0, len(terms)+1)
+	for i, term := range terms {
+		key := fmt.Sprintf(":term%d", i)
+		values[key] = &types.AttributeValueMemberS{Value: term}
+		filters = append(filters, "contains(search_text, "+key+")")
+	}
+	if prefix == "I#" {
+		values[":now"] = &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)}
+		filters = append(filters, "#ttl > :now")
+	}
+	input := &dynamodb.QueryInput{
+		TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+		FilterExpression: aws.String(strings.Join(filters, " AND ")), ExpressionAttributeValues: values,
+		ScanIndexForward: aws.Bool(false), Limit: aws.Int32(100),
+	}
+	if prefix == "I#" {
+		input.ExpressionAttributeNames = map[string]string{"#ttl": "ttl"}
+	}
+	items := []domain.Item{}
+	seen := make(map[string]bool)
+	for len(items) < limit {
+		response, err := s.db.Query(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Item
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		for _, item := range page {
+			if seen[item.ItemID] {
+				continue
+			}
+			seen[item.ItemID] = true
+			if prefix == "A#" {
+				item.ArchiveSK, item.Hearted, item.Archived, item.Read = item.SK, true, true, false
+			}
+			items = append(items, item)
+			if len(items) == limit {
+				break
+			}
+		}
+		input.ExclusiveStartKey = response.LastEvaluatedKey
+		if len(input.ExclusiveStartKey) == 0 {
+			break
+		}
+	}
+	if prefix == "I#" {
+		if err := s.ResolveRead(ctx, userID, items); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+// ResolveItemIDs returns currently searchable rows in the requested order.
+// Live rows win while they exist; once their TTL passes, the permanent archive
+// copy becomes the resolution target.
+func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
+	if len(ids) == 0 {
+		return []domain.Item{}, nil
+	}
+	live, err := s.LiveItems(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	archive, err := s.ArchiveItems(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]domain.Item, len(live)+len(archive))
+	for _, item := range archive {
+		item.ArchiveSK, item.Hearted, item.Archived, item.Read = item.SK, true, true, false
+		byID[item.ItemID] = item
+	}
+	for _, item := range live {
+		byID[item.ItemID] = item
+	}
+	result := make([]domain.Item, 0, len(ids))
+	seen := make(map[string]bool)
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if item, ok := byID[id]; ok {
+			seen[id] = true
+			result = append(result, item)
+		}
+	}
+	window := make([]domain.Item, 0, len(result))
+	windowIndexes := make([]int, 0, len(result))
+	for index := range result {
+		if strings.HasPrefix(result[index].SK, "I#") {
+			window = append(window, result[index])
+			windowIndexes = append(windowIndexes, index)
+		}
+	}
+	if err := s.ResolveRead(ctx, userID, window); err != nil {
+		return nil, err
+	}
+	for index, resultIndex := range windowIndexes {
+		result[resultIndex].Read = window[index].Read
+	}
+	return result, nil
+}
+
 func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
 	seen := make(map[string]bool)
 	users := []string{}
@@ -676,6 +837,7 @@ func (s *Store) Archives(ctx context.Context, userID, encodedCursor string, limi
 	for i := range items {
 		items[i].ArchiveSK = items[i].SK
 		items[i].Hearted = true
+		items[i].Archived = true
 		items[i].Read = false
 	}
 	next, err := encodeCursor(response.LastEvaluatedKey)
@@ -710,6 +872,7 @@ func (s *Store) ArchiveItem(ctx context.Context, userID, itemID string) (domain.
 			}
 			item.ArchiveSK = item.SK
 			item.Hearted = true
+			item.Archived = true
 			return item, nil
 		}
 		start = response.LastEvaluatedKey
@@ -737,6 +900,7 @@ func (s *Store) archiveItemBySK(ctx context.Context, userID, archiveSK string) (
 	}
 	item.ArchiveSK = item.SK
 	item.Hearted = true
+	item.Archived = true
 	return item, nil
 }
 
@@ -760,6 +924,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	archive := item
 	archive.SK = archiveSK
 	archive.TTL = 0
+	archive.SearchText = domain.DeriveSearchText(item.Title, item.Summary)
 	archive.ArchiveSK = ""
 	archive.HeartedTS = domain.Timestamp(now)
 	archive.Read = false

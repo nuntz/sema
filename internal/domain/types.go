@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	Retention       = 7 * 24 * time.Hour
@@ -79,6 +82,7 @@ type Item struct {
 	URL            string  `dynamodbav:"url" json:"url"`
 	Title          string  `dynamodbav:"title" json:"title"`
 	Summary        string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
+	SearchText     string  `dynamodbav:"search_text,omitempty" json:"-"`
 	SummarySource  string  `dynamodbav:"summary_source,omitempty" json:"summary_source"`
 	Author         string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
 	DisplayDate    string  `dynamodbav:"display_date,omitempty" json:"display_date,omitempty"`
@@ -101,6 +105,14 @@ type Item struct {
 	Read           bool    `dynamodbav:"-" json:"read"`
 	Signal         int     `dynamodbav:"-" json:"signal"`
 	Hearted        bool    `dynamodbav:"-" json:"hearted"`
+	Archived       bool    `dynamodbav:"-" json:"archived,omitempty"`
+	Similarity     *int    `dynamodbav:"-" json:"similarity,omitempty"`
+}
+
+// DeriveSearchText is the single writer-side definition used by live items,
+// archive rows, replay, and schema backfills.
+func DeriveSearchText(title, summary string) string {
+	return strings.ToLower(strings.TrimSpace(title + " " + summary))
 }
 
 type Signal struct {

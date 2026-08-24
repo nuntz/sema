@@ -29,6 +29,7 @@ describe("keyboard map", () => {
     ["v", "original"],
     ["t", "order"],
     ["a", "unread"],
+    ["r", "related"],
   ])("maps grid key %s", (key, command) =>
     expect(gridCommand(key)).toBe(command),
   );
@@ -42,6 +43,7 @@ describe("keyboard map", () => {
     ["f", "heart"],
     ["c", "copy"],
     ["v", "original"],
+    ["r", "related"],
   ])("maps reader key %s", (key, command) =>
     expect(readerCommand(key)).toBe(command),
   );

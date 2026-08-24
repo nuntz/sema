@@ -156,6 +156,37 @@ func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
 	}
 }
 
+func TestSearchItemsUsesMultiTermAndAndPageFills(t *testing.T) {
+	marshal := func(id string) map[string]types.AttributeValue {
+		item, err := attributevalue.MarshalMap(domain.Item{
+			PK: domain.UserPK("user"), SK: "I#" + id, ItemID: id,
+			SearchText: "pulumi lambda", TTL: time.Now().Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	calls := 0
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		calls++
+		filter := aws.ToString(input.FilterExpression)
+		if !strings.Contains(filter, "contains(search_text, :term0) AND contains(search_text, :term1)") ||
+			input.ExpressionAttributeValues[":term0"].(*types.AttributeValueMemberS).Value != "pulumi" ||
+			input.ExpressionAttributeValues[":term1"].(*types.AttributeValueMemberS).Value != "lambda" {
+			t.Fatalf("search query = %#v", input)
+		}
+		if calls == 1 {
+			return &dynamodb.QueryOutput{LastEvaluatedKey: key(domain.UserPK("user"), "I#continue")}, nil
+		}
+		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal("one"), marshal("two")}}, nil
+	}}
+	items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", "I#", []string{"pulumi", "lambda"}, 2)
+	if err != nil || calls != 2 || len(items) != 2 {
+		t.Fatalf("SearchItems = %#v, calls %d, err %v", items, calls, err)
+	}
+}
+
 func TestResolveReadDeduplicatesKeysAndFansOutState(t *testing.T) {
 	batchCalls := 0
 	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
@@ -538,7 +569,7 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			item := domain.Item{
-				PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "title", TTL: time.Now().Add(time.Hour).Unix(),
+				PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "TITLE", Summary: "Summary", TTL: time.Now().Add(time.Hour).Unix(),
 			}
 			encodedItem, err := attributevalue.MarshalMap(item)
 			if err != nil {
@@ -572,6 +603,18 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			}
 			if got := profileUpdateExpression(transactions[0]); got != "ADD heart_count :one, signal_count :one" {
 				t.Fatalf("signal transaction profile update = %q", got)
+			}
+			archiveSearch := ""
+			for _, write := range transactions[0].TransactItems {
+				if write.Put == nil {
+					continue
+				}
+				if value, ok := write.Put.Item["SK"].(*types.AttributeValueMemberS); ok && strings.HasPrefix(value.Value, "A#") {
+					archiveSearch = write.Put.Item["search_text"].(*types.AttributeValueMemberS).Value
+				}
+			}
+			if archiveSearch != "title summary" {
+				t.Fatalf("archive search_text = %q", archiveSearch)
 			}
 			if test.fallback {
 				if got := profileUpdateExpression(transactions[1]); got != "ADD heart_count :one" {

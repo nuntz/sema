@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
@@ -28,6 +29,7 @@ import (
 	"github.com/nuntz/sema/internal/store"
 	"github.com/nuntz/sema/internal/summarize"
 	bedrocksummary "github.com/nuntz/sema/internal/summarize/bedrock"
+	"github.com/nuntz/sema/internal/vectorstore"
 )
 
 type httpClient interface {
@@ -43,6 +45,7 @@ type handler struct {
 	models         *score.Cache
 	modelVersion   string
 	scoringVersion string
+	vectors        vectorstore.Store
 }
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -292,6 +295,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		PK: domain.UserPK(message.User), SK: domain.ItemSK(published, message.ItemID), FeedPK: "F#" + message.FeedID,
 		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feedTitle, FaviconKey: feed.FaviconKey,
 		URL: message.URL, Title: embedTitle, Summary: summary, SummarySource: summarySource, Author: author, DisplayDate: displayDate,
+		SearchText:  domain.DeriveSearchText(embedTitle, summary),
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
 		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
 		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
@@ -326,6 +330,18 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	if written {
 		metrics["ItemsWritten"] = 1
+		kind := vectorstore.KindLive
+		if item.ArchiveSK != "" {
+			kind = vectorstore.KindArchive
+		}
+		if h.vectors != nil {
+			if err := h.vectors.Put(ctx, vectorstore.FromItem(item, kind)); err != nil {
+				slog.WarnContext(ctx, "vector write failed", "user", message.User, "item_id", item.ItemID, "error", err)
+				metrics["VectorPutFailed"] = 1
+			} else {
+				metrics["VectorPutSucceeded"] = 1
+			}
+		}
 	} else {
 		metrics["ItemsDeduped"] = 1
 	}
@@ -468,9 +484,17 @@ func main() {
 		summaryModel = bedrocksummary.ModelID
 	}
 	runtime := bedrockruntime.NewFromConfig(config)
+	vectorBucket, vectorIndex := strings.TrimSpace(os.Getenv("VECTOR_BUCKET")), strings.TrimSpace(os.Getenv("VECTOR_INDEX"))
+	if vectorBucket == "" || vectorIndex == "" {
+		panic("VECTOR_BUCKET and VECTOR_INDEX are required")
+	}
 	embedder := bedrockembed.NewWithModel(runtime, modelVersion)
 	summarizer := summarize.New(bedrocksummary.NewWithModel(runtime, summaryModel))
-	h := &handler{store: repository, http: articleHTTP, media: processor, embedder: embedder, summarizer: summarizer, modelVersion: modelVersion, scoringVersion: scoringVersion}
+	h := &handler{
+		store: repository, http: articleHTTP, media: processor, embedder: embedder, summarizer: summarizer,
+		modelVersion: modelVersion, scoringVersion: scoringVersion,
+		vectors: vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex),
+	}
 	h.models = score.NewCache(repository, 5*time.Minute, modelVersion)
 	lambda.Start(h.run)
 }

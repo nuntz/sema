@@ -8,6 +8,11 @@ config:
     default: amazon.titan-embed-text-v2:0
   sema:scoringVersion:
     default: "2"
+  sema:vectorIndex:
+    default: items
+  sema:vectorDimensions:
+    type: integer
+    default: 1024
   sema:alarmTopicName:
     default: NotifyMe
   sema:domain:

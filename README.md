@@ -4,7 +4,7 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
 
 This repository contains the complete MVP stack:
 
-- five Go Lambda functions (`scheduler`, `feed-worker`, `item-worker`, `api`, and `rescore`);
+- six Go Lambda functions (`scheduler`, `feed-worker`, `item-worker`, `api`, `rescore`, and `vector-cleanup`);
 - RSS, Atom, JSON Feed, OPML, extraction, sanitization, media, embeddings, and scoring packages;
 - a SolidJS/TypeScript PWA with a virtualized justified grid and overlay reader;
 - one Pulumi Go project for DynamoDB, S3, CloudFront, SQS, API Gateway, IAM, EventBridge, and alarms.
@@ -93,6 +93,40 @@ make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
 
 The command is a read-only dry run unless `--apply` is supplied. It keeps the newest live row for each `item_id`, preserves any archive pointer on that row, creates or refreshes its identity marker, and deletes older duplicate live rows atomically. The second applied run closes the small window in which the old worker may have written an unmarked item during deployment. Read, signal, behaviour, and archive rows are already keyed by `item_id` and are not removed.
 
+### Search rollout and vector migrations
+
+Search attributes follow the writers-first convention. Deploy the item worker
+and heart writer, reindex live rows, backfill archive rows, and only then expose
+the search endpoint:
+
+```sh
+make replay STACK=prod FLAGS="--reindex"
+make backfill-search-text STACK=prod
+make backfill-search-text STACK=prod BACKFILL_ARGS=--apply
+make backfill-vectors STACK=prod
+make backfill-vectors STACK=prod BACKFILL_ARGS=--apply
+```
+
+Both backfills are dry-run by default and print total and affected row counts.
+The vector backfill indexes every current live embedding and every archive
+embedding; it does not invoke Bedrock or change ranking rows.
+
+The real-service vector lifecycle test is opt-in and refuses non-dev buckets:
+
+```sh
+S3_VECTORS_INTEGRATION=1 \
+  VECTOR_BUCKET="$(cd infra && pulumi stack output vectorBucket --stack dev)" \
+  VECTOR_INDEX="$(cd infra && pulumi stack output vectorIndex --stack dev)" \
+  go test ./internal/vectorstore -run TestS3VectorsDevIntegration
+```
+
+The vector index name and dimensions live beside `modelVersion` as
+`sema:vectorIndex` and `sema:vectorDimensions`. An embedding-model change that
+alters dimensions requires a deliberate index migration: create a new index,
+dual-write it, replay the current window and archive, switch reads, verify, and
+only then delete the old index. Never resize or repurpose an existing index in
+place.
+
 ## Ranking maintenance
 
 The nightly `rescore` Lambda rebuilds each MODEL row from explicit and
@@ -139,6 +173,7 @@ browser -> CloudFront -> S3 app/content
                     \-> HTTP API (Google JWT) -> api Lambda
 
 EventBridge (09:00 UTC) -> rescore Lambda -> MODEL + live item scores
+EventBridge (weekly) -> vector-cleanup Lambda -> expired live vectors
 ```
 
 Feed and item queue consumers use partial-batch failure reporting. Fetches are bounded by time, redirect count, and body size. Item storage is deterministic and conditionally written, so SQS retries can safely repeat extraction and object uploads. DynamoDB TTL and prefix-scoped S3 lifecycle policies enforce the seven-day rolling window; archive and signal records intentionally have no TTL.

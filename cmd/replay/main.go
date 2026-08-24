@@ -29,6 +29,7 @@ type replay struct {
 	version      string
 	forceExtract bool
 	forceSummary bool
+	reindex      bool
 }
 
 func (r *replay) run(ctx context.Context) error {
@@ -38,6 +39,22 @@ func (r *replay) run(ctx context.Context) error {
 	}
 	totalItems, totalSignals := 0, 0
 	for _, userID := range users {
+		if r.reindex {
+			items, err := r.store.LiveItems(ctx, userID)
+			if err != nil {
+				return err
+			}
+			for _, item := range items {
+				if item.SearchText == domain.DeriveSearchText(item.Title, item.Summary) {
+					continue
+				}
+				if err := r.store.UpdateSearchText(ctx, item); err != nil {
+					return err
+				}
+				totalItems++
+			}
+			continue
+		}
 		if err := r.store.StartReplay(ctx, userID, r.version, time.Now().UTC()); err != nil {
 			return err
 		}
@@ -78,6 +95,10 @@ func (r *replay) run(ctx context.Context) error {
 			return err
 		}
 		totalItems += len(messages)
+	}
+	if r.reindex {
+		slog.Info("live search text reindexed", "users", len(users), "items_updated", totalItems)
+		return nil
 	}
 	slog.Info("replay queued", "users", len(users), "signals_reembedded", totalSignals, "items_queued", totalItems, "model_version", r.version, "force_extract", r.forceExtract, "force_summary", r.forceSummary)
 	return nil
@@ -133,6 +154,7 @@ func capRunes(value string, count int) string {
 func main() {
 	forceExtract := flag.Bool("force-extract", false, "re-run extraction and media for every live item")
 	forceSummary := flag.Bool("force-summary", false, "re-run summary generation for every eligible live item")
+	reindex := flag.Bool("reindex", false, "rewrite live derived attributes without extraction, embedding, or scoring")
 	flag.Parse()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	ctx := context.Background()
@@ -141,7 +163,7 @@ func main() {
 		panic(err)
 	}
 	queueURL := strings.TrimSpace(os.Getenv("ITEMS_QUEUE_URL"))
-	if queueURL == "" {
+	if queueURL == "" && !*reindex {
 		panic("ITEMS_QUEUE_URL is required")
 	}
 	version := strings.TrimSpace(os.Getenv("MODEL_VERSION"))
@@ -150,7 +172,7 @@ func main() {
 	}
 	command := &replay{
 		store: repository, queue: sqs.NewFromConfig(config), embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), version),
-		queueURL: queueURL, version: version, forceExtract: *forceExtract, forceSummary: *forceSummary,
+		queueURL: queueURL, version: version, forceExtract: *forceExtract, forceSummary: *forceSummary, reindex: *reindex,
 	}
 	if err := command.run(ctx); err != nil {
 		panic(err)

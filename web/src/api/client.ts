@@ -6,6 +6,7 @@ import type {
   MeResponse,
   Order,
   Profile,
+  SearchResponse,
 } from "../types";
 
 export interface FeedImportResult {
@@ -79,6 +80,18 @@ export class APIClient {
   archiveItem(itemID: string) {
     return this.request<import("../types").Item>(
       `/archive/${encodeURIComponent(itemID)}`,
+    );
+  }
+
+  search(query: string, limit = 30): Promise<SearchResponse> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    return this.request(`/search?${params}`);
+  }
+
+  similar(itemID: string, limit = 12): Promise<ItemsResponse> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return this.request(
+      `/items/${encodeURIComponent(itemID)}/similar?${params}`,
     );
   }
 

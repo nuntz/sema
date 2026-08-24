@@ -55,7 +55,20 @@ export interface Item {
   read: boolean;
   signal: -1 | 0 | 1;
   hearted: boolean;
+  archived?: boolean;
   hearted_ts?: string;
+  similarity?: number;
+}
+
+export interface SearchGroup {
+  window: Item[];
+  archive: Item[];
+}
+
+export interface SearchResponse {
+  matches: SearchGroup;
+  related: SearchGroup;
+  semantic_available: boolean;
 }
 
 export interface ItemsResponse {

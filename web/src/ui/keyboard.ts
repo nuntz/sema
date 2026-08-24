@@ -16,7 +16,8 @@ export type GridCommand =
   | "copy"
   | "original"
   | "order"
-  | "unread";
+  | "unread"
+  | "related";
 export type AppCommand = "toggle-help" | "close-help" | "toggle-archive";
 export type ReaderCommand =
   | "close"
@@ -26,7 +27,8 @@ export type ReaderCommand =
   | "dislike"
   | "heart"
   | "copy"
-  | "original";
+  | "original"
+  | "related";
 
 const gridBindings: Record<string, GridCommand> = {
   j: "down",
@@ -55,6 +57,7 @@ const gridBindings: Record<string, GridCommand> = {
   v: "original",
   t: "order",
   a: "unread",
+  r: "related",
 };
 
 const appBindings: Record<string, AppCommand> = {
@@ -76,6 +79,7 @@ const readerBindings: Record<string, ReaderCommand> = {
   f: "heart",
   c: "copy",
   v: "original",
+  r: "related",
 };
 
 export const gridCommand = (key: string): GridCommand | undefined =>

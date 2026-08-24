@@ -28,6 +28,7 @@ interface ReaderProps {
   onHeart(): void;
   onCopy(): void;
   onOriginal(): void;
+  onRelated(): void;
   onRetry(): void;
   onDwell(itemID: string, dwellMS: number): void;
 }
@@ -182,6 +183,9 @@ export function Reader(props: ReaderProps) {
         props.onOriginal();
         window.open(props.item.url, "_blank", "noopener,noreferrer");
         break;
+      case "related":
+        props.onRelated();
+        break;
       default:
         return;
     }
@@ -298,6 +302,10 @@ export function Reader(props: ReaderProps) {
               )}
             </span>
             copy link
+          </button>
+          <button type="button" class="more-like" onClick={props.onRelated}>
+            <Icon name="search" />
+            more like
           </button>
           <i />
           <a

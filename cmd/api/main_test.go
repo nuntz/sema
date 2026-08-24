@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/store"
+	"github.com/nuntz/sema/internal/vectorstore"
 )
 
 type apiDynamo struct {
@@ -22,6 +23,63 @@ type apiDynamo struct {
 	getItem  func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
 	query    func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
 	update   func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
+}
+
+func TestSimilarMatchesExcludeSelfWeakAndRespectLimit(t *testing.T) {
+	got := similarMatches([]vectorstore.Match{
+		{Key: "self", Similarity: 100},
+		{Key: "weak", Similarity: 39},
+		{Key: "one", Similarity: 91},
+		{Key: "two", Similarity: 78},
+	}, "self", 1)
+	if len(got) != 1 || got[0].Key != "one" {
+		t.Fatalf("similar matches = %#v", got)
+	}
+}
+
+func TestResponseEncodesNilCollectionsAsArrays(t *testing.T) {
+	got := response(http.StatusOK, struct {
+		Items      []string       `json:"items"`
+		Nested     map[string]any `json:"nested"`
+		NextCursor *string        `json:"next_cursor"`
+		Opaque     []byte         `json:"opaque"`
+	}{Nested: map[string]any{"items": []int(nil)}})
+	want := `{"items":[],"nested":{"items":[]},"next_cursor":null,"opaque":null}`
+	if got.Body != want {
+		t.Fatalf("response body = %s, want %s", got.Body, want)
+	}
+}
+
+func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
+	db := &apiDynamo{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		return &dynamodb.QueryOutput{}, nil
+	}}
+	server := &server{store: store.New(db, nil, "table", "", "")}
+	got := server.getSearch(context.Background(), "user", map[string]string{"q": "pulumi"})
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	var body struct {
+		Matches struct {
+			Window  json.RawMessage `json:"window"`
+			Archive json.RawMessage `json:"archive"`
+		} `json:"matches"`
+		Related struct {
+			Window  json.RawMessage `json:"window"`
+			Archive json.RawMessage `json:"archive"`
+		} `json:"related"`
+	}
+	if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	for name, encoded := range map[string]json.RawMessage{
+		"matches.window": body.Matches.Window, "matches.archive": body.Matches.Archive,
+		"related.window": body.Related.Window, "related.archive": body.Related.Archive,
+	} {
+		if string(encoded) != "[]" {
+			t.Errorf("%s = %s, want []", name, encoded)
+		}
+	}
 }
 
 type apiQueue struct{ input *sqs.SendMessageBatchInput }

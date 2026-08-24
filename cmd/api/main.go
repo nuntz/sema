@@ -25,14 +25,19 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/connector/rss"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/embed"
+	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
+	"github.com/nuntz/sema/internal/vectorstore"
 )
 
 type queueAPI interface {
@@ -50,6 +55,8 @@ type server struct {
 	feedMu          sync.Mutex
 	feedCache       map[string]cachedFeedList
 	feedDetailCache map[string]cachedFeedList
+	embedder        embed.Embedder
+	vectors         vectorstore.Store
 }
 
 type unsupportedFeed struct {
@@ -86,6 +93,8 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result = s.patchMe(ctx, claims.Subject, request.Body)
 	case method == http.MethodGet && path == "/items":
 		result = s.getItems(ctx, claims.Subject, request.QueryStringParameters)
+	case method == http.MethodGet && path == "/search":
+		result = s.getSearch(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
 		result = s.readBatch(ctx, claims.Subject, request.Body)
 	case method == http.MethodPost && path == "/ranking/recompute":
@@ -94,6 +103,9 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result = s.getArchive(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodGet && strings.HasPrefix(path, "/archive/"):
 		result = s.getArchiveItem(ctx, claims.Subject, strings.TrimPrefix(path, "/archive/"))
+	case method == http.MethodGet && strings.HasPrefix(path, "/items/") && strings.HasSuffix(path, "/similar"):
+		itemID := strings.TrimSuffix(strings.TrimPrefix(path, "/items/"), "/similar")
+		result = s.getSimilar(ctx, claims.Subject, itemID, request.QueryStringParameters)
 	case strings.HasPrefix(path, "/items/"):
 		result = s.itemRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
@@ -117,6 +129,163 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result.Cookies = cookies
 	}
 	return result, nil
+}
+
+type searchGroup struct {
+	Window  []domain.Item `json:"window"`
+	Archive []domain.Item `json:"archive"`
+}
+
+func (s *server) getSearch(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	value := strings.TrimSpace(query["q"])
+	terms := strings.Fields(strings.ToLower(value))
+	if len([]rune(value)) < 2 || len(terms) == 0 {
+		return badRequest(errors.New("q must contain at least 2 characters"))
+	}
+	limit, _ := strconv.Atoi(query["limit"])
+	if limit < 1 || limit > 30 {
+		limit = 30
+	}
+	window, err := s.store.SearchItems(ctx, userID, "I#", terms, limit)
+	if err != nil {
+		return s.failure("search live items", err)
+	}
+	archive, err := s.store.SearchItems(ctx, userID, "A#", terms, limit)
+	if err != nil {
+		return s.failure("search archive", err)
+	}
+	for _, items := range [][]domain.Item{window, archive} {
+		if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+			return s.failure("apply search feed presentation", err)
+		}
+		if err := s.prepareItems(ctx, userID, items); err != nil {
+			return s.failure("prepare search results", err)
+		}
+	}
+	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
+	semanticAvailable := s.embedder != nil && s.vectors != nil
+	if semanticAvailable {
+		vector, embedErr := s.embedder.Embed(ctx, value)
+		if embedErr == nil {
+			matches, queryErr := s.vectors.Query(ctx, score.Normalize(vector), limit, time.Now().Unix())
+			if queryErr == nil {
+				exact := make(map[string]bool, len(window)+len(archive))
+				for _, items := range [][]domain.Item{window, archive} {
+					for _, item := range items {
+						exact[item.ItemID] = true
+					}
+				}
+				filtered := make([]vectorstore.Match, 0, len(matches))
+				ids := make([]string, 0, len(matches))
+				for _, match := range matches {
+					if !exact[match.Key] {
+						filtered = append(filtered, match)
+						ids = append(ids, match.Key)
+					}
+				}
+				items, resolveErr := s.store.ResolveItemIDs(ctx, userID, ids)
+				if resolveErr == nil {
+					similarity := make(map[string]int, len(filtered))
+					for _, match := range filtered {
+						similarity[match.Key] = match.Similarity
+					}
+					for index := range items {
+						value := similarity[items[index].ItemID]
+						items[index].Similarity = &value
+					}
+					if err := s.applyFeedPresentation(ctx, userID, items); err == nil {
+						if err := s.prepareItems(ctx, userID, items); err == nil {
+							for _, item := range items {
+								if item.HeartedTS != "" && item.TTL == 0 {
+									related.Archive = append(related.Archive, item)
+								} else {
+									related.Window = append(related.Window, item)
+								}
+							}
+						} else {
+							semanticAvailable = false
+						}
+					} else {
+						semanticAvailable = false
+					}
+				} else {
+					semanticAvailable = false
+				}
+			} else {
+				semanticAvailable = false
+				slog.WarnContext(ctx, "semantic search query failed", "error", queryErr)
+			}
+		} else {
+			semanticAvailable = false
+			slog.WarnContext(ctx, "semantic search embedding failed", "error", embedErr)
+		}
+	}
+	return response(http.StatusOK, map[string]any{
+		"matches": searchGroup{Window: window, Archive: archive},
+		"related": related, "semantic_available": semanticAvailable,
+	})
+}
+
+func (s *server) getSimilar(ctx context.Context, userID, itemID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	if itemID == "" || strings.Contains(itemID, "/") {
+		return response(http.StatusNotFound, map[string]string{"error": "item not found"})
+	}
+	if s.vectors == nil {
+		return s.failure("find similar items", errors.New("vector search is not configured"))
+	}
+	limit, _ := strconv.Atoi(query["limit"])
+	if limit < 1 || limit > 12 {
+		limit = 12
+	}
+	vector, err := s.vectors.Get(ctx, itemID)
+	if err != nil {
+		if errors.Is(err, vectorstore.ErrNotFound) {
+			return response(http.StatusNotFound, map[string]string{"error": "item vector not found"})
+		}
+		return s.failure("load item vector", err)
+	}
+	matches, err := s.vectors.Query(ctx, vector, limit+1, time.Now().Unix())
+	if err != nil {
+		return s.failure("query similar items", err)
+	}
+	filtered := similarMatches(matches, itemID, limit)
+	ids := make([]string, 0, len(filtered))
+	for _, match := range filtered {
+		ids = append(ids, match.Key)
+	}
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
+	if err != nil {
+		return s.failure("resolve similar items", err)
+	}
+	similarities := make(map[string]int, len(filtered))
+	for _, match := range filtered {
+		similarities[match.Key] = match.Similarity
+	}
+	for index := range items {
+		value := similarities[items[index].ItemID]
+		items[index].Similarity = &value
+	}
+	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+		return s.failure("apply similar feed presentation", err)
+	}
+	if err := s.prepareItems(ctx, userID, items); err != nil {
+		return s.failure("prepare similar items", err)
+	}
+	return response(http.StatusOK, map[string]any{"items": items})
+}
+
+func similarMatches(matches []vectorstore.Match, self string, limit int) []vectorstore.Match {
+	filtered := make([]vectorstore.Match, 0, limit)
+	for _, match := range matches {
+		if match.Key == self || match.Similarity < 40 {
+			continue
+		}
+		filtered = append(filtered, match)
+		if len(filtered) == limit {
+			break
+		}
+	}
+	return filtered
 }
 
 func (s *server) getMe(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
@@ -335,6 +504,11 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 			}
 			return s.failure("set heart", err)
 		}
+		if s.vectors != nil {
+			if vectorErr := s.syncHeartVector(ctx, userID, itemID, *input.Hearted); vectorErr != nil {
+				slog.WarnContext(ctx, "heart vector update failed", "user", userID, "item_id", itemID, "hearted", *input.Hearted, "error", vectorErr)
+			}
+		}
 		return response(http.StatusOK, map[string]any{"archive_sk": archiveSK, "heart_count": heartCount})
 	case "signal":
 		item, err := s.store.Item(ctx, userID, itemID)
@@ -413,6 +587,24 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		return response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 	return response(http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (s *server) syncHeartVector(ctx context.Context, userID, itemID string, hearted bool) error {
+	if hearted {
+		item, err := s.store.ArchiveItem(ctx, userID, itemID)
+		if err != nil {
+			return err
+		}
+		return s.vectors.Put(ctx, vectorstore.FromItem(item, vectorstore.KindArchive))
+	}
+	item, err := s.store.Item(ctx, userID, itemID)
+	if err == nil {
+		return s.vectors.Put(ctx, vectorstore.FromItem(item, vectorstore.KindLive))
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return s.vectors.Delete(ctx, itemID)
+	}
+	return err
 }
 
 func (s *server) readBatch(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
@@ -621,7 +813,12 @@ func decodeJSON(body string, value any) error {
 }
 
 func response(status int, body any) events.APIGatewayV2HTTPResponse {
-	encoded, _ := json.Marshal(body)
+	encoded, err := json.Marshal(normalizeNilJSONSlices(body))
+	if err != nil {
+		slog.Error("encode response", "error", err)
+		status = http.StatusInternalServerError
+		encoded = []byte(`{"error":"internal server error"}`)
+	}
 	return events.APIGatewayV2HTTPResponse{
 		StatusCode: status, Body: string(encoded), Headers: map[string]string{"content-type": "application/json; charset=utf-8", "cache-control": "no-store"},
 	}
@@ -700,8 +897,18 @@ func main() {
 	}
 	invoker := &lambdaInvoker{config: config, function: rescoreFunction, client: &http.Client{Timeout: 28 * time.Second}}
 	discoveryHTTP := httpx.New(4*time.Second, 5<<20)
+	vectorBucket, vectorIndex := strings.TrimSpace(os.Getenv("VECTOR_BUCKET")), strings.TrimSpace(os.Getenv("VECTOR_INDEX"))
+	if vectorBucket == "" || vectorIndex == "" {
+		panic("VECTOR_BUCKET and VECTOR_INDEX are required")
+	}
+	modelVersion := strings.TrimSpace(os.Getenv("MODEL_VERSION"))
+	if modelVersion == "" {
+		modelVersion = "amazon.titan-embed-text-v2:0"
+	}
 	lambda.Start((&server{
 		store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: rss.NewDiscoverer(discoveryHTTP), feedCache: make(map[string]cachedFeedList),
+		embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), modelVersion),
+		vectors:  vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex),
 	}).handle)
 }
