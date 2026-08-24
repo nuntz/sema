@@ -355,10 +355,24 @@ export function App(props: { token: () => string; signOut(): void }) {
         (target.isContentEditable || target.matches("input, textarea, select"))
       )
         return;
+      if (
+        command === "toggle-unread" &&
+        (view() !== "grid" ||
+          mode() !== "live" ||
+          loading() ||
+          !!readerID() ||
+          keysOpen() ||
+          !!confirmRemove() ||
+          searchActive() ||
+          !!relatedSource())
+      )
+        return;
       event.preventDefault();
       if (command === "toggle-archive") {
         setKeysOpen(false);
         void toggleArchive();
+      } else if (command === "toggle-unread") {
+        void toggleUnread();
       } else {
         setKeysOpen((open) => (command === "toggle-help" ? !open : false));
       }
@@ -1009,7 +1023,6 @@ export function App(props: { token: () => string; signOut(): void }) {
               onItemsPassed={queueRead}
               onLoadMore={loadMore}
               onToggleOrder={toggleOrder}
-              onToggleUnread={toggleUnread}
               onUndo={undoLast}
               onInsertNew={insertPendingNew}
               onRefresh={() => pollNew(true)}

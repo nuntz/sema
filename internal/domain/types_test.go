@@ -15,3 +15,12 @@ func TestTimestampSortsChronologically(t *testing.T) {
 		t.Fatal("item sort keys are not chronological")
 	}
 }
+
+func TestFeedConnectorDefaultsLegacyRowsToRSS(t *testing.T) {
+	if got := FeedConnector(Feed{}); got != ConnectorRSS {
+		t.Fatalf("legacy connector = %q, want %q", got, ConnectorRSS)
+	}
+	if got := FeedConnector(Feed{Connector: ConnectorYouTube}); got != ConnectorYouTube {
+		t.Fatalf("YouTube connector = %q, want %q", got, ConnectorYouTube)
+	}
+}

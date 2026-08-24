@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/connector"
 	rssconnector "github.com/nuntz/sema/internal/connector/rss"
+	youtubeconnector "github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
@@ -34,11 +35,20 @@ const (
 )
 
 type handler struct {
-	store     feedStore
-	connector connector.Connector
-	media     *media.Processor
-	queue     *sqs.Client
-	itemsURL  string
+	store      feedStore
+	connectors map[string]connector.Connector
+	shorts     shortsDetector
+	media      *media.Processor
+	queue      queueAPI
+	itemsURL   string
+}
+
+type queueAPI interface {
+	SendMessageBatch(context.Context, *sqs.SendMessageBatchInput, ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error)
+}
+
+type shortsDetector interface {
+	IsShort(context.Context, string) bool
 }
 
 type feedStore interface {
@@ -85,8 +95,12 @@ func (h *handler) process(ctx context.Context, body string) error {
 		slog.InfoContext(ctx, "skipping muted feed", "user", message.User, "feed_id", message.FeedID)
 		return nil
 	}
+	implementation, ok := h.connectors[domain.FeedConnector(feed)]
+	if !ok {
+		return fmt.Errorf("unknown feed connector %q", domain.FeedConnector(feed))
+	}
 	started := time.Now().UTC()
-	result, err := h.connector.Fetch(ctx, feed)
+	result, err := implementation.Fetch(ctx, feed)
 	if err != nil {
 		feed.ErrorCount++
 		feed.LastFetchAt = domain.Timestamp(started)
@@ -128,10 +142,17 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if exists {
 			continue
 		}
+		if feed.HideShorts && entry.VideoID != "" && h.shorts != nil {
+			entry.IsShort = h.shorts.IsShort(ctx, entry.VideoID)
+			if entry.IsShort {
+				continue
+			}
+		}
 		messages = append(messages, domain.ItemMessage{
 			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, Title: entry.Title,
 			SummaryRaw: truncateBytes(entry.SummaryRaw, 20<<10), ContentRaw: truncateBytes(entry.ContentRaw, 200<<10),
 			Author: entry.Author, PublishedTS: domain.Timestamp(entry.Published), DisplayDate: entry.DisplayDate, EnclosureURLs: entry.Enclosures,
+			MediaType: videoMediaType(entry.VideoID), VideoID: entry.VideoID, IsShort: entry.IsShort,
 		})
 	}
 	if err := h.enqueue(ctx, messages); err != nil {
@@ -149,8 +170,17 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if result.Modified != "" {
 		feed.LastModified = result.Modified
 	}
-	if feed.FaviconKey == "" && feed.SiteURL != "" {
-		if icon, iconErr := h.media.Favicon(ctx, feed.SiteURL); iconErr == nil {
+	if feed.FaviconKey == "" && h.media != nil {
+		var icon media.Image
+		var iconErr error
+		if feed.AvatarURL != "" {
+			icon, iconErr = h.media.Avatar(ctx, feed.AvatarURL)
+		} else if feed.SiteURL != "" {
+			icon, iconErr = h.media.Favicon(ctx, feed.SiteURL)
+		} else {
+			iconErr = errors.New("feed has no icon source")
+		}
+		if iconErr == nil {
 			key := store.FaviconKey(feed.FeedID)
 			if putErr := h.store.PutContent(ctx, key, icon.ContentType, icon.Bytes); putErr == nil {
 				feed.FaviconKey = key
@@ -180,7 +210,10 @@ func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain
 	fetched.CustomTitle = current.CustomTitle
 	fetched.Tags = current.Tags
 	fetched.Muted = current.Muted
+	fetched.HideShorts = current.HideShorts
 	fetched.AlwaysGenerate = current.AlwaysGenerate
+	fetched.Connector = current.Connector
+	fetched.AvatarURL = current.AvatarURL
 	if domain.FeedIntervalHours(current) != domain.FeedIntervalHours(fetched) && fetched.ErrorCount == 0 {
 		if lastFetch, parseErr := time.Parse(time.RFC3339Nano, fetched.LastFetchAt); parseErr == nil {
 			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(current)))
@@ -188,6 +221,13 @@ func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain
 	}
 	fetched.FetchIntervalH = current.FetchIntervalH
 	return h.store.PutFeed(ctx, fetched)
+}
+
+func videoMediaType(videoID string) string {
+	if videoID != "" {
+		return "video"
+	}
+	return ""
 }
 
 func feedScheduleKey(feed domain.Feed) string {
@@ -286,7 +326,11 @@ func main() {
 	feedHTTP := httpx.New(15*time.Second, 5<<20)
 	mediaHTTP := httpx.New(15*time.Second, 10<<20)
 	h := &handler{
-		store: repository, connector: rssconnector.New(feedHTTP), media: media.New(mediaHTTP),
+		store: repository,
+		connectors: map[string]connector.Connector{
+			domain.ConnectorRSS: rssconnector.New(feedHTTP), domain.ConnectorYouTube: youtubeconnector.New(feedHTTP),
+		},
+		shorts: youtubeconnector.NewShortsDetector(feedHTTP), media: media.New(mediaHTTP),
 		queue: sqs.NewFromConfig(config), itemsURL: itemsURL,
 	}
 	lambda.Start(h.run)

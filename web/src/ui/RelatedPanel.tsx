@@ -147,6 +147,11 @@ export function RelatedPanel(props: {
                       <Show when={item.media_url}>
                         <img src={item.media_url} alt="" />
                       </Show>
+                      <Show when={item.media_type === "video"}>
+                        <span class="related-video-play" aria-hidden="true">
+                          <Icon name="play" size={12} filled />
+                        </span>
+                      </Show>
                       <div class="related-cell-scrim" />
                       <Show
                         when={item.hearted}

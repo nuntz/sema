@@ -34,11 +34,13 @@ export interface Item {
   item_id: string;
   feed_id: string;
   feed_title?: string;
+  connector?: "rss" | "youtube" | string;
   favicon_url?: string;
   url: string;
   title: string;
   summary?: string;
   summary_source: "feed" | "body" | "generated" | "";
+  description?: string;
   author?: string;
   display_date?: string;
   published_ts: string;
@@ -46,6 +48,9 @@ export interface Item {
   media_url?: string;
   media_w?: number;
   media_h?: number;
+  media_type?: "video" | string;
+  video_id?: string;
+  is_short?: boolean;
   body_url?: string;
   has_body: boolean;
   extract_quality: number;
@@ -84,11 +89,13 @@ export interface HeartResponse {
 export interface Feed {
   feed_id: string;
   url: string;
+  connector: "rss" | "youtube" | string;
   site_url?: string;
   title?: string;
   custom_title?: string;
   tags: string[];
   muted: boolean;
+  hide_shorts: boolean;
   always_generate: boolean;
   fetch_interval_h: 1 | 6 | 24;
   favicon_url?: string;
@@ -110,6 +117,10 @@ export interface FeedCandidate {
   feed_url: string;
   title: string;
   type: "rss" | "atom" | "json" | string;
+  connector: "rss" | "youtube" | string;
+  site_url?: string;
+  avatar_url?: string;
+  cadence?: string;
   item_count: number;
   newest_item_ts?: string;
 }

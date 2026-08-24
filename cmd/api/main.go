@@ -31,10 +31,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/connector/rss"
+	"github.com/nuntz/sema/internal/connector/youtube"
+	"github.com/nuntz/sema/internal/discovery"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
 	"github.com/nuntz/sema/internal/httpx"
+	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 	"github.com/nuntz/sema/internal/vectorstore"
@@ -52,6 +55,7 @@ type server struct {
 	signer          *auth.CookieSigner
 	rescore         func(context.Context, string) error
 	discover        feedDiscoverer
+	media           *media.Processor
 	feedMu          sync.Mutex
 	feedCache       map[string]cachedFeedList
 	feedDetailCache map[string]cachedFeedList
@@ -713,13 +717,18 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
 			feedID := domain.FeedID(subscription.URL)
+			connectorName := domain.ConnectorRSS
+			if youtube.IsFeedURL(subscription.URL) {
+				connectorName = domain.ConnectorYouTube
+			}
 			feed := domain.Feed{
-				PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, URL: subscription.URL,
+				PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: subscription.URL,
 				CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
 				FetchIntervalH: subscription.IntervalH, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
 			}
 			if existing, getErr := s.store.Feed(ctx, userID, feedID); getErr == nil {
 				feed = existing
+				feed.Connector = connectorName
 				merged, mergeErr := normalizeTags(append(append([]string{}, feed.Tags...), subscription.Tags...))
 				if mergeErr != nil {
 					writeErrors <- mergeErr
@@ -907,7 +916,7 @@ func main() {
 	}
 	lambda.Start((&server{
 		store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
-		rescore: invoker.invokeRescore, discover: rss.NewDiscoverer(discoveryHTTP), feedCache: make(map[string]cachedFeedList),
+		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, 10<<20)), feedCache: make(map[string]cachedFeedList),
 		embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), modelVersion),
 		vectors:  vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex),
 	}).handle)

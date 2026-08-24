@@ -115,6 +115,17 @@ func firstImage(document []byte) string {
 }
 
 func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Image, error) {
+	return p.fetchLead(ctx, candidates, false)
+}
+
+// FetchVideoLead normalizes provider thumbnails to 16:9 before the grid's
+// justified crop. In particular, this removes the letterbox bands from
+// YouTube's 4:3 hqdefault fallback.
+func (p *Processor) FetchVideoLead(ctx context.Context, candidates []string) (Image, error) {
+	return p.fetchLead(ctx, candidates, true)
+}
+
+func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVideo bool) (Image, error) {
 	var lastErr error
 	for _, candidate := range candidates {
 		response, err := p.client.Get(ctx, candidate, http.Header{"Accept": []string{imageAccept}})
@@ -136,6 +147,9 @@ func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Image, 
 		if err != nil {
 			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("decode: %w", err)}
 			continue
+		}
+		if cropVideo {
+			decoded = cropAspect(decoded, 16, 9)
 		}
 		bounds := decoded.Bounds()
 		if bounds.Dx() < 300 {
@@ -203,6 +217,34 @@ func (p *Processor) Favicon(ctx context.Context, siteURL string) (Image, error) 
 	return Image{}, fmt.Errorf("favicon not found")
 }
 
+// Avatar caches a centre-cropped 96px channel image in the same public asset
+// namespace as favicons while preserving its distinct circular presentation.
+func (p *Processor) Avatar(ctx context.Context, sourceURL string) (Image, error) {
+	response, err := p.client.Get(ctx, sourceURL, http.Header{"Accept": []string{imageAccept}})
+	if err != nil {
+		return Image{}, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return Image{}, fmt.Errorf("avatar returned HTTP %d", response.StatusCode)
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+		return Image{}, fmt.Errorf("avatar has unexpected content type %q", response.Header.Get("Content-Type"))
+	}
+	decoded, err := decode(response.Body, 16_000_000)
+	if err != nil {
+		return Image{}, err
+	}
+	square := cropAspect(decoded, 1, 1)
+	target := image.NewRGBA(image.Rect(0, 0, 96, 96))
+	draw.CatmullRom.Scale(target, target.Bounds(), square, square.Bounds(), draw.Over, nil)
+	var output bytes.Buffer
+	if err := png.Encode(&output, target); err != nil {
+		return Image{}, err
+	}
+	return Image{Bytes: output.Bytes(), ContentType: "image/png", Extension: ".png", SourceURL: sourceURL, Width: 96, Height: 96}, nil
+}
+
 func decode(body []byte, maxPixels int64) (image.Image, error) {
 	configuration, _, err := image.DecodeConfig(bytes.NewReader(body))
 	if err != nil {
@@ -230,6 +272,25 @@ func encodeLead(source image.Image) (Image, error) {
 		return Image{}, err
 	}
 	return Image{Bytes: output.Bytes(), ContentType: "image/jpeg", Extension: ".jpg", Width: width, Height: height}, nil
+}
+
+func cropAspect(source image.Image, ratioW, ratioH int) image.Image {
+	bounds := source.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	targetW, targetH := width, height
+	if width*ratioH > height*ratioW {
+		targetW = height * ratioW / ratioH
+	} else if width*ratioH < height*ratioW {
+		targetH = width * ratioH / ratioW
+	}
+	if targetW == width && targetH == height {
+		return source
+	}
+	left := bounds.Min.X + (width-targetW)/2
+	top := bounds.Min.Y + (height-targetH)/2
+	target := image.NewRGBA(image.Rect(0, 0, targetW, targetH))
+	draw.Draw(target, target.Bounds(), source, image.Point{X: left, Y: top}, draw.Src)
+	return target
 }
 
 func attr(node *html.Node, key string) string {

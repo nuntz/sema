@@ -118,6 +118,7 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 }
 
 func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
+	feed.Connector = domain.FeedConnector(feed)
 	if feed.FetchIntervalH == 0 {
 		feed.FetchIntervalH = 1
 	}
@@ -149,6 +150,7 @@ func (s *Store) Feed(ctx context.Context, userID, feedID string) (domain.Feed, e
 	if feed.FetchIntervalH == 0 {
 		feed.FetchIntervalH = 1
 	}
+	feed.Connector = domain.FeedConnector(feed)
 	return feed, nil
 }
 
@@ -170,6 +172,7 @@ func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 			return nil, err
 		}
 		for i := range page {
+			page[i].Connector = domain.FeedConnector(page[i])
 			if page[i].FetchIntervalH == 0 {
 				page[i].FetchIntervalH = 1
 			}
@@ -204,6 +207,7 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, err
 			return nil, err
 		}
 		for i := range page {
+			page[i].Connector = domain.FeedConnector(page[i])
 			if page[i].Muted {
 				continue
 			}

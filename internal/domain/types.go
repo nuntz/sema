@@ -35,15 +35,18 @@ type Feed struct {
 	SK               string   `dynamodbav:"SK" json:"-"`
 	GSI1PK           string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
 	FeedID           string   `dynamodbav:"feed_id" json:"feed_id"`
+	Connector        string   `dynamodbav:"connector" json:"connector"`
 	URL              string   `dynamodbav:"url" json:"url"`
 	SiteURL          string   `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
 	Title            string   `dynamodbav:"title,omitempty" json:"title,omitempty"`
 	CustomTitle      string   `dynamodbav:"custom_title,omitempty" json:"custom_title,omitempty"`
 	Tags             []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
 	Muted            bool     `dynamodbav:"muted,omitempty" json:"muted"`
+	HideShorts       bool     `dynamodbav:"hide_shorts,omitempty" json:"hide_shorts"`
 	AlwaysGenerate   bool     `dynamodbav:"always_generate,omitempty" json:"always_generate"`
 	FetchIntervalH   int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
 	FaviconKey       string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	AvatarURL        string   `dynamodbav:"avatar_url,omitempty" json:"-"`
 	ETag             string   `dynamodbav:"etag,omitempty" json:"-"`
 	LastModified     string   `dynamodbav:"last_modified,omitempty" json:"-"`
 	LastFetchAt      string   `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
@@ -58,6 +61,20 @@ type Feed struct {
 	ExtractionRate   *float64 `dynamodbav:"-" json:"extraction_success_rate,omitempty"`
 	MedianQuality    *float64 `dynamodbav:"-" json:"median_extract_quality,omitempty"`
 	ExtractionSample int      `dynamodbav:"-" json:"extraction_sample"`
+}
+
+const (
+	ConnectorRSS     = "rss"
+	ConnectorYouTube = "youtube"
+)
+
+// FeedConnector preserves the writers-first rollout for rows created before
+// the connector attribute existed.
+func FeedConnector(feed Feed) string {
+	if strings.TrimSpace(feed.Connector) == "" {
+		return ConnectorRSS
+	}
+	return feed.Connector
 }
 
 const (
@@ -78,12 +95,14 @@ type Item struct {
 	ItemID         string  `dynamodbav:"item_id" json:"item_id"`
 	FeedID         string  `dynamodbav:"feed_id" json:"feed_id"`
 	FeedTitle      string  `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
+	Connector      string  `dynamodbav:"connector,omitempty" json:"connector"`
 	FaviconKey     string  `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
 	URL            string  `dynamodbav:"url" json:"url"`
 	Title          string  `dynamodbav:"title" json:"title"`
 	Summary        string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
 	SearchText     string  `dynamodbav:"search_text,omitempty" json:"-"`
 	SummarySource  string  `dynamodbav:"summary_source,omitempty" json:"summary_source"`
+	Description    string  `dynamodbav:"description,omitempty" json:"description,omitempty"`
 	Author         string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
 	DisplayDate    string  `dynamodbav:"display_date,omitempty" json:"display_date,omitempty"`
 	PublishedTS    string  `dynamodbav:"published_ts" json:"published_ts"`
@@ -91,6 +110,9 @@ type Item struct {
 	MediaKey       string  `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
 	MediaW         int     `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
 	MediaH         int     `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
+	MediaType      string  `dynamodbav:"media_type,omitempty" json:"media_type,omitempty"`
+	VideoID        string  `dynamodbav:"video_id,omitempty" json:"video_id,omitempty"`
+	IsShort        bool    `dynamodbav:"is_short,omitempty" json:"is_short,omitempty"`
 	BodyKey        string  `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
 	HasBody        bool    `dynamodbav:"has_body" json:"has_body"`
 	ExtractQuality float64 `dynamodbav:"extract_quality" json:"extract_quality"`
@@ -212,6 +234,8 @@ type Entry struct {
 	DisplayDate  string
 	Enclosures   []Enclosure
 	PageHTMLHint string
+	VideoID      string
+	IsShort      bool
 }
 
 type FetchResult struct {
@@ -240,9 +264,24 @@ type ItemMessage struct {
 	PublishedTS   string      `json:"published_ts"`
 	DisplayDate   string      `json:"display_date,omitempty"`
 	EnclosureURLs []Enclosure `json:"enclosure_urls,omitempty"`
+	MediaType     string      `json:"media_type,omitempty"`
+	VideoID       string      `json:"video_id,omitempty"`
+	IsShort       bool        `json:"is_short,omitempty"`
 	Reprocess     bool        `json:"reprocess,omitempty"`
 	ForceExtract  bool        `json:"force_extract,omitempty"`
 	ForceSummary  bool        `json:"force_summary,omitempty"`
+}
+
+type FeedCandidate struct {
+	FeedURL      string `json:"feed_url"`
+	Title        string `json:"title"`
+	Type         string `json:"type"`
+	Connector    string `json:"connector"`
+	SiteURL      string `json:"site_url,omitempty"`
+	AvatarURL    string `json:"avatar_url,omitempty"`
+	Cadence      string `json:"cadence,omitempty"`
+	ItemCount    int    `json:"item_count"`
+	NewestItemTS string `json:"newest_item_ts,omitempty"`
 }
 
 func UserPK(user string) string       { return "U#" + user }

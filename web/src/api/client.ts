@@ -171,6 +171,10 @@ export class APIClient {
     feed_url: string;
     tags?: string[];
     custom_title?: string;
+    connector?: string;
+    title?: string;
+    site_url?: string;
+    avatar_url?: string;
   }): Promise<{ feed: Feed; created: boolean }> {
     return this.request("/feeds", {
       method: "POST",
@@ -186,6 +190,7 @@ export class APIClient {
         | "custom_title"
         | "tags"
         | "muted"
+        | "hide_shorts"
         | "always_generate"
         | "fetch_interval_h"
       >

@@ -23,6 +23,7 @@ import { whyText } from "../ranking-display";
 import type { Item } from "../types";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
+import { SourceBadge } from "./SourceBadge";
 import {
   beginLongPress,
   LONG_PRESS_MS,
@@ -53,7 +54,6 @@ interface GridProps {
   onItemsPassed(ids: string[]): void;
   onLoadMore(): void;
   onToggleOrder(): void;
-  onToggleUnread(): void;
   onUndo(): void;
   onInsertNew(): void;
   onRefresh(): Promise<number>;
@@ -542,9 +542,6 @@ export function Grid(props: GridProps) {
       case "order":
         if (!props.archive) props.onToggleOrder();
         break;
-      case "unread":
-        if (!props.archive) props.onToggleUnread();
-        break;
     }
     event.preventDefault();
   };
@@ -637,6 +634,7 @@ export function Grid(props: GridProps) {
                         read: readStateEnabled(props.archive) && item().read,
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
+                        "video-cell": item().media_type === "video",
                         [`size-${cell.effectiveSize.toLowerCase()}`]: true,
                       }}
                       style={{ width: `${cell.width}px` }}
@@ -655,7 +653,27 @@ export function Grid(props: GridProps) {
                           loading="lazy"
                           width={item().media_w}
                           height={item().media_h}
+                          onError={(event) =>
+                            event.currentTarget
+                              .closest(".grid-cell")
+                              ?.classList.add("media-failed")
+                          }
                         />
+                      </Show>
+                      <Show when={item().media_type === "video"}>
+                        <span class="video-play" aria-hidden="true">
+                          <Icon
+                            name="play"
+                            size={
+                              cell.effectiveSize === "L"
+                                ? 15
+                                : cell.effectiveSize === "M"
+                                  ? 14
+                                  : 12
+                            }
+                            filled
+                          />
+                        </span>
                       </Show>
                       <div class="cell-scrim" />
                       <div class="cell-corner" aria-hidden="true">
@@ -737,9 +755,21 @@ export function Grid(props: GridProps) {
                             <p>{item().summary}</p>
                           </Show>
                           <div class="cell-meta">
-                            <Show when={props.archive && !item().has_body}>
+                            <Show
+                              when={
+                                props.archive &&
+                                !item().has_body &&
+                                item().media_type !== "video"
+                              }
+                            >
                               <em>text only</em>
                             </Show>
+                            <SourceBadge
+                              connector={item().connector}
+                              imageURL={item().favicon_url}
+                              title={item().feed_title}
+                              size={16}
+                            />
                             <Show
                               when={props.archive}
                               fallback={

@@ -1,10 +1,18 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js";
 import { isOlderThanThirtyDays } from "../archive";
 import { Icon } from "../components/Icon";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
 import { hasLeadingImage } from "./reader-content";
+import { SourceBadge } from "./SourceBadge";
 import {
   beginSwipe,
   lockSwipeAxis,
@@ -12,6 +20,10 @@ import {
   swipeCommand,
   swipeOffset,
 } from "./touch-gestures";
+import {
+  type DescriptionToken,
+  parseVideoDescription,
+} from "./video-description";
 
 interface ReaderProps {
   item: Item;
@@ -250,9 +262,13 @@ export function Reader(props: ReaderProps) {
         >
           <Icon name="back-to-grid" />
         </button>
-        <Show when={props.item.favicon_url}>
-          <img class="reader-favicon" src={props.item.favicon_url} alt="" />
-        </Show>
+        <SourceBadge
+          connector={props.item.connector}
+          imageURL={props.item.favicon_url}
+          title={props.item.feed_title}
+          size={20}
+          class="reader-badge"
+        />
         <span class="reader-source">
           {props.item.feed_title || "Feed"} ·{" "}
           {relativeTime(props.item.display_date || props.item.published_ts)} ago
@@ -348,25 +364,54 @@ export function Reader(props: ReaderProps) {
         ref={article}
       >
         <article class="article">
-          <div class="article-kicker">
-            ARTICLE ·{" "}
-            {Math.max(
-              1,
-              Math.round(
-                (body() || props.item.summary || "").split(/\s+/).length / 220,
-              ),
-            )}{" "}
-            MIN READ
-          </div>
+          <Show when={props.item.media_type !== "video"}>
+            <div class="article-kicker">
+              ARTICLE ·{" "}
+              {Math.max(
+                1,
+                Math.round(
+                  (body() || props.item.summary || "").split(/\s+/).length /
+                    220,
+                ),
+              )}{" "}
+              MIN READ
+            </div>
+          </Show>
           <h1>{props.item.title}</h1>
-          <p class="byline">
-            {props.item.author
-              ? `By ${props.item.author}`
-              : props.item.feed_title}
-            <Show when={props.item.display_date}>
-              {` · ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(props.item.display_date ?? ""))}`}
-            </Show>
-          </p>
+          <Show
+            when={props.item.media_type === "video"}
+            fallback={
+              <p class="byline">
+                {props.item.author
+                  ? `By ${props.item.author}`
+                  : props.item.feed_title}
+                <Show when={props.item.display_date}>
+                  {` · ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(props.item.display_date ?? ""))}`}
+                </Show>
+              </p>
+            }
+          >
+            <VideoMediaCard item={props.item} onOriginal={props.onOriginal} />
+            <div class="video-channel-line">
+              <SourceBadge
+                connector={props.item.connector}
+                imageURL={props.item.favicon_url}
+                title={props.item.feed_title}
+                size={28}
+              />
+              <strong>{props.item.feed_title || props.item.author}</strong>
+              <span>
+                · published{" "}
+                {new Intl.DateTimeFormat(undefined, {
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                }).format(
+                  new Date(props.item.display_date || props.item.published_ts),
+                )}
+              </span>
+            </div>
+          </Show>
           <Show when={props.item.summary}>
             <div class="article-summary">
               <Show when={props.item.summary_source === "generated"}>
@@ -375,7 +420,13 @@ export function Reader(props: ReaderProps) {
               <p>{props.item.summary}</p>
             </div>
           </Show>
-          <Show when={props.item.media_url && !hasLeadingImage(body())}>
+          <Show
+            when={
+              props.item.media_type !== "video" &&
+              props.item.media_url &&
+              !hasLeadingImage(body())
+            }
+          >
             <img
               class="article-lead"
               src={props.item.media_url}
@@ -384,33 +435,42 @@ export function Reader(props: ReaderProps) {
               height={props.item.media_h}
             />
           </Show>
+          <Show when={props.item.media_type === "video"}>
+            <VideoDescription
+              description={props.item.description || ""}
+              videoURL={props.item.url}
+              onOriginal={props.onOriginal}
+            />
+          </Show>
           <Show
-            when={body()}
+            when={props.item.media_type !== "video" && body()}
             fallback={
               <Show
-                when={!loading()}
+                when={props.item.media_type === "video" || !loading()}
                 fallback={
                   <p class="extraction-loading">
                     Loading the extracted article…
                   </p>
                 }
               >
-                <OriginalRequired
-                  reason={originalReason()}
-                  url={props.item.url}
-                  retry={
-                    !props.archive && originalReason() === "extraction"
-                      ? props.onRetry
-                      : undefined
-                  }
-                  onOriginal={props.onOriginal}
-                />
+                <Show when={props.item.media_type !== "video"}>
+                  <OriginalRequired
+                    reason={originalReason()}
+                    url={props.item.url}
+                    retry={
+                      !props.archive && originalReason() === "extraction"
+                        ? props.onRetry
+                        : undefined
+                    }
+                    onOriginal={props.onOriginal}
+                  />
+                </Show>
               </Show>
             }
           >
             <div class="article-body" innerHTML={body()} />
           </Show>
-          <Show when={props.archive}>
+          <Show when={props.archive && props.item.media_type !== "video"}>
             <div class="archive-original">
               <Show when={isOlderThanThirtyDays(props.item.published_ts)}>
                 <p class="archive-stale-note">
@@ -508,6 +568,122 @@ export function Reader(props: ReaderProps) {
         </button>
       </nav>
     </section>
+  );
+}
+
+function VideoMediaCard(props: { item: Item; onOriginal(): void }) {
+  const displayURL = () =>
+    props.item.url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  return (
+    <a
+      class="video-media-card"
+      href={props.item.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={props.onOriginal}
+    >
+      <span class="video-media-band">
+        <Show when={props.item.media_url}>
+          <img
+            src={props.item.media_url}
+            alt=""
+            width={props.item.media_w}
+            height={props.item.media_h}
+          />
+        </Show>
+        <span class="video-card-play" aria-hidden="true">
+          <Icon name="play" size={20} filled />
+        </span>
+      </span>
+      <span class="video-provider-strip">
+        <b>YOUTUBE</b>
+        <i />
+        <span>{displayURL()}</span>
+        <strong>
+          Watch
+          <Icon name="open-original" />
+        </strong>
+      </span>
+    </a>
+  );
+}
+
+function VideoDescription(props: {
+  description: string;
+  videoURL: string;
+  onOriginal(): void;
+}) {
+  const blocks = () => parseVideoDescription(props.description, props.videoURL);
+  return (
+    <div class="video-description">
+      <For each={blocks()}>
+        {(block) => (
+          <Show
+            when={block.kind === "paragraph" ? block : undefined}
+            fallback={
+              <Show when={block.kind === "chapters" ? block : undefined}>
+                {(chapters) => (
+                  <div class="video-chapters">
+                    <For each={chapters().rows}>
+                      {(row) => (
+                        <div>
+                          <DescriptionTokenView
+                            token={row.timestamp}
+                            onOriginal={props.onOriginal}
+                          />
+                          <span>
+                            <For each={row.tokens}>
+                              {(token) => (
+                                <DescriptionTokenView
+                                  token={token}
+                                  onOriginal={props.onOriginal}
+                                />
+                              )}
+                            </For>
+                          </span>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                )}
+              </Show>
+            }
+          >
+            {(paragraph) => (
+              <p>
+                <For each={paragraph().tokens}>
+                  {(token) => (
+                    <DescriptionTokenView
+                      token={token}
+                      onOriginal={props.onOriginal}
+                    />
+                  )}
+                </For>
+              </p>
+            )}
+          </Show>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function DescriptionTokenView(props: {
+  token: DescriptionToken;
+  onOriginal(): void;
+}) {
+  return (
+    <Show when={props.token.kind !== "text"} fallback={props.token.text}>
+      <a
+        classList={{ timestamp: props.token.kind === "timestamp" }}
+        href={props.token.kind === "text" ? undefined : props.token.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={props.onOriginal}
+      >
+        {props.token.text}
+      </a>
+    </Show>
   );
 }
 

@@ -48,6 +48,7 @@ func main() {
 		if scoringVersion == "" {
 			scoringVersion = "2"
 		}
+		youtubeDiscoveryEnabled := !strings.EqualFold(strings.TrimSpace(cfg.Get("youtubeDiscoveryEnabled")), "false")
 		vectorIndexName := strings.TrimSpace(cfg.Get("vectorIndex"))
 		if vectorIndexName == "" {
 			vectorIndexName = "items"
@@ -219,6 +220,7 @@ func main() {
 		}
 		apiLambda, err := function(ctx, "api", apiRole, 256, 29, 0, merge(common, pulumi.StringMap{
 			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
+			"YOUTUBE_DISCOVERY_ENABLED": pulumi.Sprintf("%t", youtubeDiscoveryEnabled),
 		}))
 		if err != nil {
 			return err
@@ -540,6 +542,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:TransactWriteItems"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": "s3:GetObject", "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:DeleteObject"}, "Resource": values[1].(string) + "/archive/*"},
+				map[string]any{"Effect": "Allow", "Action": "s3:PutObject", "Resource": values[1].(string) + "/favicons/*"},
 				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": []string{values[2].(string), values[3].(string)}},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:DeleteVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": values[4].(string)},
 			)

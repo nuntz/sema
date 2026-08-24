@@ -3,6 +3,7 @@ import { Icon } from "../components/Icon";
 import { type SearchSection, visibleSearchSections } from "../search";
 import type { Item, SearchResponse } from "../types";
 import { relativeTime } from "./Grid";
+import { SourceBadge } from "./SourceBadge";
 
 interface SearchResultsProps {
   query: string;
@@ -183,6 +184,7 @@ function ResultCell(props: {
         focused: props.focused,
         "archive-cell": props.archive,
         "text-cell": !props.item.media_url,
+        "video-cell": props.item.media_type === "video",
       }}
       tabindex="-1"
       data-search-id={props.item.item_id}
@@ -191,6 +193,11 @@ function ResultCell(props: {
     >
       <Show when={props.item.media_url}>
         <img src={props.item.media_url} alt="" />
+      </Show>
+      <Show when={props.item.media_type === "video"}>
+        <span class="video-play" aria-hidden="true">
+          <Icon name="play" size={14} filled />
+        </span>
       </Show>
       <div class="cell-scrim" />
       <div class="cell-corner">
@@ -266,6 +273,12 @@ function ResultCell(props: {
             <p>{props.item.summary}</p>
           </Show>
           <div class="cell-meta">
+            <SourceBadge
+              connector={props.item.connector}
+              imageURL={props.item.favicon_url}
+              title={props.item.feed_title}
+              size={16}
+            />
             <span>
               {props.item.feed_title || "Feed"} ·{" "}
               {props.archive

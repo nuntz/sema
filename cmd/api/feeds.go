@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/nuntz/sema/internal/connector/rss"
+	"github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
@@ -23,7 +24,7 @@ const feedCacheTTL = time.Minute
 var errInvalidFeedTag = errors.New("invalid feed tag")
 
 type feedDiscoverer interface {
-	Discover(context.Context, string) ([]rss.Candidate, error)
+	Discover(context.Context, string) ([]domain.FeedCandidate, error)
 }
 
 type cachedFeedList struct {
@@ -68,7 +69,22 @@ func (s *server) discoverFeeds(ctx context.Context, body string) events.APIGatew
 		return response(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 	}
 	if candidates == nil {
-		candidates = []rss.Candidate{}
+		candidates = []domain.FeedCandidate{}
+	}
+	for index := range candidates {
+		candidate := &candidates[index]
+		if candidate.Connector != domain.ConnectorYouTube || candidate.AvatarURL == "" || s.media == nil {
+			continue
+		}
+		avatar, avatarErr := s.media.Avatar(discoveryContext, candidate.AvatarURL)
+		candidate.AvatarURL = ""
+		if avatarErr != nil {
+			continue
+		}
+		key := store.FaviconKey(domain.FeedID(candidate.FeedURL))
+		if putErr := s.store.PutContent(discoveryContext, key, avatar.ContentType, avatar.Bytes); putErr == nil {
+			candidate.AvatarURL = s.store.ContentURL(key)
+		}
 	}
 	return response(http.StatusOK, map[string]any{"candidates": candidates})
 }
@@ -78,6 +94,10 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 		FeedURL     string   `json:"feed_url"`
 		Tags        []string `json:"tags"`
 		CustomTitle string   `json:"custom_title"`
+		Connector   string   `json:"connector"`
+		Title       string   `json:"title"`
+		SiteURL     string   `json:"site_url"`
+		AvatarURL   string   `json:"avatar_url"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
@@ -96,8 +116,39 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 	}
 	now := time.Now().UTC()
 	feedID := domain.FeedID(feedURL)
+	connectorName := strings.TrimSpace(input.Connector)
+	if connectorName == "" {
+		connectorName = domain.ConnectorRSS
+		if youtube.IsFeedURL(feedURL) {
+			connectorName = domain.ConnectorYouTube
+		}
+	}
+	if connectorName != domain.ConnectorRSS && connectorName != domain.ConnectorYouTube {
+		return badRequest(errors.New("connector must be rss or youtube"))
+	}
+	if connectorName == domain.ConnectorYouTube && !youtube.IsFeedURL(feedURL) {
+		return badRequest(errors.New("youtube connector requires a channel uploads URL"))
+	}
+	discoveredTitle := strings.TrimSpace(input.Title)
+	if utf8.RuneCountInString(discoveredTitle) > 200 {
+		return badRequest(errors.New("title must be at most 200 characters"))
+	}
+	siteURL := ""
+	if strings.TrimSpace(input.SiteURL) != "" {
+		if siteURL, err = normalizeFeedURL(input.SiteURL); err != nil {
+			return badRequest(errors.New("site_url must be an absolute HTTP URL"))
+		}
+	}
+	iconKey := ""
+	if connectorName == domain.ConnectorYouTube {
+		candidateKey := store.FaviconKey(feedID)
+		if input.AvatarURL == s.store.ContentURL(candidateKey) {
+			iconKey = candidateKey
+		}
+	}
 	feed := domain.Feed{
-		PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, URL: feedURL,
+		PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: feedURL,
+		Title: discoveredTitle, SiteURL: siteURL, FaviconKey: iconKey,
 		CustomTitle: customTitle, Tags: tags, FetchIntervalH: 1,
 		NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
 	}
@@ -112,6 +163,18 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 		feed.Tags = merged
 		if customTitle != "" {
 			feed.CustomTitle = customTitle
+		}
+		if connectorName == domain.ConnectorYouTube {
+			feed.Connector = connectorName
+			if discoveredTitle != "" {
+				feed.Title = discoveredTitle
+			}
+			if siteURL != "" {
+				feed.SiteURL = siteURL
+			}
+			if iconKey != "" {
+				feed.FaviconKey = iconKey
+			}
 		}
 		if !feed.Muted {
 			feed.NextFetchAt = domain.Timestamp(now)
@@ -142,12 +205,13 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		Tags           *[]string `json:"tags"`
 		Muted          *bool     `json:"muted"`
 		AlwaysGenerate *bool     `json:"always_generate"`
+		HideShorts     *bool     `json:"hide_shorts"`
 		FetchInterval  *int      `json:"fetch_interval_h"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
 	}
-	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.FetchInterval == nil {
+	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.HideShorts == nil && input.FetchInterval == nil {
 		return badRequest(errors.New("at least one feed field is required"))
 	}
 	feed, err := s.store.Feed(ctx, userID, feedID)
@@ -183,6 +247,12 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 	}
 	if input.AlwaysGenerate != nil {
 		feed.AlwaysGenerate = *input.AlwaysGenerate
+	}
+	if input.HideShorts != nil {
+		if domain.FeedConnector(feed) != domain.ConnectorYouTube {
+			return badRequest(errors.New("hide_shorts is only available for YouTube feeds"))
+		}
+		feed.HideShorts = *input.HideShorts
 	}
 	unmuted := wasMuted && !feed.Muted
 	if unmuted {
@@ -289,17 +359,24 @@ func (s *server) applyFeedPresentation(ctx context.Context, userID string, items
 	if err != nil {
 		return err
 	}
-	titles := make(map[string]string, len(feeds))
+	type presentation struct{ title, favicon, connector string }
+	presentations := make(map[string]presentation, len(feeds))
 	for _, feed := range feeds {
+		title := feed.Title
 		if feed.CustomTitle != "" {
-			titles[feed.FeedID] = feed.CustomTitle
-		} else if feed.Title != "" {
-			titles[feed.FeedID] = feed.Title
+			title = feed.CustomTitle
 		}
+		presentations[feed.FeedID] = presentation{title: title, favicon: feed.FaviconKey, connector: domain.FeedConnector(feed)}
 	}
 	for i := range items {
-		if title := titles[items[i].FeedID]; title != "" {
-			items[i].FeedTitle = title
+		if value, ok := presentations[items[i].FeedID]; ok {
+			if value.title != "" {
+				items[i].FeedTitle = value.title
+			}
+			if value.favicon != "" {
+				items[i].FaviconKey = value.favicon
+			}
+			items[i].Connector = value.connector
 		}
 	}
 	return nil
@@ -425,6 +502,7 @@ func feedStatus(feed domain.Feed) string {
 }
 
 func publicFeed(repository *store.Store, feed domain.Feed) domain.Feed {
+	feed.Connector = domain.FeedConnector(feed)
 	feed.FaviconKey = repository.ContentURL(feed.FaviconKey)
 	if feed.FetchIntervalH == 0 {
 		feed.FetchIntervalH = 1

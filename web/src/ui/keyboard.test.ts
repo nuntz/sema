@@ -28,7 +28,6 @@ describe("keyboard map", () => {
     ["c", "copy"],
     ["v", "original"],
     ["t", "order"],
-    ["a", "unread"],
     ["r", "related"],
   ])("maps grid key %s", (key, command) =>
     expect(gridCommand(key)).toBe(command),
@@ -61,6 +60,10 @@ describe("keyboard map", () => {
 
   it("maps shift+A to the archive at the app level", () => {
     expect(appCommand("A")).toBe("toggle-archive");
-    expect(appCommand("a")).toBeUndefined();
+  });
+
+  it("maps unread globally so it remains available without a mounted grid", () => {
+    expect(appCommand("a")).toBe("toggle-unread");
+    expect(gridCommand("a")).toBeUndefined();
   });
 });

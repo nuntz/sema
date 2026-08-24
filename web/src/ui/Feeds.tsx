@@ -18,6 +18,7 @@ import {
 } from "./feed-discovery";
 import { upsertFeed } from "./feed-list";
 import { relativeTime } from "./Grid";
+import { type BadgeSize, SourceBadge } from "./SourceBadge";
 
 type FeedSort = "title" | "updated" | "errors" | "prior" | "quality";
 
@@ -157,10 +158,20 @@ export function Feeds(props: {
         feed_url: feed.url,
         tags: feed.tags,
         custom_title: feed.custom_title,
+        connector: feed.connector,
+        title: feed.title,
+        site_url: feed.site_url,
+        avatar_url: feed.connector === "youtube" ? feed.favicon_url : undefined,
       });
-      if (feed.muted || feed.always_generate || feed.fetch_interval_h !== 1) {
+      if (
+        feed.muted ||
+        feed.hide_shorts ||
+        feed.always_generate ||
+        feed.fetch_interval_h !== 1
+      ) {
         await props.api.patchFeed(restored.feed.feed_id, {
           muted: feed.muted,
+          hide_shorts: feed.hide_shorts,
           always_generate: feed.always_generate,
           fetch_interval_h: feed.fetch_interval_h,
         });
@@ -290,7 +301,11 @@ export function Feeds(props: {
                         {(tag) => <span class="tag-chip">{tag}</span>}
                       </For>
                     </div>
-                    <small>{domainName(feed.url)}</small>
+                    <small>
+                      {feed.connector === "youtube"
+                        ? "YouTube"
+                        : domainName(feed.url)}
+                    </small>
                   </div>
                   <StatusBadge feed={feed} />
                   <Show when={!feed.muted}>
@@ -429,6 +444,7 @@ function FeedDrawer(props: {
         | "custom_title"
         | "tags"
         | "muted"
+        | "hide_shorts"
         | "always_generate"
         | "fetch_interval_h"
       >
@@ -494,7 +510,7 @@ function FeedDrawer(props: {
           <Icon name="close" />
         </button>
         <header>
-          <FeedIcon feed={props.feed} />
+          <FeedIcon feed={props.feed} size={32} />
           <div>
             <div>
               <h2 id="feed-drawer-title">{displayTitle(props.feed)}</h2>
@@ -510,9 +526,15 @@ function FeedDrawer(props: {
               )}
             </Show>
             <small>
-              {props.feed.last_fetch_at
-                ? `last fetched ${relativeTime(props.feed.last_fetch_at)} ago`
-                : "not fetched yet"}
+              {props.feed.connector === "youtube"
+                ? `YouTube · uploads · ${
+                    props.feed.last_fetch_at
+                      ? `checked ${relativeTime(props.feed.last_fetch_at)} ago`
+                      : "not checked yet"
+                  }`
+                : props.feed.last_fetch_at
+                  ? `last fetched ${relativeTime(props.feed.last_fetch_at)} ago`
+                  : "not fetched yet"}
             </small>
           </div>
         </header>
@@ -609,6 +631,24 @@ function FeedDrawer(props: {
           />
           <i />
         </label>
+        <Show when={props.feed.connector === "youtube"}>
+          <label class="mute-row shorts-row">
+            <Icon name="play" />
+            <span>
+              <strong>Hide Shorts</strong>
+              <small>Skip vertical uploads under 60s</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={props.feed.hide_shorts}
+              disabled={working()}
+              onChange={(event) =>
+                void patch({ hide_shorts: event.currentTarget.checked })
+              }
+            />
+            <i />
+          </label>
+        </Show>
         <Show when={props.feed.last_error}>
           <div class="last-error">
             <span>LAST ERROR</span>
@@ -752,6 +792,10 @@ function AddFeedDialog(props: {
       const result = await props.api.addFeed({
         feed_url: feedURL,
         tags: tags(),
+        connector: candidate?.connector,
+        title: candidate?.title,
+        site_url: candidate?.site_url,
+        avatar_url: candidate?.avatar_url,
       });
       props.onAdded(result.feed);
       props.onToast("success", "Feed added");
@@ -916,14 +960,24 @@ function AddFeedDialog(props: {
 function CandidateCard(props: { candidate: FeedCandidate; compact?: boolean }) {
   return (
     <div class="candidate-card" classList={{ compact: props.compact }}>
-      <i>
-        <Icon name="feed-fallback" />
-      </i>
+      <SourceBadge
+        connector={props.candidate.connector}
+        imageURL={props.candidate.avatar_url}
+        title={props.candidate.title}
+        size={36}
+      />
       <span>
         <strong>{props.candidate.title}</strong>
         <small>
-          {props.candidate.type.toUpperCase()} ·{" "}
-          {formatCount(props.candidate.item_count)} items
+          {props.candidate.connector === "youtube"
+            ? "YouTube · uploads"
+            : props.candidate.type.toUpperCase()}
+          <Show when={props.candidate.cadence}>
+            {` · ${props.candidate.cadence}`}
+          </Show>
+          <Show when={!props.candidate.cadence}>
+            {` · ${formatCount(props.candidate.item_count)} items`}
+          </Show>
           <Show when={props.candidate.newest_item_ts}>
             {` · newest ${relativeTime(props.candidate.newest_item_ts ?? "")} ago`}
           </Show>
@@ -1037,18 +1091,15 @@ function TagEditor(props: {
   );
 }
 
-function FeedIcon(props: { feed: Feed }) {
+function FeedIcon(props: { feed: Feed; size?: BadgeSize }) {
   return (
-    <Show
-      when={props.feed.favicon_url}
-      fallback={
-        <i class="feed-icon fallback">
-          <Icon name="feed-fallback" />
-        </i>
-      }
-    >
-      <img class="feed-icon" src={props.feed.favicon_url} alt="" />
-    </Show>
+    <SourceBadge
+      connector={props.feed.connector}
+      imageURL={props.feed.favicon_url}
+      title={displayTitle(props.feed)}
+      size={props.size ?? 20}
+      class="feed-icon"
+    />
   );
 }
 

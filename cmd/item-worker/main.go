@@ -94,13 +94,24 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if message.Title == "" {
 			message.Title = existing.Title
 		}
+		if message.MediaType == "" {
+			message.MediaType = existing.MediaType
+		}
+		if message.VideoID == "" {
+			message.VideoID = existing.VideoID
+		}
+		if message.ContentRaw == "" && message.VideoID != "" {
+			message.ContentRaw = existing.Description
+		}
+		message.IsShort = message.IsShort || existing.IsShort
 	}
+	isVideo := message.MediaType == "video" || message.VideoID != ""
 	feed, err := h.store.Feed(ctx, message.User, message.FeedID)
 	if err != nil {
 		if !message.Reprocess || !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
-		feed = domain.Feed{FeedID: existing.FeedID, Title: existing.FeedTitle, FaviconKey: existing.FaviconKey}
+		feed = domain.Feed{FeedID: existing.FeedID, Title: existing.FeedTitle, FaviconKey: existing.FaviconKey, Connector: existing.Connector}
 	}
 	feedTitle := feed.Title
 	if feed.CustomTitle != "" {
@@ -131,7 +142,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	var article extract.Result
 	var pageHTML []byte
 	if processAssets {
-		if message.URL != "" {
+		if !isVideo && message.URL != "" {
 			if response, fetchErr := h.http.Get(ctx, message.URL, nil); fetchErr == nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 				pageHTML = response.Body
 				if response.FinalURL != nil {
@@ -139,12 +150,14 @@ func (h *handler) process(ctx context.Context, body string) error {
 				}
 			}
 		}
-		article, err = articleContent(message.ContentRaw, message.URL, feed.SiteURL, pageURL, pageHTML)
-		if err != nil || article.HTML == "" {
-			article = extract.Result{}
+		if !isVideo {
+			article, err = articleContent(message.ContentRaw, message.URL, feed.SiteURL, pageURL, pageHTML)
+			if err != nil || article.HTML == "" {
+				article = extract.Result{}
+			}
 		}
 	}
-	if message.ForceSummary && article.HTML == "" && existing.BodyKey != "" {
+	if !isVideo && message.ForceSummary && article.HTML == "" && existing.BodyKey != "" {
 		if storedBody, _, contentErr := h.store.Content(ctx, existing.BodyKey); contentErr == nil {
 			article = extract.Result{
 				HTML: string(storedBody), Text: extract.PlainText(string(storedBody)), FirstParagraph: extract.FirstParagraph(string(storedBody)), Quality: existing.ExtractQuality,
@@ -161,12 +174,20 @@ func (h *handler) process(ctx context.Context, body string) error {
 	summaryMetrics := map[string]float64{}
 	if !message.Reprocess || message.ForceSummary {
 		fallbackRaw := message.SummaryRaw
+		summaryArticle := article
+		if isVideo {
+			fallbackRaw = message.ContentRaw
+			descriptionText := strings.TrimSpace(extract.PlainText(message.ContentRaw))
+			if descriptionText != "" {
+				summaryArticle = extract.Result{Text: descriptionText, FirstParagraph: descriptionText, Quality: 1}
+			}
+		}
 		force := feed.AlwaysGenerate
 		if message.ForceSummary {
 			fallbackRaw = existing.Summary
 			force = forceSummaryGeneration(feed.AlwaysGenerate, existing.SummarySource)
 		}
-		summary, summarySource, summaryMetrics = h.chooseSummary(ctx, message.Title, fallbackRaw, article, force)
+		summary, summarySource, summaryMetrics = h.chooseSummary(ctx, message.Title, fallbackRaw, summaryArticle, force)
 	}
 	mediaKey, mediaW, mediaH := existing.MediaKey, existing.MediaW, existing.MediaH
 	embedMediaSucceeded, embedMediaFailed := 0, 0
@@ -177,8 +198,18 @@ func (h *handler) process(ctx context.Context, body string) error {
 		}
 		feedHTML := []byte(message.ContentRaw + "\n" + message.SummaryRaw)
 		candidates := media.Candidates(message.EnclosureURLs, pageHTML, []byte(article.HTML), feedHTML, article.LeadImage, pageURL, feedURL)
+		if isVideo {
+			candidates = append([]string{"https://i.ytimg.com/vi/" + url.PathEscape(message.VideoID) + "/maxresdefault.jpg"}, candidates...)
+		}
 		mediaKey, mediaW, mediaH = "", 0, 0
-		if lead, mediaErr := h.media.FetchLead(ctx, candidates); mediaErr == nil {
+		var lead media.Image
+		var mediaErr error
+		if isVideo {
+			lead, mediaErr = h.media.FetchVideoLead(ctx, candidates)
+		} else {
+			lead, mediaErr = h.media.FetchLead(ctx, candidates)
+		}
+		if mediaErr == nil {
 			mediaKey = store.MediaKey(message.User, message.ItemID, lead.Extension)
 			if err := h.store.PutContent(ctx, mediaKey, lead.ContentType, lead.Bytes); err != nil {
 				return fmt.Errorf("store media: %w", err)
@@ -196,25 +227,27 @@ func (h *handler) process(ctx context.Context, body string) error {
 			slog.Warn("media failed", attributes...)
 		}
 		var embedFailures []error
-		article.HTML, embedFailures = extract.ResolveMediaCards(article.HTML, func(card extract.MediaCard) (string, error) {
-			thumbnailURL, thumbnailErr := h.embedThumbnailURL(ctx, card)
-			if thumbnailErr != nil {
-				embedMediaFailed++
-				return "", thumbnailErr
-			}
-			thumbnail, mediaErr := h.media.FetchEmbed(ctx, thumbnailURL)
-			if mediaErr != nil {
-				embedMediaFailed++
-				return "", mediaErr
-			}
-			objectKey := store.EmbedMediaKey(message.User, message.ItemID, card.Index)
-			if err := h.store.PutContent(ctx, objectKey, thumbnail.ContentType, thumbnail.Bytes); err != nil {
-				embedMediaFailed++
-				return "", fmt.Errorf("store embed thumbnail: %w", err)
-			}
-			embedMediaSucceeded++
-			return h.store.ContentURL(objectKey), nil
-		})
+		if !isVideo {
+			article.HTML, embedFailures = extract.ResolveMediaCards(article.HTML, func(card extract.MediaCard) (string, error) {
+				thumbnailURL, thumbnailErr := h.embedThumbnailURL(ctx, card)
+				if thumbnailErr != nil {
+					embedMediaFailed++
+					return "", thumbnailErr
+				}
+				thumbnail, mediaErr := h.media.FetchEmbed(ctx, thumbnailURL)
+				if mediaErr != nil {
+					embedMediaFailed++
+					return "", mediaErr
+				}
+				objectKey := store.EmbedMediaKey(message.User, message.ItemID, card.Index)
+				if err := h.store.PutContent(ctx, objectKey, thumbnail.ContentType, thumbnail.Bytes); err != nil {
+					embedMediaFailed++
+					return "", fmt.Errorf("store embed thumbnail: %w", err)
+				}
+				embedMediaSucceeded++
+				return h.store.ContentURL(objectKey), nil
+			})
+		}
 		for _, embedErr := range embedFailures {
 			slog.Warn("embed thumbnail failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", embedErr)
 		}
@@ -223,8 +256,11 @@ func (h *handler) process(ctx context.Context, body string) error {
 	extractQuality := existing.ExtractQuality
 	if processAssets {
 		bodyKey, hasBody = "", false
-		extractQuality = article.Quality
-		if article.HTML != "" {
+		extractQuality = 0
+		if !isVideo {
+			extractQuality = article.Quality
+		}
+		if !isVideo && article.HTML != "" {
 			bodyKey = store.BodyKey(message.User, message.ItemID)
 			if err := h.store.PutContent(ctx, bodyKey, "text/html; charset=utf-8", []byte(article.HTML)); err != nil {
 				return fmt.Errorf("store body: %w", err)
@@ -293,11 +329,11 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	item := domain.Item{
 		PK: domain.UserPK(message.User), SK: domain.ItemSK(published, message.ItemID), FeedPK: "F#" + message.FeedID,
-		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feedTitle, FaviconKey: feed.FaviconKey,
-		URL: message.URL, Title: embedTitle, Summary: summary, SummarySource: summarySource, Author: author, DisplayDate: displayDate,
+		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feedTitle, Connector: domain.FeedConnector(feed), FaviconKey: feed.FaviconKey,
+		URL: message.URL, Title: embedTitle, Summary: summary, SummarySource: summarySource, Description: videoDescription(isVideo, message.ContentRaw, existing.Description), Author: author, DisplayDate: displayDate,
 		SearchText:  domain.DeriveSearchText(embedTitle, summary),
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
-		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
+		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
 		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
 	}
 	written := false
@@ -357,6 +393,16 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	observability.Emit(metrics, nil)
 	return nil
+}
+
+func videoDescription(video bool, raw, existing string) string {
+	if !video {
+		return ""
+	}
+	if value := strings.TrimSpace(raw); value != "" {
+		return value
+	}
+	return existing
 }
 
 func forceSummaryGeneration(alwaysGenerate bool, existingSource string) bool {

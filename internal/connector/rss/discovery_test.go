@@ -71,28 +71,6 @@ func TestDiscoverProbesCommonPathsUntilTwoHits(t *testing.T) {
 	}
 }
 
-func TestDiscoverRewritesYouTubeChannelURL(t *testing.T) {
-	feedURL := "https://www.youtube.com/feeds/videos.xml?channel_id=UC123"
-	fetcher := &discoveryFetcher{responses: map[string]httpx.Response{feedURL: {Body: []byte(discoveryAtom)}}}
-	candidates, err := (&Discoverer{client: fetcher, parser: newParser()}).Discover(context.Background(), "https://youtube.com/channel/UC123")
-	if err != nil || len(candidates) != 1 || fetcher.requests[0] != feedURL {
-		t.Fatalf("candidates = %#v, requests = %#v, err = %v", candidates, fetcher.requests, err)
-	}
-}
-
-func TestDiscoverResolvesYouTubeHandleToChannelFeed(t *testing.T) {
-	handleURL := "https://youtube.com/@sema"
-	feedURL := "https://www.youtube.com/feeds/videos.xml?channel_id=UC_handle"
-	fetcher := &discoveryFetcher{responses: map[string]httpx.Response{
-		handleURL: {Body: []byte(`<html><script>{"channelId":"UC_handle"}</script></html>`)},
-		feedURL:   {Body: []byte(discoveryAtom)},
-	}}
-	candidates, err := (&Discoverer{client: fetcher, parser: newParser()}).Discover(context.Background(), handleURL)
-	if err != nil || len(candidates) != 1 || candidates[0].FeedURL != feedURL {
-		t.Fatalf("candidates = %#v, requests = %#v, err = %v", candidates, fetcher.requests, err)
-	}
-}
-
 func TestDiscoverDeadSiteReturnsRequestError(t *testing.T) {
 	fetcher := &discoveryFetcher{responses: map[string]httpx.Response{}}
 	_, err := (&Discoverer{client: fetcher, parser: newParser()}).Discover(context.Background(), "https://dead.example")

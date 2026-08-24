@@ -59,6 +59,7 @@ func Prompt(title, body string) string {
 
 var truncationEnding = regexp.MustCompile(`(?i)(?:…|\.\.\.|\[\s*(?:…|\.\.\.)?\s*\]|(?:read\s+more|continue\s+reading)[\s\p{P}\p{S}]*)\s*$`)
 var markupResidue = regexp.MustCompile(`(?s)<[^>]*>|&(?:#[0-9]+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);`)
+var summaryURL = regexp.MustCompile(`(?i)https?://[^\s<>]+`)
 
 // IsJunk classifies the feed-provided summary before a body fallback is used.
 func IsJunk(summaryRaw, title string, alwaysGenerate bool) bool {
@@ -74,6 +75,13 @@ func IsJunk(summaryRaw, title string, alwaysGenerate bool) bool {
 	}
 	if truncationEnding.MatchString(plain) {
 		return true
+	}
+	links := summaryURL.FindAllString(plain, -1)
+	if len(links) >= 2 {
+		withoutLinks := strings.TrimSpace(summaryURL.ReplaceAllString(plain, ""))
+		if utf8.RuneCountInString(withoutLinks) < 40 {
+			return true
+		}
 	}
 	plainRunes := utf8.RuneCountInString(plain)
 	residueRunes := 0

@@ -11,6 +11,7 @@ import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
 import Link from "lucide-solid/icons/link";
 import Pause from "lucide-solid/icons/pause";
+import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import Search from "lucide-solid/icons/search";
@@ -23,7 +24,7 @@ import X from "lucide-solid/icons/x";
 import { type JSX, splitProps } from "solid-js";
 import { Dynamic } from "solid-js/web";
 
-export type IconSize = 14 | 16 | 18 | 20 | 24;
+export type IconSize = 12 | 13 | 14 | 15 | 16 | 18 | 20 | 24;
 
 type SemaRowsProps = JSX.SvgSVGAttributes<SVGSVGElement> & {
   size?: string | number;
@@ -71,6 +72,7 @@ const glyphs = {
   "next-item": ChevronRight,
   "open-original": ExternalLink,
   "previous-item": ChevronLeft,
+  play: Play,
   "remove-feed": Trash2,
   retry: RotateCw,
   search: Search,

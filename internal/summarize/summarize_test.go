@@ -34,6 +34,7 @@ func TestJunkDetection(t *testing.T) {
 		{name: "continue reading", summary: "A useful teaser that reaches the length threshold. Continue reading...", want: true},
 		{name: "markup residue", summary: `&lt;div&gt;&lt;b&gt;&lt;i&gt;forty useful characters remain here now&lt;/i&gt;&lt;/b&gt;&lt;/div&gt;`, want: true},
 		{name: "normal html", summary: `<p>A complete and useful summary with more than forty characters for the reader.</p>`},
+		{name: "link spam", summary: `https://one.example/path https://two.example/path https://three.example/path`, want: true},
 		{name: "always", summary: "A complete and useful summary with more than forty characters for the reader.", always: true, want: true},
 	}
 	for _, test := range tests {

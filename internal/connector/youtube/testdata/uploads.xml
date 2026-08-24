@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <link rel="alternate" href="https://www.youtube.com/channel/UC123"/>
+  <title>Sema Channel</title>
+  <entry>
+    <id>yt:video:regular1</id>
+    <yt:videoId>regular1</yt:videoId>
+    <yt:channelId>UC123</yt:channelId>
+    <title>Atom title</title>
+    <author><name>Sema Channel</name><uri>https://www.youtube.com/channel/UC123</uri></author>
+    <published>2026-08-23T12:00:00+00:00</published>
+    <updated>2026-08-23T12:01:00+00:00</updated>
+    <media:group>
+      <media:title>Regular upload</media:title>
+      <media:description>Full description from the media namespace with https://example.com/details and more than forty characters.</media:description>
+      <media:thumbnail url="https://i.ytimg.com/vi/regular1/hqdefault.jpg" width="480" height="360"/>
+    </media:group>
+  </entry>
+  <entry>
+    <id>yt:video:empty2</id>
+    <yt:videoId>empty2</yt:videoId>
+    <title>Empty description</title>
+    <author><name>Sema Channel</name></author>
+    <published>2026-08-20T12:00:00Z</published>
+    <media:group>
+      <media:title>Empty description</media:title>
+      <media:description></media:description>
+      <media:thumbnail url="https://i.ytimg.com/vi/empty2/hqdefault.jpg"/>
+    </media:group>
+  </entry>
+  <entry>
+    <id>yt:video:short3</id>
+    <yt:videoId>short3</yt:videoId>
+    <title>A Short</title>
+    <author><name>Sema Channel</name></author>
+    <published>2026-08-18T12:00:00Z</published>
+    <media:group>
+      <media:title>A Short</media:title>
+      <media:description>Vertical update</media:description>
+      <media:thumbnail url="https://i.ytimg.com/vi/short3/hqdefault.jpg"/>
+    </media:group>
+  </entry>
+</feed>

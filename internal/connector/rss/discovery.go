@@ -6,28 +6,20 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/mmcdole/gofeed"
+	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 	"golang.org/x/net/html"
 )
-
-var youtubeChannelID = regexp.MustCompile(`(?:"channelId"\s*:\s*"|/channel/)(UC[A-Za-z0-9_-]+)`)
 
 var commonFeedPaths = []string{
 	"/feed", "/rss", "/rss.xml", "/atom.xml", "/index.xml", "/feed.json", "/feeds/posts/default",
 }
 
-type Candidate struct {
-	FeedURL      string `json:"feed_url"`
-	Title        string `json:"title"`
-	Type         string `json:"type"`
-	ItemCount    int    `json:"item_count"`
-	NewestItemTS string `json:"newest_item_ts,omitempty"`
-}
+type Candidate = domain.FeedCandidate
 
 type Discoverer struct {
 	client fetcher
@@ -43,28 +35,12 @@ func (d *Discoverer) Discover(ctx context.Context, rawURL string) ([]Candidate, 
 	if err != nil {
 		return nil, err
 	}
-	if rewritten := directYouTubeFeedURL(normalized); rewritten != "" {
-		normalized = rewritten
-	}
-
 	page, err := d.get(ctx, normalized)
 	if err != nil {
 		return nil, err
 	}
 	if candidate, ok := d.parseCandidate(page); ok {
 		return []Candidate{candidate}, nil
-	}
-
-	if isYouTubeHandle(normalized) {
-		if match := youtubeChannelID.FindSubmatch(page.Body); len(match) == 2 {
-			feedURL := "https://www.youtube.com/feeds/videos.xml?channel_id=" + string(match[1])
-			response, getErr := d.get(ctx, feedURL)
-			if getErr == nil {
-				if candidate, ok := d.parseCandidate(response); ok {
-					return []Candidate{candidate}, nil
-				}
-			}
-		}
 	}
 
 	links := alternateFeedLinks(page)
@@ -149,7 +125,7 @@ func (d *Discoverer) parseCandidate(response httpx.Response) (Candidate, bool) {
 		title = response.FinalURL.Hostname()
 	}
 	return Candidate{
-		FeedURL: response.FinalURL.String(), Title: title, Type: parsed.FeedType,
+		FeedURL: response.FinalURL.String(), Title: title, Type: parsed.FeedType, Connector: domain.ConnectorRSS,
 		ItemCount: len(parsed.Items), NewestItemTS: timestamp,
 	}, true
 }
@@ -210,26 +186,4 @@ func normalizeDiscoveryURL(raw string) (string, error) {
 	}
 	parsed.Fragment = ""
 	return parsed.String(), nil
-}
-
-func directYouTubeFeedURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || !youtubeHost(parsed.Hostname()) {
-		return ""
-	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) >= 2 && strings.EqualFold(parts[0], "channel") && strings.HasPrefix(parts[1], "UC") {
-		return "https://www.youtube.com/feeds/videos.xml?channel_id=" + url.QueryEscape(parts[1])
-	}
-	return ""
-}
-
-func isYouTubeHandle(raw string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && youtubeHost(parsed.Hostname()) && strings.HasPrefix(strings.Trim(parsed.Path, "/"), "@")
-}
-
-func youtubeHost(host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	return host == "youtube.com" || strings.HasSuffix(host, ".youtube.com") || host == "youtu.be"
 }

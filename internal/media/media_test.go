@@ -22,6 +22,12 @@ type fakeClient struct {
 	headers  http.Header
 }
 
+type mappedClient struct{ responses map[string]httpx.Response }
+
+func (c *mappedClient) Get(_ context.Context, rawURL string, _ http.Header) (httpx.Response, error) {
+	return c.responses[rawURL], nil
+}
+
 func (c *fakeClient) Get(_ context.Context, _ string, headers http.Header) (httpx.Response, error) {
 	c.headers = headers.Clone()
 	return c.response, nil
@@ -115,5 +121,40 @@ func TestCandidatesFallsBackToFeedContentImage(t *testing.T) {
 	want := []string{"https://cdn.example.com/page.jpg", "https://www.reddit.com/preview.jpeg?width=640"}
 	if !slices.Equal(candidates, want) {
 		t.Fatalf("candidates = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestFetchVideoLeadFallsBackAndCropsFourByThreeThumbnail(t *testing.T) {
+	var body bytes.Buffer
+	if err := jpeg.Encode(&body, image.NewRGBA(image.Rect(0, 0, 480, 360)), nil); err != nil {
+		t.Fatal(err)
+	}
+	maxres := "https://i.ytimg.com/vi/video/maxresdefault.jpg"
+	hq := "https://i.ytimg.com/vi/video/hqdefault.jpg"
+	client := &mappedClient{responses: map[string]httpx.Response{
+		maxres: {StatusCode: http.StatusNotFound, Header: http.Header{"Content-Type": []string{"text/html"}}},
+		hq:     {StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/jpeg"}}, Body: body.Bytes()},
+	}}
+	lead, err := (&Processor{client: client}).FetchVideoLead(context.Background(), []string{maxres, hq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lead.SourceURL != hq || lead.Width != 480 || lead.Height != 270 {
+		t.Fatalf("lead = %#v", lead)
+	}
+}
+
+func TestAvatarIsCentreCroppedToNinetySixPixels(t *testing.T) {
+	var body bytes.Buffer
+	if err := png.Encode(&body, image.NewRGBA(image.Rect(0, 0, 200, 100))); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{response: httpx.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/png"}}, Body: body.Bytes()}}
+	avatar, err := (&Processor{client: client}).Avatar(context.Background(), "https://example.com/avatar.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if avatar.Width != 96 || avatar.Height != 96 || avatar.ContentType != "image/png" {
+		t.Fatalf("avatar = %#v", avatar)
 	}
 }

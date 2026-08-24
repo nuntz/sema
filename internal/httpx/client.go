@@ -128,3 +128,35 @@ func (c *Client) Get(ctx context.Context, rawURL string, headers http.Header) (R
 	}
 	return Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), Body: body, FinalURL: resp.Request.URL}, nil
 }
+
+// Head returns the upstream response without following redirects. YouTube's
+// Shorts endpoint uses the distinction between 200 and redirect as metadata,
+// so callers need the original status rather than the final destination.
+func (c *Client) Head(ctx context.Context, rawURL string, headers http.Header) (Response, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return Response{}, fmt.Errorf("invalid HTTP URL %q", rawURL)
+	}
+	if c.http.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.http.Timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, u.String(), nil)
+	if err != nil {
+		return Response{}, err
+	}
+	req.Header.Set("User-Agent", c.agent)
+	for key, values := range headers {
+		req.Header.Del(key)
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	resp, err := c.http.Transport.RoundTrip(req)
+	if err != nil {
+		return Response{}, err
+	}
+	defer resp.Body.Close()
+	return Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), FinalURL: req.URL}, nil
+}

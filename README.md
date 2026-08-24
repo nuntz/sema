@@ -127,6 +127,34 @@ dual-write it, replay the current window and archive, switch reads, verify, and
 only then delete the old index. Never resize or repurpose an existing index in
 place.
 
+### YouTube connector rollout
+
+YouTube channel uploads use the public 15-entry Atom feed, so uploads older
+than the channel feed at add time cannot be recovered. Deploy connector-aware
+writers and the worker registry before switching discovery, then migrate the
+Drop 3 feed rows in place:
+
+```sh
+cd infra
+pulumi config set sema:youtubeDiscoveryEnabled false --stack prod
+cd ..
+make deploy
+make backfill-youtube-connector STACK=prod
+make backfill-youtube-connector STACK=prod BACKFILL_ARGS=--apply
+cd infra
+pulumi config set sema:youtubeDiscoveryEnabled true --stack prod
+cd ..
+make deploy
+```
+
+The backfill is a dry run unless `--apply` is supplied. It recognizes stored
+YouTube uploads URLs, preserves each URL and `feed_id`, sets
+`connector=youtube`, and caches the channel's 96px avatar. Because item IDs
+still derive from the same feed ID and entry GUID, live history, archive
+pointers, signals, and read state continue without duplication.
+`youtubeDiscoveryEnabled` defaults to true for new stacks; the temporary false
+value is only the rollout gate that keeps new YouTube adds behind the backfill.
+
 ## Ranking maintenance
 
 The nightly `rescore` Lambda rebuilds each MODEL row from explicit and
