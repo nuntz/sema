@@ -291,6 +291,11 @@ describe("read state", () => {
     expect(shouldShowEndCard(false)).toBe(true);
   });
 
+  it("keeps paging when a sparse unread page cannot scroll", () => {
+    expect(shouldLoadNextPage(true, 0, 800, 800)).toBe(true);
+    expect(shouldLoadNextPage(false, 0, 800, 800)).toBe(false);
+  });
+
   it("finds the rows intersecting the viewport remainder", () => {
     const rows = justify(
       Array.from({ length: 18 }, (_, i) => make(i)),

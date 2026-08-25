@@ -410,7 +410,17 @@ export function Grid(props: GridProps) {
   });
 
   createEffect(() => {
-    if (rows().length === 0 && props.hasMore) props.onLoadMore();
+    const viewport = viewportHeight();
+    if (
+      viewport > 0 &&
+      shouldLoadNextPage(
+        props.hasMore,
+        scrollTop(),
+        viewport,
+        Math.max(viewport, endTop()),
+      )
+    )
+      props.onLoadMore();
   });
 
   const continueToEnd = () => {
