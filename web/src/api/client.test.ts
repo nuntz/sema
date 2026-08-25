@@ -36,6 +36,31 @@ describe("behaviour event client", () => {
   });
 });
 
+describe("read state client", () => {
+  it("persists both sides of an explicit read toggle", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", request);
+
+    const client = new APIClient();
+    await client.read("item/with slash", true);
+    await client.read("item/with slash", false);
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(
+      request.mock.calls.map(([path, init]) => [path, init?.body]),
+    ).toEqual([
+      ["/api/items/item%2Fwith%20slash/read", JSON.stringify({ read: true })],
+      ["/api/items/item%2Fwith%20slash/read", JSON.stringify({ read: false })],
+    ]);
+  });
+});
+
 describe("feed management client", () => {
   it("wires feed detail edits to the encoded PATCH route", async () => {
     const request = vi.fn(

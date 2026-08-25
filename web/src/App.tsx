@@ -17,6 +17,7 @@ import { AppMark } from "./components/AppMark";
 import { Icon } from "./components/Icon";
 import { Tooltip } from "./components/Tooltip";
 import {
+  includeReadForGrid,
   mergeNewItems,
   pollCandidates,
   unreadIDsAfter,
@@ -41,7 +42,11 @@ import { SearchResults } from "./ui/SearchResults";
 import { TagFilter } from "./ui/TagFilter";
 
 type Undo = { ids: string[] };
-type Toast = { id: number; kind: "success" | "error"; message: string };
+type Toast = {
+  id: number;
+  kind: "success" | "info" | "error";
+  message: string;
+};
 type HeaderMenu = "order" | "unread" | "combined" | "overflow";
 
 export function App(props: { signOut(): void }) {
@@ -191,7 +196,12 @@ export function App(props: { signOut(): void }) {
       const page =
         nextMode === "archive"
           ? await api.archive()
-          : await api.items(nextOrder, "", !nextUnreadOnly, nextTag);
+          : await api.items(
+              nextOrder,
+              "",
+              includeReadForGrid(nextOrder, nextUnreadOnly),
+              nextTag,
+            );
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
       setItems(pageItems);
@@ -221,7 +231,12 @@ export function App(props: { signOut(): void }) {
       const page =
         mode() === "archive"
           ? await api.archive(nextCursor)
-          : await api.items(order(), nextCursor, !unreadOnly(), selectedTag());
+          : await api.items(
+              order(),
+              nextCursor,
+              includeReadForGrid(order(), unreadOnly()),
+              selectedTag(),
+            );
       if (nextCursor !== cursor()) return;
       let added: Item[] = [];
       setItems((current) => {
@@ -689,7 +704,7 @@ export function App(props: { signOut(): void }) {
         const page = await api.items(
           markOrder,
           nextCursor,
-          !unreadOnly(),
+          includeReadForGrid(markOrder, unreadOnly()),
           selectedTag(),
         );
         if (version !== requestVersion || markOrder !== order()) return;
@@ -1302,6 +1317,9 @@ export function App(props: { signOut(): void }) {
               }
               hasMore={cursor() !== ""}
               archive={mode() === "archive"}
+              unreadOnly={unreadOnly()}
+              order={order()}
+              readStateItems={items()}
               linkActionID={linkActionID()}
               pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
@@ -1317,6 +1335,9 @@ export function App(props: { signOut(): void }) {
               onLoadMore={loadMore}
               onToggleOrder={toggleOrder}
               onUndo={undoLast}
+              onCaughtUpUnavailable={() =>
+                showToast("info", "No caught-up divider here")
+              }
               onInsertNew={insertPendingNew}
               onRefresh={() => pollNew(true)}
             />
@@ -1418,14 +1439,19 @@ export function App(props: { signOut(): void }) {
           {(notice) => (
             <div
               class="link-toast"
-              classList={{ error: notice.kind === "error" }}
+              classList={{
+                error: notice.kind === "error",
+                info: notice.kind === "info",
+              }}
               role={notice.kind === "error" ? "alert" : "status"}
               aria-live={notice.kind === "error" ? "assertive" : "polite"}
             >
-              <Icon
-                name={notice.kind === "error" ? "close" : "check"}
-                class="toast-icon"
-              />
+              <Show when={notice.kind !== "info"}>
+                <Icon
+                  name={notice.kind === "error" ? "close" : "check"}
+                  class="toast-icon"
+                />
+              </Show>
               <span>{notice.message}</span>
             </div>
           )}

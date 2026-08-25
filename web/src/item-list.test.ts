@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  includeReadForGrid,
   mergeNewItems,
   pollCandidates,
   unreadIDsAfter,
   updateRead,
   visibleItemIDs,
 } from "./item-list";
+import { readVisualState } from "./layout/read-state";
 import type { Item } from "./types";
 
 const make = (itemID: string): Item => ({
@@ -26,6 +28,13 @@ const make = (itemID: string): Item => ({
 });
 
 describe("item list", () => {
+  it("loads R# state only where the grid needs a chronological boundary", () => {
+    expect(includeReadForGrid("chrono", true)).toBe(true);
+    expect(includeReadForGrid("interest", true)).toBe(false);
+    expect(includeReadForGrid("chrono", false)).toBe(true);
+    expect(includeReadForGrid("interest", false)).toBe(true);
+  });
+
   it("inserts pill items above row zero without replacing existing state", () => {
     const existing = { ...make("existing"), read: true, signal: 1 as const };
     const current = [existing, make("older")];
@@ -91,6 +100,16 @@ describe("item list", () => {
 
     expect(read.map((item) => item.read)).toEqual([true, true, false]);
     expect(undone).toEqual(items);
+  });
+
+  it("flips the all-items dot when an item is explicitly toggled", () => {
+    const items = [make("focused")];
+    const marked = updateRead(items, ["focused"], true);
+    const restored = updateRead(marked, ["focused"], false);
+
+    expect(readVisualState("all-items", items[0].read).unreadDot).toBe(true);
+    expect(readVisualState("all-items", marked[0].read).unreadDot).toBe(false);
+    expect(readVisualState("all-items", restored[0].read).unreadDot).toBe(true);
   });
 
   it("selects every unread item below the focused item", () => {

@@ -1,4 +1,8 @@
-import type { Item } from "./types";
+import type { Item, Order } from "./types";
+
+export function includeReadForGrid(order: Order, unreadOnly: boolean): boolean {
+  return !unreadOnly || order === "chrono";
+}
 
 export function mergeNewItems(current: Item[], incoming: Item[]): Item[] {
   const seen = new Set(current.map((item) => item.item_id));

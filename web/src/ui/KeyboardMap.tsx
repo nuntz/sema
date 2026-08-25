@@ -12,6 +12,7 @@ const bindings = [
   ["F", "toggle heart"],
   ["M", "toggle read"],
   ["⇧ M", "mark all below read"],
+  ["B", "back to caught-up"],
   ["End", "go to caught-up card"],
   ["Home / G G", "return to top"],
   ["U", "undo last read batch"],

@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { updateRead } from "../item-list";
 import type { Item } from "../types";
 import { justify } from "./justified";
 import {
+  automaticReadEnabled,
+  caughtUpBoundary,
+  caughtUpJumpPlan,
+  caughtUpLabel,
+  endMarkActionEnabled,
   fullyPassedRows,
+  gridReadStateContext,
   intersectingRowIDs,
-  readStateEnabled,
+  readVisualState,
+  scrollReadCandidates,
   shouldLoadNextPage,
   shouldMarkAtBottom,
   shouldShowEndCard,
@@ -28,9 +36,141 @@ const make = (id: number): Item => ({
 });
 
 describe("read state", () => {
-  it("is completely disabled in the archive", () => {
-    expect(readStateEnabled(false)).toBe(true);
-    expect(readStateEnabled(true)).toBe(false);
+  it("encodes dimming and dots by view context", () => {
+    expect(readVisualState("unread", false)).toEqual({
+      dimmed: false,
+      unreadDot: false,
+    });
+    expect(readVisualState("unread", true)).toEqual({
+      dimmed: true,
+      unreadDot: false,
+    });
+    expect(readVisualState("all-items", false)).toEqual({
+      dimmed: false,
+      unreadDot: true,
+    });
+    expect(readVisualState("all-items", true)).toEqual({
+      dimmed: false,
+      unreadDot: false,
+    });
+    for (const context of ["search", "archive"] as const) {
+      expect(readVisualState(context, false)).toEqual({
+        dimmed: false,
+        unreadDot: false,
+      });
+      expect(readVisualState(context, true)).toEqual({
+        dimmed: false,
+        unreadDot: false,
+      });
+    }
+  });
+
+  it("enables automatic read marking only in the unread grid", () => {
+    expect(gridReadStateContext(false, true)).toBe("unread");
+    expect(gridReadStateContext(false, false)).toBe("all-items");
+    expect(gridReadStateContext(true, true)).toBe("archive");
+    expect(automaticReadEnabled("unread")).toBe(true);
+    expect(automaticReadEnabled("all-items")).toBe(false);
+    expect(automaticReadEnabled("search")).toBe(false);
+    expect(automaticReadEnabled("archive")).toBe(false);
+    expect(endMarkActionEnabled("unread")).toBe(true);
+    expect(endMarkActionEnabled("all-items")).toBe(false);
+    expect(endMarkActionEnabled("archive")).toBe(false);
+  });
+
+  it("positions the caught-up divider above the newest read item in All", () => {
+    const loaded = [make(0), make(1), { ...make(2), read: true }, make(3)];
+
+    expect(caughtUpBoundary("all-items", "chrono", loaded, loaded)).toEqual({
+      count: 2,
+      beforeItemID: "2",
+    });
+  });
+
+  it("positions the unread divider between items straddling the read item", () => {
+    const loaded = [make(0), make(1), { ...make(2), read: true }, make(3)];
+    const unread = loaded.filter((item) => !item.read);
+
+    expect(caughtUpBoundary("unread", "chrono", loaded, unread)).toEqual({
+      count: 2,
+      beforeItemID: "3",
+    });
+  });
+
+  it("hides the caught-up divider outside Latest grid views", () => {
+    const loaded = [make(0), { ...make(1), read: true }, make(2)];
+
+    expect(
+      caughtUpBoundary("unread", "interest", loaded, loaded),
+    ).toBeUndefined();
+    expect(
+      caughtUpBoundary("all-items", "interest", loaded, loaded),
+    ).toBeUndefined();
+    expect(
+      caughtUpBoundary("search", "chrono", loaded, loaded),
+    ).toBeUndefined();
+    expect(
+      caughtUpBoundary("archive", "chrono", loaded, loaded),
+    ).toBeUndefined();
+  });
+
+  it("does not guess when no read anchor is loaded or nothing is above it", () => {
+    const unread = [make(0), make(1), make(2)];
+    expect(
+      caughtUpBoundary("all-items", "chrono", unread, unread),
+    ).toBeUndefined();
+    const anchorLoadedLater = [...unread, { ...make(3), read: true }, make(4)];
+    expect(
+      caughtUpBoundary(
+        "all-items",
+        "chrono",
+        anchorLoadedLater,
+        anchorLoadedLater,
+      ),
+    ).toEqual({ count: 3, beforeItemID: "3" });
+
+    const newestRead = [{ ...make(0), read: true }, make(1)];
+    expect(
+      caughtUpBoundary("all-items", "chrono", newestRead, newestRead),
+    ).toBeUndefined();
+  });
+
+  it("labels and plans the caught-up jump, with no-op when absent", () => {
+    const boundary = { count: 34, beforeItemID: "anchor" };
+    expect(caughtUpLabel(boundary.count)).toBe(
+      "New since you last caught up · 34",
+    );
+    expect(caughtUpJumpPlan(boundary, 300, false)).toEqual({
+      itemID: "anchor",
+      scrollTop: 284,
+    });
+    expect(caughtUpJumpPlan(boundary, 300, true)).toEqual({
+      itemID: "anchor",
+      scrollTop: 286,
+    });
+    expect(caughtUpJumpPlan(undefined, 300, false)).toBeUndefined();
+    expect(caughtUpJumpPlan(boundary, undefined, false)).toBeUndefined();
+  });
+
+  it("recomputes the boundary after m-style toggles and undo", () => {
+    const initial = [make(0), make(1), { ...make(2), read: true }, make(3)];
+    const marked = updateRead(initial, ["1"], true);
+    const undone = updateRead(marked, ["1"], false);
+    const noReads = updateRead(undone, ["2"], false);
+
+    expect(
+      caughtUpBoundary("all-items", "chrono", initial, initial)?.count,
+    ).toBe(2);
+    expect(caughtUpBoundary("all-items", "chrono", marked, marked)).toEqual({
+      count: 1,
+      beforeItemID: "1",
+    });
+    expect(caughtUpBoundary("all-items", "chrono", undone, undone)?.count).toBe(
+      2,
+    );
+    expect(
+      caughtUpBoundary("all-items", "chrono", noReads, noReads),
+    ).toBeUndefined();
   });
 
   it("only returns newly fully-passed rows", () => {
@@ -99,6 +239,49 @@ describe("read state", () => {
 
   it("marks a user-scrolled long list at the bottom", () => {
     expect(shouldMarkAtBottom(true, 499, 500, 1_000)).toBe(true);
+  });
+
+  it("returns zero read candidates when all-items is scrolled", () => {
+    const rows = justify(
+      Array.from({ length: 18 }, (_, i) => make(i)),
+      500,
+    );
+    expect(
+      scrollReadCandidates(
+        "all-items",
+        rows,
+        rows[2].top + rows[2].height + 1,
+        500,
+        2_000,
+        true,
+        new Set(),
+        new Set(),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps scroll-past candidates unchanged in the unread view", () => {
+    const rows = justify(
+      Array.from({ length: 18 }, (_, i) => make(i)),
+      500,
+    );
+    const scrollTop = rows[2].top + rows[2].height + 1;
+    expect(
+      scrollReadCandidates(
+        "unread",
+        rows,
+        scrollTop,
+        500,
+        2_000,
+        true,
+        new Set([rows[0].cells[0].item.item_id]),
+        new Set([rows[1].cells[0].item.item_id]),
+      ),
+    ).toEqual([
+      ...rows[0].cells.slice(1).map((cell) => cell.item.item_id),
+      ...rows[1].cells.slice(1).map((cell) => cell.item.item_id),
+      ...rows[2].cells.map((cell) => cell.item.item_id),
+    ]);
   });
 
   it("keeps paging before the end card appears", () => {

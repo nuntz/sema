@@ -13,15 +13,18 @@ import { Icon } from "../components/Icon";
 import { justify, totalHeight, visibleRows } from "../layout/justified";
 import { type LayoutDirection, nearestCell } from "../layout/navigation";
 import {
-  fullyPassedRows,
-  intersectingRowIDs,
-  readStateEnabled,
+  caughtUpBoundary,
+  caughtUpJumpPlan,
+  caughtUpLabel,
+  endMarkActionEnabled,
+  gridReadStateContext,
+  readVisualState,
+  scrollReadCandidates,
   shouldLoadNextPage,
-  shouldMarkAtBottom,
   shouldShowEndCard,
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
-import type { Item } from "../types";
+import type { Item, Order } from "../types";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -42,6 +45,9 @@ interface GridProps {
   active: boolean;
   hasMore: boolean;
   archive: boolean;
+  unreadOnly: boolean;
+  order: Order;
+  readStateItems: Item[];
   linkActionID: string;
   pendingNewCount: number;
   onFocus(id: string): void;
@@ -57,6 +63,7 @@ interface GridProps {
   onLoadMore(): void;
   onToggleOrder(): void;
   onUndo(): void;
+  onCaughtUpUnavailable(): void;
   onInsertNew(): void;
   onRefresh(): Promise<number>;
 }
@@ -84,6 +91,7 @@ export function Grid(props: GridProps) {
   let pullTracking = false;
   let pullWasReady = false;
   let refreshNoticeTimer: number | undefined;
+  let jumpWashTimer: number | undefined;
   const refreshGate = new RefreshGate();
   let userScrolling = false;
   let programmaticScrolling = false;
@@ -99,24 +107,72 @@ export function Grid(props: GridProps) {
     "idle" | "pulling" | "ready" | "fetching" | "landed" | "up-to-date"
   >("idle");
   const [refreshCount, setRefreshCount] = createSignal(0);
+  const [jumpLandedID, setJumpLandedID] = createSignal("");
   const liveItems = createMemo(
     () => new Map(props.items.map((item) => [item.item_id, item])),
   );
-  const rows = createMemo(() => {
-    props.layoutKey;
-    return justify(
-      untrack(() => props.items),
-      Math.max(0, width() - (width() < 700 ? 24 : 32)),
-      props.hasMore,
-    );
+  const readContext = createMemo(() =>
+    gridReadStateContext(props.archive, props.unreadOnly),
+  );
+  const caughtUp = createMemo(() =>
+    caughtUpBoundary(
+      readContext(),
+      props.order,
+      props.readStateItems,
+      props.items,
+    ),
+  );
+  const contentWidth = createMemo(() =>
+    Math.max(0, width() - (width() < 700 ? 24 : 32)),
+  );
+  const dividerHeight = createMemo(() => {
+    if (contentWidth() < 310) return 40;
+    return width() < 700 ? 24 : 28;
   });
+  const layout = createMemo(() => {
+    props.layoutKey;
+    const items = untrack(() => props.items);
+    const boundary = caughtUp();
+    if (!boundary) {
+      const rows = justify(items, contentWidth(), props.hasMore);
+      return { rows, height: totalHeight(rows) };
+    }
+
+    const beforeIndex = boundary.beforeItemID
+      ? items.findIndex((item) => item.item_id === boundary.beforeItemID)
+      : items.length;
+    if (beforeIndex < 0) {
+      const rows = justify(items, contentWidth(), props.hasMore);
+      return { rows, height: totalHeight(rows) };
+    }
+
+    const above = justify(items.slice(0, beforeIndex), contentWidth(), true);
+    const aboveHeight = totalHeight(above);
+    const below = justify(
+      items.slice(beforeIndex),
+      contentWidth(),
+      props.hasMore,
+    ).map((row) => ({
+      ...row,
+      top: row.top + aboveHeight + dividerHeight(),
+    }));
+    const rows = [...above, ...below];
+    return {
+      rows,
+      dividerTop: aboveHeight + 14,
+      height:
+        below.length > 0 ? totalHeight(rows) : aboveHeight + dividerHeight(),
+    };
+  });
+  const rows = createMemo(() => layout().rows);
+  const dividerTop = createMemo(() => layout().dividerTop);
   const visible = createMemo(() =>
     visibleRows(rows(), scrollTop(), viewportHeight()),
   );
   const unreadIDs = createMemo(() =>
     props.items.filter((item) => !item.read).map((item) => item.item_id),
   );
-  const endTop = createMemo(() => totalHeight(rows()) + 28);
+  const endTop = createMemo(() => layout().height + 28);
   const canvasHeight = createMemo(
     () => endTop() + (props.hasMore ? 0 : viewportHeight()),
   );
@@ -275,42 +331,21 @@ export function Grid(props: GridProps) {
   const processScroll = () => {
     const top = scroller.scrollTop;
     setScrollTop(top);
-    const ids = new Set<string>();
-    if (
-      readStateEnabled(props.archive) &&
-      userScrolling &&
-      !programmaticScrolling
-    ) {
-      const passed = fullyPassedRows(rows(), -1, top);
-      for (const row of passed.rows) {
-        for (const cell of row.cells) {
-          const id = cell.item.item_id;
-          if (passedIDs.has(id) || liveItems().get(id)?.read) continue;
-          passedIDs.add(id);
-          ids.add(id);
-        }
-      }
-      if (
-        shouldMarkAtBottom(
-          true,
-          top,
-          scroller.clientHeight,
-          scroller.scrollHeight,
-        )
-      ) {
-        for (const id of intersectingRowIDs(
-          rows(),
-          top,
-          scroller.clientHeight,
-          14,
-        )) {
-          if (passedIDs.has(id) || liveItems().get(id)?.read) continue;
-          passedIDs.add(id);
-          ids.add(id);
-        }
-      }
-    }
-    if (ids.size > 0) props.onItemsPassed([...ids]);
+    const alreadyRead = new Set(
+      props.items.filter((item) => item.read).map((item) => item.item_id),
+    );
+    const ids = scrollReadCandidates(
+      readContext(),
+      rows(),
+      top,
+      scroller.clientHeight,
+      scroller.scrollHeight,
+      userScrolling && !programmaticScrolling,
+      passedIDs,
+      alreadyRead,
+    );
+    for (const id of ids) passedIDs.add(id);
+    if (ids.length > 0) props.onItemsPassed(ids);
     if (
       shouldLoadNextPage(
         props.hasMore,
@@ -359,6 +394,7 @@ export function Grid(props: GridProps) {
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
       window.clearTimeout(refreshNoticeTimer);
+      window.clearTimeout(jumpWashTimer);
     });
   });
 
@@ -404,11 +440,15 @@ export function Grid(props: GridProps) {
     endRequested = false;
     props.onFocus(id);
     requestAnimationFrame(() => {
-      programmaticScroll(() =>
-        scroller
-          .querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`)
-          ?.scrollIntoView({ block: "nearest", inline: "nearest" }),
-      );
+      programmaticScroll(() => {
+        const cell = scroller.querySelector<HTMLElement>(
+          `[data-item-id="${CSS.escape(id)}"]`,
+        );
+        cell?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        cell
+          ?.querySelector<HTMLButtonElement>(".cell-main")
+          ?.focus({ preventScroll: true });
+      });
     });
   };
 
@@ -434,6 +474,32 @@ export function Grid(props: GridProps) {
   const goEnd = () => {
     endRequested = true;
     continueToEnd();
+  };
+
+  const jumpToCaughtUp = () => {
+    const jump = caughtUpJumpPlan(caughtUp(), dividerTop(), width() < 700);
+    if (!jump) {
+      props.onCaughtUpUnavailable();
+      return;
+    }
+
+    endRequested = false;
+    props.onFocus(jump.itemID);
+    window.clearTimeout(jumpWashTimer);
+    setJumpLandedID("");
+    programmaticScroll(() => {
+      scroller.scrollTop = jump.scrollTop;
+      setScrollTop(jump.scrollTop);
+    });
+    requestAnimationFrame(() => {
+      setJumpLandedID(jump.itemID);
+      scroller
+        .querySelector<HTMLButtonElement>(
+          `[data-item-id="${CSS.escape(jump.itemID)}"] .cell-main`,
+        )
+        ?.focus({ preventScroll: true });
+      jumpWashTimer = window.setTimeout(() => setJumpLandedID(""), 500);
+    });
   };
 
   const markRemaining = () => {
@@ -498,6 +564,9 @@ export function Grid(props: GridProps) {
         break;
       case "mark-below":
         if (item && !props.archive) props.onMarkBelow(item);
+        break;
+      case "caught-up":
+        jumpToCaughtUp();
         break;
       case "end":
         goEnd();
@@ -621,12 +690,17 @@ export function Grid(props: GridProps) {
                   const explanation = createMemo(() =>
                     condensedLarge() ? shortWhyText(item()) : whyText(item()),
                   );
+                  const readVisuals = createMemo(() =>
+                    readVisualState(readContext(), item().read),
+                  );
                   return (
                     <article
                       class="grid-cell"
                       classList={{
                         focused: item().item_id === props.focusedID,
-                        read: readStateEnabled(props.archive) && item().read,
+                        read: readVisuals().dimmed,
+                        "jump-landed": item().item_id === jumpLandedID(),
+                        "all-items-cell": readContext() === "all-items",
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
                         "video-cell": item().media_type === "video",
@@ -688,33 +762,36 @@ export function Grid(props: GridProps) {
                       </Show>
                       <div class="cell-scrim" />
                       <div class="cell-corner" aria-hidden="true">
-                        <Show
-                          when={props.archive}
-                          fallback={
+                        <UnreadDot visible={readVisuals().unreadDot} />
+                        <div class="cell-corner-meta">
+                          <Show
+                            when={props.archive}
+                            fallback={
+                              <span
+                                class="cell-age"
+                                title={publishedDate(item().published_ts)}
+                              >
+                                {relativeTime(item().published_ts)}
+                              </span>
+                            }
+                          >
                             <span
                               class="cell-age"
-                              title={publishedDate(item().published_ts)}
+                              title={publishedDate(
+                                item().hearted_ts || item().published_ts,
+                              )}
                             >
-                              {relativeTime(item().published_ts)}
+                              {`kept ${relativeTime(
+                                item().hearted_ts || item().published_ts,
+                              )}`}
                             </span>
-                          }
-                        >
-                          <span
-                            class="cell-age"
-                            title={publishedDate(
-                              item().hearted_ts || item().published_ts,
-                            )}
-                          >
-                            {`kept ${relativeTime(
-                              item().hearted_ts || item().published_ts,
-                            )}`}
-                          </span>
-                        </Show>
-                        <Show when={!props.archive}>
-                          <span class="cell-rank">
-                            {rankBand(cell.effectiveSize)}
-                          </span>
-                        </Show>
+                          </Show>
+                          <Show when={!props.archive}>
+                            <span class="cell-rank">
+                              {rankBand(cell.effectiveSize)}
+                            </span>
+                          </Show>
+                        </div>
                       </div>
                       <Show when={props.archive}>
                         <span class="kept-marker">
@@ -756,7 +833,7 @@ export function Grid(props: GridProps) {
                           }
                           props.onOpen(item());
                         }}
-                        aria-label={`Open ${item().title}`}
+                        aria-label={`Open ${item().title}${readVisuals().unreadDot ? ", unread" : ""}`}
                       >
                         <div class="cell-copy">
                           <h2>{item().title}</h2>
@@ -821,9 +898,32 @@ export function Grid(props: GridProps) {
             </div>
           )}
         </For>
+        <Show when={dividerTop()} keyed>
+          {(top) => (
+            <div
+              class="caughtup-shell"
+              style={{ top: `${top}px`, height: `${dividerHeight()}px` }}
+            >
+              <div class="caughtup">
+                <hr
+                  class="caughtup-semantic"
+                  aria-label={caughtUpLabel(caughtUp()?.count ?? 0)}
+                />
+                <i />
+                <span class="caughtup-label" aria-hidden="true">
+                  NEW SINCE YOU LAST CAUGHT UP{" "}
+                  <span class="caughtup-separator">·</span>{" "}
+                  <span class="caughtup-count">{caughtUp()?.count}</span>
+                </span>
+                <i />
+              </div>
+            </div>
+          )}
+        </Show>
         <Show when={shouldShowEndCard(props.hasMore)}>
           <section
             class="end-of-feed"
+            classList={{ "no-action": !endMarkActionEnabled(readContext()) }}
             style={{
               top: `${endTop()}px`,
               "min-height": `${viewportHeight()}px`,
@@ -836,13 +936,15 @@ export function Grid(props: GridProps) {
                   <>
                     <h2>You&apos;re all caught up</h2>
                     <p>Everything currently loaded is behind you.</p>
-                    <button
-                      ref={endButton}
-                      type="button"
-                      onClick={markRemaining}
-                    >
-                      Mark remaining {unreadIDs().length} as read
-                    </button>
+                    <Show when={endMarkActionEnabled(readContext())}>
+                      <button
+                        ref={endButton}
+                        type="button"
+                        onClick={markRemaining}
+                      >
+                        Mark remaining {unreadIDs().length} as read
+                      </button>
+                    </Show>
                   </>
                 }
               >
@@ -954,6 +1056,35 @@ export function Grid(props: GridProps) {
         </Show>
       </Portal>
     </div>
+  );
+}
+
+function UnreadDot(props: { visible: boolean }) {
+  let exitTimer: number | undefined;
+  const [rendered, setRendered] = createSignal(props.visible);
+  const [exiting, setExiting] = createSignal(false);
+
+  createEffect(() => {
+    const visible = props.visible;
+    window.clearTimeout(exitTimer);
+    if (visible) {
+      setRendered(true);
+      setExiting(false);
+      return;
+    }
+    if (!untrack(rendered)) return;
+    setExiting(true);
+    exitTimer = window.setTimeout(() => {
+      setRendered(false);
+      setExiting(false);
+    }, 140);
+  });
+  onCleanup(() => window.clearTimeout(exitTimer));
+
+  return (
+    <Show when={rendered()}>
+      <span class="unread-dot" classList={{ exiting: exiting() }} />
+    </Show>
   );
 }
 
