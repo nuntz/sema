@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/store"
 	"github.com/nuntz/sema/internal/vectorstore"
@@ -20,7 +23,9 @@ import (
 type apiDynamo struct {
 	*dynamodb.Client
 	batchGet func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error)
+	delete   func(*dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error)
 	getItem  func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
+	putItem  func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error)
 	query    func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
 	update   func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
 }
@@ -93,8 +98,16 @@ func (f *apiDynamo) BatchGetItem(_ context.Context, input *dynamodb.BatchGetItem
 	return f.batchGet(input)
 }
 
+func (f *apiDynamo) DeleteItem(_ context.Context, input *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
+	return f.delete(input)
+}
+
 func (f *apiDynamo) GetItem(_ context.Context, input *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
 	return f.getItem(input)
+}
+
+func (f *apiDynamo) PutItem(_ context.Context, input *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
+	return f.putItem(input)
 }
 
 func (f *apiDynamo) Query(_ context.Context, input *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
@@ -103,6 +116,104 @@ func (f *apiDynamo) Query(_ context.Context, input *dynamodb.QueryInput, _ ...fu
 
 func (f *apiDynamo) UpdateItem(_ context.Context, input *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
 	return f.update(input)
+}
+
+func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
+	profile, err := attributevalue.MarshalMap(domain.User{
+		PK: "U#reader", SK: "PROFILE", Email: "reader@example.com", OrderPref: domain.OrderInterest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessionItem map[string]types.AttributeValue
+	var deleted map[string]types.AttributeValue
+	db := &apiDynamo{
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			sk := input.Key["SK"].(*types.AttributeValueMemberS).Value
+			if sk == "PROFILE" {
+				return &dynamodb.GetItemOutput{Item: profile}, nil
+			}
+			if sk == "MODEL" {
+				return &dynamodb.GetItemOutput{}, nil
+			}
+			return &dynamodb.GetItemOutput{Item: sessionItem}, nil
+		},
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			sessionItem = input.Item
+			return &dynamodb.PutItemOutput{}, nil
+		},
+		update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			return &dynamodb.UpdateItemOutput{}, nil
+		},
+		delete: func(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+			deleted = input.Key
+			return &dynamodb.DeleteItemOutput{}, nil
+		},
+	}
+	repository := store.New(db, nil, "table", "", "")
+	server := &server{
+		store: repository, sessions: auth.NewSessions(repository),
+		verifyGoogle: func(_ context.Context, credential string) (auth.Claims, error) {
+			if credential != "google-token" {
+				t.Fatalf("credential = %q", credential)
+			}
+			return auth.Claims{Subject: "reader", Email: "reader@example.com"}, nil
+		},
+	}
+	created, err := server.handle(context.Background(), apiRequest(http.MethodPost, "/api/session", `{"credential":"google-token"}`))
+	if err != nil || created.StatusCode != http.StatusOK {
+		t.Fatalf("create session = %d, %s, %v", created.StatusCode, created.Body, err)
+	}
+	if len(created.Cookies) != 1 || !strings.HasPrefix(created.Cookies[0], auth.SessionCookieName+"=") {
+		t.Fatalf("create cookies = %#v", created.Cookies)
+	}
+	setCookie, err := http.ParseSetCookie(created.Cookies[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setCookie.Path != "/api" || setCookie.MaxAge != int(auth.SessionLifetime.Seconds()) || !setCookie.Secure || !setCookie.HttpOnly || setCookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("session cookie = %#v", setCookie)
+	}
+	if sessionItem["PK"].(*types.AttributeValueMemberS).Value == "SESSION#"+setCookie.Value {
+		t.Fatal("session record used the raw credential as its key")
+	}
+
+	request := apiRequest(http.MethodDelete, "/api/session", "")
+	request.Cookies = []string{auth.SessionCookieName + "=" + setCookie.Value}
+	cleared, err := server.handle(context.Background(), request)
+	if err != nil || cleared.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete session = %d, %s, %v", cleared.StatusCode, cleared.Body, err)
+	}
+	if len(cleared.Cookies) != 1 || !strings.Contains(cleared.Cookies[0], "Max-Age=0") {
+		t.Fatalf("clear cookies = %#v", cleared.Cookies)
+	}
+	if deleted["PK"].(*types.AttributeValueMemberS).Value != sessionItem["PK"].(*types.AttributeValueMemberS).Value {
+		t.Fatalf("deleted key = %#v, session = %#v", deleted, sessionItem)
+	}
+}
+
+func TestHandleRejectsCrossSiteMutationsBeforeAuthentication(t *testing.T) {
+	request := apiRequest(http.MethodPost, "/api/session", `{"credential":"ignored"}`)
+	request.Headers = map[string]string{"Sec-Fetch-Site": "cross-site"}
+	got, err := (&server{}).handle(context.Background(), request)
+	if err != nil || got.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-site response = %d, %s, %v", got.StatusCode, got.Body, err)
+	}
+	for _, site := range []string{"", "same-origin", "none"} {
+		if crossSiteMutation(http.MethodPost, map[string]string{"sec-fetch-site": site}) {
+			t.Errorf("site %q was rejected", site)
+		}
+	}
+	if crossSiteMutation(http.MethodGet, map[string]string{"sec-fetch-site": "cross-site"}) {
+		t.Fatal("cross-site GET was rejected")
+	}
+}
+
+func apiRequest(method, path, body string) events.APIGatewayV2HTTPRequest {
+	return events.APIGatewayV2HTTPRequest{
+		RawPath: path, Body: body,
+		RequestContext: events.APIGatewayV2HTTPRequestContext{HTTP: events.APIGatewayV2HTTPRequestContextHTTPDescription{Method: method}},
+	}
 }
 
 func TestParseIncludeRead(t *testing.T) {

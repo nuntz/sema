@@ -81,6 +81,67 @@ func (f *fakeDynamoDB) TransactWriteItems(_ context.Context, input *dynamodb.Tra
 	return &dynamodb.TransactWriteItemsOutput{}, nil
 }
 
+func TestSessionStoreLifecycleUsesHashedPrimaryKey(t *testing.T) {
+	var stored map[string]types.AttributeValue
+	var renewal *dynamodb.UpdateItemInput
+	var deletion *dynamodb.DeleteItemInput
+	db := &fakeDynamoDB{
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			stored = input.Item
+			if aws.ToString(input.ConditionExpression) != "attribute_not_exists(PK)" {
+				t.Fatalf("put condition = %q", aws.ToString(input.ConditionExpression))
+			}
+			return &dynamodb.PutItemOutput{}, nil
+		},
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("session lookup was not consistent")
+			}
+			return &dynamodb.GetItemOutput{Item: stored}, nil
+		},
+		updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			renewal = input
+			return &dynamodb.UpdateItemOutput{}, nil
+		},
+		deleteItem: func(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+			deletion = input
+			return &dynamodb.DeleteItemOutput{}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+	record := Session{Subject: "reader", Email: "reader@example.com", CreatedAt: now.Unix(), RenewedAt: now.Unix(), ExpiresAt: now.Add(30 * 24 * time.Hour).Unix(), TTL: now.Add(30 * 24 * time.Hour).Unix()}
+	if err := repository.PutSession(context.Background(), "hashed-id", record); err != nil {
+		t.Fatal(err)
+	}
+	if stored["PK"].(*types.AttributeValueMemberS).Value != "SESSION#hashed-id" || stored["SK"].(*types.AttributeValueMemberS).Value != sessionSK {
+		t.Fatalf("session key = %#v", stored)
+	}
+	if _, exists := stored["session_id"]; exists {
+		t.Fatal("raw session ID was persisted")
+	}
+	got, err := repository.Session(context.Background(), "hashed-id")
+	if err != nil || got.Subject != record.Subject || got.Email != record.Email || got.TTL != record.TTL {
+		t.Fatalf("Session = %#v, %v", got, err)
+	}
+	renewedAt, expiresAt := now.Add(25*time.Hour).Unix(), now.Add(31*24*time.Hour).Unix()
+	if err := repository.RenewSession(context.Background(), "hashed-id", renewedAt, expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if aws.ToString(renewal.UpdateExpression) != "SET renewed_at = :renewed, expires_at = :expires, #ttl = :expires" || aws.ToString(renewal.ConditionExpression) != "attribute_exists(PK) AND #ttl > :renewed" {
+		t.Fatalf("renewal = %#v", renewal)
+	}
+	if renewal.ExpressionAttributeValues[":expires"].(*types.AttributeValueMemberN).Value != strconv.FormatInt(expiresAt, 10) {
+		t.Fatalf("renewal expiry = %#v", renewal.ExpressionAttributeValues)
+	}
+	if err := repository.DeleteSession(context.Background(), "hashed-id"); err != nil {
+		t.Fatal(err)
+	}
+	if deletion.Key["PK"].(*types.AttributeValueMemberS).Value != "SESSION#hashed-id" || deletion.Key["SK"].(*types.AttributeValueMemberS).Value != sessionSK {
+		t.Fatalf("delete key = %#v", deletion.Key)
+	}
+}
+
 func TestDueFeedsQueriesSparseIndex(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	feeds := []domain.Feed{

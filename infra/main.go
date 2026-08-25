@@ -220,7 +220,7 @@ func main() {
 		}
 		apiLambda, err := function(ctx, "api", apiRole, 256, 29, 0, merge(common, pulumi.StringMap{
 			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
-			"YOUTUBE_DISCOVERY_ENABLED": pulumi.Sprintf("%t", youtubeDiscoveryEnabled),
+			"GOOGLE_CLIENT_ID": pulumi.String(googleClientID), "YOUTUBE_DISCOVERY_ENABLED": pulumi.Sprintf("%t", youtubeDiscoveryEnabled),
 		}))
 		if err != nil {
 			return err
@@ -279,13 +279,6 @@ func main() {
 		if err != nil {
 			return err
 		}
-		authorizer, err := apigatewayv2.NewAuthorizer(ctx, "google", &apigatewayv2.AuthorizerArgs{
-			ApiId: httpAPI.ID(), AuthorizerType: pulumi.String("JWT"), IdentitySources: pulumi.StringArray{pulumi.String("$request.header.Authorization")},
-			JwtConfiguration: &apigatewayv2.AuthorizerJwtConfigurationArgs{Issuer: pulumi.String("https://accounts.google.com"), Audiences: pulumi.StringArray{pulumi.String(googleClientID)}},
-		})
-		if err != nil {
-			return err
-		}
 		integration, err := apigatewayv2.NewIntegration(ctx, "api-integration", &apigatewayv2.IntegrationArgs{
 			ApiId: httpAPI.ID(), IntegrationType: pulumi.String("AWS_PROXY"), IntegrationUri: apiLambda.Arn, PayloadFormatVersion: pulumi.String("2.0"), TimeoutMilliseconds: pulumi.Int(29000),
 		})
@@ -294,7 +287,7 @@ func main() {
 		}
 		for name, routeKey := range map[string]string{"api-root": "ANY /api", "api-proxy": "ANY /api/{proxy+}"} {
 			if _, err := apigatewayv2.NewRoute(ctx, name, &apigatewayv2.RouteArgs{
-				ApiId: httpAPI.ID(), RouteKey: pulumi.String(routeKey), Target: pulumi.Sprintf("integrations/%s", integration.ID()), AuthorizationType: pulumi.String("JWT"), AuthorizerId: authorizer.ID(),
+				ApiId: httpAPI.ID(), RouteKey: pulumi.String(routeKey), Target: pulumi.Sprintf("integrations/%s", integration.ID()), AuthorizationType: pulumi.String("NONE"),
 			}); err != nil {
 				return err
 			}
@@ -600,7 +593,7 @@ func contentBehavior(pattern, origin string, trusted pulumi.StringInput) *cloudf
 }
 
 func apiBehavior(pattern, origin string) *cloudfront.DistributionOrderedCacheBehaviorArgs {
-	return &cloudfront.DistributionOrderedCacheBehaviorArgs{PathPattern: pulumi.String(pattern), TargetOriginId: pulumi.String(origin), ViewerProtocolPolicy: pulumi.String("https-only"), AllowedMethods: pulumi.StringArray{pulumi.String("GET"), pulumi.String("HEAD"), pulumi.String("OPTIONS"), pulumi.String("PUT"), pulumi.String("POST"), pulumi.String("PATCH"), pulumi.String("DELETE")}, CachedMethods: pulumi.StringArray{pulumi.String("GET"), pulumi.String("HEAD")}, Compress: pulumi.Bool(true), MinTtl: pulumi.Int(0), DefaultTtl: pulumi.Int(0), MaxTtl: pulumi.Int(0), ForwardedValues: &cloudfront.DistributionOrderedCacheBehaviorForwardedValuesArgs{QueryString: pulumi.Bool(true), Headers: pulumi.StringArray{pulumi.String("Authorization"), pulumi.String("Content-Type")}, Cookies: &cloudfront.DistributionOrderedCacheBehaviorForwardedValuesCookiesArgs{Forward: pulumi.String("all")}}}
+	return &cloudfront.DistributionOrderedCacheBehaviorArgs{PathPattern: pulumi.String(pattern), TargetOriginId: pulumi.String(origin), ViewerProtocolPolicy: pulumi.String("https-only"), AllowedMethods: pulumi.StringArray{pulumi.String("GET"), pulumi.String("HEAD"), pulumi.String("OPTIONS"), pulumi.String("PUT"), pulumi.String("POST"), pulumi.String("PATCH"), pulumi.String("DELETE")}, CachedMethods: pulumi.StringArray{pulumi.String("GET"), pulumi.String("HEAD")}, Compress: pulumi.Bool(true), MinTtl: pulumi.Int(0), DefaultTtl: pulumi.Int(0), MaxTtl: pulumi.Int(0), ForwardedValues: &cloudfront.DistributionOrderedCacheBehaviorForwardedValuesArgs{QueryString: pulumi.Bool(true), Headers: pulumi.StringArray{pulumi.String("Content-Type"), pulumi.String("Sec-Fetch-Site")}, Cookies: &cloudfront.DistributionOrderedCacheBehaviorForwardedValuesCookiesArgs{Forward: pulumi.String("all")}}}
 }
 
 func merge(maps ...pulumi.StringMap) pulumi.StringMap {

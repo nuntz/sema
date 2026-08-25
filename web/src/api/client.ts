@@ -16,17 +16,24 @@ export interface FeedImportResult {
 
 export class UnauthorizedError extends Error {}
 
-export class APIClient {
-  constructor(private readonly token: () => string) {}
+let sessionBootstrap: MeResponse | undefined;
 
+export function primeSessionBootstrap(value: MeResponse): void {
+  sessionBootstrap = value;
+}
+
+export function clearSessionBootstrap(): void {
+  sessionBootstrap = undefined;
+}
+
+export class APIClient {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${this.token()}`);
     if (init.body && !(init.body instanceof FormData))
       headers.set("Content-Type", "application/json");
     const response = await fetch(`/api${path}`, { ...init, headers });
     if (response.status === 401)
-      throw new UnauthorizedError("Your Google session expired.");
+      throw new UnauthorizedError("Your Sema session expired.");
     if (!response.ok) {
       const payload = await response
         .json()
@@ -38,6 +45,11 @@ export class APIClient {
   }
 
   me(): Promise<MeResponse> {
+    if (sessionBootstrap) {
+      const value = sessionBootstrap;
+      sessionBootstrap = undefined;
+      return Promise.resolve(value);
+    }
     return this.request("/me");
   }
 
@@ -209,11 +221,9 @@ export class APIClient {
   }
 
   async exportOPML(): Promise<Blob> {
-    const response = await fetch("/api/feeds/export.opml", {
-      headers: { Authorization: `Bearer ${this.token()}` },
-    });
+    const response = await fetch("/api/feeds/export.opml");
     if (response.status === 401)
-      throw new UnauthorizedError("Your Google session expired.");
+      throw new UnauthorizedError("Your Sema session expired.");
     if (!response.ok) throw new Error(`Export failed (${response.status})`);
     return response.blob();
   }

@@ -51,7 +51,7 @@ pulumi up
 
 `Pulumi.dev.yaml` and `Pulumi.prod.yaml` are checked in with `aws:region: us-east-1`, so the client ID is the only configuration a new stack needs. `Pulumi.yaml` declares `sema:googleClientId` as a secret, so set it with `--secret`.
 
-The stack exports `url`, `cloudfrontUrl`, `distributionId`, `appBucket`, `contentBucket`, and `apiEndpoint`. Add the `url` HTTPS origin to the Google OAuth client's authorized JavaScript origins before signing in; sign-in fails until that origin is registered. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build automatically.
+The stack exports `url`, `cloudfrontUrl`, `distributionId`, `appBucket`, `contentBucket`, and `apiEndpoint`. Add the `url` HTTPS origin to the Google OAuth client's authorized JavaScript origins before signing in; sign-in fails until that origin is registered. The OAuth client ID is public browser configuration; Pulumi injects it into the Vite build and API Lambda automatically.
 
 ### Custom domain
 
@@ -70,7 +70,9 @@ When DNS is hosted elsewhere, omit `sema:route53ZoneId`. Run a targeted update f
 
 After the domain resolves, add `https://reader.example.com` (using your configured name) to the Google OAuth web client’s **Authorized JavaScript origins**. If the GIS client is separately origin-restricted, update that configuration too. Keep the CloudFront origin registered until every installed PWA has moved to the custom origin.
 
-Pulumi generates an RSA key in encrypted stack state, registers its public half with CloudFront, and supplies the secret half only to the API Lambda. Authenticated API responses refresh one-hour signed cookies scoped to `/bodies/<sub>/`, `/media/<sub>/`, and `/archive/<sub>/`, which are also the object keys in the content bucket; favicons are shared public assets. S3 itself remains private behind origin access control.
+Google Identity Services is used only for initial sign-in. The API verifies that ID token once and exchanges it for a 30-day, sliding Sema session in the Secure, HttpOnly, first-party `sema_session` cookie; the browser neither stores the Google token nor sends it on later API calls. Session records contain only a SHA-256 hash of the random credential and are renewed at most once per day. Applying this auth change requires `pulumi up` because it removes the API Gateway JWT authorizer and adds `GOOGLE_CLIENT_ID` to the API Lambda environment.
+
+Pulumi generates an RSA key in encrypted stack state, registers its public half with CloudFront, and supplies the secret half only to the API Lambda. Authenticated API responses also refresh one-hour signed cookies scoped to `/bodies/<sub>/`, `/media/<sub>/`, and `/archive/<sub>/`, which are the object keys in the content bucket; favicons are shared public assets. S3 itself remains private behind origin access control.
 
 `pulumi up` runs the pinned Bun install and builds the Lambda archives and SPA before registering their assets, so a clean checkout does not need a separate build command. `make deploy` is an equivalent shortcut from the repository root.
 
@@ -198,7 +200,9 @@ EventBridge -> scheduler -> feeds-q -> feed-worker -> items-q -> item-worker
                             DLQ         DynamoDB     DynamoDB + S3 + Bedrock
 
 browser -> CloudFront -> S3 app/content
-                    \-> HTTP API (Google JWT) -> api Lambda
+                    \-> HTTP API -> api Lambda (Sema session cookie)
+
+Google GIS -> POST /api/session (one-time ID-token verification)
 
 EventBridge (09:00 UTC) -> rescore Lambda -> MODEL + live item scores
 EventBridge (weekly) -> vector-cleanup Lambda -> expired live vectors

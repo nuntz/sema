@@ -7,11 +7,7 @@ const root = document.getElementById("root");
 if (!root) throw new Error("Sema root element is missing");
 
 render(
-  () => (
-    <AuthGate>
-      {(token, signOut) => <App token={token} signOut={signOut} />}
-    </AuthGate>
-  ),
+  () => <AuthGate>{(signOut) => <App signOut={signOut} />}</AuthGate>,
   root,
 );
 

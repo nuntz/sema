@@ -49,6 +49,8 @@ type queueAPI interface {
 
 type server struct {
 	store           *store.Store
+	sessions        *auth.Sessions
+	verifyGoogle    func(context.Context, string) (auth.Claims, error)
 	queue           queueAPI
 	feedsURL        string
 	itemsURL        string
@@ -75,19 +77,34 @@ type importFeedsResult struct {
 }
 
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	claims, err := auth.FromRequest(request)
-	if err != nil {
-		return response(http.StatusUnauthorized, map[string]string{"error": "unauthorized"}), nil
-	}
-	if err := s.store.EnsureUser(ctx, claims.Subject, claims.Email); err != nil {
-		return s.failure("ensure user", err), nil
-	}
 	path := strings.TrimSuffix(request.RawPath, "/")
 	path = strings.TrimPrefix(path, "/api")
 	if path == "" {
 		path = "/"
 	}
 	method := request.RequestContext.HTTP.Method
+	if crossSiteMutation(method, request.Headers) {
+		return response(http.StatusForbidden, map[string]string{"error": "forbidden"}), nil
+	}
+	if method == http.MethodPost && path == "/session" {
+		return s.postSession(ctx, request.Body), nil
+	}
+
+	claims, renewedCookie, err := auth.FromRequest(ctx, request, s.sessions)
+	if err != nil {
+		return response(http.StatusUnauthorized, map[string]string{"error": "unauthorized"}), nil
+	}
+	if method == http.MethodDelete && path == "/session" {
+		if err := s.sessions.DeleteRequest(ctx, request); err != nil {
+			return s.failure("delete session", err), nil
+		}
+		return events.APIGatewayV2HTTPResponse{
+			StatusCode: http.StatusNoContent, Headers: map[string]string{"cache-control": "no-store"}, Cookies: []string{auth.ClearSessionCookie()},
+		}, nil
+	}
+	if err := s.store.EnsureUser(ctx, claims.Subject, claims.Email); err != nil {
+		return s.failure("ensure user", err), nil
+	}
 
 	var result events.APIGatewayV2HTTPResponse
 	switch {
@@ -132,7 +149,54 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 	} else {
 		result.Cookies = cookies
 	}
+	if renewedCookie != "" {
+		result.Cookies = append(result.Cookies, renewedCookie)
+	}
 	return result, nil
+}
+
+func (s *server) postSession(ctx context.Context, body string) events.APIGatewayV2HTTPResponse {
+	var input struct {
+		Credential string `json:"credential"`
+	}
+	if err := decodeJSON(body, &input); err != nil || strings.TrimSpace(input.Credential) == "" || s.verifyGoogle == nil {
+		return response(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	claims, err := s.verifyGoogle(ctx, input.Credential)
+	if err != nil {
+		return response(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+	}
+	if err := s.store.EnsureUser(ctx, claims.Subject, claims.Email); err != nil {
+		return s.failure("ensure user", err)
+	}
+	result := s.getMe(ctx, claims.Subject)
+	if result.StatusCode < 200 || result.StatusCode >= 300 {
+		return result
+	}
+	contentCookies, err := s.signer.Cookies(claims.Subject, time.Now().UTC())
+	if err != nil {
+		return s.failure("sign content cookies", err)
+	}
+	sessionCookie, err := s.sessions.Create(ctx, claims)
+	if err != nil {
+		return s.failure("create session", err)
+	}
+	result.Cookies = append(contentCookies, sessionCookie)
+	return result
+}
+
+func crossSiteMutation(method string, headers map[string]string) bool {
+	if method == http.MethodGet || method == http.MethodHead {
+		return false
+	}
+	site := ""
+	for name, value := range headers {
+		if strings.EqualFold(name, "sec-fetch-site") {
+			site = strings.ToLower(strings.TrimSpace(value))
+			break
+		}
+	}
+	return site != "" && site != "same-origin" && site != "none"
 }
 
 type searchGroup struct {
@@ -900,6 +964,10 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	googleClientID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+	if googleClientID == "" {
+		panic("GOOGLE_CLIENT_ID is required")
+	}
 	rescoreFunction := strings.TrimSpace(os.Getenv("RESCORE_FUNCTION_NAME"))
 	if rescoreFunction == "" {
 		panic("RESCORE_FUNCTION_NAME is required")
@@ -915,7 +983,9 @@ func main() {
 		modelVersion = "amazon.titan-embed-text-v2:0"
 	}
 	lambda.Start((&server{
-		store: repository, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
+		store: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
+			return auth.VerifyGoogle(ctx, credential, googleClientID)
+		}, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, 10<<20)), feedCache: make(map[string]cachedFeedList),
 		embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), modelVersion),
 		vectors:  vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex),

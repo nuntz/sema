@@ -44,8 +44,8 @@ type Undo = { ids: string[] };
 type Toast = { id: number; kind: "success" | "error"; message: string };
 type HeaderMenu = "order" | "unread" | "combined" | "overflow";
 
-export function App(props: { token: () => string; signOut(): void }) {
-  const api = new APIClient(props.token);
+export function App(props: { signOut(): void }) {
+  const api = new APIClient();
   const [, setProfile] = createSignal<Profile>();
   const [heartCount, setHeartCount] = createSignal(0);
   const [order, setOrder] = createSignal<Order>("interest");

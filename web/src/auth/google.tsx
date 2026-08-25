@@ -1,4 +1,6 @@
 import { createSignal, type JSX, onCleanup, onMount, Show } from "solid-js";
+import { clearSessionBootstrap, primeSessionBootstrap } from "../api/client";
+import type { MeResponse } from "../types";
 
 declare global {
   interface Window {
@@ -14,9 +16,7 @@ declare global {
             element: HTMLElement,
             options: Record<string, unknown>,
           ): void;
-          prompt(
-            callback?: (notification: { isNotDisplayed(): boolean }) => void,
-          ): void;
+          prompt(): void;
           disableAutoSelect(): void;
         };
       };
@@ -24,53 +24,67 @@ declare global {
   }
 }
 
-const tokenKey = "sema.google-token";
+export const signedInKey = "sema.signed-in";
 
-function expiration(token: string): number {
+function hasSessionFlag(): boolean {
   try {
-    const payload = JSON.parse(
-      atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
-    );
-    return Number(payload.exp ?? 0) * 1000;
+    return localStorage.getItem(signedInKey) === "1";
   } catch {
-    return 0;
+    return false;
   }
 }
 
-function valid(token: string): boolean {
-  return expiration(token) > Date.now() + 30_000;
+export async function signInWithCredential(
+  credential: string,
+  storage?: Pick<Storage, "setItem">,
+): Promise<void> {
+  const response = await fetch("/api/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credential }),
+  });
+  if (!response.ok) throw new Error("Google Sign-In was not accepted.");
+  const bootstrap = (await response.json()) as MeResponse;
+  try {
+    (storage ?? localStorage).setItem(signedInKey, "1");
+  } catch {
+    // The cookie remains authoritative when persistent browser storage is unavailable.
+  }
+  primeSessionBootstrap(bootstrap);
+}
+
+export async function deleteSession(
+  storage?: Pick<Storage, "removeItem">,
+): Promise<void> {
+  try {
+    (storage ?? localStorage).removeItem(signedInKey);
+  } catch {
+    // The in-memory state below still returns the current page to sign-in.
+  }
+  clearSessionBootstrap();
+  const response = await fetch("/api/session", { method: "DELETE" });
+  if (!response.ok && response.status !== 401)
+    throw new Error("Sema could not end the session.");
 }
 
 export function AuthGate(props: {
-  children: (token: () => string, signOut: () => void) => JSX.Element;
+  children: (signOut: () => void) => JSX.Element;
 }) {
-  const stored = sessionStorage.getItem(tokenKey) ?? "";
-  const [token, setToken] = createSignal(valid(stored) ? stored : "");
+  const [signedIn, setSignedIn] = createSignal(hasSessionFlag());
   const [ready, setReady] = createSignal(false);
   const [error, setError] = createSignal("");
   let button: HTMLDivElement | undefined;
-  let refreshTimer: number | undefined;
 
-  const accept = (credential: string) => {
-    if (!valid(credential)) {
-      setError("Google returned an expired sign-in token.");
-      return;
+  const accept = async (credential: string) => {
+    setError("");
+    try {
+      await signInWithCredential(credential);
+      setSignedIn(true);
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Google Sign-In failed.",
+      );
     }
-    sessionStorage.setItem(tokenKey, credential);
-    setToken(credential);
-    scheduleRefresh(credential);
-  };
-
-  const scheduleRefresh = (credential: string) => {
-    window.clearTimeout(refreshTimer);
-    const delay = Math.max(
-      1_000,
-      expiration(credential) - Date.now() - 5 * 60_000,
-    );
-    refreshTimer = window.setTimeout(
-      () => window.google?.accounts.id.prompt(),
-      delay,
-    );
   };
 
   const initialize = () => {
@@ -83,10 +97,10 @@ export function AuthGate(props: {
     if (!window.google) return;
     window.google.accounts.id.initialize({
       client_id: clientID,
-      callback: (response) => accept(response.credential),
+      callback: (response) => void accept(response.credential),
       auto_select: true,
     });
-    if (button)
+    if (button && !signedIn())
       window.google.accounts.id.renderButton(button, {
         theme: "filled_black",
         size: "large",
@@ -94,8 +108,7 @@ export function AuthGate(props: {
         width: 260,
       });
     setReady(true);
-    if (token()) scheduleRefresh(token());
-    else window.google.accounts.id.prompt();
+    if (!signedIn()) window.google.accounts.id.prompt();
   };
 
   onMount(() => {
@@ -110,18 +123,20 @@ export function AuthGate(props: {
     document.head.append(script);
     onCleanup(() => script.remove());
   });
-  onCleanup(() => window.clearTimeout(refreshTimer));
 
   const signOut = () => {
-    sessionStorage.removeItem(tokenKey);
     window.google?.accounts.id.disableAutoSelect();
-    setToken("");
-    queueMicrotask(initialize);
+    setSignedIn(false);
+    setReady(false);
+    setError("");
+    void deleteSession()
+      .catch(() => undefined)
+      .finally(() => queueMicrotask(initialize));
   };
 
   return (
     <Show
-      when={token()}
+      when={signedIn()}
       fallback={
         <main class="signin-shell">
           <section class="signin-card">
@@ -140,7 +155,7 @@ export function AuthGate(props: {
         </main>
       }
     >
-      {props.children(token, signOut)}
+      {props.children(signOut)}
     </Show>
   );
 }
