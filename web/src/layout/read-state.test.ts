@@ -14,6 +14,7 @@ import {
   readVisualState,
   scrollReadCandidates,
   shouldLoadNextPage,
+  shouldLoadToFillViewport,
   shouldMarkAtBottom,
   shouldShowEndCard,
 } from "./read-state";
@@ -97,6 +98,17 @@ describe("read state", () => {
     });
   });
 
+  it("positions the unread divider from a server-loaded read anchor", () => {
+    const unread = [make(0), make(1), make(3), make(4)];
+
+    expect(
+      caughtUpBoundary("unread", "chrono", unread, unread, {
+        item_id: "anchor",
+        published_ts: make(2).published_ts,
+      }),
+    ).toEqual({ count: 2, beforeItemID: "3" });
+  });
+
   it("hides the caught-up divider outside Latest grid views", () => {
     const loaded = [make(0), { ...make(1), read: true }, make(2)];
 
@@ -132,6 +144,9 @@ describe("read state", () => {
     const newestRead = [{ ...make(0), read: true }, make(1)];
     expect(
       caughtUpBoundary("all-items", "chrono", newestRead, newestRead),
+    ).toBeUndefined();
+    expect(
+      caughtUpBoundary("unread", "chrono", unread, unread),
     ).toBeUndefined();
   });
 
@@ -171,6 +186,26 @@ describe("read state", () => {
     expect(
       caughtUpBoundary("all-items", "chrono", noReads, noReads),
     ).toBeUndefined();
+  });
+
+  it("recomputes an unread boundary against the persisted anchor", () => {
+    const initial = [make(0), make(1), make(3)];
+    const anchor = {
+      item_id: "anchor",
+      published_ts: make(2).published_ts,
+    };
+    const marked = updateRead(initial, ["1"], true);
+    const undone = updateRead(marked, ["1"], false);
+
+    expect(
+      caughtUpBoundary("unread", "chrono", initial, initial, anchor),
+    ).toEqual({ count: 2, beforeItemID: "3" });
+    expect(
+      caughtUpBoundary("unread", "chrono", marked, marked, anchor),
+    ).toEqual({ count: 1, beforeItemID: "1" });
+    expect(
+      caughtUpBoundary("unread", "chrono", undone, undone, anchor),
+    ).toEqual({ count: 2, beforeItemID: "3" });
   });
 
   it("only returns newly fully-passed rows", () => {
@@ -291,9 +326,11 @@ describe("read state", () => {
     expect(shouldShowEndCard(false)).toBe(true);
   });
 
-  it("keeps paging when a sparse unread page cannot scroll", () => {
-    expect(shouldLoadNextPage(true, 0, 800, 800)).toBe(true);
-    expect(shouldLoadNextPage(false, 0, 800, 800)).toBe(false);
+  it("fills a sparse unread viewport without prefetching scrollable content", () => {
+    expect(shouldLoadToFillViewport(true, 640, 800)).toBe(true);
+    expect(shouldLoadToFillViewport(true, 800, 800)).toBe(true);
+    expect(shouldLoadToFillViewport(true, 801, 800)).toBe(false);
+    expect(shouldLoadToFillViewport(false, 640, 800)).toBe(false);
   });
 
   it("finds the rows intersecting the viewport remainder", () => {

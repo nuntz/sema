@@ -86,6 +86,12 @@ export interface SearchResponse {
 export interface ItemsResponse {
   items: Item[];
   next_cursor: string | null;
+  read_anchor?: ReadAnchor;
+}
+
+export interface ReadAnchor {
+  item_id: string;
+  published_ts: string;
 }
 
 export interface HeartResponse {

@@ -387,25 +387,26 @@ type cursor struct {
 }
 
 func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
-	return s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, nil)
+	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, nil)
+	return items, next, err
 }
 
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages to a stable end cursor.
-func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs map[string]bool) ([]domain.Item, string, error) {
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
 	start, err := decodeCursor(encodedCursor)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	if len(start) > 0 {
 		pk, ok := start["PK"].(*types.AttributeValueMemberS)
 		_, hasScore := start["score"]
 		if !ok || pk.Value != domain.UserPK(userID) || (order == domain.OrderInterest) != hasScore {
-			return nil, "", ErrInvalidCursor
+			return nil, "", nil, ErrInvalidCursor
 		}
 	}
 	input := &dynamodb.QueryInput{
@@ -425,24 +426,22 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	}
 	items := []domain.Item{}
 	seenItemIDs := make(map[string]bool)
+	var newestRead *domain.Item
 	var last map[string]types.AttributeValue
 	for len(items) < limit {
 		input.Limit = aws.Int32(100)
 		response, err := s.db.Query(ctx, input)
 		if err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 		var page []domain.Item
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 		if err := s.ResolveRead(ctx, userID, page); err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 		for i, item := range page {
-			if !includeRead && item.Read {
-				continue
-			}
 			if allowedFeedIDs != nil && !allowedFeedIDs[item.FeedID] {
 				continue
 			}
@@ -450,6 +449,13 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 				continue
 			}
 			seenItemIDs[item.ItemID] = true
+			if item.Read && newestRead == nil {
+				anchor := item
+				newestRead = &anchor
+			}
+			if !includeRead && item.Read {
+				continue
+			}
 			items = append(items, item)
 			if len(items) == limit {
 				if i < len(page)-1 {
@@ -470,7 +476,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		input.ExclusiveStartKey = last
 	}
 	next, err := encodeCursor(last)
-	return items, next, err
+	return items, next, newestRead, err
 }
 
 func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, error) {

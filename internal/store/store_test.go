@@ -211,9 +211,45 @@ func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
 		return output, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, map[string]bool{"dev": true})
+	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, map[string]bool{"dev": true})
 	if err != nil || cursor != "" || calls != 2 || len(items) != 2 || items[0].FeedID != "dev" || items[1].FeedID != "dev" {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
+	}
+}
+
+func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T) {
+	marshal := func(id string, published time.Time) map[string]types.AttributeValue {
+		item, err := attributevalue.MarshalMap(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(published, id), ItemID: id,
+			FeedID: "feed", PublishedTS: domain.Timestamp(published), TTL: time.Now().Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	now := time.Now().UTC()
+	db := &fakeDynamoDB{
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
+				marshal("new", now),
+				marshal("anchor", now.Add(-time.Minute)),
+				marshal("old", now.Add(-2*time.Minute)),
+			}}, nil
+		},
+		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{
+				"table": {{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}}},
+			}}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil)
+	if err != nil || cursor != "" || len(items) != 2 || items[0].ItemID != "new" || items[1].ItemID != "old" {
+		t.Fatalf("items = %#v, cursor = %q, err = %v", items, cursor, err)
+	}
+	if anchor == nil || anchor.ItemID != "anchor" || !anchor.Read {
+		t.Fatalf("anchor = %#v", anchor)
 	}
 }
 

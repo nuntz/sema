@@ -426,7 +426,7 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 		return s.failure("load feeds for item filtering", err)
 	}
-	items, next, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, allowed)
+	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, allowed)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -439,7 +439,14 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	if err := s.prepareItems(ctx, userID, items); err != nil {
 		return s.failure("prepare items", err)
 	}
-	return response(http.StatusOK, map[string]any{"items": items, "next_cursor": next})
+	payload := map[string]any{"items": items, "next_cursor": next}
+	if !includeRead && readAnchor != nil {
+		payload["read_anchor"] = map[string]string{
+			"item_id":      readAnchor.ItemID,
+			"published_ts": readAnchor.PublishedTS,
+		}
+	}
+	return response(http.StatusOK, payload)
 }
 
 func (s *server) getArchive(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {

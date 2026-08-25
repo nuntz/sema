@@ -28,11 +28,9 @@ const make = (itemID: string): Item => ({
 });
 
 describe("item list", () => {
-  it("loads R# state only where the grid needs a chronological boundary", () => {
-    expect(includeReadForGrid("chrono", true)).toBe(true);
-    expect(includeReadForGrid("interest", true)).toBe(false);
-    expect(includeReadForGrid("chrono", false)).toBe(true);
-    expect(includeReadForGrid("interest", false)).toBe(true);
+  it("lets the server fill unread pages before returning them", () => {
+    expect(includeReadForGrid(true)).toBe(false);
+    expect(includeReadForGrid(false)).toBe(true);
   });
 
   it("inserts pill items above row zero without replacing existing state", () => {

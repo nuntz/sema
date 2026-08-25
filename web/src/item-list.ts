@@ -1,7 +1,7 @@
-import type { Item, Order } from "./types";
+import type { Item } from "./types";
 
-export function includeReadForGrid(order: Order, unreadOnly: boolean): boolean {
-  return !unreadOnly || order === "chrono";
+export function includeReadForGrid(unreadOnly: boolean): boolean {
+  return !unreadOnly;
 }
 
 export function mergeNewItems(current: Item[], incoming: Item[]): Item[] {

@@ -30,7 +30,14 @@ import {
   LinkActionFailure,
 } from "./link-action";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
-import type { Feed, Item, Order, Profile, SearchResponse } from "./types";
+import type {
+  Feed,
+  Item,
+  Order,
+  Profile,
+  ReadAnchor,
+  SearchResponse,
+} from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import { Grid } from "./ui/Grid";
@@ -57,6 +64,7 @@ export function App(props: { signOut(): void }) {
   const [selectedTag, setSelectedTag] = createSignal("");
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [items, setItems] = createSignal<Item[]>([]);
+  const [readAnchor, setReadAnchor] = createSignal<ReadAnchor>();
   const [gridIDs, setGridIDs] = createSignal<string[]>([]);
   const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
   const [layoutVersion, setLayoutVersion] = createSignal(0);
@@ -189,6 +197,7 @@ export function App(props: { signOut(): void }) {
     setLoading(true);
     setHasPage(false);
     setItems([]);
+    setReadAnchor();
     setGridIDs([]);
     setPendingNew([]);
     setCursor("");
@@ -199,12 +208,13 @@ export function App(props: { signOut(): void }) {
           : await api.items(
               nextOrder,
               "",
-              includeReadForGrid(nextOrder, nextUnreadOnly),
+              includeReadForGrid(nextUnreadOnly),
               nextTag,
             );
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
       setItems(pageItems);
+      setReadAnchor(page.read_anchor);
       const visibleIDs =
         nextMode === "archive"
           ? pageItems.map((item) => item.item_id)
@@ -234,7 +244,7 @@ export function App(props: { signOut(): void }) {
           : await api.items(
               order(),
               nextCursor,
-              includeReadForGrid(order(), unreadOnly()),
+              includeReadForGrid(unreadOnly()),
               selectedTag(),
             );
       if (nextCursor !== cursor()) return;
@@ -252,6 +262,7 @@ export function App(props: { signOut(): void }) {
         setGridIDs((current) => [...current, ...visible]);
         setLayoutVersion((value) => value + 1);
       }
+      if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
       setCursor(page.next_cursor ?? "");
       continueLoading = visible.length === 0 && (page.next_cursor ?? "") !== "";
     } catch (caught) {
@@ -704,7 +715,7 @@ export function App(props: { signOut(): void }) {
         const page = await api.items(
           markOrder,
           nextCursor,
-          includeReadForGrid(markOrder, unreadOnly()),
+          includeReadForGrid(unreadOnly()),
           selectedTag(),
         );
         if (version !== requestVersion || markOrder !== order()) return;
@@ -1289,7 +1300,7 @@ export function App(props: { signOut(): void }) {
           }
         >
           <Show
-            when={items().length > 0}
+            when={items().length > 0 || Boolean(readAnchor())}
             fallback={
               mode() === "archive" ? (
                 <ArchiveEmpty />
@@ -1320,6 +1331,7 @@ export function App(props: { signOut(): void }) {
               unreadOnly={unreadOnly()}
               order={order()}
               readStateItems={items()}
+              readAnchor={readAnchor()}
               linkActionID={linkActionID()}
               pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}

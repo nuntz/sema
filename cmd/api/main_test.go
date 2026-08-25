@@ -87,6 +87,68 @@ func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
 	}
 }
 
+func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
+	now := time.Now().UTC()
+	marshal := func(id string, published time.Time) map[string]types.AttributeValue {
+		item, err := attributevalue.MarshalMap(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(published, id), ItemID: id,
+			FeedID: "feed", URL: "https://example.com/" + id, Title: id,
+			PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(now),
+			SummarySource: "", Size: "S", TTL: now.Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	db := &apiDynamo{
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
+				marshal("new", now),
+				marshal("anchor", now.Add(-time.Minute)),
+				marshal("old", now.Add(-2*time.Minute)),
+			}}, nil
+		},
+		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			request := input.RequestItems["table"]
+			if aws.ToString(request.ProjectionExpression) == "SK" {
+				return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{
+					"table": {{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}}},
+				}}, nil
+			}
+			return &dynamodb.BatchGetItemOutput{}, nil
+		},
+	}
+	server := &server{
+		store: store.New(db, nil, "table", "", ""),
+		feedCache: map[string]cachedFeedList{
+			"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}},
+		},
+	}
+	got := server.getItems(context.Background(), "user", map[string]string{
+		"order": "chrono", "limit": "2",
+	})
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	var body struct {
+		Items      []domain.Item `json:"items"`
+		ReadAnchor struct {
+			ItemID      string `json:"item_id"`
+			PublishedTS string `json:"published_ts"`
+		} `json:"read_anchor"`
+	}
+	if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 2 || body.Items[0].ItemID != "new" || body.Items[1].ItemID != "old" {
+		t.Fatalf("items = %#v", body.Items)
+	}
+	if body.ReadAnchor.ItemID != "anchor" || body.ReadAnchor.PublishedTS == "" {
+		t.Fatalf("read anchor = %#v", body.ReadAnchor)
+	}
+}
+
 type apiQueue struct{ input *sqs.SendMessageBatchInput }
 
 func (q *apiQueue) SendMessageBatch(_ context.Context, input *sqs.SendMessageBatchInput, _ ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {

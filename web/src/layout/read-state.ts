@@ -1,4 +1,4 @@
-import type { Item, Order } from "../types";
+import type { Item, Order, ReadAnchor } from "../types";
 import type { LayoutRow } from "./justified";
 
 export type ReadStateContext = "unread" | "all-items" | "search" | "archive";
@@ -49,18 +49,40 @@ export function caughtUpBoundary(
   order: Order,
   loadedItems: Item[],
   visibleItems: Item[],
+  readAnchor?: ReadAnchor,
 ): CaughtUpBoundary | undefined {
   if (order !== "chrono" || (context !== "unread" && context !== "all-items"))
     return undefined;
 
-  const newestReadIndex = loadedItems.findIndex((item) => item.read);
-  if (newestReadIndex <= 0) return undefined;
+  const newestLoadedReadIndex = loadedItems.findIndex((item) => item.read);
+  if (context === "all-items") {
+    if (newestLoadedReadIndex <= 0) return undefined;
 
-  const visible = new Set(visibleItems.map((item) => item.item_id));
-  const beforeItemID = loadedItems
-    .slice(newestReadIndex)
-    .find((item) => visible.has(item.item_id))?.item_id;
-  return { count: newestReadIndex, beforeItemID };
+    const visible = new Set(visibleItems.map((item) => item.item_id));
+    const beforeItemID = loadedItems
+      .slice(newestLoadedReadIndex)
+      .find((item) => visible.has(item.item_id))?.item_id;
+    return { count: newestLoadedReadIndex, beforeItemID };
+  }
+
+  const newestLoadedRead = loadedItems[newestLoadedReadIndex];
+  const anchor =
+    newestLoadedRead &&
+    (!readAnchor || newestLoadedRead.published_ts >= readAnchor.published_ts)
+      ? newestLoadedRead
+      : readAnchor;
+  if (!anchor) return undefined;
+
+  const beforeIndex = visibleItems.findIndex(
+    (item) => item.published_ts <= anchor.published_ts,
+  );
+  const count = beforeIndex < 0 ? visibleItems.length : beforeIndex;
+  if (count === 0) return undefined;
+  return {
+    count,
+    beforeItemID:
+      beforeIndex < 0 ? undefined : visibleItems[beforeIndex].item_id,
+  };
 }
 
 export function caughtUpLabel(count: number): string {
@@ -114,6 +136,14 @@ export function shouldLoadNextPage(
   scrollHeight: number,
 ): boolean {
   return hasMore && scrollHeight - scrollTop - clientHeight < clientHeight * 2;
+}
+
+export function shouldLoadToFillViewport(
+  hasMore: boolean,
+  contentHeight: number,
+  viewportHeight: number,
+): boolean {
+  return hasMore && viewportHeight > 0 && contentHeight <= viewportHeight;
 }
 
 export function shouldShowEndCard(hasMore: boolean): boolean {

@@ -21,10 +21,11 @@ import {
   readVisualState,
   scrollReadCandidates,
   shouldLoadNextPage,
+  shouldLoadToFillViewport,
   shouldShowEndCard,
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
-import type { Item, Order } from "../types";
+import type { Item, Order, ReadAnchor } from "../types";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -48,6 +49,7 @@ interface GridProps {
   unreadOnly: boolean;
   order: Order;
   readStateItems: Item[];
+  readAnchor?: ReadAnchor;
   linkActionID: string;
   pendingNewCount: number;
   onFocus(id: string): void;
@@ -120,6 +122,7 @@ export function Grid(props: GridProps) {
       props.order,
       props.readStateItems,
       props.items,
+      props.readAnchor,
     ),
   );
   const contentWidth = createMemo(() =>
@@ -411,15 +414,7 @@ export function Grid(props: GridProps) {
 
   createEffect(() => {
     const viewport = viewportHeight();
-    if (
-      viewport > 0 &&
-      shouldLoadNextPage(
-        props.hasMore,
-        scrollTop(),
-        viewport,
-        Math.max(viewport, endTop()),
-      )
-    )
+    if (shouldLoadToFillViewport(props.hasMore, endTop(), viewport))
       props.onLoadMore();
   });
 
