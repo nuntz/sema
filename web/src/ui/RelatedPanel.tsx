@@ -9,6 +9,7 @@ import {
 import { Icon } from "../components/Icon";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
+import { ResponsiveImage } from "./ResponsiveImage";
 
 export function RelatedPanel(props: {
   source: Item;
@@ -145,7 +146,11 @@ export function RelatedPanel(props: {
                       }}
                     >
                       <Show when={item.media_url}>
-                        <img src={item.media_url} alt="" />
+                        <ResponsiveImage
+                          item={item}
+                          sizes="(max-width: 700px) calc((100vw - 36px) / 2), 192px"
+                          alt=""
+                        />
                       </Show>
                       <Show when={item.media_type === "video"}>
                         <span class="related-video-play" aria-hidden="true">

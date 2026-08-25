@@ -30,6 +30,12 @@ export interface Why {
   feed_title?: string;
 }
 
+export interface MediaVariant {
+  url: string;
+  width: number;
+  height: number;
+}
+
 export interface Item {
   item_id: string;
   feed_id: string;
@@ -46,6 +52,7 @@ export interface Item {
   published_ts: string;
   fetched_ts: string;
   media_url?: string;
+  media_variants?: MediaVariant[];
   media_w?: number;
   media_h?: number;
   media_type?: "video" | string;

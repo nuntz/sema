@@ -198,8 +198,13 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 		BodyKey: BodyKey("keeper", "kept"), HasBody: true, MediaKey: MediaKey("keeper", "kept", ".webp"), MediaW: 1200, MediaH: 800,
 		Score: 0.7, Size: "L", Vector: []byte{1, 2, 3}, TTL: now.Add(domain.Retention).Unix(),
 	}
+	item.MediaVariants = []domain.MediaVariant{
+		{Key: MediaVariantKey(item.MediaKey, 384), Width: 384, Height: 256},
+		{Key: item.MediaKey, Width: 1200, Height: 800},
+	}
 	objects.objects[item.BodyKey] = true
 	objects.objects[item.MediaKey] = true
+	objects.objects[item.MediaVariants[0].Key] = true
 	if written, err := repository.PutItem(ctx, item); err != nil || !written {
 		t.Fatalf("put item = %v, %v", written, err)
 	}
@@ -209,11 +214,12 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 		t.Fatalf("heart = %q, %d, %v", archiveSK, count, err)
 	}
 	assertUserCounts(t, repository, "keeper", 1, 1)
-	if !objects.objects[ArchiveBodyKey("keeper", "kept")] || !objects.objects[ArchiveMediaKey("keeper", "kept")] {
+	archiveVariantKey := MediaVariantKey(ArchiveMediaKey("keeper", "kept"), 384)
+	if !objects.objects[ArchiveBodyKey("keeper", "kept")] || !objects.objects[ArchiveMediaKey("keeper", "kept")] || !objects.objects[archiveVariantKey] {
 		t.Fatalf("archive objects = %#v", objects.objects)
 	}
 	archived, err := repository.ArchiveItem(ctx, "keeper", item.ItemID)
-	if err != nil || archived.SK != archiveSK || archived.TTL != 0 || !archived.HasBody || archived.BodyKey != ArchiveBodyKey("keeper", "kept") || archived.MediaKey != ArchiveMediaKey("keeper", "kept") {
+	if err != nil || archived.SK != archiveSK || archived.TTL != 0 || !archived.HasBody || archived.BodyKey != ArchiveBodyKey("keeper", "kept") || archived.MediaKey != ArchiveMediaKey("keeper", "kept") || len(archived.MediaVariants) != 2 || archived.MediaVariants[0].Key != archiveVariantKey {
 		t.Fatalf("archive item = %#v, %v", archived, err)
 	}
 	raw, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(repository.table), Key: key(domain.UserPK("keeper"), archiveSK)})
@@ -284,7 +290,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if _, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("archive after unheart = %v", err)
 	}
-	if objects.objects[ArchiveBodyKey("keeper", "kept")] || objects.objects[ArchiveMediaKey("keeper", "kept")] {
+	if objects.objects[ArchiveBodyKey("keeper", "kept")] || objects.objects[ArchiveMediaKey("keeper", "kept")] || objects.objects[archiveVariantKey] {
 		t.Fatalf("objects survived unheart = %#v", objects.objects)
 	}
 	live, err = repository.Item(ctx, "keeper", item.ItemID)

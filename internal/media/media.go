@@ -32,6 +32,13 @@ type Image struct {
 	Height      int
 }
 
+// Lead contains responsive encodings in ascending size order and embeds the
+// largest encoding for compatibility with callers that only need one image.
+type Lead struct {
+	Image
+	Variants []Image
+}
+
 type LeadError struct {
 	URL         string
 	ContentType string
@@ -114,18 +121,18 @@ func firstImage(document []byte) string {
 	return result
 }
 
-func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Image, error) {
+func (p *Processor) FetchLead(ctx context.Context, candidates []string) (Lead, error) {
 	return p.fetchLead(ctx, candidates, false)
 }
 
 // FetchVideoLead normalizes provider thumbnails to 16:9 before the grid's
 // justified crop. In particular, this removes the letterbox bands from
 // YouTube's 4:3 hqdefault fallback.
-func (p *Processor) FetchVideoLead(ctx context.Context, candidates []string) (Image, error) {
+func (p *Processor) FetchVideoLead(ctx context.Context, candidates []string) (Lead, error) {
 	return p.fetchLead(ctx, candidates, true)
 }
 
-func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVideo bool) (Image, error) {
+func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVideo bool) (Lead, error) {
 	var lastErr error
 	for _, candidate := range candidates {
 		response, err := p.client.Get(ctx, candidate, http.Header{"Accept": []string{imageAccept}})
@@ -156,7 +163,7 @@ func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVide
 			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("image width %d is below 300 pixels", bounds.Dx())}
 			continue
 		}
-		lead, err := encodeLead(decoded)
+		lead, err := EncodeLead(decoded)
 		if err != nil {
 			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("encode: %w", err)}
 			continue
@@ -167,13 +174,14 @@ func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVide
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no usable lead image")
 	}
-	return Image{}, lastErr
+	return Lead{}, lastErr
 }
 
 // FetchEmbed applies the lead-image safety, decode, resize, and byte limits to
 // a provider thumbnail. The caller stores it under the embed-specific key.
 func (p *Processor) FetchEmbed(ctx context.Context, sourceURL string) (Image, error) {
-	return p.FetchLead(ctx, []string{sourceURL})
+	lead, err := p.FetchLead(ctx, []string{sourceURL})
+	return lead.Image, err
 }
 
 func (p *Processor) Favicon(ctx context.Context, siteURL string) (Image, error) {
@@ -257,21 +265,57 @@ func decode(body []byte, maxPixels int64) (image.Image, error) {
 	return decoded, err
 }
 
-func encodeLead(source image.Image) (Image, error) {
+// EncodeLead creates JPEG encodings that fit within 384, 768, and 1280 pixel
+// boxes. The first box that contains the source contributes the source-sized
+// encoding and terminates the sequence, so images are never upscaled.
+func EncodeLead(source image.Image) (Lead, error) {
 	bounds := source.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
-	if width > 1280 {
-		height = max(1, height*1280/width)
-		width = 1280
-		target := image.NewRGBA(image.Rect(0, 0, width, height))
-		draw.CatmullRom.Scale(target, target.Bounds(), source, bounds, draw.Over, nil)
-		source = target
+	if bounds.Dx() <= 0 || bounds.Dy() <= 0 {
+		return Lead{}, fmt.Errorf("empty source image")
 	}
-	var output bytes.Buffer
-	if err := jpeg.Encode(&output, source, &jpeg.Options{Quality: 85}); err != nil {
-		return Image{}, err
+	variants := make([]Image, 0, 3)
+	for _, box := range []int{384, 768, 1280} {
+		width, height := fit(bounds.Dx(), bounds.Dy(), box)
+		candidate := source
+		if width != bounds.Dx() || height != bounds.Dy() {
+			target := image.NewRGBA(image.Rect(0, 0, width, height))
+			draw.CatmullRom.Scale(target, target.Bounds(), source, bounds, draw.Over, nil)
+			candidate = target
+		}
+		quality := 85
+		if box == 384 {
+			quality = 80
+		}
+		var output bytes.Buffer
+		if err := jpeg.Encode(&output, candidate, &jpeg.Options{Quality: quality}); err != nil {
+			return Lead{}, err
+		}
+		variants = append(variants, Image{Bytes: output.Bytes(), ContentType: "image/jpeg", Extension: ".jpg", Width: width, Height: height})
+		if width == bounds.Dx() && height == bounds.Dy() {
+			break
+		}
 	}
-	return Image{Bytes: output.Bytes(), ContentType: "image/jpeg", Extension: ".jpg", Width: width, Height: height}, nil
+	largest := variants[len(variants)-1]
+	return Lead{Image: largest, Variants: variants}, nil
+}
+
+// EncodeLeadBytes is the backfill entry point for an already-stored lead.
+func EncodeLeadBytes(body []byte) (Lead, error) {
+	decoded, err := decode(body, 40_000_000)
+	if err != nil {
+		return Lead{}, err
+	}
+	return EncodeLead(decoded)
+}
+
+func fit(width, height, box int) (int, int) {
+	if width <= box && height <= box {
+		return width, height
+	}
+	if width >= height {
+		return box, max(1, height*box/width)
+	}
+	return max(1, width*box/height), box
 }
 
 func cropAspect(source image.Image, ratioW, ratioH int) image.Image {

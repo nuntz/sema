@@ -1,6 +1,10 @@
 package store
 
-import "fmt"
+import (
+	"fmt"
+	"path"
+	"strings"
+)
 
 func BodyKey(userID, itemID string) string {
 	return fmt.Sprintf("bodies/%s/%s.html", userID, itemID)
@@ -8,6 +12,11 @@ func BodyKey(userID, itemID string) string {
 
 func MediaKey(userID, itemID, extension string) string {
 	return fmt.Sprintf("media/%s/%s/lead%s", userID, itemID, extension)
+}
+
+func MediaVariantKey(mediaKey string, width int) string {
+	extension := path.Ext(mediaKey)
+	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(mediaKey, extension), width, extension)
 }
 
 func EmbedMediaKey(userID, itemID string, index int) string {

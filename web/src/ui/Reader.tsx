@@ -12,6 +12,7 @@ import { Icon } from "../components/Icon";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
+import { ResponsiveImage } from "./ResponsiveImage";
 import { hasLeadingImage } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
 import {
@@ -430,9 +431,10 @@ export function Reader(props: ReaderProps) {
               !hasLeadingImage(body())
             }
           >
-            <img
+            <ResponsiveImage
               class="article-lead"
-              src={props.item.media_url}
+              item={props.item}
+              sizes="(max-width: 700px) calc(100vw - 44px), 640px"
               alt=""
               width={props.item.media_w}
               height={props.item.media_h}
@@ -587,8 +589,9 @@ function VideoMediaCard(props: { item: Item; onOriginal(): void }) {
     >
       <span class="video-media-band">
         <Show when={props.item.media_url}>
-          <img
-            src={props.item.media_url}
+          <ResponsiveImage
+            item={props.item}
+            sizes="(max-width: 700px) calc(100vw - 44px), 640px"
             alt=""
             width={props.item.media_w}
             height={props.item.media_h}

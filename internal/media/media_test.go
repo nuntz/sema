@@ -56,6 +56,44 @@ func TestFetchLeadRequestsAndAcceptsImages(t *testing.T) {
 	}
 }
 
+func TestEncodeLeadFitsBothDimensionsAndNeverUpscales(t *testing.T) {
+	tests := []struct {
+		name          string
+		width, height int
+		want          [][2]int
+	}{
+		{name: "landscape", width: 2400, height: 1600, want: [][2]int{{384, 256}, {768, 512}, {1280, 853}}},
+		{name: "portrait", width: 1600, height: 2400, want: [][2]int{{256, 384}, {512, 768}, {853, 1280}}},
+		{name: "small source skips larger boxes", width: 500, height: 333, want: [][2]int{{384, 255}, {500, 333}}},
+		{name: "source within smallest box", width: 300, height: 200, want: [][2]int{{300, 200}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			lead, err := EncodeLead(image.NewRGBA(image.Rect(0, 0, test.width, test.height)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(lead.Variants) != len(test.want) {
+				t.Fatalf("variants = %#v, want dimensions %#v", lead.Variants, test.want)
+			}
+			for index, want := range test.want {
+				variant := lead.Variants[index]
+				if variant.Width != want[0] || variant.Height != want[1] {
+					t.Errorf("variant %d = %dx%d, want %dx%d", index, variant.Width, variant.Height, want[0], want[1])
+				}
+				configuration, format, err := image.DecodeConfig(bytes.NewReader(variant.Bytes))
+				if err != nil || format != "jpeg" || configuration.Width != want[0] || configuration.Height != want[1] {
+					t.Errorf("encoded variant %d = %#v, %q, %v", index, configuration, format, err)
+				}
+			}
+			largest := test.want[len(test.want)-1]
+			if lead.Width != largest[0] || lead.Height != largest[1] || lead.Width > 1280 || lead.Height > 1280 {
+				t.Errorf("largest = %dx%d, want %dx%d within cap", lead.Width, lead.Height, largest[0], largest[1])
+			}
+		})
+	}
+}
+
 func TestAdvertisedImageFormatsAreDecodable(t *testing.T) {
 	source := image.NewRGBA(image.Rect(0, 0, 1, 1))
 	var jpegBody, pngBody bytes.Buffer

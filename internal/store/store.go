@@ -548,6 +548,27 @@ func (s *Store) UpdateSearchText(ctx context.Context, item domain.Item) error {
 	return err
 }
 
+// UpdateMediaVariants changes only the media dimensions and responsive asset
+// manifest so a backfill cannot overwrite mutable read, heart, or rank state.
+func (s *Store) UpdateMediaVariants(ctx context.Context, item domain.Item, variants []domain.MediaVariant, width, height int) error {
+	encoded, err := attributevalue.Marshal(variants)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+		UpdateExpression:    aws.String("SET media_variants = :variants, media_w = :width, media_h = :height"),
+		ConditionExpression: aws.String("attribute_exists(PK) AND item_id = :item"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":variants": encoded,
+			":width":    &types.AttributeValueMemberN{Value: strconv.Itoa(width)},
+			":height":   &types.AttributeValueMemberN{Value: strconv.Itoa(height)},
+			":item":     &types.AttributeValueMemberS{Value: item.ItemID},
+		},
+	})
+	return err
+}
+
 // SearchItems page-fills after DynamoDB applies the multi-term contains
 // post-filter. Results retain partition order (newest publication/heart first).
 func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int) ([]domain.Item, error) {
@@ -955,6 +976,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	}
 
 	archive.MediaKey = ""
+	archive.MediaVariants = nil
 	if item.MediaKey != "" {
 		destination := ArchiveMediaKey(userID, item.ItemID)
 		copied, copyErr := s.copyContent(ctx, item.MediaKey, destination)
@@ -963,6 +985,20 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		}
 		if copied {
 			archive.MediaKey = destination
+			for _, variant := range item.MediaVariants {
+				if variant.Key == item.MediaKey {
+					archive.MediaVariants = append(archive.MediaVariants, domain.MediaVariant{Key: destination, Width: variant.Width, Height: variant.Height})
+					continue
+				}
+				variantDestination := MediaVariantKey(destination, variant.Width)
+				variantCopied, variantErr := s.copyContent(ctx, variant.Key, variantDestination)
+				if variantErr != nil {
+					return "", 0, variantErr
+				}
+				if variantCopied {
+					archive.MediaVariants = append(archive.MediaVariants, domain.MediaVariant{Key: variantDestination, Width: variant.Width, Height: variant.Height})
+				}
+			}
 		} else {
 			archive.MediaW = 0
 			archive.MediaH = 0
@@ -1105,7 +1141,7 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 			slog.ErrorContext(ctx, "decrement heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
 		}
 	}
-	s.deleteArchiveContent(ctx, userID, itemID)
+	s.deleteArchiveContent(ctx, userID, itemID, archive.MediaVariants)
 	count, err := s.heartCount(ctx, userID)
 	return "", count, err
 }
@@ -1159,11 +1195,17 @@ func (s *Store) copyContent(ctx context.Context, source, destination string) (bo
 	return false, err
 }
 
-func (s *Store) deleteArchiveContent(ctx context.Context, userID, itemID string) {
+func (s *Store) deleteArchiveContent(ctx context.Context, userID, itemID string, variants []domain.MediaVariant) {
 	if s.s3 == nil || s.bucket == "" {
 		return
 	}
-	for _, objectKey := range []string{ArchiveBodyKey(userID, itemID), ArchiveMediaKey(userID, itemID)} {
+	keys := []string{ArchiveBodyKey(userID, itemID), ArchiveMediaKey(userID, itemID)}
+	for _, variant := range variants {
+		if variant.Key != "" && variant.Key != ArchiveMediaKey(userID, itemID) {
+			keys = append(keys, variant.Key)
+		}
+	}
+	for _, objectKey := range keys {
 		if _, err := s.s3.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(objectKey)}); err != nil {
 			slog.ErrorContext(ctx, "delete archived content", "key", objectKey, "error", err)
 		}
@@ -1644,6 +1686,10 @@ func (s *Store) ContentURL(objectKey string) string {
 func (s *Store) PublicItem(item domain.Item) domain.Item {
 	item.Hearted = item.ArchiveSK != "" || item.HeartedTS != ""
 	item.MediaKey = s.ContentURL(item.MediaKey)
+	item.MediaVariants = append([]domain.MediaVariant(nil), item.MediaVariants...)
+	for index := range item.MediaVariants {
+		item.MediaVariants[index].Key = s.ContentURL(item.MediaVariants[index].Key)
+	}
 	item.BodyKey = s.ContentURL(item.BodyKey)
 	item.FaviconKey = s.ContentURL(item.FaviconKey)
 	item.Vector = nil

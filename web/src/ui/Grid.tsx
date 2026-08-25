@@ -24,6 +24,7 @@ import { whyText } from "../ranking-display";
 import type { Item } from "../types";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
+import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
 import {
   beginLongPress,
@@ -594,7 +595,8 @@ export function Grid(props: GridProps) {
         class="virtual-canvas"
         style={{
           height: `${canvasHeight()}px`,
-          transform: `translateY(${pullDistance()}px)`,
+          transform:
+            pullDistance() > 0 ? `translateY(${pullDistance()}px)` : undefined,
         }}
       >
         <For each={visible()}>
@@ -651,8 +653,9 @@ export function Grid(props: GridProps) {
                       onPointerCancel={cancelLongPress}
                     >
                       <Show when={item().media_url}>
-                        <img
-                          src={item().media_url}
+                        <ResponsiveImage
+                          item={item()}
+                          sizes={cell.width}
                           alt=""
                           loading="lazy"
                           width={item().media_w}

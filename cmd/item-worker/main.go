@@ -190,6 +190,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		summary, summarySource, summaryMetrics = h.chooseSummary(ctx, message.Title, fallbackRaw, summaryArticle, force)
 	}
 	mediaKey, mediaW, mediaH := existing.MediaKey, existing.MediaW, existing.MediaH
+	mediaVariants := existing.MediaVariants
 	embedMediaSucceeded, embedMediaFailed := 0, 0
 	if processAssets {
 		feedURL, feedErr := url.Parse(feed.SiteURL)
@@ -201,8 +202,8 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if isVideo {
 			candidates = append([]string{"https://i.ytimg.com/vi/" + url.PathEscape(message.VideoID) + "/maxresdefault.jpg"}, candidates...)
 		}
-		mediaKey, mediaW, mediaH = "", 0, 0
-		var lead media.Image
+		mediaKey, mediaW, mediaH, mediaVariants = "", 0, 0, nil
+		var lead media.Lead
 		var mediaErr error
 		if isVideo {
 			lead, mediaErr = h.media.FetchVideoLead(ctx, candidates)
@@ -211,7 +212,8 @@ func (h *handler) process(ctx context.Context, body string) error {
 		}
 		if mediaErr == nil {
 			mediaKey = store.MediaKey(message.User, message.ItemID, lead.Extension)
-			if err := h.store.PutContent(ctx, mediaKey, lead.ContentType, lead.Bytes); err != nil {
+			mediaVariants, err = storeLead(ctx, h.store, mediaKey, lead)
+			if err != nil {
 				return fmt.Errorf("store media: %w", err)
 			}
 			mediaW, mediaH = lead.Width, lead.Height
@@ -333,7 +335,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		URL: message.URL, Title: embedTitle, Summary: summary, SummarySource: summarySource, Description: videoDescription(isVideo, message.ContentRaw, existing.Description), Author: author, DisplayDate: displayDate,
 		SearchText:  domain.DeriveSearchText(embedTitle, summary),
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
-		MediaKey: mediaKey, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
+		MediaKey: mediaKey, MediaVariants: mediaVariants, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
 		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
 	}
 	written := false
@@ -393,6 +395,25 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	observability.Emit(metrics, nil)
 	return nil
+}
+
+type contentWriter interface {
+	PutContent(context.Context, string, string, []byte) error
+}
+
+func storeLead(ctx context.Context, writer contentWriter, mediaKey string, lead media.Lead) ([]domain.MediaVariant, error) {
+	variants := make([]domain.MediaVariant, 0, len(lead.Variants))
+	for index, image := range lead.Variants {
+		key := mediaKey
+		if index != len(lead.Variants)-1 {
+			key = store.MediaVariantKey(mediaKey, image.Width)
+		}
+		if err := writer.PutContent(ctx, key, image.ContentType, image.Bytes); err != nil {
+			return nil, err
+		}
+		variants = append(variants, domain.MediaVariant{Key: key, Width: image.Width, Height: image.Height})
+	}
+	return variants, nil
 }
 
 func videoDescription(video bool, raw, existing string) string {

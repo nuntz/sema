@@ -88,47 +88,54 @@ type Why struct {
 	FeedTitle string `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
 }
 
+type MediaVariant struct {
+	Key    string `dynamodbav:"key" json:"url"`
+	Width  int    `dynamodbav:"width" json:"width"`
+	Height int    `dynamodbav:"height" json:"height"`
+}
+
 type Item struct {
-	PK             string  `dynamodbav:"PK" json:"-"`
-	SK             string  `dynamodbav:"SK" json:"-"`
-	FeedPK         string  `dynamodbav:"feed_pk" json:"-"`
-	ItemID         string  `dynamodbav:"item_id" json:"item_id"`
-	FeedID         string  `dynamodbav:"feed_id" json:"feed_id"`
-	FeedTitle      string  `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
-	Connector      string  `dynamodbav:"connector,omitempty" json:"connector"`
-	FaviconKey     string  `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
-	URL            string  `dynamodbav:"url" json:"url"`
-	Title          string  `dynamodbav:"title" json:"title"`
-	Summary        string  `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
-	SearchText     string  `dynamodbav:"search_text,omitempty" json:"-"`
-	SummarySource  string  `dynamodbav:"summary_source,omitempty" json:"summary_source"`
-	Description    string  `dynamodbav:"description,omitempty" json:"description,omitempty"`
-	Author         string  `dynamodbav:"author,omitempty" json:"author,omitempty"`
-	DisplayDate    string  `dynamodbav:"display_date,omitempty" json:"display_date,omitempty"`
-	PublishedTS    string  `dynamodbav:"published_ts" json:"published_ts"`
-	FetchedTS      string  `dynamodbav:"fetched_ts" json:"fetched_ts"`
-	MediaKey       string  `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
-	MediaW         int     `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
-	MediaH         int     `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
-	MediaType      string  `dynamodbav:"media_type,omitempty" json:"media_type,omitempty"`
-	VideoID        string  `dynamodbav:"video_id,omitempty" json:"video_id,omitempty"`
-	IsShort        bool    `dynamodbav:"is_short,omitempty" json:"is_short,omitempty"`
-	BodyKey        string  `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
-	HasBody        bool    `dynamodbav:"has_body" json:"has_body"`
-	ExtractQuality float64 `dynamodbav:"extract_quality" json:"extract_quality"`
-	Score          float64 `dynamodbav:"score" json:"score"`
-	Size           string  `dynamodbav:"size" json:"size"`
-	Vector         []byte  `dynamodbav:"vector,omitempty" json:"-"`
-	ModelVersion   string  `dynamodbav:"model_version,omitempty" json:"-"`
-	Why            *Why    `dynamodbav:"why,omitempty" json:"why,omitempty"`
-	TTL            int64   `dynamodbav:"ttl,omitempty" json:"-"`
-	ArchiveSK      string  `dynamodbav:"archive_sk,omitempty" json:"-"`
-	HeartedTS      string  `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
-	Read           bool    `dynamodbav:"-" json:"read"`
-	Signal         int     `dynamodbav:"-" json:"signal"`
-	Hearted        bool    `dynamodbav:"-" json:"hearted"`
-	Archived       bool    `dynamodbav:"-" json:"archived,omitempty"`
-	Similarity     *int    `dynamodbav:"-" json:"similarity,omitempty"`
+	PK             string         `dynamodbav:"PK" json:"-"`
+	SK             string         `dynamodbav:"SK" json:"-"`
+	FeedPK         string         `dynamodbav:"feed_pk" json:"-"`
+	ItemID         string         `dynamodbav:"item_id" json:"item_id"`
+	FeedID         string         `dynamodbav:"feed_id" json:"feed_id"`
+	FeedTitle      string         `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
+	Connector      string         `dynamodbav:"connector,omitempty" json:"connector"`
+	FaviconKey     string         `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	URL            string         `dynamodbav:"url" json:"url"`
+	Title          string         `dynamodbav:"title" json:"title"`
+	Summary        string         `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
+	SearchText     string         `dynamodbav:"search_text,omitempty" json:"-"`
+	SummarySource  string         `dynamodbav:"summary_source,omitempty" json:"summary_source"`
+	Description    string         `dynamodbav:"description,omitempty" json:"description,omitempty"`
+	Author         string         `dynamodbav:"author,omitempty" json:"author,omitempty"`
+	DisplayDate    string         `dynamodbav:"display_date,omitempty" json:"display_date,omitempty"`
+	PublishedTS    string         `dynamodbav:"published_ts" json:"published_ts"`
+	FetchedTS      string         `dynamodbav:"fetched_ts" json:"fetched_ts"`
+	MediaKey       string         `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
+	MediaVariants  []MediaVariant `dynamodbav:"media_variants,omitempty" json:"media_variants,omitempty"`
+	MediaW         int            `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
+	MediaH         int            `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
+	MediaType      string         `dynamodbav:"media_type,omitempty" json:"media_type,omitempty"`
+	VideoID        string         `dynamodbav:"video_id,omitempty" json:"video_id,omitempty"`
+	IsShort        bool           `dynamodbav:"is_short,omitempty" json:"is_short,omitempty"`
+	BodyKey        string         `dynamodbav:"body_key,omitempty" json:"body_url,omitempty"`
+	HasBody        bool           `dynamodbav:"has_body" json:"has_body"`
+	ExtractQuality float64        `dynamodbav:"extract_quality" json:"extract_quality"`
+	Score          float64        `dynamodbav:"score" json:"score"`
+	Size           string         `dynamodbav:"size" json:"size"`
+	Vector         []byte         `dynamodbav:"vector,omitempty" json:"-"`
+	ModelVersion   string         `dynamodbav:"model_version,omitempty" json:"-"`
+	Why            *Why           `dynamodbav:"why,omitempty" json:"why,omitempty"`
+	TTL            int64          `dynamodbav:"ttl,omitempty" json:"-"`
+	ArchiveSK      string         `dynamodbav:"archive_sk,omitempty" json:"-"`
+	HeartedTS      string         `dynamodbav:"hearted_ts,omitempty" json:"hearted_ts,omitempty"`
+	Read           bool           `dynamodbav:"-" json:"read"`
+	Signal         int            `dynamodbav:"-" json:"signal"`
+	Hearted        bool           `dynamodbav:"-" json:"hearted"`
+	Archived       bool           `dynamodbav:"-" json:"archived,omitempty"`
+	Similarity     *int           `dynamodbav:"-" json:"similarity,omitempty"`
 }
 
 // DeriveSearchText is the single writer-side definition used by live items,

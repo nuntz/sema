@@ -3,6 +3,7 @@ import { Icon } from "../components/Icon";
 import { type SearchSection, visibleSearchSections } from "../search";
 import type { Item, SearchResponse } from "../types";
 import { relativeTime } from "./Grid";
+import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
 
 interface SearchResultsProps {
@@ -192,7 +193,11 @@ function ResultCell(props: {
       onMouseEnter={props.onFocus}
     >
       <Show when={props.item.media_url}>
-        <img src={props.item.media_url} alt="" />
+        <ResponsiveImage
+          item={props.item}
+          sizes="(max-width: 700px) calc((100vw - 36px) / 2), 240px"
+          alt=""
+        />
       </Show>
       <Show when={props.item.media_type === "video"}>
         <span class="video-play" aria-hidden="true">
