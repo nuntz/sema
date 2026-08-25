@@ -241,7 +241,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .pull-refresh > button { position: relative; min-width: 54px; height: 44px; padding: 0 12px; border-radius: 22px; background: transparent; color: var(--accent); font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; pointer-events: auto; isolation: isolate; }
 .pull-refresh > button::before { content: ""; position: absolute; height: 26px; inset: 9px 0; z-index: -1; border: 1px solid rgba(214, 242, 75, .28); border-radius: 13px; background: rgba(214, 242, 75, .14); }
 @keyframes ptr-spin { to { transform: rotate(270deg); } }
-.grid-row { position: absolute; left: 16px; right: 16px; contain: strict; }
+.grid-row { position: absolute; left: 16px; right: 16px; contain: size layout style; }
 .caughtup-shell { position: absolute; left: 16px; right: 16px; z-index: 1; container-type: inline-size; pointer-events: none; }
 .caughtup { height: 100%; display: flex; align-items: center; gap: var(--caughtup-gap); }
 .caughtup > i { min-width: 16px; height: 1px; flex: 1; background: var(--caughtup-rule); }
