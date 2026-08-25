@@ -11,6 +11,7 @@ import {
 import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import { justify, totalHeight, visibleRows } from "../layout/justified";
+import { type LayoutDirection, nearestCell } from "../layout/navigation";
 import {
   fullyPassedRows,
   intersectingRowIDs,
@@ -59,6 +60,12 @@ interface GridProps {
   onRefresh(): Promise<number>;
 }
 
+function shortWhyText(item: Item): string {
+  if (item.why?.title) return `Liked: ${item.why.title}`;
+  if (item.why?.feed_title) return `Often: ${item.why.feed_title}`;
+  return "";
+}
+
 export function Grid(props: GridProps) {
   let scroller!: HTMLDivElement;
   let endButton!: HTMLButtonElement;
@@ -98,7 +105,8 @@ export function Grid(props: GridProps) {
     props.layoutKey;
     return justify(
       untrack(() => props.items),
-      Math.max(0, width() - (width() < 700 ? 28 : 32)),
+      Math.max(0, width() - (width() < 700 ? 24 : 32)),
+      props.hasMore,
     );
   });
   const visible = createMemo(() =>
@@ -365,7 +373,7 @@ export function Grid(props: GridProps) {
   });
 
   createEffect(() => {
-    if (props.items.length === 0 && props.hasMore) props.onLoadMore();
+    if (rows().length === 0 && props.hasMore) props.onLoadMore();
   });
 
   const continueToEnd = () => {
@@ -387,33 +395,11 @@ export function Grid(props: GridProps) {
     if (endRequested) requestAnimationFrame(continueToEnd);
   });
 
-  const position = () => {
-    const allRows = rows();
-    const rowIndex = 0;
-    const cellIndex = 0;
-    for (let r = 0; r < allRows.length; r++) {
-      const found = allRows[r].cells.findIndex(
-        (cell) => cell.item.item_id === props.focusedID,
-      );
-      if (found >= 0) return { rowIndex: r, cellIndex: found };
-    }
-    return { rowIndex, cellIndex };
-  };
-
-  const move = (rowDelta: number, cellDelta: number) => {
+  const move = (direction: LayoutDirection) => {
     const allRows = rows();
     if (allRows.length === 0) return;
-    const current = position();
-    const rowIndex = Math.max(
-      0,
-      Math.min(allRows.length - 1, current.rowIndex + rowDelta),
-    );
-    const targetRow = allRows[rowIndex];
-    const cellIndex = Math.max(
-      0,
-      Math.min(targetRow.cells.length - 1, current.cellIndex + cellDelta),
-    );
-    const id = targetRow.cells[cellIndex].item.item_id;
+    const id = nearestCell(allRows, props.focusedID, direction);
+    if (!id) return;
     endRequested = false;
     props.onFocus(id);
     requestAnimationFrame(() => {
@@ -481,16 +467,16 @@ export function Grid(props: GridProps) {
     if (command !== "go-prefix") clearGo();
     switch (command) {
       case "down":
-        move(1, 0);
+        move("down");
         break;
       case "up":
-        move(-1, 0);
+        move("up");
         break;
       case "left":
-        move(0, -1);
+        move("left");
         break;
       case "right":
-        move(0, 1);
+        move("right");
         break;
       case "open":
         if (item) props.onOpen(item);
@@ -618,13 +604,20 @@ export function Grid(props: GridProps) {
               style={{
                 top: `${row.top + 14}px`,
                 height: `${row.height}px`,
-                gap: `${row.gap}px`,
               }}
             >
               <For each={row.cells}>
                 {(cell) => {
                   const item = createMemo(
                     () => liveItems().get(cell.item.item_id) ?? cell.item,
+                  );
+                  const condensedLarge = createMemo(
+                    () =>
+                      width() < 700 &&
+                      (row.kind === "hero" || row.kind === "pair"),
+                  );
+                  const explanation = createMemo(() =>
+                    condensedLarge() ? shortWhyText(item()) : whyText(item()),
                   );
                   return (
                     <article
@@ -635,9 +628,20 @@ export function Grid(props: GridProps) {
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
                         "video-cell": item().media_type === "video",
+                        "span-2": cell.span === 2,
+                        "tall-hero": cell.tall === true,
+                        "hero-cell": row.kind === "hero",
+                        "pair-cell": row.kind === "pair",
+                        "sub-cell": row.kind === "span" && cell.span !== 2,
+                        "compact-cell": row.kind === "compact",
                         [`size-${cell.effectiveSize.toLowerCase()}`]: true,
                       }}
-                      style={{ width: `${cell.width}px` }}
+                      style={{
+                        left: `${cell.left}px`,
+                        top: `${cell.offsetY ?? 0}px`,
+                        width: `${cell.width}px`,
+                        height: `${cell.height ?? row.height}px`,
+                      }}
                       data-item-id={item().item_id}
                       onMouseEnter={() => props.onFocus(item().item_id)}
                       onDblClick={() => props.onOpen(item())}
@@ -665,11 +669,15 @@ export function Grid(props: GridProps) {
                           <Icon
                             name="play"
                             size={
-                              cell.effectiveSize === "L"
-                                ? 15
-                                : cell.effectiveSize === "M"
-                                  ? 14
-                                  : 12
+                              row.kind === "hero" || row.kind === "pair"
+                                ? 24
+                                : cell.span === 2
+                                  ? 20
+                                  : cell.effectiveSize === "L"
+                                    ? 15
+                                    : cell.effectiveSize === "M"
+                                      ? 14
+                                      : 12
                             }
                             filled
                           />
@@ -750,7 +758,11 @@ export function Grid(props: GridProps) {
                         <div class="cell-copy">
                           <h2>{item().title}</h2>
                           <Show
-                            when={cell.effectiveSize !== "S" && item().summary}
+                            when={
+                              cell.effectiveSize !== "S" &&
+                              !condensedLarge() &&
+                              item().summary
+                            }
                           >
                             <p>{item().summary}</p>
                           </Show>
@@ -783,7 +795,7 @@ export function Grid(props: GridProps) {
                             when={!props.archive && cell.effectiveSize === "L"}
                           >
                             <div class="why-hint why-l" title={whyText(item())}>
-                              {whyText(item())}
+                              {explanation()}
                             </div>
                           </Show>
                           <Show

@@ -48,6 +48,47 @@ describe("read state", () => {
     expect(second.rows.length).toBe(1);
   });
 
+  it("treats a two-row hero mosaic as one read and intersection band", () => {
+    const hero = {
+      ...make(100),
+      size: "L" as const,
+      media_url: "https://example.com/hero.jpg",
+      media_w: 100,
+      media_h: 100,
+    };
+    const companions = Array.from({ length: 5 }, (_, index) => make(index));
+    const rows = justify([hero, ...companions], 1248);
+    expect(rows[0].kind).toBe("span");
+
+    expect(fullyPassedRows(rows, -1, rows[0].height).rows).toHaveLength(0);
+    expect(
+      fullyPassedRows(rows, -1, rows[0].height + 1).rows[0].cells.map(
+        (cell) => cell.item.item_id,
+      ),
+    ).toEqual([hero, ...companions].map((entry) => entry.item_id));
+    expect(intersectingRowIDs(rows, rows[0].height / 2, 1)).toEqual(
+      [hero, ...companions].map((entry) => entry.item_id),
+    );
+  });
+
+  it("marks every L in a hero row as one band", () => {
+    const large = Array.from({ length: 3 }, (_, index) => ({
+      ...make(index + 200),
+      size: "L" as const,
+      media_url: `https://example.com/${index}.jpg`,
+      media_w: 150,
+      media_h: 100,
+    }));
+    const rows = justify(large, 1248);
+    expect(rows.map((row) => [row.kind, row.height])).toEqual([["hero", 288]]);
+    expect(fullyPassedRows(rows, -1, 288).rows).toHaveLength(0);
+    expect(
+      fullyPassedRows(rows, -1, 289).rows[0].cells.map(
+        (cell) => cell.item.item_id,
+      ),
+    ).toEqual(large.map((entry) => entry.item_id));
+  });
+
   it("does not auto-mark a short non-scrollable list", () => {
     expect(shouldMarkAtBottom(true, 0, 500, 500)).toBe(false);
   });
