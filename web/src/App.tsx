@@ -7,7 +7,7 @@ import {
   Show,
 } from "solid-js";
 import { APIClient, UnauthorizedError } from "./api/client";
-import { shouldConfirmArchiveRemoval } from "./archive";
+import { completeArchiveRemoval, shouldConfirmArchiveRemoval } from "./archive";
 import {
   type BehaviourEvent,
   linkBehaviourEvent,
@@ -1442,10 +1442,13 @@ export function App(props: { signOut(): void }) {
           {(item) => (
             <ConfirmRemove
               onCancel={() => setConfirmRemove()}
-              onConfirm={() => {
-                setConfirmRemove();
-                void performHeart(item());
-              }}
+              onConfirm={() =>
+                completeArchiveRemoval(
+                  item,
+                  () => setConfirmRemove(),
+                  performHeart,
+                )
+              }
             />
           )}
         </Show>

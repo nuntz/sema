@@ -17,6 +17,16 @@ export function shouldConfirmArchiveRemoval(
   return archive && hearted;
 }
 
+export function completeArchiveRemoval(
+  item: () => Item,
+  dismiss: () => void,
+  remove: (item: Item) => void,
+): void {
+  const confirmed = item();
+  dismiss();
+  remove(confirmed);
+}
+
 export function archiveSize(count: number): string {
   const megabytes = count * 0.3;
   return megabytes >= 10

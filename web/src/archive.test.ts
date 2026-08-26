@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { shouldConfirmArchiveRemoval, updateHeartState } from "./archive";
+import {
+  completeArchiveRemoval,
+  shouldConfirmArchiveRemoval,
+  updateHeartState,
+} from "./archive";
 import type { Item } from "./types";
 
 const item = (hearted: boolean): Item => ({
@@ -31,5 +35,27 @@ describe("archive heart behavior", () => {
     expect(shouldConfirmArchiveRemoval(true, true)).toBe(true);
     expect(shouldConfirmArchiveRemoval(false, true)).toBe(false);
     expect(shouldConfirmArchiveRemoval(true, false)).toBe(false);
+  });
+
+  it("captures the confirmed item before dismissing the dialog", () => {
+    const confirmed = item(true);
+    let pending: Item | undefined = confirmed;
+    let removed: Item | undefined;
+
+    completeArchiveRemoval(
+      () => {
+        if (!pending) throw new Error("confirmation was already dismissed");
+        return pending;
+      },
+      () => {
+        pending = undefined;
+      },
+      (selected) => {
+        removed = selected;
+      },
+    );
+
+    expect(pending).toBeUndefined();
+    expect(removed).toBe(confirmed);
   });
 });
