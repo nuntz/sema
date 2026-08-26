@@ -67,6 +67,21 @@ describe("item list", () => {
     expect(pollCandidates(loaded, [], incoming, true)).toEqual([incoming[0]]);
   });
 
+  it("offers read candidates only in the all-items pill", () => {
+    const loaded = [{ ...make("loaded"), fetched_ts: "2026-08-22T10:00:00Z" }];
+    const incoming = [
+      { ...make("new-unread"), fetched_ts: "2026-08-22T10:02:00Z" },
+      {
+        ...make("new-read"),
+        fetched_ts: "2026-08-22T10:01:00Z",
+        read: true,
+      },
+    ];
+
+    expect(pollCandidates(loaded, [], incoming, true)).toEqual([incoming[0]]);
+    expect(pollCandidates(loaded, [], incoming, false)).toEqual(incoming);
+  });
+
   it("keeps session-read items in the unread-only grid snapshot", () => {
     const items = [make("unread"), { ...make("already-read"), read: true }];
     const visible = visibleItemIDs(items, true);

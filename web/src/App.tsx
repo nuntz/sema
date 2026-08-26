@@ -47,6 +47,7 @@ import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
 import { TagFilter } from "./ui/TagFilter";
+import { listenForWindowReturn } from "./window-activity";
 
 type Undo = { ids: string[] };
 type Toast = {
@@ -285,7 +286,12 @@ export function App(props: { signOut(): void }) {
     const version = requestVersion;
     pollInFlight = true;
     try {
-      const page = await api.items("chrono", "", false, selectedTag());
+      const page = await api.items(
+        "chrono",
+        "",
+        includeReadForGrid(unreadOnly()),
+        selectedTag(),
+      );
       if (version !== requestVersion) return 0;
       const unseen = pollCandidates(
         items(),
@@ -368,10 +374,7 @@ export function App(props: { signOut(): void }) {
   onMount(() => {
     bootstrap();
     const flush = () => void flushPending(true);
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") flush();
-      else void pollNew();
-    };
+    const stopWindowReturn = listenForWindowReturn(flush, () => void pollNew());
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (
@@ -433,11 +436,10 @@ export function App(props: { signOut(): void }) {
       }
     };
     pollTimer = window.setInterval(() => void pollNew(), 60_000);
-    document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", flush);
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
-      document.removeEventListener("visibilitychange", onVisibility);
+      stopWindowReturn();
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("keydown", onKeyDown);
       window.clearTimeout(readTimer);
