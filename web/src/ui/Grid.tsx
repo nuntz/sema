@@ -1014,15 +1014,15 @@ export function Grid(props: GridProps) {
                     )
                   }
                 >
-                  <Icon name="thumbs-up" size={20} filled={item.signal === 1} />
-                  Thumbs up
+                  <Icon name="boost" size={20} />
+                  Boost
                 </button>
                 <button
                   type="button"
                   onClick={() => runSheetAction(() => props.onRelated(item))}
                 >
                   <Icon name="search" size={20} />
-                  More like this
+                  Similar
                 </button>
                 <button
                   type="button"
@@ -1033,12 +1033,8 @@ export function Grid(props: GridProps) {
                     )
                   }
                 >
-                  <Icon
-                    name="thumbs-down"
-                    size={20}
-                    filled={item.signal === -1}
-                  />
-                  Less like this
+                  <Icon name="bury" size={20} />
+                  Bury
                 </button>
                 <button
                   type="button"

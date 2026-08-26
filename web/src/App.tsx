@@ -1,3 +1,4 @@
+// biome-ignore-all lint/a11y/useSemanticElements: The settled header contract requires button elements with radio roles.
 import {
   createEffect,
   createMemo,
@@ -13,7 +14,7 @@ import {
   linkBehaviourEvent,
   mergeBehaviourEvent,
 } from "./behaviour-events";
-import { AppMark } from "./components/AppMark";
+import { AppHeader } from "./components/AppHeader";
 import { Icon } from "./components/Icon";
 import { Tooltip } from "./components/Tooltip";
 import {
@@ -29,6 +30,7 @@ import {
   isCancelledShare,
   LinkActionFailure,
 } from "./link-action";
+import { createMediaQuery } from "./media-query";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import type {
   Feed,
@@ -55,7 +57,7 @@ type Toast = {
   kind: "success" | "info" | "error";
   message: string;
 };
-type HeaderMenu = "order" | "unread" | "combined" | "overflow";
+type HeaderMenu = "combined" | "overflow";
 
 export function App(props: { signOut(): void }) {
   const api = new APIClient();
@@ -95,6 +97,7 @@ export function App(props: { signOut(): void }) {
   const [relatedLoading, setRelatedLoading] = createSignal(false);
   const [readerArchive, setReaderArchive] = createSignal(false);
   const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
+  const phoneHeader = createMediaQuery("(max-width: 430px)");
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
@@ -121,7 +124,6 @@ export function App(props: { signOut(): void }) {
   const orderLabel = createMemo(() =>
     order() === "interest" ? "Front page" : "Latest",
   );
-  const unreadLabel = createMemo(() => (unreadOnly() ? "Unread" : "All"));
 
   const handleError = (caught: unknown) => {
     if (caught instanceof UnauthorizedError) {
@@ -886,146 +888,71 @@ export function App(props: { signOut(): void }) {
           "tag-filter-open": tagFilterOpen(),
         }}
       >
-        <header class="topbar">
-          <AppMark
-            onActivate={() => void backToTop()}
-            tooltipDisabled={headerTooltipDisabled()}
-          />
+        <AppHeader
+          view="grid"
+          onHome={() => void backToTop()}
+          tooltipDisabled={headerTooltipDisabled()}
+        >
           <Show when={mode() === "live"}>
             <div class="header-display-controls">
               <div class="header-segments">
-                <fieldset class="segmented-control" aria-label="Item order">
+                <div
+                  class="segmented segmented-control"
+                  role="radiogroup"
+                  aria-label="Item order"
+                >
                   <button
                     type="button"
+                    class="segmented__item"
                     classList={{ active: order() === "interest" }}
-                    aria-pressed={order() === "interest"}
+                    role="radio"
+                    aria-checked={order() === "interest"}
                     onClick={() => void selectOrder("interest")}
                   >
-                    Front page
+                    <span>Front page</span>
                   </button>
                   <button
                     type="button"
+                    class="segmented__item"
                     classList={{ active: order() === "chrono" }}
-                    aria-pressed={order() === "chrono"}
+                    role="radio"
+                    aria-checked={order() === "chrono"}
                     onClick={() => void selectOrder("chrono")}
                   >
-                    Latest
+                    <span>Latest</span>
                   </button>
-                </fieldset>
-                <fieldset class="segmented-control" aria-label="Items shown">
+                </div>
+                <div
+                  class="segmented segmented-control"
+                  role="radiogroup"
+                  aria-label="Items shown"
+                >
                   <button
                     type="button"
+                    class="segmented__item"
                     classList={{ active: unreadOnly() }}
-                    aria-pressed={unreadOnly()}
+                    role="radio"
+                    aria-checked={unreadOnly()}
                     onClick={() => void selectUnread(true)}
                   >
-                    Unread
+                    <span>Unread</span>
                   </button>
                   <button
                     type="button"
+                    class="segmented__item"
                     classList={{ active: !unreadOnly() }}
-                    aria-pressed={!unreadOnly()}
+                    role="radio"
+                    aria-checked={!unreadOnly()}
                     onClick={() => void selectUnread(false)}
                   >
-                    All
+                    <span>All</span>
                   </button>
-                </fieldset>
-              </div>
-
-              <div class="header-value-controls">
-                <div class="header-value-control">
-                  <button
-                    type="button"
-                    class="value-button"
-                    aria-haspopup="menu"
-                    aria-expanded={headerMenu() === "order"}
-                    onClick={() =>
-                      setHeaderMenu((current) =>
-                        current === "order" ? undefined : "order",
-                      )
-                    }
-                  >
-                    <span>{orderLabel()}</span>
-                    <Icon name="chevron-down" size={13} />
-                  </button>
-                  <Show when={headerMenu() === "order"}>
-                    <div class="header-popover" role="menu">
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={order() === "interest"}
-                        classList={{ active: order() === "interest" }}
-                        onClick={() => {
-                          setHeaderMenu();
-                          void selectOrder("interest");
-                        }}
-                      >
-                        Front page
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={order() === "chrono"}
-                        classList={{ active: order() === "chrono" }}
-                        onClick={() => {
-                          setHeaderMenu();
-                          void selectOrder("chrono");
-                        }}
-                      >
-                        Latest
-                      </button>
-                    </div>
-                  </Show>
-                </div>
-                <div class="header-value-control">
-                  <button
-                    type="button"
-                    class="value-button"
-                    aria-haspopup="menu"
-                    aria-expanded={headerMenu() === "unread"}
-                    onClick={() =>
-                      setHeaderMenu((current) =>
-                        current === "unread" ? undefined : "unread",
-                      )
-                    }
-                  >
-                    <span>{unreadLabel()}</span>
-                    <Icon name="chevron-down" size={13} />
-                  </button>
-                  <Show when={headerMenu() === "unread"}>
-                    <div class="header-popover" role="menu">
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={unreadOnly()}
-                        classList={{ active: unreadOnly() }}
-                        onClick={() => {
-                          setHeaderMenu();
-                          void selectUnread(true);
-                        }}
-                      >
-                        Unread
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={!unreadOnly()}
-                        classList={{ active: !unreadOnly() }}
-                        onClick={() => {
-                          setHeaderMenu();
-                          void selectUnread(false);
-                        }}
-                      >
-                        All
-                      </button>
-                    </div>
-                  </Show>
                 </div>
               </div>
-
               <button
                 type="button"
-                class="value-button header-merged-control"
+                class="chrome-btn filter-button"
+                classList={{ "is-hidden": !phoneHeader() }}
                 aria-haspopup="dialog"
                 aria-expanded={headerMenu() === "combined"}
                 onClick={() =>
@@ -1034,16 +961,14 @@ export function App(props: { signOut(): void }) {
                   )
                 }
               >
-                <span>
-                  {orderLabel()} · {unreadLabel()}
-                </span>
+                <span>{orderLabel()}</span>
                 <Icon name="chevron-down" size={13} />
               </button>
             </div>
           </Show>
 
           <div class="header-spacer" />
-          <div class="header-tools">
+          <div class="chrome-group chrome-group--icons header-tools">
             <TagFilter
               feeds={feedFilters()}
               value={selectedTag()}
@@ -1066,7 +991,7 @@ export function App(props: { signOut(): void }) {
                   >
                     <button
                       type="button"
-                      class="header-icon-button search-trigger"
+                      class="chrome-icon header-icon-button search-trigger"
                       aria-label="Search"
                       onClick={focusSearch}
                     >
@@ -1126,7 +1051,7 @@ export function App(props: { signOut(): void }) {
             >
               <button
                 type="button"
-                class="header-icon-button archive-toggle"
+                class="chrome-icon header-icon-button archive-toggle"
                 classList={{ active: mode() === "archive" }}
                 aria-pressed={mode() === "archive"}
                 aria-label="Archive"
@@ -1135,45 +1060,42 @@ export function App(props: { signOut(): void }) {
                 <Icon name="archive" size={18} />
               </button>
             </Tooltip>
-            <span class="header-tools-divider" aria-hidden="true" />
-            <Tooltip
-              name="Feeds & settings"
-              shortcut="G"
-              disabled={headerTooltipDisabled()}
-              align="end"
-            >
-              <button
-                type="button"
-                class="header-icon-button settings-trigger"
-                aria-label="Feeds & settings"
-                onClick={openFeedsAndSettings}
-              >
-                <Icon name="settings" size={18} />
-              </button>
-            </Tooltip>
+          </div>
+          <span
+            class="chrome-divider header-tools-divider"
+            aria-hidden="true"
+          />
+          <Tooltip
+            name="Feeds & settings"
+            shortcut="G"
+            disabled={headerTooltipDisabled()}
+            align="end"
+          >
             <button
               type="button"
-              class="header-icon-button mobile-overflow-trigger"
-              aria-label="More"
-              aria-haspopup="dialog"
-              aria-expanded={headerMenu() === "overflow"}
-              onClick={() =>
-                setHeaderMenu((current) =>
-                  current === "overflow" ? undefined : "overflow",
-                )
-              }
+              class="chrome-icon header-icon-button settings-trigger"
+              aria-label="Feeds & settings"
+              onClick={openFeedsAndSettings}
             >
-              <Icon name="menu" size={18} />
+              <Icon name="settings" size={18} />
             </button>
-          </div>
-        </header>
-        <Show when={headerMenu() === "order" || headerMenu() === "unread"}>
-          <div
-            class="header-menu-dismiss"
-            aria-hidden="true"
-            onPointerDown={() => setHeaderMenu()}
-          />
-        </Show>
+          </Tooltip>
+          <button
+            type="button"
+            class="chrome-btn chrome-btn--icon grid-overflow-trigger"
+            classList={{ "is-hidden": !phoneHeader() }}
+            aria-label="More"
+            aria-haspopup="dialog"
+            aria-expanded={headerMenu() === "overflow"}
+            onClick={() =>
+              setHeaderMenu((current) =>
+                current === "overflow" ? undefined : "overflow",
+              )
+            }
+          >
+            <Icon name="menu" size={18} />
+          </button>
+        </AppHeader>
         <Show when={headerMenu() === "combined"}>
           <div class="header-sheet-layer">
             <button
@@ -1190,9 +1112,11 @@ export function App(props: { signOut(): void }) {
             >
               <div class="header-sheet-row">
                 <span>Order</span>
-                <fieldset aria-label="Item order">
+                <div role="radiogroup" aria-label="Item order">
                   <button
                     type="button"
+                    role="radio"
+                    aria-checked={order() === "interest"}
                     classList={{ active: order() === "interest" }}
                     onClick={() => void selectOrder("interest")}
                   >
@@ -1200,18 +1124,22 @@ export function App(props: { signOut(): void }) {
                   </button>
                   <button
                     type="button"
+                    role="radio"
+                    aria-checked={order() === "chrono"}
                     classList={{ active: order() === "chrono" }}
                     onClick={() => void selectOrder("chrono")}
                   >
                     Latest
                   </button>
-                </fieldset>
+                </div>
               </div>
               <div class="header-sheet-row">
                 <span>Items</span>
-                <fieldset aria-label="Items shown">
+                <div role="radiogroup" aria-label="Items shown">
                   <button
                     type="button"
+                    role="radio"
+                    aria-checked={unreadOnly()}
                     classList={{ active: unreadOnly() }}
                     onClick={() => void selectUnread(true)}
                   >
@@ -1219,12 +1147,14 @@ export function App(props: { signOut(): void }) {
                   </button>
                   <button
                     type="button"
+                    role="radio"
+                    aria-checked={!unreadOnly()}
                     classList={{ active: !unreadOnly() }}
                     onClick={() => void selectUnread(false)}
                   >
                     All
                   </button>
-                </fieldset>
+                </div>
               </div>
             </section>
           </div>
@@ -1529,9 +1459,9 @@ function ColdStart(props: { onImport(): void }) {
       </div>
       <h1>Nothing scored yet.</h1>
       <p>
-        Sema starts newest-first and sizes items by media and recency. Thumb a
-        few dozen items and the grid begins shaping itself around what you
-        actually read.
+        Sema starts newest-first and sizes items by media and recency. Boost or
+        bury a few dozen items and the grid begins shaping itself around what
+        you actually read.
       </p>
       <button type="button" onClick={props.onImport}>
         <Icon name="import-opml" />

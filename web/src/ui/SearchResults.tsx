@@ -227,22 +227,18 @@ function ResultCell(props: {
         <button
           type="button"
           classList={{ selected: props.item.signal === 1 }}
-          aria-label="Thumb up"
+          aria-label="Boost"
           onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
         >
-          <Icon name="thumbs-up" size={14} filled={props.item.signal === 1} />
+          <Icon name="boost" size={14} />
         </button>
         <button
           type="button"
           classList={{ selected: props.item.signal === -1 }}
-          aria-label="Thumb down"
+          aria-label="Bury"
           onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
         >
-          <Icon
-            name="thumbs-down"
-            size={14}
-            filled={props.item.signal === -1}
-          />
+          <Icon name="bury" size={14} />
         </button>
         <button
           type="button"
@@ -252,11 +248,7 @@ function ResultCell(props: {
         >
           <Icon name="keep" size={14} filled={props.item.hearted} />
         </button>
-        <button
-          type="button"
-          aria-label="More like this"
-          onClick={props.onRelated}
-        >
+        <button type="button" aria-label="Similar" onClick={props.onRelated}>
           <Icon name="search" size={14} />
         </button>
         <button

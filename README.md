@@ -36,9 +36,17 @@ bun install --frozen-lockfile
 bun run dev
 bun run lint
 bun run test
+bunx playwright install chromium # once per machine
+bun run test:e2e
 ```
 
 For local frontend work, put the Google client ID in `web/.env.local` as `VITE_GOOGLE_CLIENT_ID`. Vite proxies `/api` to `http://localhost:8787` by default; set `SEMA_API_ORIGIN` to proxy a deployed stack.
+
+### Header chrome contract
+
+Grid and reader use the same 56px header shell, 20px edge padding, fixed 60px brand slot, and 2px bottom band. At widths of 1200px and above, the reader identity text aligns to the centered 640px article measure. The centered shim collapses at 1199px and below; 1199px is the canonical threshold for both implementation and documentation.
+
+Header action icons also encode direction. A trailing icon means the control moves elsewhere (`original ↗`, `next ›`); a leading icon means the control acts on the current item (all other actions).
 
 ## Deploy
 

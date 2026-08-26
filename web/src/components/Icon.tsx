@@ -1,5 +1,7 @@
 import Archive from "lucide-solid/icons/archive";
+import ArrowDown from "lucide-solid/icons/arrow-down";
 import ArrowLeft from "lucide-solid/icons/arrow-left";
+import ArrowUp from "lucide-solid/icons/arrow-up";
 import ArrowUpDown from "lucide-solid/icons/arrow-up-down";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
@@ -19,8 +21,6 @@ import RotateCw from "lucide-solid/icons/rotate-cw";
 import Search from "lucide-solid/icons/search";
 import Settings from "lucide-solid/icons/settings";
 import Tag from "lucide-solid/icons/tag";
-import ThumbsDown from "lucide-solid/icons/thumbs-down";
-import ThumbsUp from "lucide-solid/icons/thumbs-up";
 import Trash2 from "lucide-solid/icons/trash-2";
 import Unplug from "lucide-solid/icons/unplug";
 import Upload from "lucide-solid/icons/upload";
@@ -63,6 +63,8 @@ const glyphs = {
   "add-feed": Plus,
   archive: Archive,
   "back-to-grid": ArrowLeft,
+  boost: ArrowUp,
+  bury: ArrowDown,
   check: Check,
   close: X,
   "copy-link": Link,
@@ -88,8 +90,6 @@ const glyphs = {
   "status-ok": Check,
   "status-slowed": Clock,
   tag: Tag,
-  "thumbs-down": ThumbsDown,
-  "thumbs-up": ThumbsUp,
 } as const;
 
 export type IconName = keyof typeof glyphs;

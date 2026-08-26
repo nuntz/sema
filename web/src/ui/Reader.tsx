@@ -7,8 +7,9 @@ import {
   Show,
 } from "solid-js";
 import { isOlderThanThirtyDays } from "../archive";
-import { AppMark } from "../components/AppMark";
+import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
+import { createMediaQuery } from "../media-query";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
@@ -53,8 +54,11 @@ export function Reader(props: ReaderProps) {
   const [body, setBody] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [progress, setProgress] = createSignal(0);
+  const [scrolled, setScrolled] = createSignal(false);
+  const [overflowOpen, setOverflowOpen] = createSignal(false);
   const [dragOffset, setDragOffset] = createSignal(0);
   const [swiping, setSwiping] = createSignal(false);
+  const narrowHeader = createMediaQuery("(max-width: 619px)");
   let trackedID = props.item.item_id;
   let dwellMS = 0;
   let activeSince = 0;
@@ -100,6 +104,8 @@ export function Reader(props: ReaderProps) {
     lastReported = 0;
     thresholdReported = false;
     setProgress(0);
+    setScrolled(false);
+    setOverflowOpen(false);
     setDragOffset(0);
     if (article) article.scrollTop = 0;
     startDwell();
@@ -127,6 +133,9 @@ export function Reader(props: ReaderProps) {
   const updateProgress = () => {
     const range = article.scrollHeight - article.clientHeight;
     setProgress(range <= 0 ? 1 : article.scrollTop / range);
+    setScrolled((current) =>
+      current ? article.scrollTop > 160 : article.scrollTop >= 180,
+    );
   };
 
   const onTouchStart = (event: TouchEvent) => {
@@ -256,8 +265,12 @@ export function Reader(props: ReaderProps) {
       aria-modal="true"
       aria-label={props.item.title}
     >
-      <header class="reader-bar">
-        <AppMark onActivate={props.onHome} />
+      <AppHeader
+        view="reader"
+        onHome={props.onHome}
+        scrolled={scrolled()}
+        progress={progress()}
+      >
         <button
           type="button"
           class="reader-back"
@@ -266,101 +279,179 @@ export function Reader(props: ReaderProps) {
         >
           <Icon name="back-to-grid" />
         </button>
-        <SourceBadge
-          connector={props.item.connector}
-          imageURL={props.item.favicon_url}
-          title={props.item.feed_title}
-          size={20}
-          class="reader-badge"
-        />
-        <span class="reader-source">
-          {props.item.feed_title || "Feed"} ·{" "}
-          {relativeTime(props.item.display_date || props.item.published_ts)} ago
-        </span>
-        <div class="reader-actions">
+        <div class="reader-slot">
+          <SourceBadge
+            connector={props.item.connector}
+            imageURL={props.item.favicon_url}
+            title={props.item.feed_title}
+            size={20}
+            class="reader-favicon reader-badge"
+          />
+          <span class="reader-slot__text">
+            <span class="reader-crumb" aria-hidden={scrolled()}>
+              <span class="reader-crumb__source">
+                {props.item.feed_title || "Feed"}
+              </span>{" "}
+              ·{" "}
+              {relativeTime(props.item.display_date || props.item.published_ts)}{" "}
+              ago
+            </span>
+            <span class="reader-title" aria-hidden={!scrolled()}>
+              {props.item.title}
+            </span>
+          </span>
+        </div>
+        <div class="chrome-group chrome-group--judge">
           <button
             type="button"
-            class="signal"
-            classList={{ selected: props.item.signal === 1 }}
+            class="chrome-btn chrome-btn--collapse-2"
+            classList={{ "chrome-btn--on": props.item.signal === 1 }}
             aria-pressed={props.item.signal === 1}
             onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
           >
-            <Icon name="thumbs-up" filled={props.item.signal === 1} />
-            up
+            <Icon name="boost" />
+            <span class="chrome-btn__label">
+              {props.item.signal === 1 ? "boosted" : "boost"}
+            </span>
           </button>
           <button
             type="button"
-            class="signal"
-            classList={{ selected: props.item.signal === -1 }}
+            class="chrome-btn chrome-btn--collapse-2"
+            classList={{ "chrome-btn--on": props.item.signal === -1 }}
             aria-pressed={props.item.signal === -1}
             onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
           >
-            <Icon name="thumbs-down" filled={props.item.signal === -1} />
-            down
+            <Icon name="bury" />
+            <span class="chrome-btn__label">
+              {props.item.signal === -1 ? "buried" : "bury"}
+            </span>
           </button>
           <button
             type="button"
-            class="keep"
-            classList={{ selected: props.hearted }}
+            class="chrome-btn"
+            classList={{ "chrome-btn--on": props.hearted }}
             aria-pressed={props.hearted}
             onClick={props.onHeart}
           >
             <Icon name="keep" filled={props.hearted} />
-            {props.hearted ? "kept" : "keep"}
+            <span class="chrome-btn__label">
+              {props.hearted ? "kept" : "keep"}
+            </span>
           </button>
+        </div>
+        <div class="chrome-group chrome-group--secondary">
           <button
             type="button"
-            class="copy-link"
-            classList={{ activated: props.linkActionActive }}
+            class="chrome-btn chrome-btn--collapse-1"
+            classList={{ "chrome-btn--on": props.linkActionActive }}
             onClick={props.onCopy}
           >
-            <span>
-              {props.linkActionActive ? (
-                <Icon name="check" />
-              ) : (
-                <Icon name="copy-link" />
-              )}
-            </span>
-            copy link
+            {props.linkActionActive ? (
+              <Icon name="check" />
+            ) : (
+              <Icon name="copy-link" />
+            )}
+            <span class="chrome-btn__label">copy link</span>
           </button>
-          <button type="button" class="more-like" onClick={props.onRelated}>
-            <Icon name="search" />
-            more like
-          </button>
-          <i />
-          <a
-            href={props.item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="original-link"
-            onClick={props.onOriginal}
-          >
-            original
-            <Icon name="open-original" />
-          </a>
           <button
             type="button"
+            class="chrome-btn chrome-btn--collapse-1"
+            onClick={props.onRelated}
+          >
+            <Icon name="search" />
+            <span class="chrome-btn__label">similar</span>
+          </button>
+        </div>
+        <span class="chrome-divider reader-leave-divider" aria-hidden="true" />
+        <a
+          href={props.item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="chrome-btn chrome-btn--original chrome-btn--collapse-1"
+          onClick={props.onOriginal}
+        >
+          <span class="chrome-btn__label">original</span>
+          <Icon name="open-original" />
+        </a>
+        <button
+          type="button"
+          class="chrome-btn chrome-btn--icon chrome-overflow"
+          classList={{ "is-hidden": !narrowHeader() }}
+          aria-label="More actions"
+          aria-haspopup="menu"
+          aria-expanded={overflowOpen()}
+          onClick={() => setOverflowOpen((open) => !open)}
+        >
+          <Icon name="more" />
+        </button>
+        <div class="chrome-group chrome-group--page">
+          <button
+            type="button"
+            class="chrome-btn chrome-btn--icon"
             onClick={props.onPrevious}
             disabled={!props.canPrevious}
             aria-label="Previous item"
-            title="Previous item"
           >
             <Icon name="previous-item" />
           </button>
           <button
             type="button"
+            class="chrome-btn chrome-btn--emphasis"
             onClick={props.onNext}
             disabled={!props.canNext}
-            aria-label="Next item"
-            title="Next item"
+            aria-label="Next unread item"
           >
+            <span>next</span>
             <Icon name="next-item" />
           </button>
         </div>
-      </header>
-      <div class="reader-progress">
-        <i style={{ width: `${progress() * 100}%` }} />
-      </div>
+        <Show when={overflowOpen() && narrowHeader()}>
+          <div class="reader-overflow-menu" role="menu">
+            <button
+              type="button"
+              class="chrome-btn"
+              role="menuitem"
+              onClick={() => {
+                setOverflowOpen(false);
+                props.onCopy();
+              }}
+            >
+              {props.linkActionActive ? (
+                <Icon name="check" />
+              ) : (
+                <Icon name="copy-link" />
+              )}
+              <span>copy link</span>
+            </button>
+            <button
+              type="button"
+              class="chrome-btn"
+              role="menuitem"
+              onClick={() => {
+                setOverflowOpen(false);
+                props.onRelated();
+              }}
+            >
+              <Icon name="search" />
+              <span>similar</span>
+            </button>
+            <a
+              href={props.item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="chrome-btn"
+              role="menuitem"
+              onClick={() => {
+                setOverflowOpen(false);
+                props.onOriginal();
+              }}
+            >
+              <span>original</span>
+              <Icon name="open-original" />
+            </a>
+          </div>
+        </Show>
+      </AppHeader>
       <div
         class="reader-scroll"
         classList={{ swiping: swiping() }}
@@ -516,60 +607,56 @@ export function Reader(props: ReaderProps) {
           </footer>
         </article>
       </div>
-      <nav class="reader-mobile-actions">
+      <nav class="reader-bottom-actions" aria-label="Article actions">
         <button
           type="button"
-          classList={{ selected: props.item.signal === 1 }}
-          aria-label="Thumbs up"
+          class="chrome-btn chrome-btn--icon"
+          classList={{ "chrome-btn--on": props.item.signal === 1 }}
+          aria-label={props.item.signal === 1 ? "Remove boost" : "Boost"}
           aria-pressed={props.item.signal === 1}
           onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
         >
-          <Icon name="thumbs-up" size={18} filled={props.item.signal === 1} />
+          <Icon name="boost" />
         </button>
         <button
           type="button"
-          classList={{ selected: props.item.signal === -1 }}
-          aria-label="Thumbs down"
+          class="chrome-btn chrome-btn--icon"
+          classList={{ "chrome-btn--on": props.item.signal === -1 }}
+          aria-label={props.item.signal === -1 ? "Remove bury" : "Bury"}
           aria-pressed={props.item.signal === -1}
           onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
         >
-          <Icon
-            name="thumbs-down"
-            size={18}
-            filled={props.item.signal === -1}
-          />
+          <Icon name="bury" />
         </button>
         <button
           type="button"
-          class="keep"
-          classList={{ selected: props.hearted }}
+          class="chrome-btn chrome-btn--icon"
+          classList={{ "chrome-btn--on": props.hearted }}
           aria-label={props.hearted ? "Remove from archive" : "Keep in archive"}
           aria-pressed={props.hearted}
           onClick={props.onHeart}
         >
-          <Icon name="keep" size={18} filled={props.hearted} />
+          <Icon name="keep" filled={props.hearted} />
+        </button>
+        <span class="reader-bottom-actions__spacer" />
+        <button
+          type="button"
+          class="chrome-btn chrome-btn--icon"
+          onClick={props.onPrevious}
+          disabled={!props.canPrevious}
+          aria-label="Previous item"
+        >
+          <Icon name="previous-item" />
         </button>
         <button
           type="button"
-          class="next"
+          class="chrome-btn chrome-btn--emphasis"
           onClick={props.onNext}
           disabled={!props.canNext}
+          aria-label="Next unread item"
         >
-          NEXT
-          <Icon name="next-item" size={18} />
-        </button>
-        <button
-          type="button"
-          class="copy-link"
-          classList={{ activated: props.linkActionActive }}
-          aria-label="Copy or share original link"
-          onClick={props.onCopy}
-        >
-          {props.linkActionActive ? (
-            <Icon name="check" size={18} />
-          ) : (
-            <Icon name="copy-link" size={18} />
-          )}
+          <span>next</span>
+          <Icon name="next-item" />
         </button>
       </nav>
     </section>

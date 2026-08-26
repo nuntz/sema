@@ -84,12 +84,12 @@ export function RelatedPanel(props: {
         class="related-panel"
         role="dialog"
         aria-modal="true"
-        aria-label={`More like ${props.source.title}`}
+        aria-label={`Similar to ${props.source.title}`}
       >
         <i class="related-grabber" />
         <header>
           <div>
-            <small>MORE LIKE</small>
+            <small>SIMILAR</small>
             <h2>{props.source.title}</h2>
           </div>
           <button
@@ -171,31 +171,23 @@ export function RelatedPanel(props: {
                       <div class="related-actions">
                         <button
                           type="button"
-                          aria-label="Thumb up"
+                          aria-label="Boost"
                           onClick={(event) => {
                             event.stopPropagation();
                             props.onSignal(item, item.signal === 1 ? 0 : 1);
                           }}
                         >
-                          <Icon
-                            name="thumbs-up"
-                            size={14}
-                            filled={item.signal === 1}
-                          />
+                          <Icon name="boost" size={14} />
                         </button>
                         <button
                           type="button"
-                          aria-label="Thumb down"
+                          aria-label="Bury"
                           onClick={(event) => {
                             event.stopPropagation();
                             props.onSignal(item, item.signal === -1 ? 0 : -1);
                           }}
                         >
-                          <Icon
-                            name="thumbs-down"
-                            size={14}
-                            filled={item.signal === -1}
-                          />
+                          <Icon name="bury" size={14} />
                         </button>
                         <button
                           type="button"

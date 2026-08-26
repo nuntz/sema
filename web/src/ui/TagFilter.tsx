@@ -129,7 +129,7 @@ export function TagFilter(props: {
               >
                 <button
                   type="button"
-                  class="header-icon-button tag-trigger"
+                  class="chrome-icon header-icon-button tag-trigger"
                   aria-label="Filter by tag"
                   onClick={begin}
                 >
@@ -195,7 +195,6 @@ export function TagFilter(props: {
                   id={`grid-tag-${option.tag}`}
                   type="button"
                   role="option"
-                  aria-selected={index() === highlight()}
                   classList={{ highlighted: index() === highlight() }}
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setHighlight(index())}
