@@ -107,6 +107,11 @@ export function App(props: { signOut(): void }) {
   let pollTimer: number | undefined;
   let pollInFlight = false;
   let markBelowInFlight = false;
+  let settingsGoPending = false;
+  let settingsGoTimer: number | undefined;
+  let gridScrollTop = 0;
+  let feedsGridDirty = false;
+  let feedFilterRefresh: Promise<void> | undefined;
   let linkActionTimer: number | undefined;
   let toastTimer: number | undefined;
   let toastID = 0;
@@ -216,6 +221,7 @@ export function App(props: { signOut(): void }) {
             );
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
+      gridScrollTop = 0;
       setItems(pageItems);
       setReadAnchor(page.read_anchor);
       const visibleIDs =
@@ -373,11 +379,27 @@ export function App(props: { signOut(): void }) {
     });
   };
 
+  const clearSettingsGo = () => {
+    settingsGoPending = false;
+    window.clearTimeout(settingsGoTimer);
+    settingsGoTimer = undefined;
+  };
+
+  const settingsSequenceAvailable = () =>
+    !keysOpen() &&
+    (view() === "feeds" ||
+      (view() === "grid" &&
+        !readerID() &&
+        !confirmRemove() &&
+        !searchActive() &&
+        !relatedSource()));
+
   onMount(() => {
     bootstrap();
     const flush = () => void flushPending(true);
     const stopWindowReturn = listenForWindowReturn(flush, () => void pollNew());
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const target = event.target;
       if (
         event.key === "/" &&
@@ -398,21 +420,39 @@ export function App(props: { signOut(): void }) {
         setHeaderMenu();
         return;
       }
-      const command = appCommand(event.key);
-      if (
-        event.repeat ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.altKey ||
-        !command ||
-        (command === "close-help" && !keysOpen())
-      )
-        return;
       if (
         target instanceof HTMLElement &&
         (target.isContentEditable || target.matches("input, textarea, select"))
-      )
+      ) {
+        clearSettingsGo();
         return;
+      }
+      if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
+        clearSettingsGo();
+        return;
+      }
+      if (settingsGoPending) {
+        const toggleSettings = event.key === "s" && settingsSequenceAvailable();
+        clearSettingsGo();
+        if (toggleSettings) {
+          event.preventDefault();
+          if (view() === "feeds") void closeFeedsAndSettings();
+          else openFeedsAndSettings();
+          return;
+        }
+      } else if (event.key === "g" && settingsSequenceAvailable()) {
+        settingsGoPending = true;
+        settingsGoTimer = window.setTimeout(clearSettingsGo, 600);
+        if (view() === "feeds") event.preventDefault();
+        return;
+      }
+      if (event.key === "Escape" && view() === "feeds" && !keysOpen()) {
+        event.preventDefault();
+        void closeFeedsAndSettings();
+        return;
+      }
+      const command = appCommand(event.key);
+      if (!command || (command === "close-help" && !keysOpen())) return;
       if (
         command === "toggle-unread" &&
         (view() !== "grid" ||
@@ -431,8 +471,6 @@ export function App(props: { signOut(): void }) {
         void toggleArchive();
       } else if (command === "toggle-unread") {
         void toggleUnread();
-      } else if (command === "open-settings") {
-        openFeedsAndSettings();
       } else {
         setKeysOpen((open) => (command === "toggle-help" ? !open : false));
       }
@@ -448,6 +486,7 @@ export function App(props: { signOut(): void }) {
       window.clearInterval(pollTimer);
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
+      window.clearTimeout(settingsGoTimer);
       void flushPending(true);
     });
   });
@@ -818,6 +857,15 @@ export function App(props: { signOut(): void }) {
     }
   };
 
+  const noteFeedsChanged = () => {
+    feedsGridDirty = true;
+    const refresh = refreshFeedFilters();
+    feedFilterRefresh = refresh;
+    void refresh.finally(() => {
+      if (feedFilterRefresh === refresh) feedFilterRefresh = undefined;
+    });
+  };
+
   const backToTop = async () => {
     const wasFeeds = view() === "feeds";
     const wasArchive = mode() === "archive";
@@ -836,12 +884,23 @@ export function App(props: { signOut(): void }) {
   };
 
   const openFeedsAndSettings = () => {
+    clearSettingsGo();
     setHeaderMenu();
     setKeysOpen(false);
     setRelatedSource();
     setReaderID("");
     clearSearch();
     setView("feeds");
+  };
+
+  const closeFeedsAndSettings = async () => {
+    clearSettingsGo();
+    setKeysOpen(false);
+    setView("grid");
+    if (!feedsGridDirty) return;
+    feedsGridDirty = false;
+    await feedFilterRefresh;
+    await reload(order(), unreadOnly(), mode(), selectedTag());
   };
 
   const toggleArchive = async () => {
@@ -867,10 +926,10 @@ export function App(props: { signOut(): void }) {
           <Feeds
             api={api}
             heartCount={heartCount()}
-            onBack={() => void backToTop()}
+            onBack={() => void closeFeedsAndSettings()}
             onKeys={() => setKeysOpen(true)}
             onSignOut={props.signOut}
-            onFeedsChanged={() => void refreshFeedFilters()}
+            onFeedsChanged={noteFeedsChanged}
             onToast={showToast}
           />
           <Show when={keysOpen()}>
@@ -1067,7 +1126,7 @@ export function App(props: { signOut(): void }) {
           />
           <Tooltip
             name="Feeds & settings"
-            shortcut="G"
+            shortcut="G S"
             disabled={headerTooltipDisabled()}
             align="end"
           >
@@ -1201,7 +1260,7 @@ export function App(props: { signOut(): void }) {
               <button type="button" onClick={openFeedsAndSettings}>
                 <Icon name="settings" size={18} />
                 <span>Feeds &amp; settings</span>
-                <kbd>G</kbd>
+                <kbd>G S</kbd>
               </button>
             </section>
           </div>
@@ -1242,7 +1301,7 @@ export function App(props: { signOut(): void }) {
                   onClear={() => void applyTag("")}
                 />
               ) : (
-                <ColdStart onImport={() => setView("feeds")} />
+                <ColdStart onImport={openFeedsAndSettings} />
               )
             }
           >
@@ -1250,8 +1309,10 @@ export function App(props: { signOut(): void }) {
               items={gridItems()}
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}
+              initialScrollTop={gridScrollTop}
               focusedID={focusedID()}
               active={
+                view() === "grid" &&
                 !readerID() &&
                 !keysOpen() &&
                 !confirmRemove() &&
@@ -1284,6 +1345,9 @@ export function App(props: { signOut(): void }) {
               }
               onInsertNew={insertPendingNew}
               onRefresh={() => pollNew(true)}
+              onScrollPosition={(top) => {
+                gridScrollTop = top;
+              }}
             />
           </Show>
         </Show>

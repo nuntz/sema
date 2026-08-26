@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: "header.e2e.ts",
+  testMatch: "*.e2e.ts",
   outputDir: "/tmp/sema-playwright-results",
   fullyParallel: true,
   reporter: "line",

@@ -204,7 +204,20 @@ export function Feeds(props: {
   onCleanup(() => window.clearTimeout(undoTimer));
 
   return (
-    <main class="feeds-view">
+    <main
+      class="feeds-view"
+      onKeyDown={(event) => {
+        if (
+          event.key !== "Escape" ||
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches("input, textarea, select")
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.target.blur();
+      }}
+    >
       <header class="feeds-header">
         <AppMark onActivate={props.onBack} />
         <span>/ feeds &amp; settings</span>
@@ -235,6 +248,13 @@ export function Feeds(props: {
               placeholder="Search feeds"
               aria-label="Search feeds"
               onInput={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                setQuery("");
+                event.currentTarget.blur();
+              }}
             />
             <Show when={query()}>
               <small>{visibleFeeds().length}</small>
@@ -430,7 +450,8 @@ function FeedDrawer(props: {
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
-      props.onClose();
+      if (confirming()) setConfirming(false);
+      else props.onClose();
     };
     window.addEventListener("keydown", dismiss, true);
     onCleanup(() => window.removeEventListener("keydown", dismiss, true));
@@ -814,7 +835,12 @@ function AddFeedDialog(props: {
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-feed-title"
-        onKeyDown={(event) => event.key === "Escape" && props.onClose()}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          event.stopPropagation();
+          props.onClose();
+        }}
       >
         <header>
           <div>
@@ -1048,8 +1074,11 @@ function TagEditor(props: {
             event.preventDefault();
             commit(matches()[0] ?? draft());
           } else if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
             setDraft("");
             setOpen(false);
+            event.currentTarget.blur();
           } else if (
             event.key === "Backspace" &&
             !draft() &&

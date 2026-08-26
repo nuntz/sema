@@ -42,6 +42,7 @@ interface GridProps {
   items: Item[];
   layoutKey: number;
   scrollToTopKey: number;
+  initialScrollTop?: number;
   focusedID: string;
   active: boolean;
   hasMore: boolean;
@@ -68,6 +69,7 @@ interface GridProps {
   onCaughtUpUnavailable(): void;
   onInsertNew(): void;
   onRefresh(): Promise<number>;
+  onScrollPosition?(top: number): void;
 }
 
 function shortWhyText(item: Item): string {
@@ -81,6 +83,7 @@ export function Grid(props: GridProps) {
   let endButton!: HTMLButtonElement;
   let frame = 0;
   let programmaticFrame = 0;
+  let restoreFrame = 0;
   let scrollIdle: number | undefined;
   let goTimer: number | undefined;
   let longPressTimer: number | undefined;
@@ -101,7 +104,9 @@ export function Grid(props: GridProps) {
   let goPending = false;
   const [width, setWidth] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
-  const [scrollTop, setScrollTop] = createSignal(0);
+  const [scrollTop, setScrollTop] = createSignal(
+    Math.max(0, props.initialScrollTop ?? 0),
+  );
   const [sheetItem, setSheetItem] = createSignal<Item>();
   const [sheetOffset, setSheetOffset] = createSignal(0);
   const [pullDistance, setPullDistance] = createSignal(0);
@@ -334,6 +339,7 @@ export function Grid(props: GridProps) {
   const processScroll = () => {
     const top = scroller.scrollTop;
     setScrollTop(top);
+    props.onScrollPosition?.(top);
     const alreadyRead = new Set(
       props.items.filter((item) => item.read).map((item) => item.item_id),
     );
@@ -381,7 +387,18 @@ export function Grid(props: GridProps) {
     scroller.addEventListener("touchend", onPullEnd, { passive: true });
     scroller.addEventListener("touchcancel", onPullEnd, { passive: true });
     window.addEventListener("keydown", onKeyDown);
+    const restoredTop = Math.max(0, props.initialScrollTop ?? 0);
+    if (restoredTop > 0) {
+      restoreFrame = requestAnimationFrame(() => {
+        programmaticScroll(() => {
+          scroller.scrollTop = restoredTop;
+        });
+        setScrollTop(scroller.scrollTop);
+        props.onScrollPosition?.(scroller.scrollTop);
+      });
+    }
     onCleanup(() => {
+      props.onScrollPosition?.(scroller.scrollTop);
       observer.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", noteUserScroll);
@@ -393,6 +410,7 @@ export function Grid(props: GridProps) {
       window.removeEventListener("keydown", onKeyDown);
       cancelAnimationFrame(frame);
       cancelAnimationFrame(programmaticFrame);
+      cancelAnimationFrame(restoreFrame);
       window.clearTimeout(scrollIdle);
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
@@ -401,14 +419,17 @@ export function Grid(props: GridProps) {
     });
   });
 
+  let currentScrollToTopKey = props.scrollToTopKey;
   createEffect(() => {
-    props.scrollToTopKey;
-    if (!scroller) return;
+    const nextKey = props.scrollToTopKey;
+    if (!scroller || nextKey === currentScrollToTopKey) return;
+    currentScrollToTopKey = nextKey;
     endRequested = false;
     programmaticScroll(() => {
       scroller.scrollTop = 0;
     });
     setScrollTop(0);
+    props.onScrollPosition?.(0);
     passedIDs.clear();
   });
 
