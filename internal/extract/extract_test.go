@@ -59,7 +59,15 @@ func TestMediaCardsAreProviderLinksWithoutThirdPartyLoadsAfterResolution(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`class="media-card"`, `data-provider="YouTube"`, `href="https://www.youtube.com/watch?v=abc123"`, "A useful talk", "opens on youtube.com"} {
+	for _, want := range []string{
+		`class="media-card"`,
+		`data-provider="YouTube"`,
+		`href="https://www.youtube.com/watch?v=abc123"`,
+		`title="A useful talk"`,
+		`class="media-card-thumbnail"`,
+		`class="video-card-play" aria-hidden="true"`,
+		`class="video-provider-strip"><b>YOUTUBE</b><i></i><span>www.youtube.com/watch?v=abc123</span><strong>Watch<span class="media-card-open" aria-hidden="true"></span></strong>`,
+	} {
 		if !strings.Contains(cleaned, want) {
 			t.Fatalf("media card missing %q: %s", want, cleaned)
 		}
@@ -73,13 +81,25 @@ func TestMediaCardsAreProviderLinksWithoutThirdPartyLoadsAfterResolution(t *test
 		}
 		return "/media/user/item/embed-0.webp", nil
 	})
-	if len(failures) != 0 || !strings.Contains(resolved, `src="/media/user/item/embed-0.webp"`) || strings.Contains(resolved, "i.ytimg.com") || strings.Contains(resolved, "data-thumbnail") {
+	resolvedThumbnail := `<span class="media-card-thumbnail"><span class="video-card-play" aria-hidden="true"></span><img src="/media/user/item/embed-0.webp" alt="" loading="lazy"/></span>`
+	if len(failures) != 0 || !strings.Contains(resolved, resolvedThumbnail) || strings.Contains(resolved, "i.ytimg.com") || strings.Contains(resolved, "data-thumbnail") {
 		t.Fatalf("resolved card = %s, failures = %v", resolved, failures)
 	}
 
 	compact, failures := ResolveMediaCards(cleaned, func(MediaCard) (string, error) { return "", fmt.Errorf("offline") })
-	if len(failures) != 1 || strings.Contains(compact, "<img") || strings.Contains(compact, "i.ytimg.com") {
+	if len(failures) != 1 || strings.Contains(compact, "<img") || strings.Contains(compact, "i.ytimg.com") || !strings.Contains(compact, `class="video-provider-strip"`) {
 		t.Fatalf("compact card = %s, failures = %v", compact, failures)
+	}
+}
+
+func TestEmbedDisplayURLStripsSchemeAndTrailingSlash(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://www.youtube.com/watch?v=abc": "www.youtube.com/watch?v=abc",
+		"http://vimeo.com/98765/":             "vimeo.com/98765",
+	} {
+		if got := embedDisplayURL(raw); got != want {
+			t.Errorf("embedDisplayURL(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }
 
@@ -100,6 +120,14 @@ func TestVimeoCardDefersThumbnailResolutionToWorker(t *testing.T) {
 	cleaned, err := Sanitize(`<iframe title="Documentary" src="https://player.vimeo.com/video/98765"></iframe>`, base)
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, want := range []string{`data-provider="Vimeo"`, `title="Documentary"`, `<b>VIMEO</b>`, `<span>vimeo.com/98765</span>`, `<strong>Watch`, `class="video-card-play"`} {
+		if !strings.Contains(cleaned, want) {
+			t.Fatalf("Vimeo card missing %q: %s", want, cleaned)
+		}
+	}
+	if strings.Contains(cleaned, "<img") || strings.Contains(cleaned, "data-thumbnail-url") {
+		t.Fatalf("Vimeo card unexpectedly has a thumbnail: %s", cleaned)
 	}
 	called := false
 	resolved, failures := ResolveMediaCards(cleaned, func(card MediaCard) (string, error) {

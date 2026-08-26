@@ -164,11 +164,11 @@ func Sanitize(raw string, pageURL *url.URL) (string, error) {
 		}
 	}
 	policy := bluemonday.NewPolicy()
-	policy.AllowElements("p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "pre", "code", "figure", "figcaption", "strong", "em", "small", "span", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "br", "hr")
+	policy.AllowElements("p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "pre", "code", "figure", "figcaption", "strong", "b", "i", "em", "small", "span", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "br", "hr")
 	policy.AllowAttrs("href", "title").OnElements("a")
 	policy.AllowAttrs("src", "srcset", "alt", "title", "width", "height", "loading").OnElements("img")
 	policy.AllowAttrs("colspan", "rowspan", "scope").OnElements("th", "td")
-	policy.AllowAttrs("class").Matching(regexp.MustCompile(`^(?:media-card|media-card-thumbnail|media-provider|media-card-info|media-card-external)$`)).OnElements("a", "span")
+	policy.AllowAttrs("class").Matching(regexp.MustCompile(`^(?:media-card|media-card-thumbnail|media-provider|media-card-info|media-card-external|media-card-open|video-card-play|video-provider-strip)$`)).OnElements("a", "span")
 	policy.AllowAttrs("class").Matching(regexp.MustCompile(`^(?:language-[A-Za-z0-9_+.-]+|lang-[A-Za-z0-9_+.-]+)$`)).OnElements("pre", "code")
 	policy.AllowAttrs("data-provider", "data-thumbnail-url").OnElements("a")
 	policy.AllowAttrs("aria-hidden").OnElements("span")
@@ -367,12 +367,8 @@ func replaceEmbeds(node *html.Node, pageURL *url.URL) {
 	if title == "" {
 		title = provider + " video"
 	}
-	host := "youtube.com"
-	if provider == "Vimeo" {
-		host = "vimeo.com"
-	}
 	replacement := &html.Node{Type: html.ElementNode, Data: "a", DataAtom: atom.A, Attr: []html.Attribute{
-		{Key: "class", Val: "media-card"}, {Key: "data-provider", Val: provider}, {Key: "href", Val: external},
+		{Key: "class", Val: "media-card"}, {Key: "data-provider", Val: provider}, {Key: "href", Val: external}, {Key: "title", Val: title},
 	}}
 	if thumbnail != "" {
 		replacement.Attr = append(replacement.Attr, html.Attribute{Key: "data-thumbnail-url", Val: thumbnail})
@@ -381,22 +377,28 @@ func replaceEmbeds(node *html.Node, pageURL *url.URL) {
 	if thumbnail != "" {
 		frame.AppendChild(&html.Node{Type: html.ElementNode, Data: "img", DataAtom: atom.Img, Attr: []html.Attribute{{Key: "src", Val: thumbnail}, {Key: "alt", Val: ""}}})
 	}
-	badge := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "media-provider"}}}
-	badge.AppendChild(&html.Node{Type: html.TextNode, Data: provider})
-	frame.AppendChild(badge)
+	play := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "video-card-play"}, {Key: "aria-hidden", Val: "true"}}}
+	frame.AppendChild(play)
 	replacement.AppendChild(frame)
-	info := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "media-card-info"}}}
-	strong := &html.Node{Type: html.ElementNode, Data: "strong", DataAtom: atom.Strong}
-	strong.AppendChild(&html.Node{Type: html.TextNode, Data: title})
-	info.AppendChild(strong)
-	small := &html.Node{Type: html.ElementNode, Data: "small", DataAtom: atom.Small}
-	small.AppendChild(&html.Node{Type: html.TextNode, Data: "opens on " + host})
-	info.AppendChild(small)
-	externalIcon := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "media-card-external"}, {Key: "aria-hidden", Val: "true"}}}
-	externalIcon.AppendChild(&html.Node{Type: html.TextNode, Data: "↗"})
-	info.AppendChild(externalIcon)
-	replacement.AppendChild(info)
+	strip := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "video-provider-strip"}}}
+	providerLabel := &html.Node{Type: html.ElementNode, Data: "b", DataAtom: atom.B}
+	providerLabel.AppendChild(&html.Node{Type: html.TextNode, Data: strings.ToUpper(provider)})
+	strip.AppendChild(providerLabel)
+	strip.AppendChild(&html.Node{Type: html.ElementNode, Data: "i", DataAtom: atom.I})
+	displayURL := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span}
+	displayURL.AppendChild(&html.Node{Type: html.TextNode, Data: embedDisplayURL(external)})
+	strip.AppendChild(displayURL)
+	watch := &html.Node{Type: html.ElementNode, Data: "strong", DataAtom: atom.Strong}
+	watch.AppendChild(&html.Node{Type: html.TextNode, Data: "Watch"})
+	watch.AppendChild(&html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "media-card-open"}, {Key: "aria-hidden", Val: "true"}}})
+	strip.AppendChild(watch)
+	replacement.AppendChild(strip)
 	replaceNode(node, replacement)
+}
+
+func embedDisplayURL(raw string) string {
+	display := strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+	return strings.TrimSuffix(display, "/")
 }
 
 func supportedEmbed(raw string) (provider, external, thumbnail string, ok bool) {
