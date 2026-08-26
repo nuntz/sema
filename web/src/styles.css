@@ -487,7 +487,15 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .article-summary { margin: -12px 0 28px; padding-left: 14px; border-left: 1px solid rgba(255, 255, 255, .1); }
 .summary-provenance { margin-bottom: 9px; color: var(--fg-quaternary); font: 400 var(--t-12)/1 "IBM Plex Mono", monospace; letter-spacing: .06em; text-transform: lowercase; }
 .article-summary > p { margin: 0; color: var(--fg-tertiary); font: 400 var(--t-15)/1.6 "Instrument Sans", sans-serif; text-wrap: pretty; }
-.article-lead { display: block; width: 100%; height: auto; max-height: 460px; margin-bottom: 30px; border-radius: 4px; object-fit: cover; }
+.article-lead {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: min(75vh, 720px);
+  margin: 0 auto 30px;
+  border-radius: 4px;
+}
 .article-body { color: #dedbd4; font: 300 20px/1.68 "Newsreader", Georgia, serif; }
 .article-body p { margin: 0 0 26px; text-wrap: pretty; }
 .article-fallback > p { margin: 0 0 26px; color: #dedbd4; font: 300 20px/1.68 "Newsreader", Georgia, serif; text-wrap: pretty; }
