@@ -1,4 +1,5 @@
 import Archive from "lucide-solid/icons/archive";
+import ArrowLeft from "lucide-solid/icons/arrow-left";
 import ArrowUpDown from "lucide-solid/icons/arrow-up-down";
 import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
@@ -61,7 +62,7 @@ function SemaRows(props: SemaRowsProps) {
 const glyphs = {
   "add-feed": Plus,
   archive: Archive,
-  "back-to-grid": SemaRows,
+  "back-to-grid": ArrowLeft,
   check: Check,
   close: X,
   "copy-link": Link,
