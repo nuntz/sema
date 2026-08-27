@@ -180,6 +180,9 @@ export function Grid(props: GridProps) {
   const unreadIDs = createMemo(() =>
     props.items.filter((item) => !item.read).map((item) => item.item_id),
   );
+  const showEndMarkAction = createMemo(
+    () => endMarkActionEnabled(readContext()) && unreadIDs().length > 0,
+  );
   const endTop = createMemo(() => layout().height + 28);
   const canvasHeight = createMemo(
     () => endTop() + (props.hasMore ? 0 : viewportHeight()),
@@ -949,7 +952,10 @@ export function Grid(props: GridProps) {
         <Show when={shouldShowEndCard(props.hasMore)}>
           <section
             class="end-of-feed"
-            classList={{ "no-action": !endMarkActionEnabled(readContext()) }}
+            classList={{
+              "empty-grid": props.items.length === 0,
+              "no-action": !showEndMarkAction(),
+            }}
             style={{
               top: `${endTop()}px`,
               "min-height": `${viewportHeight()}px`,
@@ -962,7 +968,7 @@ export function Grid(props: GridProps) {
                   <>
                     <h2>You&apos;re all caught up</h2>
                     <p>Everything currently loaded is behind you.</p>
-                    <Show when={endMarkActionEnabled(readContext())}>
+                    <Show when={showEndMarkAction()}>
                       <button
                         ref={endButton}
                         type="button"

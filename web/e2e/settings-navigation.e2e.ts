@@ -61,7 +61,16 @@ const items = Array.from({ length: 80 }, (_, index) => ({
   hearted: false,
 }));
 
-async function openApp(page: Page): Promise<AppState> {
+interface OpenAppOptions {
+  initialItems?: typeof items;
+  polledItems?: typeof items;
+  readAnchor?: { item_id: string; published_ts: string };
+}
+
+async function openApp(
+  page: Page,
+  options: OpenAppOptions = {},
+): Promise<AppState> {
   const state = { itemRequests: 0 };
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
@@ -88,10 +97,17 @@ async function openApp(page: Page): Promise<AppState> {
     if (url.pathname === "/api/items") {
       state.itemRequests++;
       const includeRead = url.searchParams.get("include_read") === "true";
+      const responseItems =
+        state.itemRequests === 1
+          ? (options.initialItems ?? items)
+          : (options.polledItems ?? options.initialItems ?? items);
       await route.fulfill({
         json: {
-          items: includeRead ? items : items.filter((item) => !item.read),
+          items: includeRead
+            ? responseItems
+            : responseItems.filter((item) => !item.read),
           next_cursor: null,
+          ...(options.readAnchor ? { read_anchor: options.readAnchor } : {}),
         },
       });
       return;
@@ -105,6 +121,31 @@ async function openApp(page: Page): Promise<AppState> {
   ).toBeVisible();
   return state;
 }
+
+test("empty unread grid omits the end divider and zero-item action", async ({
+  page,
+}) => {
+  const state = await openApp(page, {
+    initialItems: [],
+    polledItems: items,
+    readAnchor: {
+      item_id: "caught-up-anchor",
+      published_ts: "2026-08-25T17:00:00.000Z",
+    },
+  });
+  const endCard = page.locator(".end-of-feed");
+
+  await expect(endCard).toHaveClass(/empty-grid/);
+  await expect(endCard).toHaveCSS("border-top-width", "0px");
+  await expect(
+    page.getByRole("button", { name: /Mark remaining/ }),
+  ).toHaveCount(0);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
+  await expect(page.locator(".pull-refresh button")).toContainText("new");
+  await expect(endCard).toHaveCSS("border-top-width", "0px");
+});
 
 async function setMidScroll(page: Page): Promise<number> {
   const scroller = page.locator(".grid-scroll");

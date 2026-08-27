@@ -314,6 +314,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .caughtup-label { letter-spacing: .08em; white-space: normal; }
 }
 .end-of-feed { position: absolute; left: 16px; right: 16px; display: grid; place-items: center; border-top: 1px solid var(--hairline); text-align: center; }
+.end-of-feed.empty-grid { border-top: 0; }
 .end-of-feed > div { max-width: 360px; padding: 48px 20px; }
 .end-of-feed h2 { margin: 0 0 8px; color: var(--fg-primary); font: 400 var(--t-24)/1.25 "Newsreader", Georgia, serif; }
 .end-of-feed p { margin: 0 0 20px; color: var(--fg-tertiary); font-size: var(--t-13-5); }
