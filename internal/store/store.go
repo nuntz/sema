@@ -410,7 +410,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		}
 	}
 	input := &dynamodb.QueryInput{
-		TableName: aws.String(s.table), ScanIndexForward: aws.Bool(false), Limit: aws.Int32(int32(limit)), ExclusiveStartKey: start,
+		TableName: aws.String(s.table), ScanIndexForward: aws.Bool(false), ExclusiveStartKey: start,
 		KeyConditionExpression:   aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 		FilterExpression:         aws.String("#ttl > :now"),
 		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
