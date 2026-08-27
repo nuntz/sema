@@ -26,8 +26,9 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) return;
   const path = new URL(event.request.url).pathname;
   if (NETWORK_ONLY_PREFIXES.some((prefix) => path.startsWith(prefix))) return;
+  const cacheable = SHELL.includes(path) || path.startsWith("/assets/");
   event.respondWith(fetch(event.request).then((response) => {
-    if (response.ok) {
+    if (response.ok && cacheable) {
       const copy = response.clone();
       caches.open(CACHE).then((cache) => cache.put(event.request, copy));
     }
