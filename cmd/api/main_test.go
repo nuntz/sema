@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -309,6 +311,64 @@ func TestNormalizeTagsAndFeedStatus(t *testing.T) {
 	}
 	if got := feedStatus(domain.Feed{Muted: true, ErrorCount: 3}); got != "muted" {
 		t.Fatalf("muted status = %q", got)
+	}
+}
+
+func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
+	feedURL := "https://example.com/feed.xml"
+	feedID := domain.FeedID(feedURL)
+	existing := domain.Feed{
+		PK: domain.UserPK("user"), SK: domain.FeedSK(feedID), FeedID: feedID,
+		URL: feedURL, CustomTitle: "My title", Tags: []string{"saved"}, Muted: true,
+		FetchIntervalH: 24, NextFetchAt: "2026-08-27T12:00:00Z",
+	}
+	item, err := attributevalue.MarshalMap(existing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved domain.Feed
+	db := &apiDynamo{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{Item: item}, nil
+		},
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
+				t.Fatal(err)
+			}
+			return &dynamodb.PutItemOutput{}, nil
+		},
+	}
+	queue := &apiQueue{}
+	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "subscriptions.opml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = part.Write([]byte(`<?xml version="1.0"?><opml version="2.0"><body><outline text="Imported title" xmlUrl="https://example.com/feed.xml" category="imported" sema:interval="1h"/></body></opml>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := server.importFeeds(context.Background(), "user", events.APIGatewayV2HTTPRequest{
+		Body: body.String(), Headers: map[string]string{"content-type": writer.FormDataContentType()},
+	})
+	if got.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	if !saved.Muted || saved.FetchIntervalH != 24 || saved.NextFetchAt != existing.NextFetchAt {
+		t.Fatalf("saved feed settings = %#v", saved)
+	}
+	if saved.CustomTitle != "My title" || strings.Join(saved.Tags, ",") != "imported,saved" {
+		t.Fatalf("saved feed presentation = %#v", saved)
+	}
+	if queue.input != nil {
+		t.Fatalf("muted feed was enqueued: %#v", queue.input)
 	}
 }
 

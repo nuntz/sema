@@ -809,9 +809,9 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 				if feed.CustomTitle == "" {
 					feed.CustomTitle = subscription.Title
 				}
-				feed.Muted = subscription.Muted
-				feed.FetchIntervalH = subscription.IntervalH
-				feed.NextFetchAt = domain.Timestamp(now)
+				if !feed.Muted {
+					feed.NextFetchAt = domain.Timestamp(now)
+				}
 			} else if !errors.Is(getErr, store.ErrNotFound) {
 				writeErrors <- getErr
 				return
@@ -820,7 +820,9 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 				writeErrors <- err
 				return
 			}
-			messages[index] = domain.FeedMessage{User: userID, FeedID: feedID}
+			if !feed.Muted {
+				messages[index] = domain.FeedMessage{User: userID, FeedID: feedID}
+			}
 		}(index, subscription)
 	}
 	group.Wait()
@@ -828,7 +830,13 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	if err := <-writeErrors; err != nil {
 		return s.failure("store imported feed", err)
 	}
-	if err := s.enqueueFeeds(ctx, messages); err != nil {
+	queued := messages[:0]
+	for _, message := range messages {
+		if message.FeedID != "" {
+			queued = append(queued, message)
+		}
+	}
+	if err := s.enqueueFeeds(ctx, queued); err != nil {
 		return s.failure("enqueue imported feeds", err)
 	}
 	s.invalidateFeeds(userID)
