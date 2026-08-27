@@ -11,6 +11,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,13 @@ type CookieSigner struct {
 	privateKey *rsa.PrivateKey
 	keyPairID  string
 	maxAge     time.Duration
+	mu         sync.Mutex
+	cache      map[string]cachedCookies
+}
+
+type cachedCookies struct {
+	signedAt time.Time
+	values   []string
 }
 
 func NewCookieSigner(privatePEM, keyPairID string, maxAge time.Duration) (*CookieSigner, error) {
@@ -37,12 +45,17 @@ func NewCookieSigner(privatePEM, keyPairID string, maxAge time.Duration) (*Cooki
 	if key == nil {
 		return nil, fmt.Errorf("CloudFront private key is not an RSA private key")
 	}
-	return &CookieSigner{privateKey: key, keyPairID: keyPairID, maxAge: maxAge}, nil
+	return &CookieSigner{privateKey: key, keyPairID: keyPairID, maxAge: maxAge, cache: make(map[string]cachedCookies)}, nil
 }
 
 func (s *CookieSigner) Cookies(userID string, now time.Time) ([]string, error) {
 	if s == nil {
 		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cached, ok := s.cache[userID]; ok && now.Before(cached.signedAt.Add(s.maxAge/2)) {
+		return append([]string(nil), cached.values...), nil
 	}
 	var cookies []string
 	for _, prefix := range []string{"bodies", "media", "archive"} {
@@ -59,7 +72,8 @@ func (s *CookieSigner) Cookies(userID string, now time.Time) ([]string, error) {
 			"CloudFront-Hash-Algorithm=SHA256"+attributes,
 		)
 	}
-	return cookies, nil
+	s.cache[userID] = cachedCookies{signedAt: now, values: cookies}
+	return append([]string(nil), cookies...), nil
 }
 
 type signedPolicy struct {

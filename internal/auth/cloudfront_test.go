@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -33,5 +34,37 @@ func TestCookieSignerScopesCookiesToUserPrefixes(t *testing.T) {
 		if !strings.Contains(joined, expected) {
 			t.Errorf("cookies do not contain %q", expected)
 		}
+	}
+}
+
+func TestCookieSignerCachesUntilHalfMaxAge(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := x509.MarshalPKCS8PrivateKey(key)
+	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded})
+	signer, err := NewCookieSigner(string(privatePEM), "K123", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	first, err := signer.Cookies("google-sub", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, err := signer.Cookies("google-sub", now.Add(29*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cached, first) {
+		t.Fatal("cookies were re-signed before half their max-age")
+	}
+	refreshed, err := signer.Cookies("google-sub", now.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(refreshed, first) {
+		t.Fatal("cookies were not re-signed at half their max-age")
 	}
 }
