@@ -167,7 +167,10 @@ func (f *apiDynamo) DeleteItem(_ context.Context, input *dynamodb.DeleteItemInpu
 }
 
 func (f *apiDynamo) GetItem(_ context.Context, input *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
-	return f.getItem(input)
+	if f.getItem != nil {
+		return f.getItem(input)
+	}
+	return &dynamodb.GetItemOutput{}, nil
 }
 
 func (f *apiDynamo) PutItem(_ context.Context, input *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {

@@ -649,30 +649,38 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string)
 	if len(ids) == 0 {
 		return []domain.Item{}, nil
 	}
-	live, err := s.LiveItems(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	archive, err := s.ArchiveItems(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	byID := make(map[string]domain.Item, len(live)+len(archive))
-	for _, item := range archive {
-		item.ArchiveSK, item.Hearted, item.Archived, item.Read = item.SK, true, true, false
-		byID[item.ItemID] = item
-	}
-	for _, item := range live {
-		byID[item.ItemID] = item
-	}
-	result := make([]domain.Item, 0, len(ids))
-	seen := make(map[string]bool)
+	orderedIDs := make([]string, 0, len(ids))
+	requested := make(map[string]bool, len(ids))
 	for _, id := range ids {
-		if seen[id] {
+		if requested[id] {
 			continue
 		}
-		if item, ok := byID[id]; ok {
-			seen[id] = true
+		requested[id] = true
+		orderedIDs = append(orderedIDs, id)
+	}
+	live, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs)
+	if err != nil {
+		return nil, err
+	}
+	archive := make(map[string]domain.Item)
+	if len(live) < len(orderedIDs) {
+		archivedItems, archiveErr := s.ArchiveItems(ctx, userID)
+		if archiveErr != nil {
+			return nil, archiveErr
+		}
+		for _, item := range archivedItems {
+			if !requested[item.ItemID] {
+				continue
+			}
+			item.ArchiveSK, item.Hearted, item.Archived, item.Read = item.SK, true, true, false
+			archive[item.ItemID] = item
+		}
+	}
+	result := make([]domain.Item, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if item, ok := live[id]; ok {
+			result = append(result, item)
+		} else if item, ok := archive[id]; ok {
 			result = append(result, item)
 		}
 	}
@@ -691,6 +699,88 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string)
 		result[resultIndex].Read = window[index].Read
 	}
 	return result, nil
+}
+
+func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string) (map[string]domain.Item, error) {
+	pk := domain.UserPK(userID)
+	identityKeys := make([]map[string]types.AttributeValue, 0, len(ids))
+	for _, id := range ids {
+		identityKeys = append(identityKeys, key(pk, domain.ItemIdentitySK(id)))
+	}
+	rows, err := s.batchGetRows(ctx, identityKeys)
+	if err != nil {
+		return nil, err
+	}
+	identities := make(map[string]domain.ItemIdentity, len(rows))
+	for _, row := range rows {
+		var identity domain.ItemIdentity
+		if err := attributevalue.UnmarshalMap(row, &identity); err != nil {
+			return nil, err
+		}
+		identities[strings.TrimPrefix(identity.SK, "D#")] = identity
+	}
+
+	now := time.Now().Unix()
+	liveKeys := make([]map[string]types.AttributeValue, 0, len(identities))
+	legacyIDs := make(map[string]bool)
+	for _, id := range ids {
+		identity, ok := identities[id]
+		if !ok {
+			legacyIDs[id] = true
+			continue
+		}
+		if identity.TTL > now && strings.HasPrefix(identity.ItemSK, "I#") {
+			liveKeys = append(liveKeys, key(pk, identity.ItemSK))
+		}
+	}
+	liveRows, err := s.batchGetRows(ctx, liveKeys)
+	if err != nil {
+		return nil, err
+	}
+	live := make(map[string]domain.Item, len(liveRows))
+	for _, row := range liveRows {
+		var item domain.Item
+		if err := attributevalue.UnmarshalMap(row, &item); err != nil {
+			return nil, err
+		}
+		identity, ok := identities[item.ItemID]
+		if ok && identity.ItemSK == item.SK && item.TTL > now {
+			live[item.ItemID] = item
+		}
+	}
+	if len(legacyIDs) > 0 {
+		legacy, err := s.LiveItems(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range legacy {
+			if legacyIDs[item.ItemID] {
+				live[item.ItemID] = item
+			}
+		}
+	}
+	return live, nil
+}
+
+func (s *Store) batchGetRows(ctx context.Context, keys []map[string]types.AttributeValue) ([]map[string]types.AttributeValue, error) {
+	rows := make([]map[string]types.AttributeValue, 0, len(keys))
+	for offset := 0; offset < len(keys); offset += 100 {
+		pending := keys[offset:min(offset+100, len(keys))]
+		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
+			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
+				Keys: pending, ConsistentRead: aws.Bool(true),
+			}}})
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, response.Responses[s.table]...)
+			pending = response.UnprocessedKeys[s.table].Keys
+		}
+		if len(pending) > 0 {
+			return nil, fmt.Errorf("%d item lookups were throttled", len(pending))
+		}
+	}
+	return rows, nil
 }
 
 func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
@@ -803,6 +893,43 @@ func itemPageKey(item map[string]types.AttributeValue, order domain.Order) map[s
 }
 
 func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	now := time.Now().Unix()
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if len(response.Item) == 0 {
+		return s.legacyItem(ctx, userID, itemID, now)
+	}
+	var identity domain.ItemIdentity
+	if err := attributevalue.UnmarshalMap(response.Item, &identity); err != nil {
+		return domain.Item{}, err
+	}
+	if identity.TTL <= now || !strings.HasPrefix(identity.ItemSK, "I#") {
+		return domain.Item{}, ErrNotFound
+	}
+	response, err = s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), identity.ItemSK), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if len(response.Item) == 0 {
+		return domain.Item{}, ErrNotFound
+	}
+	var item domain.Item
+	if err := attributevalue.UnmarshalMap(response.Item, &item); err != nil {
+		return domain.Item{}, err
+	}
+	if item.ItemID != itemID || item.TTL <= now {
+		return domain.Item{}, ErrNotFound
+	}
+	return item, nil
+}
+
+func (s *Store) legacyItem(ctx context.Context, userID, itemID string, now int64) (domain.Item, error) {
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
@@ -812,7 +939,7 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 			ExpressionAttributeValues: map[string]types.AttributeValue{
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"}, ":id": &types.AttributeValueMemberS{Value: itemID},
-				":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+				":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
 			},
 		})
 		if err != nil {
@@ -875,9 +1002,21 @@ func (s *Store) Archives(ctx context.Context, userID, encodedCursor string, limi
 	return items, next, err
 }
 
-// ArchiveItem finds an archived item by item_id. The query is intentionally a
-// partition scan; archive sizes are expected to remain small for this drop.
 func (s *Store) ArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	item, err := s.Item(ctx, userID, itemID)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return domain.Item{}, err
+	}
+	if err == nil && item.ArchiveSK != "" {
+		archive, archiveErr := s.archiveItemBySK(ctx, userID, item.ArchiveSK)
+		if archiveErr == nil || !errors.Is(archiveErr, ErrNotFound) {
+			return archive, archiveErr
+		}
+	}
+	return s.scanArchiveItem(ctx, userID, itemID)
+}
+
+func (s *Store) scanArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{

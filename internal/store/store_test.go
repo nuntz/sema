@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -357,6 +358,200 @@ func TestItemExistsReadsStableIdentityMarker(t *testing.T) {
 	}
 }
 
+func TestItemResolvesStableIdentityDirectly(t *testing.T) {
+	now := time.Now()
+	live := domain.Item{
+		PK: domain.UserPK("user"), SK: domain.ItemSK(now, "same"), ItemID: "same", TTL: now.Add(time.Hour).Unix(),
+	}
+	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: live.PK, SK: domain.ItemIdentitySK(live.ItemID), ItemSK: live.SK, TTL: live.TTL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := attributevalue.MarshalMap(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gets := 0
+	db := &fakeDynamoDB{
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			gets++
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("item lookup was not consistent")
+			}
+			switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+			case domain.ItemIdentitySK("same"):
+				return &dynamodb.GetItemOutput{Item: identity}, nil
+			case live.SK:
+				return &dynamodb.GetItemOutput{Item: item}, nil
+			default:
+				t.Fatalf("unexpected item key: %#v", input.Key)
+				return nil, nil
+			}
+		},
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			t.Fatal("identity-backed item lookup scanned the partition")
+			return nil, nil
+		},
+	}
+	got, err := New(db, nil, "table", "", "").Item(context.Background(), "user", "same")
+	if err != nil || got.SK != live.SK || gets != 2 {
+		t.Fatalf("Item = %#v, gets %d, %v", got, gets, err)
+	}
+}
+
+func TestItemRejectsExpiredIdentityWithoutScanning(t *testing.T) {
+	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("expired"), ItemSK: "I#expired", TTL: time.Now().Add(-time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &fakeDynamoDB{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{Item: identity}, nil
+		},
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			t.Fatal("expired identity lookup scanned the partition")
+			return nil, nil
+		},
+	}
+	if _, err := New(db, nil, "table", "", "").Item(context.Background(), "user", "expired"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Item error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestItemFallsBackForLegacyLiveRow(t *testing.T) {
+	live, err := attributevalue.MarshalMap(domain.Item{
+		PK: domain.UserPK("user"), SK: "I#legacy", ItemID: "legacy", TTL: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := 0
+	db := &fakeDynamoDB{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{}, nil
+		},
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			queries++
+			if input.ExpressionAttributeValues[":id"].(*types.AttributeValueMemberS).Value != "legacy" {
+				t.Fatalf("legacy query = %#v", input)
+			}
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{live}}, nil
+		},
+	}
+	got, err := New(db, nil, "table", "", "").Item(context.Background(), "user", "legacy")
+	if err != nil || got.ItemID != "legacy" || queries != 1 {
+		t.Fatalf("Item = %#v, queries %d, %v", got, queries, err)
+	}
+}
+
+func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
+	now := time.Now()
+	liveItems := []domain.Item{
+		{PK: domain.UserPK("user"), SK: "I#live", ItemID: "live", TTL: now.Add(time.Hour).Unix()},
+		{PK: domain.UserPK("user"), SK: "I#read", ItemID: "read", TTL: now.Add(time.Hour).Unix()},
+	}
+	identities := []domain.ItemIdentity{
+		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("archive"), ItemSK: "I#archive", TTL: now.Add(-time.Hour).Unix()},
+		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("live"), ItemSK: "I#live", TTL: liveItems[0].TTL},
+		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("read"), ItemSK: "I#read", TTL: liveItems[1].TTL},
+		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("missing"), ItemSK: "I#missing", TTL: now.Add(-time.Hour).Unix()},
+	}
+	archive := domain.Item{PK: domain.UserPK("user"), SK: "A#archive", ItemID: "archive", Read: true}
+	marshalList := func(values any) []map[string]types.AttributeValue {
+		rows, err := attributevalue.MarshalList(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := make([]map[string]types.AttributeValue, 0, len(rows))
+		for _, row := range rows {
+			result = append(result, row.(*types.AttributeValueMemberM).Value)
+		}
+		return result
+	}
+	batchCalls := 0
+	queries := 0
+	db := &fakeDynamoDB{
+		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			batchCalls++
+			request := input.RequestItems["table"]
+			if !aws.ToBool(request.ConsistentRead) && aws.ToString(request.ProjectionExpression) == "" {
+				t.Fatal("item batch lookup was not consistent")
+			}
+			prefix := request.Keys[0]["SK"].(*types.AttributeValueMemberS).Value[:2]
+			var rows []map[string]types.AttributeValue
+			switch prefix {
+			case "D#":
+				rows = marshalList(identities)
+			case "I#":
+				rows = marshalList(liveItems)
+			case "R#":
+				rows = []map[string]types.AttributeValue{{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("read")}}}
+			default:
+				t.Fatalf("unexpected batch keys: %#v", request.Keys)
+			}
+			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+		},
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			queries++
+			if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value != "A#" {
+				t.Fatalf("unexpected fallback query: %#v", input)
+			}
+			return &dynamodb.QueryOutput{Items: marshalList([]domain.Item{archive})}, nil
+		},
+	}
+	got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"archive", "live", "archive", "read", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].ItemID != "archive" || got[1].ItemID != "live" || got[2].ItemID != "read" {
+		t.Fatalf("resolved items = %#v", got)
+	}
+	if !got[0].Archived || !got[0].Hearted || got[0].ArchiveSK != archive.SK || got[0].Read {
+		t.Fatalf("archive flags = %#v", got[0])
+	}
+	if got[1].Read || !got[2].Read || batchCalls != 3 || queries != 1 {
+		t.Fatalf("read state = %#v, batch calls %d, queries %d", got, batchCalls, queries)
+	}
+}
+
+func TestArchiveItemUsesLiveArchivePointer(t *testing.T) {
+	now := time.Now()
+	live := domain.Item{
+		PK: domain.UserPK("user"), SK: "I#live", ItemID: "same", ArchiveSK: "A#archive", TTL: now.Add(time.Hour).Unix(),
+	}
+	identity := domain.ItemIdentity{
+		PK: live.PK, SK: domain.ItemIdentitySK(live.ItemID), ItemSK: live.SK, TTL: live.TTL,
+	}
+	archive := domain.Item{PK: live.PK, SK: live.ArchiveSK, ItemID: live.ItemID}
+	rows := map[string]any{identity.SK: identity, live.SK: live, archive.SK: archive}
+	db := &fakeDynamoDB{
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			sk := input.Key["SK"].(*types.AttributeValueMemberS).Value
+			row, ok := rows[sk]
+			if !ok {
+				return &dynamodb.GetItemOutput{}, nil
+			}
+			encoded, err := attributevalue.MarshalMap(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &dynamodb.GetItemOutput{Item: encoded}, nil
+		},
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			t.Fatal("archive pointer lookup scanned the partition")
+			return nil, nil
+		},
+	}
+	got, err := New(db, nil, "table", "", "").ArchiveItem(context.Background(), "user", "same")
+	if err != nil || got.SK != archive.SK || !got.Archived || !got.Hearted {
+		t.Fatalf("ArchiveItem = %#v, %v", got, err)
+	}
+}
+
 func TestReconcileItemIdentityPreservesArchiveAndDeletesDuplicate(t *testing.T) {
 	var transaction *dynamodb.TransactWriteItemsInput
 	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
@@ -676,13 +871,21 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			identity, err := attributevalue.MarshalMap(domain.ItemIdentity{PK: item.PK, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL})
+			if err != nil {
+				t.Fatal(err)
+			}
 			var transactions []*dynamodb.TransactWriteItemsInput
 			db := &fakeDynamoDB{
-				query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{encodedItem}}, nil
-				},
-				getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-					return &dynamodb.GetItemOutput{Item: profile}, nil
+				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+					switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+					case domain.ItemIdentitySK(item.ItemID):
+						return &dynamodb.GetItemOutput{Item: identity}, nil
+					case item.SK:
+						return &dynamodb.GetItemOutput{Item: encodedItem}, nil
+					default:
+						return &dynamodb.GetItemOutput{Item: profile}, nil
+					}
 				},
 				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 					transactions = append(transactions, input)
@@ -736,17 +939,21 @@ func TestRemoveHeartCountsOnlyDeletedHeartSignal(t *testing.T) {
 			archive.SK = item.ArchiveSK
 			encodedItem, _ := attributevalue.MarshalMap(item)
 			encodedArchive, _ := attributevalue.MarshalMap(archive)
+			identity, _ := attributevalue.MarshalMap(domain.ItemIdentity{PK: item.PK, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL})
 			profile, _ := attributevalue.MarshalMap(domain.User{PK: "U#user", SK: "PROFILE"})
 			var transactions []*dynamodb.TransactWriteItemsInput
 			db := &fakeDynamoDB{
-				query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{encodedItem}}, nil
-				},
 				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-					if input.Key["SK"].(*types.AttributeValueMemberS).Value == "PROFILE" {
+					switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+					case domain.ItemIdentitySK(item.ItemID):
+						return &dynamodb.GetItemOutput{Item: identity}, nil
+					case item.SK:
+						return &dynamodb.GetItemOutput{Item: encodedItem}, nil
+					case "PROFILE":
 						return &dynamodb.GetItemOutput{Item: profile}, nil
+					default:
+						return &dynamodb.GetItemOutput{Item: encodedArchive}, nil
 					}
-					return &dynamodb.GetItemOutput{Item: encodedArchive}, nil
 				},
 				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 					transactions = append(transactions, input)

@@ -243,6 +243,10 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if durable, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); err != nil || durable.BodyKey != ArchiveBodyKey("keeper", "kept") {
 		t.Fatalf("archive after live expiry = %#v, %v", durable, err)
 	}
+	resolved, err := repository.ResolveItemIDs(ctx, "keeper", []string{item.ItemID, item.ItemID, "missing"})
+	if err != nil || len(resolved) != 1 || resolved[0].SK != archiveSK || !resolved[0].Archived || !resolved[0].Hearted || resolved[0].Read {
+		t.Fatalf("resolve expired live item = %#v, %v", resolved, err)
+	}
 	if _, err := repository.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(repository.table), Key: key(domain.UserPK("keeper"), item.SK),
 		UpdateExpression:          aws.String("SET #ttl = :active"),
