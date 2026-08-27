@@ -14,16 +14,68 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
 ## How it works
 
 ```text
-EventBridge -> scheduler -> feeds-q -> feed-worker -> items-q -> item-worker
-                              |             |             |
-                              v             v             v
-                            DLQ         DynamoDB     DynamoDB + S3 + Bedrock
+                              INGESTION PIPELINE
+                              ==================
 
-browser -> CloudFront -> S3 app/content
-                    \-> HTTP API -> api Lambda
+ EventBridge ---------+
+ (rate schedule)      |
+                      v
+               +-------------+    claims due feeds     +----------------+
+               |  scheduler  |<----------------------->|    DynamoDB    |
+               |   Lambda    |   (5-min claim lease)   | feeds / items  |
+               +------+------+                         | prefs / users  |
+                      | enqueue feed jobs              +----------------+
+                      v                                    ^         ^
+               [ feeds-q SQS ]--> DLQ                      |         |
+                      |                                    |         |
+                      v                                    |         |
+               +-------------+   fetch + parse feeds       |         |
+               | feed-worker |-- RSS / Atom / JSON Feed ---+         |
+               |   Lambda    |   YouTube connectors                  |
+               +------+------+   (dedupe, write new items)           |
+                      | enqueue per-item jobs                        |
+                      v                                              |
+               [ items-q SQS ]--> DLQ                                |
+                      |                                              |
+                      v                                              |
+               +-------------+   extract article text ---------------+
+               | item-worker |   fetch media/thumbnails ---> S3 (content)
+               |   Lambda    |   embed text -----------> Bedrock Titan
+               +-------------+                                |
+                                            store vectors     v
+                                            & score item   [ S3 Vectors ]
 
-EventBridge (nightly) -> rescore Lambda -> updated rankings
-EventBridge (weekly)  -> vector-cleanup Lambda -> expired vectors
+
+                              SERVING & TRIAGE
+                              ================
+
+  browser (SolidJS PWA)
+    | Google sign-in (once) -> API sets 30-day HttpOnly session cookie
+    v
+ +------------+   static app & media    +--------------------------+
+ | CloudFront |------------------------>| S3: app bundle + content |
+ |            |   (signed cookies)      +--------------------------+
+ +-----+------+
+       | /api
+       v
+ +------------+   items, hearts, feedback, OPML import, search
+ | HTTP API   |----> api Lambda ----> DynamoDB / SQS / Bedrock (query
+ +------------+                       embeddings) / S3 Vectors (similarity)
+
+  User signals fed back in:  hearts, skips, reading behaviour ---> prefs
+
+
+                              RANKING & EXPIRY
+                              ================
+
+ EventBridge (nightly) --> rescore Lambda --------> re-ranks items per user
+                             (blends explicit feedback + behaviour
+                              + embedding similarity to liked items)
+
+ EventBridge (weekly) ---> vector-cleanup Lambda -> deletes expired vectors
+
+ DynamoDB TTL + S3 lifecycle: unkept items expire after 7 days
+ Hearted items -> copied to permanent archive (never expires)
 ```
 
 The repository contains six Go Lambda functions, shared feed-processing packages, a SolidJS/TypeScript PWA, and a Pulumi Go project that provisions the AWS stack. Queue consumers are retry-safe and use dead-letter queues. DynamoDB TTL and S3 lifecycle rules enforce the rolling seven-day window; archived items and preference signals do not expire.
