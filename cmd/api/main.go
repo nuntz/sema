@@ -226,68 +226,68 @@ func (s *server) getSearch(ctx context.Context, userID string, query map[string]
 			return s.failure("prepare search results", err)
 		}
 	}
-	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
-	semanticAvailable := s.embedder != nil && s.vectors != nil
-	if semanticAvailable {
-		vector, embedErr := s.embedder.Embed(ctx, value)
-		if embedErr == nil {
-			matches, queryErr := s.vectors.Query(ctx, score.Normalize(vector), limit, time.Now().Unix())
-			if queryErr == nil {
-				exact := make(map[string]bool, len(window)+len(archive))
-				for _, items := range [][]domain.Item{window, archive} {
-					for _, item := range items {
-						exact[item.ItemID] = true
-					}
-				}
-				filtered := make([]vectorstore.Match, 0, len(matches))
-				ids := make([]string, 0, len(matches))
-				for _, match := range matches {
-					if !exact[match.Key] {
-						filtered = append(filtered, match)
-						ids = append(ids, match.Key)
-					}
-				}
-				items, resolveErr := s.store.ResolveItemIDs(ctx, userID, ids)
-				if resolveErr == nil {
-					similarity := make(map[string]int, len(filtered))
-					for _, match := range filtered {
-						similarity[match.Key] = match.Similarity
-					}
-					for index := range items {
-						value := similarity[items[index].ItemID]
-						items[index].Similarity = &value
-					}
-					if err := s.applyFeedPresentation(ctx, userID, items); err == nil {
-						if err := s.prepareItems(ctx, userID, items); err == nil {
-							for _, item := range items {
-								if item.HeartedTS != "" && item.TTL == 0 {
-									related.Archive = append(related.Archive, item)
-								} else {
-									related.Window = append(related.Window, item)
-								}
-							}
-						} else {
-							semanticAvailable = false
-						}
-					} else {
-						semanticAvailable = false
-					}
-				} else {
-					semanticAvailable = false
-				}
-			} else {
-				semanticAvailable = false
-				slog.WarnContext(ctx, "semantic search query failed", "error", queryErr)
-			}
-		} else {
-			semanticAvailable = false
-			slog.WarnContext(ctx, "semantic search embedding failed", "error", embedErr)
+	exact := make(map[string]bool, len(window)+len(archive))
+	for _, items := range [][]domain.Item{window, archive} {
+		for _, item := range items {
+			exact[item.ItemID] = true
 		}
 	}
+	related, semanticAvailable := s.semanticResults(ctx, userID, value, limit, exact)
 	return response(http.StatusOK, map[string]any{
 		"matches": searchGroup{Window: window, Archive: archive},
 		"related": related, "semantic_available": semanticAvailable,
 	})
+}
+
+func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude map[string]bool) (searchGroup, bool) {
+	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
+	if s.embedder == nil || s.vectors == nil {
+		return related, false
+	}
+	vector, err := s.embedder.Embed(ctx, query)
+	if err != nil {
+		slog.WarnContext(ctx, "semantic search embedding failed", "error", err)
+		return related, false
+	}
+	matches, err := s.vectors.Query(ctx, score.Normalize(vector), limit, time.Now().Unix())
+	if err != nil {
+		slog.WarnContext(ctx, "semantic search query failed", "error", err)
+		return related, false
+	}
+	filtered := make([]vectorstore.Match, 0, len(matches))
+	ids := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if !exclude[match.Key] {
+			filtered = append(filtered, match)
+			ids = append(ids, match.Key)
+		}
+	}
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
+	if err != nil {
+		return related, false
+	}
+	similarities := make(map[string]int, len(filtered))
+	for _, match := range filtered {
+		similarities[match.Key] = match.Similarity
+	}
+	for index := range items {
+		similarity := similarities[items[index].ItemID]
+		items[index].Similarity = &similarity
+	}
+	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+		return related, false
+	}
+	if err := s.prepareItems(ctx, userID, items); err != nil {
+		return related, false
+	}
+	for _, item := range items {
+		if item.HeartedTS != "" && item.TTL == 0 {
+			related.Archive = append(related.Archive, item)
+		} else {
+			related.Window = append(related.Window, item)
+		}
+	}
+	return related, true
 }
 
 func (s *server) getSimilar(ctx context.Context, userID, itemID string, query map[string]string) events.APIGatewayV2HTTPResponse {
