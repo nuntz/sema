@@ -823,7 +823,12 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	}
 	group.Wait()
 	close(writeErrors)
-	if err := <-writeErrors; err != nil {
+	var importErrors []error
+	for err := range writeErrors {
+		importErrors = append(importErrors, err)
+	}
+	if err := errors.Join(importErrors...); err != nil {
+		s.invalidateFeeds(userID)
 		return s.failure("store imported feed", err)
 	}
 	queued := messages[:0]
@@ -833,6 +838,7 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 		}
 	}
 	if err := s.enqueueFeeds(ctx, queued); err != nil {
+		s.invalidateFeeds(userID)
 		return s.failure("enqueue imported feeds", err)
 	}
 	s.invalidateFeeds(userID)
@@ -840,7 +846,7 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 }
 
 func (s *server) enqueueFeeds(ctx context.Context, messages []domain.FeedMessage) error {
-	errors := make(chan error, (len(messages)+9)/10)
+	enqueueErrors := make(chan error, (len(messages)+9)/10)
 	var group sync.WaitGroup
 	for offset := 0; offset < len(messages); offset += 10 {
 		end := min(offset+10, len(messages))
@@ -854,17 +860,21 @@ func (s *server) enqueueFeeds(ctx context.Context, messages []domain.FeedMessage
 			}
 			result, err := s.queue.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{QueueUrl: aws.String(s.feedsURL), Entries: entries})
 			if err != nil {
-				errors <- err
+				enqueueErrors <- err
 				return
 			}
 			if len(result.Failed) > 0 {
-				errors <- fmt.Errorf("%d feeds failed to enqueue", len(result.Failed))
+				enqueueErrors <- fmt.Errorf("%d feeds failed to enqueue", len(result.Failed))
 			}
 		}(offset, end)
 	}
 	group.Wait()
-	close(errors)
-	return <-errors
+	close(enqueueErrors)
+	var collected []error
+	for err := range enqueueErrors {
+		collected = append(collected, err)
+	}
+	return errors.Join(collected...)
 }
 
 func (s *server) deleteFeed(ctx context.Context, userID, feedID string) events.APIGatewayV2HTTPResponse {

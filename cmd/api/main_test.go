@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -151,9 +152,15 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 	}
 }
 
-type apiQueue struct{ input *sqs.SendMessageBatchInput }
+type apiQueue struct {
+	input *sqs.SendMessageBatchInput
+	send  func(*sqs.SendMessageBatchInput) (*sqs.SendMessageBatchOutput, error)
+}
 
 func (q *apiQueue) SendMessageBatch(_ context.Context, input *sqs.SendMessageBatchInput, _ ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
+	if q.send != nil {
+		return q.send(input)
+	}
 	q.input = input
 	return &sqs.SendMessageBatchOutput{}, nil
 }
@@ -384,6 +391,74 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 	}
 	if queue.input != nil {
 		t.Fatalf("muted feed was enqueued: %#v", queue.input)
+	}
+}
+
+func TestImportFeedsInvalidatesCacheAfterPartialWriteFailure(t *testing.T) {
+	writeFailure := errors.New("write failed")
+	db := &apiDynamo{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{}, nil
+		},
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			var feed domain.Feed
+			if err := attributevalue.UnmarshalMap(input.Item, &feed); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(feed.URL, "failed") {
+				return nil, writeFailure
+			}
+			return &dynamodb.PutItemOutput{}, nil
+		},
+	}
+	server := &server{
+		store: store.New(db, nil, "table", "", ""), queue: &apiQueue{},
+		feedCache:       map[string]cachedFeedList{"user": {}},
+		feedDetailCache: map[string]cachedFeedList{"user": {}},
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "subscriptions.opml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = part.Write([]byte(`<?xml version="1.0"?><opml version="2.0"><body><outline xmlUrl="https://example.com/saved.xml"/><outline xmlUrl="https://example.com/failed.xml"/></body></opml>`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got := server.importFeeds(context.Background(), "user", events.APIGatewayV2HTTPRequest{
+		Body: body.String(), Headers: map[string]string{"content-type": writer.FormDataContentType()},
+	})
+	if got.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	if _, ok := server.feedCache["user"]; ok {
+		t.Fatal("feed list cache was not invalidated")
+	}
+	if _, ok := server.feedDetailCache["user"]; ok {
+		t.Fatal("feed detail cache was not invalidated")
+	}
+}
+
+func TestEnqueueFeedsJoinsBatchErrors(t *testing.T) {
+	first := errors.New("first batch failed")
+	second := errors.New("second batch failed")
+	queue := &apiQueue{send: func(input *sqs.SendMessageBatchInput) (*sqs.SendMessageBatchOutput, error) {
+		if aws.ToString(input.Entries[0].Id) == "feed-0" {
+			return nil, first
+		}
+		return nil, second
+	}}
+	messages := make([]domain.FeedMessage, 20)
+	for index := range messages {
+		messages[index] = domain.FeedMessage{User: "user", FeedID: string(rune('a' + index))}
+	}
+	err := (&server{queue: queue, feedsURL: "queue"}).enqueueFeeds(context.Background(), messages)
+	if !errors.Is(err, first) || !errors.Is(err, second) {
+		t.Fatalf("enqueue error = %v", err)
 	}
 }
 

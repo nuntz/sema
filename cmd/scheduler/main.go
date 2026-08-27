@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -37,7 +38,7 @@ func (h *handler) run(ctx context.Context) error {
 		end := min(offset+10, len(feeds))
 		claimed := make(chan domain.Feed, end-offset)
 		var group sync.WaitGroup
-		errors := make(chan error, end-offset)
+		claimErrors := make(chan error, end-offset)
 		for _, feed := range feeds[offset:end] {
 			if feed.Muted {
 				continue
@@ -47,7 +48,7 @@ func (h *handler) run(ctx context.Context) error {
 				defer group.Done()
 				ok, err := h.store.ClaimFeed(ctx, feed.PK[2:], feed.FeedID, started, started.Add(claimLease))
 				if err != nil {
-					errors <- err
+					claimErrors <- err
 				} else if ok {
 					claimed <- feed
 				}
@@ -55,8 +56,12 @@ func (h *handler) run(ctx context.Context) error {
 		}
 		group.Wait()
 		close(claimed)
-		close(errors)
-		if err := <-errors; err != nil {
+		close(claimErrors)
+		var collected []error
+		for err := range claimErrors {
+			collected = append(collected, err)
+		}
+		if err := errors.Join(collected...); err != nil {
 			return err
 		}
 
