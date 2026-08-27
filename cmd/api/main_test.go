@@ -191,6 +191,7 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 	}
 	var sessionItem map[string]types.AttributeValue
 	var deleted map[string]types.AttributeValue
+	updateCount := 0
 	db := &apiDynamo{
 		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 			sk := input.Key["SK"].(*types.AttributeValueMemberS).Value
@@ -207,6 +208,7 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 			return &dynamodb.PutItemOutput{}, nil
 		},
 		update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			updateCount++
 			return &dynamodb.UpdateItemOutput{}, nil
 		},
 		delete: func(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
@@ -240,6 +242,16 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 	}
 	if sessionItem["PK"].(*types.AttributeValueMemberS).Value == "SESSION#"+setCookie.Value {
 		t.Fatal("session record used the raw credential as its key")
+	}
+
+	authenticated := apiRequest(http.MethodGet, "/api/not-found", "")
+	authenticated.Cookies = []string{auth.SessionCookieName + "=" + setCookie.Value}
+	notFound, err := server.handle(context.Background(), authenticated)
+	if err != nil || notFound.StatusCode != http.StatusNotFound {
+		t.Fatalf("authenticated response = %d, %s, %v", notFound.StatusCode, notFound.Body, err)
+	}
+	if updateCount != 1 {
+		t.Fatalf("profile updates = %d, want login upsert only", updateCount)
 	}
 
 	request := apiRequest(http.MethodDelete, "/api/session", "")

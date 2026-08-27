@@ -102,10 +102,6 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 			StatusCode: http.StatusNoContent, Headers: map[string]string{"cache-control": "no-store"}, Cookies: []string{auth.ClearSessionCookie()},
 		}, nil
 	}
-	if err := s.store.EnsureUser(ctx, claims.Subject, claims.Email); err != nil {
-		return s.failure("ensure user", err), nil
-	}
-
 	var result events.APIGatewayV2HTTPResponse
 	switch {
 	case method == http.MethodGet && path == "/me":
