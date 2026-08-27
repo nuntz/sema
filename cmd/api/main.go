@@ -77,7 +77,7 @@ type importFeedsResult struct {
 }
 
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	path := strings.TrimSuffix(request.RawPath, "/")
+	path := strings.TrimRight(request.RawPath, "/")
 	path = strings.TrimPrefix(path, "/api")
 	if path == "" {
 		path = "/"

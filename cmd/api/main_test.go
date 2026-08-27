@@ -217,6 +217,9 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 			sessionItem = input.Item
 			return &dynamodb.PutItemOutput{}, nil
 		},
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			return &dynamodb.QueryOutput{}, nil
+		},
 		update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 			updateCount++
 			return &dynamodb.UpdateItemOutput{}, nil
@@ -262,6 +265,13 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 	}
 	if updateCount != 1 {
 		t.Fatalf("profile updates = %d, want login upsert only", updateCount)
+	}
+
+	items := apiRequest(http.MethodGet, "/api/items//", "")
+	items.Cookies = []string{auth.SessionCookieName + "=" + setCookie.Value}
+	itemsResponse, err := server.handle(context.Background(), items)
+	if err != nil || itemsResponse.StatusCode != http.StatusOK {
+		t.Fatalf("normalized items response = %d, %s, %v", itemsResponse.StatusCode, itemsResponse.Body, err)
 	}
 
 	request := apiRequest(http.MethodDelete, "/api/session", "")
