@@ -545,6 +545,42 @@ func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, er
 	}
 }
 
+// LiveItemStats returns only the fields used to decorate feed extraction
+// statistics. Unlike LiveItems, it is an eventually consistent projected read.
+func (s *Store) LiveItemStats(ctx context.Context, userID string) ([]domain.Item, error) {
+	items := []domain.Item{}
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.table),
+			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			FilterExpression:       aws.String("#ttl > :now"),
+			ProjectionExpression:   aws.String("#feed, #quality, #body"),
+			ExpressionAttributeNames: map[string]string{
+				"#ttl": "ttl", "#feed": "feed_id", "#quality": "extract_quality", "#body": "has_body",
+			},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
+				":prefix": &types.AttributeValueMemberS{Value: "I#"},
+				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Item
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		items = append(items, page...)
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return items, nil
+		}
+	}
+}
+
 // ArchiveItems returns every permanent archive row for schema backfills and
 // vector indexing. It intentionally has no public cursor or page-size cap.
 func (s *Store) ArchiveItems(ctx context.Context, userID string) ([]domain.Item, error) {

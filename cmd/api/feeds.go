@@ -618,7 +618,7 @@ func publicFeed(repository *store.Store, feed domain.Feed) domain.Feed {
 }
 
 func (s *server) decorateFeeds(ctx context.Context, userID string, feeds []domain.Feed) error {
-	items, err := s.store.LiveItems(ctx, userID)
+	items, err := s.store.LiveItemStats(ctx, userID)
 	if err != nil {
 		return err
 	}

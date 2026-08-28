@@ -279,6 +279,47 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 	}
 }
 
+func TestLiveItemStatsUsesEventuallyConsistentProjectedPages(t *testing.T) {
+	statsItem := func(feedID string, quality float64, hasBody bool) map[string]types.AttributeValue {
+		return map[string]types.AttributeValue{
+			"feed_id":         &types.AttributeValueMemberS{Value: feedID},
+			"extract_quality": &types.AttributeValueMemberN{Value: strconv.FormatFloat(quality, 'f', -1, 64)},
+			"has_body":        &types.AttributeValueMemberBOOL{Value: hasBody},
+		}
+	}
+	pageKey := key(domain.UserPK("user"), "I#continue")
+	calls := 0
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		calls++
+		if input.ConsistentRead != nil {
+			t.Fatalf("stats query ConsistentRead = %v, want unset", aws.ToBool(input.ConsistentRead))
+		}
+		if aws.ToString(input.ProjectionExpression) != "#feed, #quality, #body" {
+			t.Fatalf("stats projection = %q", aws.ToString(input.ProjectionExpression))
+		}
+		for alias, name := range map[string]string{"#feed": "feed_id", "#quality": "extract_quality", "#body": "has_body"} {
+			if input.ExpressionAttributeNames[alias] != name {
+				t.Fatalf("stats projection names = %#v", input.ExpressionAttributeNames)
+			}
+		}
+		if calls == 1 {
+			if len(input.ExclusiveStartKey) != 0 {
+				t.Fatalf("first stats start key = %#v", input.ExclusiveStartKey)
+			}
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{statsItem("first", 0.8, true)}, LastEvaluatedKey: pageKey}, nil
+		}
+		if input.ExclusiveStartKey["SK"].(*types.AttributeValueMemberS).Value != "I#continue" {
+			t.Fatalf("second stats start key = %#v", input.ExclusiveStartKey)
+		}
+		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{statsItem("second", 0.2, false)}}, nil
+	}}
+
+	items, err := New(db, nil, "table", "", "").LiveItemStats(context.Background(), "user")
+	if err != nil || calls != 2 || len(items) != 2 || items[0].FeedID != "first" || items[0].ExtractQuality != 0.8 || !items[0].HasBody || items[1].FeedID != "second" || items[1].ExtractQuality != 0.2 || items[1].HasBody {
+		t.Fatalf("stats items = %#v, calls = %d, err = %v", items, calls, err)
+	}
+}
+
 func TestSearchItemsUsesMultiTermAndAndPageFills(t *testing.T) {
 	marshal := func(id string) map[string]types.AttributeValue {
 		item, err := attributevalue.MarshalMap(domain.Item{

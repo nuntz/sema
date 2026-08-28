@@ -7,6 +7,7 @@ import (
 	"errors"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -560,6 +561,55 @@ func TestDecorateExtractionComputesPerFeedDistribution(t *testing.T) {
 	}
 	if feeds[1].ExtractionSample != 4 || feeds[1].ExtractionRate != nil || feeds[1].MedianQuality != nil {
 		t.Fatalf("new feed stats = %#v", feeds[1])
+	}
+}
+
+func TestDecorateFeedsProjectedStatsMatchFullItems(t *testing.T) {
+	fullItems := make([]domain.Item, 0, 14)
+	for index := range 10 {
+		fullItems = append(fullItems, domain.Item{
+			FeedID: "enough", HasBody: index < 8, ExtractQuality: float64(index+1) / 10,
+			Vector: []byte{1, 2, 3}, SearchText: "large search payload",
+		})
+	}
+	for range 4 {
+		fullItems = append(fullItems, domain.Item{
+			FeedID: "new", HasBody: true, ExtractQuality: 0.9,
+			Vector: []byte{4, 5, 6}, SearchText: "another large search payload",
+		})
+	}
+
+	rows := make([]map[string]types.AttributeValue, 0, len(fullItems))
+	for _, item := range fullItems {
+		rows = append(rows, map[string]types.AttributeValue{
+			"feed_id":         &types.AttributeValueMemberS{Value: item.FeedID},
+			"extract_quality": &types.AttributeValueMemberN{Value: strconv.FormatFloat(item.ExtractQuality, 'f', -1, 64)},
+			"has_body":        &types.AttributeValueMemberBOOL{Value: item.HasBody},
+		})
+	}
+	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if input.ConsistentRead != nil || aws.ToString(input.ProjectionExpression) != "#feed, #quality, #body" {
+			t.Fatalf("feed stats query = %#v", input)
+		}
+		return &dynamodb.QueryOutput{Items: rows}, nil
+	}}
+	want := []domain.Feed{{FeedID: "enough"}, {FeedID: "new"}}
+	decorateExtraction(want, fullItems)
+	got := []domain.Feed{{FeedID: "enough"}, {FeedID: "new"}}
+	server := &server{store: store.New(db, nil, "table", "", "")}
+	if err := server.decorateFeeds(context.Background(), "user", got); err != nil {
+		t.Fatal(err)
+	}
+	for index := range want {
+		if got[index].ItemCount != want[index].ItemCount || got[index].ExtractionSample != want[index].ExtractionSample {
+			t.Fatalf("feed %d counts = %#v, want %#v", index, got[index], want[index])
+		}
+		if (got[index].ExtractionRate == nil) != (want[index].ExtractionRate == nil) || (got[index].MedianQuality == nil) != (want[index].MedianQuality == nil) {
+			t.Fatalf("feed %d optional stats = %#v, want %#v", index, got[index], want[index])
+		}
+		if got[index].ExtractionRate != nil && (*got[index].ExtractionRate != *want[index].ExtractionRate || *got[index].MedianQuality != *want[index].MedianQuality) {
+			t.Fatalf("feed %d distribution = %#v, want %#v", index, got[index], want[index])
+		}
 	}
 }
 
