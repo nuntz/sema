@@ -108,7 +108,7 @@ func replayMessages(userID string, items []domain.Item, forceExtract, forceSumma
 	messages := make([]domain.ItemMessage, 0, len(items))
 	for _, item := range items {
 		messages = append(messages, domain.ItemMessage{
-			User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL,
+			User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL, ExternalURL: item.ExternalURL, PostType: item.PostType,
 			Title: item.Title, Author: item.Author, PublishedTS: item.PublishedTS, DisplayDate: item.DisplayDate, Reprocess: true,
 			ForceExtract: forceExtract, ForceSummary: forceSummary,
 		})

@@ -14,6 +14,7 @@ import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
 import Link from "lucide-solid/icons/link";
 import Menu from "lucide-solid/icons/menu";
+import MessageSquare from "lucide-solid/icons/message-square";
 import Pause from "lucide-solid/icons/pause";
 import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
@@ -74,6 +75,7 @@ const glyphs = {
   keep: Heart,
   "chevron-down": ChevronDown,
   menu: Menu,
+  discussion: MessageSquare,
   more: Ellipsis,
   mute: Pause,
   "next-item": ChevronRight,

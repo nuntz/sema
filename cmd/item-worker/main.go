@@ -94,6 +94,12 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if message.Title == "" {
 			message.Title = existing.Title
 		}
+		if message.ExternalURL == "" {
+			message.ExternalURL = existing.ExternalURL
+		}
+		if message.PostType == "" {
+			message.PostType = existing.PostType
+		}
 		if message.MediaType == "" {
 			message.MediaType = existing.MediaType
 		}
@@ -138,12 +144,13 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 	}
-	pageURL, _ := url.Parse(message.URL)
+	contentURL, fetchURL := itemContentURLs(message)
+	pageURL, _ := url.Parse(contentURL)
 	var article extract.Result
 	var pageHTML []byte
 	if processAssets {
-		if !isVideo && message.URL != "" {
-			if response, fetchErr := h.http.Get(ctx, message.URL, nil); fetchErr == nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		if !isVideo && fetchURL != "" {
+			if response, fetchErr := h.http.Get(ctx, fetchURL, nil); fetchErr == nil && response.StatusCode >= 200 && response.StatusCode < 300 {
 				pageHTML = response.Body
 				if response.FinalURL != nil {
 					pageURL = response.FinalURL
@@ -151,7 +158,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 		if !isVideo {
-			article, err = articleContent(message.ContentRaw, message.URL, feed.SiteURL, pageURL, pageHTML)
+			article, err = articleContent(message.ContentRaw, contentURL, feed.SiteURL, pageURL, pageHTML)
 			if err != nil || article.HTML == "" {
 				article = extract.Result{}
 			}
@@ -332,7 +339,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	item := domain.Item{
 		PK: domain.UserPK(message.User), SK: domain.ItemSK(published, message.ItemID), FeedPK: "F#" + message.FeedID,
 		ItemID: message.ItemID, FeedID: message.FeedID, FeedTitle: feedTitle, Connector: domain.FeedConnector(feed), FaviconKey: feed.FaviconKey,
-		URL: message.URL, Title: embedTitle, Summary: summary, SummarySource: summarySource, Description: videoDescription(isVideo, message.ContentRaw, existing.Description), Author: author, DisplayDate: displayDate,
+		URL: message.URL, ExternalURL: message.ExternalURL, PostType: message.PostType, Title: embedTitle, Summary: summary, SummarySource: summarySource, Description: videoDescription(isVideo, message.ContentRaw, existing.Description), Author: author, DisplayDate: displayDate,
 		SearchText:  domain.DeriveSearchText(embedTitle, summary),
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
 		MediaKey: mediaKey, MediaVariants: mediaVariants, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
@@ -342,6 +349,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if message.Reprocess {
 		item.PK, item.SK, item.FeedPK = existing.PK, existing.SK, existing.FeedPK
 		item.URL = existing.URL
+		item.ExternalURL, item.PostType = message.ExternalURL, message.PostType
 		item.FetchedTS, item.TTL = existing.FetchedTS, existing.TTL
 		item.ArchiveSK, item.HeartedTS = existing.ArchiveSK, existing.HeartedTS
 		if err := h.store.OverwriteItem(ctx, item); err != nil {
@@ -424,6 +432,19 @@ func videoDescription(video bool, raw, existing string) string {
 		return value
 	}
 	return existing
+}
+
+func itemContentURLs(message domain.ItemMessage) (contentURL, fetchURL string) {
+	contentURL, fetchURL = message.URL, message.URL
+	if message.PostType == "" {
+		return contentURL, fetchURL
+	}
+	// Reddit thread pages are not scraped. Link posts extract the external
+	// article; text and media posts use the cleaned Atom body and enclosures.
+	if message.PostType == "link" && message.ExternalURL != "" {
+		return message.ExternalURL, message.ExternalURL
+	}
+	return contentURL, ""
 }
 
 func forceSummaryGeneration(alwaysGenerate bool, existingSource string) bool {

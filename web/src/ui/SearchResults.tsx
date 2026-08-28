@@ -1,5 +1,11 @@
 import { createMemo, For, onCleanup, onMount, Show } from "solid-js";
 import { Icon } from "../components/Icon";
+import {
+  externalHost,
+  isRedditItem,
+  isRedditLink,
+  redditPrimaryRoute,
+} from "../reddit-item";
 import { type SearchSection, visibleSearchSections } from "../search";
 import type { Item, SearchResponse } from "../types";
 import { relativeTime } from "./Grid";
@@ -15,6 +21,8 @@ interface SearchResultsProps {
   linkActionID: string;
   onFocus(id: string): void;
   onOpen(item: Item, archive: boolean): void;
+  onExternalOpen(item: Item): void;
+  onDiscussion(item: Item): void;
   onSignal(item: Item, value: -1 | 0 | 1): void;
   onHeart(item: Item): void;
   onCopy(item: Item): void;
@@ -83,7 +91,13 @@ export function SearchResults(props: SearchResultsProps) {
       const current = linear().find(
         ({ item }) => item.item_id === props.focusedID,
       );
-      if (current) props.onOpen(current.item, current.archive);
+      if (current) {
+        const route = redditPrimaryRoute(current.item);
+        if (route.kind === "external") {
+          props.onExternalOpen(current.item);
+          window.open(route.url, "_blank", "noopener,noreferrer");
+        } else props.onOpen(current.item, current.archive);
+      }
     } else if (!targetIsInput && event.key === "r") {
       const current = linear().find(
         ({ item }) => item.item_id === props.focusedID,
@@ -132,6 +146,8 @@ export function SearchResults(props: SearchResultsProps) {
                       linkActionActive={item.item_id === props.linkActionID}
                       onFocus={() => props.onFocus(item.item_id)}
                       onOpen={() => props.onOpen(item, section.archive)}
+                      onExternalOpen={() => props.onExternalOpen(item)}
+                      onDiscussion={() => props.onDiscussion(item)}
                       onSignal={(value) => props.onSignal(item, value)}
                       onHeart={() => props.onHeart(item)}
                       onCopy={() => props.onCopy(item)}
@@ -173,11 +189,14 @@ function ResultCell(props: {
   linkActionActive: boolean;
   onFocus(): void;
   onOpen(): void;
+  onExternalOpen(): void;
+  onDiscussion(): void;
   onSignal(value: -1 | 0 | 1): void;
   onHeart(): void;
   onCopy(): void;
   onRelated(): void;
 }) {
+  const primaryRoute = () => redditPrimaryRoute(props.item);
   return (
     <article
       class="grid-cell result-cell size-m"
@@ -186,6 +205,10 @@ function ResultCell(props: {
         "archive-cell": props.archive,
         "text-cell": !props.item.media_url,
         "video-cell": props.item.media_type === "video",
+        "reddit-cell": isRedditItem(props.item),
+        [`reddit-${props.item.post_type ?? "unknown"}`]: isRedditItem(
+          props.item,
+        ),
       }}
       tabindex="-1"
       data-search-id={props.item.item_id}
@@ -199,9 +222,25 @@ function ResultCell(props: {
           alt=""
         />
       </Show>
-      <Show when={props.item.media_type === "video"}>
+      <Show
+        when={
+          props.item.media_type === "video" ||
+          (isRedditItem(props.item) &&
+            !!props.item.media_url &&
+            !!props.item.external_url)
+        }
+      >
         <span class="video-play" aria-hidden="true">
-          <Icon name="play" size={14} filled />
+          <Icon
+            name={
+              props.item.media_type === "video" ||
+              props.item.post_type === "video"
+                ? "play"
+                : "open-original"
+            }
+            size={14}
+            filled={props.item.post_type === "video"}
+          />
         </span>
       </Show>
       <div class="cell-scrim" />
@@ -263,32 +302,72 @@ function ResultCell(props: {
           />
         </button>
       </div>
-      <button type="button" class="cell-main" onClick={props.onOpen}>
-        <div class="cell-copy">
-          <h2>{props.item.title}</h2>
-          <Show when={props.item.summary}>
-            <p>{props.item.summary}</p>
-          </Show>
-          <div class="cell-meta">
-            <SourceBadge
-              connector={props.item.connector}
-              imageURL={props.item.favicon_url}
-              title={props.item.feed_title}
-              size={16}
-            />
-            <span>
-              {props.item.feed_title || "Feed"} ·{" "}
-              {props.archive
-                ? `kept ${relativeTime(props.item.hearted_ts || props.item.published_ts)}`
-                : relativeTime(props.item.published_ts)}
-            </span>
-            <Show when={props.archive && props.item.similarity !== undefined}>
-              <em>≈{props.item.similarity}</em>
-            </Show>
-          </div>
-        </div>
-      </button>
+      <Show
+        when={primaryRoute().kind === "external" && props.item.external_url}
+        fallback={
+          <button type="button" class="cell-main" onClick={props.onOpen}>
+            <ResultCopy item={props.item} archive={props.archive} />
+          </button>
+        }
+      >
+        <a
+          class="cell-main"
+          href={props.item.external_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={props.onExternalOpen}
+        >
+          <ResultCopy item={props.item} archive={props.archive} />
+        </a>
+      </Show>
+      <Show when={isRedditItem(props.item)}>
+        <a
+          class="reddit-discussion"
+          href={props.item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Discussion on Reddit"
+          data-tooltip="Discussion on Reddit"
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onDiscussion();
+          }}
+        >
+          <Icon name="discussion" size={13} />
+        </a>
+      </Show>
     </article>
+  );
+}
+
+function ResultCopy(props: { item: Item; archive: boolean }) {
+  return (
+    <div class="cell-copy">
+      <h2>{props.item.title}</h2>
+      <Show when={isRedditLink(props.item)}>
+        <div class="reddit-domain">{externalHost(props.item.external_url)}</div>
+      </Show>
+      <Show when={props.item.summary && !isRedditItem(props.item)}>
+        <p>{props.item.summary}</p>
+      </Show>
+      <div class="cell-meta">
+        <SourceBadge
+          connector={props.item.connector}
+          imageURL={props.item.favicon_url}
+          title={props.item.feed_title}
+          size={16}
+        />
+        <span>
+          {props.item.feed_title || "Feed"} ·{" "}
+          {props.archive
+            ? `kept ${relativeTime(props.item.hearted_ts || props.item.published_ts)}`
+            : relativeTime(props.item.published_ts)}
+        </span>
+        <Show when={props.archive && props.item.similarity !== undefined}>
+          <em>≈{props.item.similarity}</em>
+        </Show>
+      </div>
+    </div>
   );
 }
 

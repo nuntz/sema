@@ -7,11 +7,18 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import type { APIClient } from "../api/client";
+import { type APIClient, APIError } from "../api/client";
 import { archiveSize } from "../archive";
 import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
 import { formatPrior } from "../ranking-display";
+import {
+  type RedditCollection,
+  redditCanonicalURL,
+  redditCollectionFromURL,
+  redditCollectionLabel,
+  redditSubreddit,
+} from "../reddit-feed";
 import type { Feed, FeedCandidate } from "../types";
 import {
   type DiscoveryState,
@@ -162,19 +169,22 @@ export function Feeds(props: {
         connector: feed.connector,
         title: feed.title,
         site_url: feed.site_url,
+        badge_url: feed.connector === "reddit" ? feed.favicon_url : undefined,
         avatar_url: feed.connector === "youtube" ? feed.favicon_url : undefined,
       });
       if (
         feed.muted ||
         feed.hide_shorts ||
         feed.always_generate ||
-        feed.fetch_interval_h !== 1
+        (feed.connector !== "reddit" && feed.fetch_interval_h !== 1)
       ) {
         await props.api.patchFeed(restored.feed.feed_id, {
           muted: feed.muted,
-          hide_shorts: feed.hide_shorts,
+          hide_shorts:
+            feed.connector === "youtube" ? feed.hide_shorts : undefined,
           always_generate: feed.always_generate,
-          fetch_interval_h: feed.fetch_interval_h,
+          fetch_interval_h:
+            feed.connector === "reddit" ? undefined : feed.fetch_interval_h,
         });
       }
       await refresh();
@@ -320,11 +330,7 @@ export function Feeds(props: {
                         {(tag) => <span class="tag-chip">{tag}</span>}
                       </For>
                     </div>
-                    <small>
-                      {feed.connector === "youtube"
-                        ? "YouTube"
-                        : domainName(feed.url)}
-                    </small>
+                    <small>{feedDescriptor(feed)}</small>
                   </div>
                   <StatusBadge feed={feed} />
                   <Show when={!feed.muted}>
@@ -442,10 +448,10 @@ function FeedDrawer(props: {
   const [confirming, setConfirming] = createSignal(false);
   const [working, setWorking] = createSignal(false);
   let panel!: HTMLElement;
-  let name!: HTMLInputElement;
+  let name: HTMLInputElement | undefined;
 
   onMount(() => {
-    name.focus();
+    (name ?? panel.querySelector<HTMLElement>(focusSelector))?.focus();
     const dismiss = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -467,6 +473,7 @@ function FeedDrawer(props: {
         | "hide_shorts"
         | "always_generate"
         | "fetch_interval_h"
+        | "url"
       >
     >,
   ) => {
@@ -545,17 +552,7 @@ function FeedDrawer(props: {
                 </a>
               )}
             </Show>
-            <small>
-              {props.feed.connector === "youtube"
-                ? `YouTube · uploads · ${
-                    props.feed.last_fetch_at
-                      ? `checked ${relativeTime(props.feed.last_fetch_at)} ago`
-                      : "not checked yet"
-                  }`
-                : props.feed.last_fetch_at
-                  ? `last fetched ${relativeTime(props.feed.last_fetch_at)} ago`
-                  : "not fetched yet"}
-            </small>
+            <small>{drawerDescriptor(props.feed)}</small>
           </div>
         </header>
         <Show when={props.feed.muted}>
@@ -564,93 +561,111 @@ function FeedDrawer(props: {
           </p>
         </Show>
 
-        <label class="drawer-field">
-          <span>NAME</span>
-          <input
-            ref={name}
-            value={props.feed.custom_title ?? ""}
-            placeholder={props.feed.title || domainName(props.feed.url)}
-            onBlur={(event) => {
-              const next = event.currentTarget.value.trim();
-              if (next !== (props.feed.custom_title ?? ""))
-                void patch({ custom_title: next });
-            }}
-          />
-        </label>
-        <div class="drawer-field">
-          <span>TAGS</span>
-          <TagEditor
-            tags={props.feed.tags ?? []}
-            suggestions={props.allTags}
-            onChange={(tags) => void patch({ tags })}
-          />
-        </div>
-        <fieldset
-          class="drawer-field interval-field"
-          disabled={props.feed.muted || working()}
-        >
-          <legend>FETCH EVERY</legend>
-          <div>
-            <For each={[1, 6, 24] as const}>
-              {(interval) => (
-                <button
-                  type="button"
-                  classList={{
-                    active: props.feed.fetch_interval_h === interval,
+        <Show
+          when={props.feed.connector === "reddit"}
+          fallback={
+            <>
+              <label class="drawer-field">
+                <span>NAME</span>
+                <input
+                  ref={name}
+                  value={props.feed.custom_title ?? ""}
+                  placeholder={props.feed.title || domainName(props.feed.url)}
+                  onBlur={(event) => {
+                    const next = event.currentTarget.value.trim();
+                    if (next !== (props.feed.custom_title ?? ""))
+                      void patch({ custom_title: next });
                   }}
-                  onClick={() => void patch({ fetch_interval_h: interval })}
-                >
-                  {interval}h
-                </button>
-              )}
-            </For>
-          </div>
-        </fieldset>
-        <section class="drawer-content">
-          <h3>CONTENT</h3>
-          <div class="content-row extraction-row">
-            <span>
-              <strong>Extraction</strong>
-              <small>Last 30 days</small>
-            </span>
-            <ExtractionQuality feed={props.feed} />
-          </div>
-          <label class="content-row generate-row">
-            <span>
-              <strong>Always generate summaries</strong>
-              <small>
-                {props.feed.always_generate
-                  ? "On for this feed · adds ~2s to first open"
-                  : "Even when the body extracts cleanly"}
-              </small>
-            </span>
-            <input
-              type="checkbox"
-              checked={props.feed.always_generate}
-              disabled={working()}
-              onChange={(event) =>
-                void patch({ always_generate: event.currentTarget.checked })
+                />
+              </label>
+              <div class="drawer-field">
+                <span>TAGS</span>
+                <TagEditor
+                  tags={props.feed.tags ?? []}
+                  suggestions={props.allTags}
+                  onChange={(tags) => void patch({ tags })}
+                />
+              </div>
+              <fieldset
+                class="drawer-field interval-field"
+                disabled={props.feed.muted || working()}
+              >
+                <legend>FETCH EVERY</legend>
+                <div>
+                  <For each={[1, 6, 24] as const}>
+                    {(interval) => (
+                      <button
+                        type="button"
+                        classList={{
+                          active: props.feed.fetch_interval_h === interval,
+                        }}
+                        onClick={() =>
+                          void patch({ fetch_interval_h: interval })
+                        }
+                      >
+                        {interval}h
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </fieldset>
+              <section class="drawer-content">
+                <h3>CONTENT</h3>
+                <div class="content-row extraction-row">
+                  <span>
+                    <strong>Extraction</strong>
+                    <small>Last 30 days</small>
+                  </span>
+                  <ExtractionQuality feed={props.feed} />
+                </div>
+                <label class="content-row generate-row">
+                  <span>
+                    <strong>Always generate summaries</strong>
+                    <small>
+                      {props.feed.always_generate
+                        ? "On for this feed · adds ~2s to first open"
+                        : "Even when the body extracts cleanly"}
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={props.feed.always_generate}
+                    disabled={working()}
+                    onChange={(event) =>
+                      void patch({
+                        always_generate: event.currentTarget.checked,
+                      })
+                    }
+                  />
+                  <i />
+                </label>
+              </section>
+            </>
+          }
+        >
+          <fieldset
+            class="reddit-collect drawer-reddit-collect"
+            disabled={props.feed.muted || working()}
+          >
+            <legend>
+              <strong>Collect</strong>
+              <small>Which listing Sema fetches</small>
+            </legend>
+            <RedditCollectionControl
+              value={redditCollectionFromURL(props.feed.url)}
+              onChange={(collection) =>
+                void patch({
+                  url: redditCanonicalURL(props.feed.url, collection),
+                })
               }
             />
-            <i />
-          </label>
-        </section>
-        <label class="mute-row">
-          <Icon name="mute" />
-          <span>
-            <strong>Mute feed</strong>
-            <small>Stop fetching and hide its items.</small>
-          </span>
-          <input
-            type="checkbox"
-            checked={props.feed.muted}
-            disabled={working()}
-            onChange={(event) =>
-              void patch({ muted: event.currentTarget.checked })
-            }
-          />
-          <i />
-        </label>
+          </fieldset>
+        </Show>
+        <MuteControl
+          feed={props.feed}
+          working={working()}
+          onChange={(muted) => void patch({ muted })}
+        />
         <Show when={props.feed.connector === "youtube"}>
           <label class="mute-row shorts-row">
             <Icon name="play" />
@@ -681,7 +696,11 @@ function FeedDrawer(props: {
             when={!confirming()}
             fallback={
               <div class="remove-confirm">
-                <strong>Remove feed?</strong>
+                <strong>
+                  {props.feed.connector === "reddit"
+                    ? "Unsubscribe from subreddit?"
+                    : "Remove feed?"}
+                </strong>
                 <p>
                   {props.feed.item_count} items from the current window will
                   disappear. Kept items stay in the archive.
@@ -697,7 +716,9 @@ function FeedDrawer(props: {
                     onClick={() => void props.onRemove()}
                   >
                     <Icon name="remove-feed" />
-                    Remove
+                    {props.feed.connector === "reddit"
+                      ? "Unsubscribe"
+                      : "Remove"}
                   </button>
                 </div>
               </div>
@@ -724,7 +745,9 @@ function FeedDrawer(props: {
               onClick={() => setConfirming(true)}
             >
               <Icon name="remove-feed" />
-              Remove feed
+              {props.feed.connector === "reddit"
+                ? "Unsubscribe"
+                : "Remove feed"}
             </button>
           </Show>
         </div>
@@ -772,10 +795,13 @@ function AddFeedDialog(props: {
   const [selected, setSelected] = createSignal(0);
   const [tags, setTags] = createSignal<string[]>([]);
   const [error, setError] = createSignal("");
+  const [errorKind, setErrorKind] = createSignal("");
+  const [collection, setCollection] = createSignal<RedditCollection>("top-day");
   const [direct, setDirect] = createSignal(false);
   const [adding, setAdding] = createSignal(false);
   let timer: number | undefined;
   let input!: HTMLInputElement;
+  let errorPanel: HTMLDivElement | undefined;
 
   onMount(() => input.focus());
   onCleanup(() => window.clearTimeout(timer));
@@ -786,14 +812,21 @@ function AddFeedDialog(props: {
     if (!value) return;
     setState("loading");
     setError("");
+    setErrorKind("");
     try {
       const result = await props.api.discoverFeed(value);
       setCandidates(result);
       setSelected(0);
+      if (result[0]?.connector === "reddit")
+        setCollection(redditCollectionFromURL(result[0].feed_url));
       setState(discoveredCandidateState(result));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Discovery failed.");
+      setErrorKind(caught instanceof APIError ? (caught.kind ?? "") : "");
       setState(discoveredCandidateState([], true));
+      queueMicrotask(() =>
+        errorPanel?.querySelector<HTMLElement>("a, button")?.focus(),
+      );
     }
   };
 
@@ -803,9 +836,19 @@ function AddFeedDialog(props: {
     timer = window.setTimeout(() => void resolve(), 400);
   };
 
+  const edit = () => {
+    setState("idle");
+    input.focus();
+    input.select();
+  };
+
   const add = async () => {
     const candidate = candidates()[selected()];
-    const feedURL = direct() ? absoluteAddress(address()) : candidate?.feed_url;
+    const feedURL = direct()
+      ? absoluteAddress(address())
+      : candidate?.connector === "reddit"
+        ? redditCanonicalURL(candidate.feed_url, collection())
+        : candidate?.feed_url;
     if (!feedURL) return;
     setAdding(true);
     try {
@@ -815,6 +858,7 @@ function AddFeedDialog(props: {
         connector: candidate?.connector,
         title: candidate?.title,
         site_url: candidate?.site_url,
+        badge_url: candidate?.badge_url,
         avatar_url: candidate?.avatar_url,
       });
       props.onAdded(result.feed);
@@ -845,7 +889,7 @@ function AddFeedDialog(props: {
         <header>
           <div>
             <h2 id="add-feed-title">Add feed</h2>
-            <p>Paste a homepage, feed URL, or YouTube channel.</p>
+            <p>A homepage, a feed URL, a channel, or r/subreddit.</p>
           </div>
           <button
             type="button"
@@ -865,6 +909,7 @@ function AddFeedDialog(props: {
               onInput={(event) => {
                 setAddress(event.currentTarget.value);
                 setState("idle");
+                setDirect(false);
               }}
               onBlur={scheduleResolve}
               onKeyDown={(event) => {
@@ -887,7 +932,11 @@ function AddFeedDialog(props: {
         </label>
 
         <Show when={state() === "single"}>
-          <CandidateCard candidate={candidates()[0]} />
+          <CandidateCard
+            candidate={candidates()[0]}
+            collection={collection()}
+            onCollection={setCollection}
+          />
         </Show>
         <Show when={state() === "multiple"}>
           <fieldset class="candidate-list">
@@ -924,23 +973,48 @@ function AddFeedDialog(props: {
           </div>
         </Show>
         <Show when={state() === "error"}>
-          <div class="discovery-error" role="alert">
-            <strong>Couldn’t inspect that address.</strong>
-            <code>{error()}</code>
+          <div
+            ref={errorPanel}
+            class="discovery-error"
+            role="alert"
+            aria-live="polite"
+          >
+            <strong>{error()}</strong>
+            <code>{address()}</code>
             <div>
-              <button type="button" onClick={resolve}>
-                <Icon name="retry" />
-                Try again
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setState("idle");
-                  input.focus();
-                }}
+              <Show when={errorKind() === "not_found"}>
+                <a
+                  href={`https://www.reddit.com/search/?q=${encodeURIComponent(redditSearchTerm(address()))}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Search Reddit for “{redditSearchTerm(address())}”
+                </a>
+              </Show>
+              <Show when={errorKind() === "rate_limited"}>
+                <button type="button" onClick={resolve}>
+                  <Icon name="retry" />
+                  Try again
+                </button>
+                <button type="button" onClick={props.onClose}>
+                  Cancel
+                </button>
+              </Show>
+              <Show
+                when={
+                  errorKind() !== "rate_limited" &&
+                  errorKind() !== "unavailable"
+                }
               >
-                Edit address
-              </button>
+                <button type="button" onClick={edit}>
+                  Edit {errorKind() === "not_found" ? "name" : "address"}
+                </button>
+              </Show>
+              <Show when={errorKind() === "unavailable"}>
+                <button type="button" onClick={edit}>
+                  Try another name
+                </button>
+              </Show>
             </div>
           </div>
         </Show>
@@ -982,33 +1056,92 @@ function AddFeedDialog(props: {
   );
 }
 
-function CandidateCard(props: { candidate: FeedCandidate; compact?: boolean }) {
+function CandidateCard(props: {
+  candidate: FeedCandidate;
+  compact?: boolean;
+  collection?: RedditCollection;
+  onCollection?(collection: RedditCollection): void;
+}) {
   return (
-    <div class="candidate-card" classList={{ compact: props.compact }}>
+    <div
+      class="candidate-card"
+      classList={{
+        compact: props.compact,
+        reddit: props.candidate.connector === "reddit",
+      }}
+    >
       <SourceBadge
         connector={props.candidate.connector}
-        imageURL={props.candidate.avatar_url}
+        imageURL={props.candidate.badge_url ?? props.candidate.avatar_url}
         title={props.candidate.title}
         size={36}
       />
       <span>
         <strong>{props.candidate.title}</strong>
-        <small>
-          {props.candidate.connector === "youtube"
-            ? "YouTube · uploads"
-            : props.candidate.type.toUpperCase()}
-          <Show when={props.candidate.cadence}>
-            {` · ${props.candidate.cadence}`}
-          </Show>
-          <Show when={!props.candidate.cadence}>
-            {` · ${formatCount(props.candidate.item_count)} items`}
-          </Show>
-          <Show when={props.candidate.newest_item_ts}>
-            {` · newest ${relativeTime(props.candidate.newest_item_ts ?? "")} ago`}
-          </Show>
-        </small>
+        <small>{candidateDescriptor(props.candidate)}</small>
       </span>
+      <Show
+        when={
+          props.candidate.connector === "reddit" &&
+          props.collection &&
+          props.onCollection
+        }
+      >
+        <fieldset class="reddit-collect candidate-collect">
+          <legend>COLLECT</legend>
+          <RedditCollectionControl
+            value={props.collection ?? "top-day"}
+            onChange={(value) => props.onCollection?.(value)}
+          />
+          <small>{redditCollectionDescription(props.collection)}</small>
+        </fieldset>
+      </Show>
     </div>
+  );
+}
+
+function RedditCollectionControl(props: {
+  value: RedditCollection;
+  onChange(collection: RedditCollection): void;
+}) {
+  return (
+    <div class="reddit-collect-options">
+      <For each={redditCollections}>
+        {(collection) => (
+          <button
+            type="button"
+            classList={{ active: props.value === collection }}
+            aria-pressed={props.value === collection}
+            onClick={() => props.onChange(collection)}
+          >
+            {redditCollectionLabel(collection)}
+          </button>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function MuteControl(props: {
+  feed: Feed;
+  working: boolean;
+  onChange(muted: boolean): void;
+}) {
+  return (
+    <label class="mute-row">
+      <Icon name="mute" />
+      <span>
+        <strong>Mute feed</strong>
+        <small>Stop fetching and hide its items.</small>
+      </span>
+      <input
+        type="checkbox"
+        checked={props.feed.muted}
+        disabled={props.working}
+        onChange={(event) => props.onChange(event.currentTarget.checked)}
+      />
+      <i />
+    </label>
   );
 }
 
@@ -1186,6 +1319,62 @@ function displayTitle(feed: Feed): string {
   return feed.custom_title || feed.title || domainName(feed.url) || feed.url;
 }
 
+function feedDescriptor(feed: Feed): string {
+  if (feed.connector === "youtube") return "YouTube";
+  if (feed.connector === "reddit")
+    return `reddit.com · ${redditCollectionLabel(
+      redditCollectionFromURL(feed.url),
+    ).toLowerCase()}`;
+  return domainName(feed.url);
+}
+
+function drawerDescriptor(feed: Feed): string {
+  const checked = feed.last_fetch_at
+    ? `checked ${relativeTime(feed.last_fetch_at)} ago`
+    : "not checked yet";
+  if (feed.connector === "youtube") return `YouTube · uploads · ${checked}`;
+  if (feed.connector === "reddit")
+    return `${feedDescriptor(feed)} · ${checked}`;
+  return feed.last_fetch_at
+    ? `last fetched ${relativeTime(feed.last_fetch_at)} ago`
+    : "not fetched yet";
+}
+
+function candidateDescriptor(candidate: FeedCandidate): string {
+  if (candidate.connector === "youtube") return "YouTube · uploads";
+  if (candidate.connector === "reddit")
+    return `reddit.com · ${formatCount(candidate.item_count)} items in this listing`;
+  const timing = candidate.cadence
+    ? ` · ${candidate.cadence}`
+    : ` · ${formatCount(candidate.item_count)} items`;
+  const newest = candidate.newest_item_ts
+    ? ` · newest ${relativeTime(candidate.newest_item_ts)} ago`
+    : "";
+  return `${candidate.type.toUpperCase()}${timing}${newest}`;
+}
+
+function redditCollectionDescription(collection?: RedditCollection): string {
+  switch (collection) {
+    case "hot":
+      return "Hot: checked every 3 hours.";
+    case "new":
+      return "New: checked hourly.";
+    default:
+      return "Top · day is the default: one pass a day, the community’s own filter, about 25 items.";
+  }
+}
+
+function redditSearchTerm(raw: string): string {
+  const fromURL = redditSubreddit(
+    raw.includes("://") ? raw : `https://${raw.replace(/^\/?/, "")}`,
+  );
+  if (fromURL) return fromURL;
+  return raw
+    .trim()
+    .replace(/^\/?r\//i, "")
+    .split(/[/?#]/)[0];
+}
+
 function domainName(rawURL: string): string {
   try {
     const parsed = new URL(rawURL);
@@ -1219,3 +1408,9 @@ function formatCount(value: number): string {
 
 const focusSelector =
   "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+
+const redditCollections: readonly RedditCollection[] = [
+  "hot",
+  "top-day",
+  "new",
+];

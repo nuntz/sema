@@ -25,6 +25,7 @@ import {
   shouldShowEndCard,
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
+import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Order, ReadAnchor } from "../types";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
@@ -55,6 +56,8 @@ interface GridProps {
   pendingNewCount: number;
   onFocus(id: string): void;
   onOpen(item: Item): void;
+  onExternalOpen(item: Item): void;
+  onDiscussion(item: Item): void;
   onSignal(item: Item, value: -1 | 0 | 1): void;
   onHeart(item: Item): void;
   onToggleRead(item: Item): void;
@@ -537,6 +540,21 @@ export function Grid(props: GridProps) {
     props.onItemsPassed(ids);
   };
 
+  const openPrimary = (item: Item) => {
+    const route = redditPrimaryRoute(item);
+    if (route.kind === "external") {
+      props.onExternalOpen(item);
+      window.open(route.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    props.onOpen(item);
+  };
+
+  const openDiscussion = (item: Item) => {
+    props.onDiscussion(item);
+    window.open(item.url, "_blank", "noopener,noreferrer");
+  };
+
   const onKeyDown = (event: KeyboardEvent) => {
     if (sheetItem() && event.key === "Escape") {
       closeSheet();
@@ -575,7 +593,7 @@ export function Grid(props: GridProps) {
         move("right");
         break;
       case "open":
-        if (item) props.onOpen(item);
+        if (item) openPrimary(item);
         break;
       case "like":
         if (item && !props.archive)
@@ -616,7 +634,8 @@ export function Grid(props: GridProps) {
         if (!props.archive) props.onUndo();
         break;
       case "copy":
-        if (item) props.onCopy(item);
+        if (item && isRedditItem(item)) openDiscussion(item);
+        else if (item) props.onCopy(item);
         break;
       case "original":
         if (item) props.onOriginal(item);
@@ -722,6 +741,9 @@ export function Grid(props: GridProps) {
                   const readVisuals = createMemo(() =>
                     readVisualState(readContext(), item().read),
                   );
+                  const primaryRoute = createMemo(() =>
+                    redditPrimaryRoute(item()),
+                  );
                   return (
                     <article
                       class="grid-cell"
@@ -733,6 +755,9 @@ export function Grid(props: GridProps) {
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
                         "video-cell": item().media_type === "video",
+                        "reddit-cell": isRedditItem(item()),
+                        [`reddit-${item().post_type ?? "unknown"}`]:
+                          isRedditItem(item()),
                         "span-2": cell.span === 2,
                         "tall-hero": cell.tall === true,
                         "hero-cell": row.kind === "hero",
@@ -749,7 +774,10 @@ export function Grid(props: GridProps) {
                       }}
                       data-item-id={item().item_id}
                       onMouseEnter={() => props.onFocus(item().item_id)}
-                      onDblClick={() => props.onOpen(item())}
+                      onDblClick={() => {
+                        if (primaryRoute().kind !== "external")
+                          openPrimary(item());
+                      }}
                       onPointerDown={(event) => startLongPress(event, item())}
                       onPointerMove={moveLongPressGesture}
                       onPointerUp={cancelLongPress}
@@ -770,10 +798,25 @@ export function Grid(props: GridProps) {
                           }
                         />
                       </Show>
-                      <Show when={item().media_type === "video"}>
-                        <span class="video-play" aria-hidden="true">
+                      <Show
+                        when={
+                          item().media_type === "video" ||
+                          (isRedditItem(item()) &&
+                            !!item().media_url &&
+                            !!item().external_url)
+                        }
+                      >
+                        <span
+                          class="video-play destination-glyph"
+                          aria-hidden="true"
+                        >
                           <Icon
-                            name="play"
+                            name={
+                              item().media_type === "video" ||
+                              item().post_type === "video"
+                                ? "play"
+                                : "open-original"
+                            }
                             size={
                               row.kind === "hero" || row.kind === "pair"
                                 ? 24
@@ -785,7 +828,10 @@ export function Grid(props: GridProps) {
                                       ? 14
                                       : 12
                             }
-                            filled
+                            filled={
+                              item().media_type === "video" ||
+                              item().post_type === "video"
+                            }
                           />
                         </span>
                       </Show>
@@ -827,6 +873,67 @@ export function Grid(props: GridProps) {
                           <Icon name="keep" size={14} filled={true} />
                         </span>
                       </Show>
+                      <Show
+                        when={
+                          primaryRoute().kind === "external" &&
+                          item().external_url
+                        }
+                        fallback={
+                          <button
+                            type="button"
+                            class="cell-main"
+                            onClick={() => {
+                              if (suppressOpenID === item().item_id) {
+                                suppressOpenID = "";
+                                return;
+                              }
+                              openPrimary(item());
+                            }}
+                            aria-label={`Open ${item().title}${readVisuals().unreadDot ? ", unread" : ""}`}
+                          >
+                            <CellCopy
+                              item={item()}
+                              archive={props.archive}
+                              effectiveSize={cell.effectiveSize}
+                              condensed={condensedLarge()}
+                              explanation={explanation()}
+                            />
+                          </button>
+                        }
+                      >
+                        <a
+                          class="cell-main"
+                          href={item().external_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={() => props.onExternalOpen(item())}
+                          aria-label={`Open ${item().title} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}`}
+                        >
+                          <CellCopy
+                            item={item()}
+                            archive={props.archive}
+                            effectiveSize={cell.effectiveSize}
+                            condensed={condensedLarge()}
+                            explanation={explanation()}
+                          />
+                        </a>
+                      </Show>
+                      <Show when={isRedditItem(item())}>
+                        <a
+                          class="reddit-discussion"
+                          href={item().url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="Discussion on Reddit"
+                          data-tooltip="Discussion on Reddit"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onDiscussion(item());
+                          }}
+                        >
+                          <Icon name="discussion" size={13} />
+                        </a>
+                      </Show>
                       <div class="cell-actions">
                         <button
                           type="button"
@@ -852,74 +959,6 @@ export function Grid(props: GridProps) {
                           <Icon name="more" size={14} />
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        class="cell-main"
-                        onClick={() => {
-                          if (suppressOpenID === item().item_id) {
-                            suppressOpenID = "";
-                            return;
-                          }
-                          props.onOpen(item());
-                        }}
-                        aria-label={`Open ${item().title}${readVisuals().unreadDot ? ", unread" : ""}`}
-                      >
-                        <div class="cell-copy">
-                          <h2>{item().title}</h2>
-                          <Show
-                            when={
-                              cell.effectiveSize !== "S" &&
-                              !condensedLarge() &&
-                              item().summary
-                            }
-                          >
-                            <p>{item().summary}</p>
-                          </Show>
-                          <div class="cell-meta">
-                            <Show
-                              when={
-                                props.archive &&
-                                !item().has_body &&
-                                item().media_type !== "video"
-                              }
-                            >
-                              <em>text only</em>
-                            </Show>
-                            <SourceBadge
-                              connector={item().connector}
-                              imageURL={item().favicon_url}
-                              title={item().feed_title}
-                              size={16}
-                            />
-                            <Show
-                              when={props.archive}
-                              fallback={
-                                <span>{item().feed_title || "Feed"}</span>
-                              }
-                            >
-                              <span>{item().feed_title || "Feed"}</span>
-                            </Show>
-                          </div>
-                          <Show
-                            when={!props.archive && cell.effectiveSize === "L"}
-                          >
-                            <div class="why-hint why-l" title={whyText(item())}>
-                              {explanation()}
-                            </div>
-                          </Show>
-                          <Show
-                            when={
-                              !props.archive &&
-                              cell.effectiveSize === "M" &&
-                              whyText(item())
-                            }
-                          >
-                            <div class="why-hint why-m" title={whyText(item())}>
-                              {whyText(item())}
-                            </div>
-                          </Show>
-                        </div>
-                      </button>
                     </article>
                   );
                 }}
@@ -1025,13 +1064,42 @@ export function Grid(props: GridProps) {
                     {relativeTime(item.published_ts)}
                   </span>
                 </header>
-                <button
-                  type="button"
-                  onClick={() => runSheetAction(() => props.onOriginal(item))}
-                >
-                  <Icon name="open-original" size={20} />
-                  Open original
-                </button>
+                <Show when={!isRedditItem(item)}>
+                  <button
+                    type="button"
+                    onClick={() => runSheetAction(() => props.onOriginal(item))}
+                  >
+                    <Icon name="open-original" size={20} />
+                    Open original
+                  </button>
+                </Show>
+                <Show when={isRedditItem(item) && item.external_url}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      runSheetAction(() => {
+                        props.onExternalOpen(item);
+                        window.open(
+                          item.external_url,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      })
+                    }
+                  >
+                    <Icon name="open-original" size={20} />
+                    Open linked site
+                  </button>
+                </Show>
+                <Show when={isRedditItem(item)}>
+                  <button
+                    type="button"
+                    onClick={() => runSheetAction(() => openDiscussion(item))}
+                  >
+                    <Icon name="discussion" size={20} />
+                    Open discussion
+                  </button>
+                </Show>
                 <button
                   type="button"
                   classList={{ selected: item.signal === 1 }}
@@ -1083,6 +1151,75 @@ export function Grid(props: GridProps) {
           )}
         </Show>
       </Portal>
+    </div>
+  );
+}
+
+function CellCopy(props: {
+  item: Item;
+  archive: boolean;
+  effectiveSize: "S" | "M" | "L";
+  condensed: boolean;
+  explanation: string;
+}) {
+  const reddit = () => isRedditItem(props.item);
+  const domain = () =>
+    props.item.post_type === "link"
+      ? externalHost(props.item.external_url)
+      : "";
+  return (
+    <div class="cell-copy">
+      <h2>{props.item.title}</h2>
+      <Show when={reddit() && domain()}>
+        <div class="reddit-domain">{domain()}</div>
+      </Show>
+      <Show
+        when={
+          props.effectiveSize !== "S" &&
+          !props.condensed &&
+          props.item.summary &&
+          (!reddit() || props.item.post_type === "text")
+        }
+      >
+        <p>{props.item.summary}</p>
+      </Show>
+      <div class="cell-meta">
+        <Show
+          when={
+            props.archive &&
+            !props.item.has_body &&
+            props.item.media_type !== "video"
+          }
+        >
+          <em>text only</em>
+        </Show>
+        <SourceBadge
+          connector={props.item.connector}
+          imageURL={props.item.favicon_url}
+          title={props.item.feed_title}
+          size={16}
+        />
+        <span>
+          {props.item.feed_title || "Feed"}
+          <Show when={reddit()}>
+            {` · ${relativeTime(props.item.published_ts)}`}
+          </Show>
+        </span>
+      </div>
+      <Show when={!props.archive && props.effectiveSize === "L"}>
+        <div class="why-hint why-l" title={whyText(props.item)}>
+          {props.explanation}
+        </div>
+      </Show>
+      <Show
+        when={
+          !props.archive && props.effectiveSize === "M" && whyText(props.item)
+        }
+      >
+        <div class="why-hint why-m" title={whyText(props.item)}>
+          {whyText(props.item)}
+        </div>
+      </Show>
     </div>
   );
 }

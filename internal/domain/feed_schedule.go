@@ -18,7 +18,7 @@ func NextFeedFetch(key string, after time.Time, intervalHours ...int) time.Time 
 	period := defaultFeedFetchPeriod
 	if len(intervalHours) > 0 {
 		switch intervalHours[0] {
-		case 6, 24:
+		case 3, 6, 24:
 			period = time.Duration(intervalHours[0]) * time.Hour
 		}
 	}
@@ -31,7 +31,7 @@ func NextFeedFetch(key string, after time.Time, intervalHours ...int) time.Time 
 
 func FeedIntervalHours(feed Feed) int {
 	switch feed.FetchIntervalH {
-	case 6, 24:
+	case 3, 6, 24:
 		return feed.FetchIntervalH
 	default:
 		return 1

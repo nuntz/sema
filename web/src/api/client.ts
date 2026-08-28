@@ -16,6 +16,18 @@ export interface FeedImportResult {
 
 export class UnauthorizedError extends Error {}
 
+export class APIError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly kind?: string,
+    readonly upstreamStatus?: number,
+  ) {
+    super(message);
+    this.name = "APIError";
+  }
+}
+
 let sessionBootstrap: MeResponse | undefined;
 
 export function primeSessionBootstrap(value: MeResponse): void {
@@ -38,7 +50,12 @@ export class APIClient {
       const payload = await response
         .json()
         .catch(() => ({ error: response.statusText }));
-      throw new Error(payload.error ?? `Request failed (${response.status})`);
+      throw new APIError(
+        payload.error ?? `Request failed (${response.status})`,
+        response.status,
+        payload.kind,
+        payload.upstream_status,
+      );
     }
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
@@ -186,6 +203,7 @@ export class APIClient {
     connector?: string;
     title?: string;
     site_url?: string;
+    badge_url?: string;
     avatar_url?: string;
   }): Promise<{ feed: Feed; created: boolean }> {
     return this.request("/feeds", {
@@ -205,6 +223,7 @@ export class APIClient {
         | "hide_shorts"
         | "always_generate"
         | "fetch_interval_h"
+        | "url"
       >
     >,
   ): Promise<Feed> {

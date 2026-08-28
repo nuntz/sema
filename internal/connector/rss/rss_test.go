@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/mmcdole/gofeed"
 	"github.com/nuntz/sema/internal/connector"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
@@ -31,7 +30,7 @@ func connectorFor(body, contentType string) *Connector {
 	headers := make(http.Header)
 	headers.Set("Content-Type", contentType)
 	headers.Set("ETag", `"v1"`)
-	return &Connector{client: fakeFetcher{response: httpx.Response{StatusCode: http.StatusOK, Header: headers, Body: []byte(body), FinalURL: base}}, parser: gofeed.NewParser()}
+	return &Connector{client: fakeFetcher{response: httpx.Response{StatusCode: http.StatusOK, Header: headers, Body: []byte(body), FinalURL: base}}}
 }
 
 func TestFetchFeedFormats(t *testing.T) {
@@ -106,7 +105,7 @@ func TestConditionalFetch(t *testing.T) {
 			if got := headers.Get("If-Modified-Since"); got != "yesterday" {
 				t.Errorf("If-Modified-Since = %q", got)
 			}
-		}}, parser: gofeed.NewParser()}
+		}}}
 	result, err := connector.Fetch(context.Background(), domain.Feed{URL: "https://example.com/feed", ETag: `"old"`, LastModified: "yesterday"})
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +120,7 @@ func TestFetchPreservesHTTPStatusMetadata(t *testing.T) {
 	headers.Set("Retry-After", "120")
 	feedConnector := &Connector{client: fakeFetcher{
 		response: httpx.Response{StatusCode: http.StatusTooManyRequests, Header: headers},
-	}, parser: gofeed.NewParser()}
+	}}
 
 	_, err := feedConnector.Fetch(context.Background(), domain.Feed{URL: "https://example.com/feed"})
 	var statusErr *connector.HTTPStatusError

@@ -22,6 +22,7 @@ type fakeFeedStore struct {
 	feeds    map[string]domain.Feed
 	putErr   error
 	putFeeds []domain.Feed
+	existing map[string]bool
 }
 
 func (f *fakeFeedStore) Feed(_ context.Context, _, feedID string) (domain.Feed, error) {
@@ -43,8 +44,10 @@ func (f *fakeFeedStore) PutFeed(_ context.Context, feed domain.Feed) error {
 	return f.putErr
 }
 
-func (*fakeFeedStore) ItemExists(context.Context, string, string) (bool, error) {
-	return false, nil
+func (f *fakeFeedStore) ItemExists(_ context.Context, _, itemID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.existing[itemID], nil
 }
 
 func (*fakeFeedStore) PutContent(context.Context, string, string, []byte) error {
@@ -56,6 +59,12 @@ type failingConnector struct {
 }
 
 type resultConnector struct{ result domain.FetchResult }
+
+type connectorFunc func(context.Context, domain.Feed) (domain.FetchResult, error)
+
+func (f connectorFunc) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchResult, error) {
+	return f(ctx, feed)
+}
 
 func (c resultConnector) Fetch(context.Context, domain.Feed) (domain.FetchResult, error) {
 	return c.result, nil
@@ -251,20 +260,126 @@ func TestShortsFilteringOnlyProbesOptedInYouTubeFeeds(t *testing.T) {
 	}
 }
 
-func TestRegistryDispatchesRSSAndYouTubeInOneBatch(t *testing.T) {
+func TestRegistryDispatchesRSSRedditAndYouTubeInOneBatch(t *testing.T) {
 	store := &fakeFeedStore{feeds: map[string]domain.Feed{
-		"rss": {PK: "U#user", SK: "F#rss", FeedID: "rss", Connector: domain.ConnectorRSS},
-		"yt":  {PK: "U#user", SK: "F#yt", FeedID: "yt", Connector: domain.ConnectorYouTube},
+		"rss":    {PK: "U#user", SK: "F#rss", FeedID: "rss", Connector: domain.ConnectorRSS},
+		"reddit": {PK: "U#user", SK: "F#reddit", FeedID: "reddit", Connector: domain.ConnectorReddit},
+		"yt":     {PK: "U#user", SK: "F#yt", FeedID: "yt", Connector: domain.ConnectorYouTube},
 	}}
-	rssConnector, youtubeConnector := &countingConnector{}, &countingConnector{}
+	rssConnector, redditConnector, youtubeConnector := &countingConnector{}, &countingConnector{}, &countingConnector{}
 	handler := &handler{store: store, connectors: map[string]connector.Connector{
-		domain.ConnectorRSS: rssConnector, domain.ConnectorYouTube: youtubeConnector,
+		domain.ConnectorRSS: rssConnector, domain.ConnectorReddit: redditConnector, domain.ConnectorYouTube: youtubeConnector,
 	}}
 	response, err := handler.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{
 		{MessageId: "rss", Body: `{"user":"user","feed_id":"rss"}`},
+		{MessageId: "reddit", Body: `{"user":"user","feed_id":"reddit"}`},
 		{MessageId: "yt", Body: `{"user":"user","feed_id":"yt"}`},
 	}})
-	if err != nil || len(response.BatchItemFailures) != 0 || rssConnector.calls.Load() != 1 || youtubeConnector.calls.Load() != 1 {
-		t.Fatalf("response = %#v, rss calls = %d, youtube calls = %d, err = %v", response, rssConnector.calls.Load(), youtubeConnector.calls.Load(), err)
+	if err != nil || len(response.BatchItemFailures) != 0 || rssConnector.calls.Load() != 1 || redditConnector.calls.Load() != 1 || youtubeConnector.calls.Load() != 1 {
+		t.Fatalf("response = %#v, rss calls = %d, reddit calls = %d, youtube calls = %d, err = %v", response, rssConnector.calls.Load(), redditConnector.calls.Load(), youtubeConnector.calls.Load(), err)
+	}
+}
+
+func TestRedditDestinationsAndPostTypeReachItemQueue(t *testing.T) {
+	entry := domain.Entry{
+		GUID: "t3_one", URL: "https://reddit.com/r/example/comments/one/title/", ExternalURL: "https://example.com/story", PostType: "link",
+		Title: "Story", SummaryRaw: "Clean excerpt", Published: time.Now().UTC(),
+	}
+	store := &fakeFeedStore{feed: domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: domain.ConnectorReddit}}
+	queue := &fakeItemsQueue{}
+	handler := &handler{store: store, connectors: map[string]connector.Connector{domain.ConnectorReddit: resultConnector{result: domain.FetchResult{Entries: []domain.Entry{entry}}}}, queue: queue, itemsURL: "items"}
+	if err := handler.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.messages) != 1 || queue.messages[0].ExternalURL != entry.ExternalURL || queue.messages[0].PostType != "link" || queue.messages[0].SummaryRaw != "Clean excerpt" {
+		t.Fatalf("messages = %#v", queue.messages)
+	}
+}
+
+func TestRedditFullnameDeduplicatesAcrossScheduledRuns(t *testing.T) {
+	entry := domain.Entry{
+		GUID: "t3_same", URL: "https://www.reddit.com/r/example/comments/same/title/",
+		Title: "Same post", Published: time.Now().UTC(),
+	}
+	store := &fakeFeedStore{
+		feed:     domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: domain.ConnectorReddit},
+		existing: map[string]bool{},
+	}
+	queue := &fakeItemsQueue{}
+	handler := &handler{
+		store: store,
+		connectors: map[string]connector.Connector{
+			domain.ConnectorReddit: resultConnector{result: domain.FetchResult{Entries: []domain.Entry{entry}}},
+		},
+		queue: queue, itemsURL: "items",
+	}
+	message := `{"user":"user","feed_id":"feed"}`
+	if err := handler.process(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.messages) != 1 {
+		t.Fatalf("first run messages = %#v", queue.messages)
+	}
+	store.existing[domain.ItemID("feed", "t3_same", entry.URL)] = true
+	if err := handler.process(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.messages) != 1 {
+		t.Fatalf("duplicate was queued: %#v", queue.messages)
+	}
+}
+
+func TestRedditPersistentForbiddenDoesNotAffectHealthySibling(t *testing.T) {
+	store := &fakeFeedStore{feeds: map[string]domain.Feed{
+		"blocked": {PK: "U#user", SK: "F#blocked", FeedID: "blocked", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/blocked/.rss"},
+		"healthy": {PK: "U#user", SK: "F#healthy", FeedID: "healthy", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/healthy/.rss"},
+	}}
+	var healthyCalls atomic.Int32
+	implementation := connectorFunc(func(_ context.Context, feed domain.Feed) (domain.FetchResult, error) {
+		if feed.FeedID == "blocked" {
+			return domain.FetchResult{}, &connector.HTTPStatusError{StatusCode: http.StatusForbidden}
+		}
+		healthyCalls.Add(1)
+		return domain.FetchResult{}, nil
+	})
+	handler := &handler{store: store, connectors: map[string]connector.Connector{domain.ConnectorReddit: implementation}}
+	event := events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "blocked", Body: `{"user":"user","feed_id":"blocked"}`},
+		{MessageId: "healthy", Body: `{"user":"user","feed_id":"healthy"}`},
+	}}
+	for run := 0; run < 3; run++ {
+		response, err := handler.run(context.Background(), event)
+		if err != nil || len(response.BatchItemFailures) != 0 {
+			t.Fatalf("run %d = %#v, %v", run+1, response, err)
+		}
+	}
+	blocked := store.feeds["blocked"]
+	healthy := store.feeds["healthy"]
+	last, lastErr := time.Parse(time.RFC3339Nano, blocked.LastFetchAt)
+	next, nextErr := time.Parse(time.RFC3339Nano, blocked.NextFetchAt)
+	if blocked.ErrorCount != 3 || blocked.LastStatus != "feed returned HTTP 403" || lastErr != nil || nextErr != nil || next.Sub(last) != 8*time.Hour {
+		t.Fatalf("blocked feed = %#v, last error %v, next error %v", blocked, lastErr, nextErr)
+	}
+	if healthyCalls.Load() != 3 || healthy.ErrorCount != 0 || healthy.LastStatus != "200" {
+		t.Fatalf("healthy feed = %#v, calls = %d", healthy, healthyCalls.Load())
+	}
+}
+
+func TestPersistFeedDropsStaleRedditSortResult(t *testing.T) {
+	current := domain.Feed{
+		PK: "U#user", SK: "F#reddit", FeedID: "reddit", Connector: domain.ConnectorReddit,
+		URL: "https://www.reddit.com/r/castles/new.rss", FetchIntervalH: 1,
+	}
+	store := &fakeFeedStore{feed: current}
+	handler := &handler{store: store}
+	fetched := current
+	fetched.URL = "https://www.reddit.com/r/castles/top.rss?t=day"
+	fetched.FetchIntervalH = 24
+	fetched.LastStatus = "200"
+	if err := handler.persistFeed(context.Background(), "user", fetched); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.putFeeds) != 0 {
+		t.Fatalf("stale result wrote %#v", store.putFeeds)
 	}
 }

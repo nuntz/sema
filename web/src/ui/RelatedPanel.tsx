@@ -7,6 +7,7 @@ import {
   Show,
 } from "solid-js";
 import { Icon } from "../components/Icon";
+import { isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -20,6 +21,8 @@ export function RelatedPanel(props: {
   onClose(): void;
   onWalk(item: Item): void;
   onOpen(item: Item): void;
+  onExternalOpen(item: Item): void;
+  onDiscussion(item: Item): void;
   onSignal(item: Item, value: -1 | 0 | 1): void;
   onHeart(item: Item): void;
   onCopy(item: Item): void;
@@ -64,9 +67,24 @@ export function RelatedPanel(props: {
     else if (event.key === "ArrowDown") move(2);
     else if (event.key === "ArrowUp") move(-2);
     else if (event.key === "r" && item) props.onWalk(item);
-    else if (event.key === "Enter" && item) props.onOpen(item);
-    else return;
+    else if (event.key === "Enter" && item) {
+      const route = redditPrimaryRoute(item);
+      if (route.kind === "external") {
+        props.onExternalOpen(item);
+        window.open(route.url, "_blank", "noopener,noreferrer");
+      } else props.onOpen(item);
+    } else return;
     event.preventDefault();
+  };
+
+  const openPrimary = (item: Item) => {
+    const route = redditPrimaryRoute(item);
+    if (route.kind === "external") {
+      props.onExternalOpen(item);
+      window.open(route.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    props.onOpen(item);
   };
 
   onMount(() => window.addEventListener("keydown", onKey));
@@ -132,16 +150,17 @@ export function RelatedPanel(props: {
                       classList={{
                         focused: item.item_id === focusedID(),
                         kept: item.hearted,
+                        "reddit-cell": isRedditItem(item),
                       }}
                       tabindex="-1"
                       data-related-id={item.item_id}
                       onFocus={() => setFocusedID(item.item_id)}
                       onMouseEnter={() => setFocusedID(item.item_id)}
-                      onClick={() => props.onWalk(item)}
+                      onClick={() => openPrimary(item)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter" || event.key === " ") {
                           event.preventDefault();
-                          props.onWalk(item);
+                          openPrimary(item);
                         }
                       }}
                     >
@@ -152,9 +171,25 @@ export function RelatedPanel(props: {
                           alt=""
                         />
                       </Show>
-                      <Show when={item.media_type === "video"}>
+                      <Show
+                        when={
+                          item.media_type === "video" ||
+                          (isRedditItem(item) &&
+                            !!item.media_url &&
+                            !!item.external_url)
+                        }
+                      >
                         <span class="related-video-play" aria-hidden="true">
-                          <Icon name="play" size={12} filled />
+                          <Icon
+                            name={
+                              item.media_type === "video" ||
+                              item.post_type === "video"
+                                ? "play"
+                                : "open-original"
+                            }
+                            size={12}
+                            filled={item.post_type === "video"}
+                          />
                         </span>
                       </Show>
                       <div class="related-cell-scrim" />
@@ -218,15 +253,35 @@ export function RelatedPanel(props: {
                         </button>
                       </div>
                       <div class="related-copy">
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            props.onOpen(item);
-                          }}
+                        <Show
+                          when={
+                            redditPrimaryRoute(item).kind === "external" &&
+                            item.external_url
+                          }
+                          fallback={
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                props.onOpen(item);
+                              }}
+                            >
+                              {item.title}
+                            </button>
+                          }
                         >
-                          {item.title}
-                        </button>
+                          <a
+                            href={item.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.onExternalOpen(item);
+                            }}
+                          >
+                            {item.title}
+                          </a>
+                        </Show>
                         <span>
                           {item.feed_title || "Feed"} ·{" "}
                           {item.hearted
@@ -234,6 +289,22 @@ export function RelatedPanel(props: {
                             : relativeTime(item.published_ts)}
                         </span>
                       </div>
+                      <Show when={isRedditItem(item)}>
+                        <a
+                          class="reddit-discussion"
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label="Discussion on Reddit"
+                          data-tooltip="Discussion on Reddit"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.onDiscussion(item);
+                          }}
+                        >
+                          <Icon name="discussion" size={13} />
+                        </a>
+                      </Show>
                     </article>
                   )}
                 </For>

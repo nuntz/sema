@@ -10,6 +10,14 @@ import { isOlderThanThirtyDays } from "../archive";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
 import { createMediaQuery } from "../media-query";
+import {
+  externalHost,
+  isRedditGallery,
+  isRedditItem,
+  redditReaderOriginalURL,
+  redditSummaryProvenance,
+  showsReaderOriginalFallback,
+} from "../reddit-item";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
@@ -370,7 +378,9 @@ export function Reader(props: ReaderProps) {
           class="chrome-btn chrome-btn--original chrome-btn--collapse-1"
           onClick={props.onOriginal}
         >
-          <span class="chrome-btn__label">original</span>
+          <span class="chrome-btn__label">
+            {isRedditItem(props.item) ? "discussion" : "original"}
+          </span>
           <Icon name="open-original" />
         </a>
         <button
@@ -446,7 +456,9 @@ export function Reader(props: ReaderProps) {
                 props.onOriginal();
               }}
             >
-              <span>original</span>
+              <span>
+                {isRedditItem(props.item) ? "discussion" : "original"}
+              </span>
               <Icon name="open-original" />
             </a>
           </div>
@@ -459,7 +471,11 @@ export function Reader(props: ReaderProps) {
         ref={article}
       >
         <article class="article">
-          <Show when={props.item.media_type !== "video"}>
+          <Show
+            when={
+              props.item.media_type !== "video" && !isRedditItem(props.item)
+            }
+          >
             <div class="article-kicker">
               ARTICLE ·{" "}
               {Math.max(
@@ -473,44 +489,58 @@ export function Reader(props: ReaderProps) {
             </div>
           </Show>
           <h1>{props.item.title}</h1>
-          <Show
-            when={props.item.media_type === "video"}
-            fallback={
-              <p class="byline">
-                {props.item.author
-                  ? `By ${props.item.author}`
-                  : props.item.feed_title}
-                <Show when={props.item.display_date}>
-                  {` · ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(props.item.display_date ?? ""))}`}
-                </Show>
-              </p>
-            }
-          >
-            <VideoMediaCard item={props.item} onOriginal={props.onOriginal} />
-            <div class="video-channel-line">
-              <SourceBadge
-                connector={props.item.connector}
-                imageURL={props.item.favicon_url}
-                title={props.item.feed_title}
-                size={28}
-              />
-              <strong>{props.item.feed_title || props.item.author}</strong>
-              <span>
-                · published{" "}
-                {new Intl.DateTimeFormat(undefined, {
-                  day: "numeric",
-                  month: "short",
-                  year: "numeric",
-                }).format(
-                  new Date(props.item.display_date || props.item.published_ts),
-                )}
-              </span>
-            </div>
+          <Show when={!isRedditItem(props.item)}>
+            <Show
+              when={props.item.media_type === "video"}
+              fallback={
+                <p class="byline">
+                  {props.item.author
+                    ? `By ${props.item.author}`
+                    : props.item.feed_title}
+                  <Show when={props.item.display_date}>
+                    {` · ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(props.item.display_date ?? ""))}`}
+                  </Show>
+                </p>
+              }
+            >
+              <VideoMediaCard item={props.item} onOriginal={props.onOriginal} />
+              <div class="video-channel-line">
+                <SourceBadge
+                  connector={props.item.connector}
+                  imageURL={props.item.favicon_url}
+                  title={props.item.feed_title}
+                  size={28}
+                />
+                <strong>{props.item.feed_title || props.item.author}</strong>
+                <span>
+                  · published{" "}
+                  {new Intl.DateTimeFormat(undefined, {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  }).format(
+                    new Date(
+                      props.item.display_date || props.item.published_ts,
+                    ),
+                  )}
+                </span>
+              </div>
+            </Show>
+          </Show>
+          <Show when={isRedditItem(props.item)}>
+            <RedditReaderIntro
+              item={props.item}
+              onClickThrough={props.onOriginal}
+            />
           </Show>
           <Show when={props.item.summary}>
             <div class="article-summary">
               <Show when={props.item.summary_source === "generated"}>
-                <div class="summary-provenance">summary · generated</div>
+                <div class="summary-provenance">
+                  {isRedditItem(props.item)
+                    ? redditSummaryProvenance(props.item)
+                    : "summary · generated"}
+                </div>
               </Show>
               <p>{props.item.summary}</p>
             </div>
@@ -518,6 +548,7 @@ export function Reader(props: ReaderProps) {
           <Show
             when={
               props.item.media_type !== "video" &&
+              !isRedditItem(props.item) &&
               props.item.media_url &&
               !hasLeadingImage(body())
             }
@@ -549,10 +580,15 @@ export function Reader(props: ReaderProps) {
                   </p>
                 }
               >
-                <Show when={props.item.media_type !== "video"}>
+                <Show
+                  when={
+                    props.item.media_type !== "video" &&
+                    showsReaderOriginalFallback(props.item)
+                  }
+                >
                   <OriginalRequired
                     reason={originalReason()}
-                    url={props.item.url}
+                    url={redditReaderOriginalURL(props.item)}
                     retry={
                       !props.archive && originalReason() === "extraction"
                         ? props.onRetry
@@ -566,7 +602,13 @@ export function Reader(props: ReaderProps) {
           >
             <div class="article-body" innerHTML={body()} />
           </Show>
-          <Show when={props.archive && props.item.media_type !== "video"}>
+          <Show
+            when={
+              props.archive &&
+              props.item.media_type !== "video" &&
+              !isRedditItem(props.item)
+            }
+          >
             <div class="archive-original">
               <Show when={isOlderThanThirtyDays(props.item.published_ts)}>
                 <p class="archive-stale-note">
@@ -660,6 +702,164 @@ export function Reader(props: ReaderProps) {
         </button>
       </nav>
     </section>
+  );
+}
+
+function RedditReaderIntro(props: { item: Item; onClickThrough(): void }) {
+  const destination = () => props.item.external_url || "";
+  const textPost = () => props.item.post_type === "text";
+  const imagePost = () =>
+    props.item.post_type === "image" || isRedditGallery(props.item);
+  return (
+    <>
+      <Show when={textPost()}>
+        <RedditSourceLine item={props.item} />
+      </Show>
+      <Show
+        when={imagePost()}
+        fallback={
+          <Show when={destination()}>
+            <RedditDestinationCard
+              item={props.item}
+              onClickThrough={props.onClickThrough}
+            />
+          </Show>
+        }
+      >
+        <RedditImageCard
+          item={props.item}
+          onClickThrough={props.onClickThrough}
+        />
+      </Show>
+      <div class="reddit-reader-actions">
+        <a
+          href={props.item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={props.onClickThrough}
+        >
+          <Icon name="discussion" size={14} />
+          Discussion
+        </a>
+      </div>
+      <Show when={!textPost()}>
+        <RedditSourceLine item={props.item} />
+      </Show>
+    </>
+  );
+}
+
+function RedditDestinationCard(props: { item: Item; onClickThrough(): void }) {
+  return (
+    <a
+      class="reddit-media-card"
+      href={props.item.external_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={props.onClickThrough}
+    >
+      <Show when={props.item.media_url}>
+        <span class="reddit-media-band">
+          <ResponsiveImage
+            item={props.item}
+            sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+            alt=""
+            width={props.item.media_w}
+            height={props.item.media_h}
+          />
+        </span>
+      </Show>
+      <span class="reddit-provider-strip">
+        <b>REDDIT</b>
+        <i />
+        <span>{externalHost(props.item.external_url)}</span>
+        <strong>
+          Open
+          <Icon name="open-original" />
+        </strong>
+      </span>
+    </a>
+  );
+}
+
+function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
+  const [failedURL, setFailedURL] = createSignal("");
+  const gallery = () => isRedditGallery(props.item);
+  const destination = () => props.item.external_url || "";
+  const useStoredImage = () =>
+    gallery() || !destination() || failedURL() === destination();
+  const target = () => (useStoredImage() ? props.item.url : destination());
+  return (
+    <a
+      class="reddit-media-card reddit-image-card"
+      href={target()}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={props.onClickThrough}
+    >
+      <span class="reddit-media-band reddit-image-band">
+        <Show
+          when={!useStoredImage()}
+          fallback={
+            <Show
+              when={props.item.media_url}
+              fallback={
+                <span class="reddit-image-unavailable">
+                  Image unavailable · open on Reddit
+                </span>
+              }
+            >
+              <ResponsiveImage
+                item={props.item}
+                sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                alt={props.item.title}
+                width={props.item.media_w}
+                height={props.item.media_h}
+              />
+            </Show>
+          }
+        >
+          <img
+            class="reddit-full-image"
+            src={destination()}
+            alt={props.item.title}
+            loading="eager"
+            decoding="async"
+            referrerpolicy="no-referrer"
+            onError={() => setFailedURL(destination())}
+          />
+        </Show>
+      </span>
+      <span class="reddit-provider-strip">
+        <b>REDDIT</b>
+        <i />
+        <span>
+          {useStoredImage() ? "reddit.com" : externalHost(destination())}
+        </span>
+        <strong>
+          {useStoredImage() ? "Open Reddit" : "Open"}
+          <Icon name="open-original" />
+        </strong>
+      </span>
+    </a>
+  );
+}
+
+function RedditSourceLine(props: { item: Item }) {
+  return (
+    <div class="reddit-source-line">
+      <SourceBadge
+        connector={props.item.connector}
+        imageURL={props.item.favicon_url}
+        title={props.item.feed_title}
+        size={28}
+      />
+      <strong>{props.item.feed_title || "Reddit"}</strong>
+      <span>
+        · posted by {props.item.author || "unknown"} ·{" "}
+        {relativeTime(props.item.display_date || props.item.published_ts)}
+      </span>
+    </div>
   );
 }
 

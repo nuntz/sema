@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { linkBehaviourEvent } from "../behaviour-events";
 import {
   APIClient,
+  APIError,
   clearSessionBootstrap,
   primeSessionBootstrap,
 } from "./client";
@@ -91,6 +92,38 @@ describe("feed management client", () => {
         fetch_interval_h: 6,
       }),
     );
+  });
+
+  it("preserves structured Reddit discovery errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: "Reddit is rate-limiting us.",
+              kind: "rate_limited",
+              upstream_status: 429,
+            }),
+            {
+              status: 422,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+      ),
+    );
+
+    const failure = await new APIClient()
+      .discoverFeed("r/castles")
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(APIError);
+    expect(failure).toMatchObject({
+      message: "Reddit is rate-limiting us.",
+      status: 422,
+      kind: "rate_limited",
+      upstreamStatus: 429,
+    });
   });
 });
 

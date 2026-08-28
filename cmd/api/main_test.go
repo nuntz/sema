@@ -346,6 +346,79 @@ func TestNormalizeTagsAndFeedStatus(t *testing.T) {
 	}
 }
 
+func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
+	var saved domain.Feed
+	db := &apiDynamo{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{}, nil
+		},
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			return &dynamodb.QueryOutput{}, nil
+		},
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
+				t.Fatal(err)
+			}
+			return &dynamodb.PutItemOutput{}, nil
+		},
+	}
+	queue := &apiQueue{}
+	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
+	got := server.addFeed(context.Background(), "user", `{
+		"feed_url":"https://old.reddit.com/r/Castles/new.rss",
+		"connector":"reddit",
+		"title":"untrusted listing title",
+		"site_url":"https://example.com/"
+	}`)
+	if got.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	wantID := domain.FeedID("https://www.reddit.com/r/castles/")
+	if saved.FeedID != wantID || saved.Connector != domain.ConnectorReddit || saved.URL != "https://www.reddit.com/r/castles/new.rss" || saved.SiteURL != "https://www.reddit.com/r/castles/" || saved.Title != "r/castles" || saved.FetchIntervalH != 1 {
+		t.Fatalf("saved feed = %#v", saved)
+	}
+	if queue.input == nil || len(queue.input.Entries) != 1 {
+		t.Fatalf("queue input = %#v", queue.input)
+	}
+}
+
+func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
+	feed := domain.Feed{
+		PK: domain.UserPK("user"), SK: domain.FeedSK("legacy-id"), FeedID: "legacy-id",
+		Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/castles/top.rss?t=day",
+		Title: "r/castles", SiteURL: "https://www.reddit.com/r/castles/", FetchIntervalH: 24,
+		ETag: `"top"`, LastModified: "yesterday", ErrorCount: 3, LastError: "forbidden",
+	}
+	item, err := attributevalue.MarshalMap(feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved domain.Feed
+	db := &apiDynamo{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{Item: item}, nil
+		},
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
+				t.Fatal(err)
+			}
+			return &dynamodb.PutItemOutput{}, nil
+		},
+	}
+	queue := &apiQueue{}
+	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
+	got := server.patchFeed(context.Background(), "user", "legacy-id", `{"url":"https://www.reddit.com/r/castles/.rss"}`)
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	if saved.FeedID != "legacy-id" || saved.URL != "https://www.reddit.com/r/castles/.rss" || saved.FetchIntervalH != 3 || saved.ETag != "" || saved.LastModified != "" || saved.ErrorCount != 0 || saved.LastError != "" || saved.LastStatus != "queued" {
+		t.Fatalf("saved feed = %#v", saved)
+	}
+	if queue.input == nil || len(queue.input.Entries) != 1 {
+		t.Fatalf("queue input = %#v", queue.input)
+	}
+}
+
 func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 	feedURL := "https://example.com/feed.xml"
 	feedID := domain.FeedID(feedURL)

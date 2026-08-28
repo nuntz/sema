@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/connector"
+	redditconnector "github.com/nuntz/sema/internal/connector/reddit"
 	rssconnector "github.com/nuntz/sema/internal/connector/rss"
 	youtubeconnector "github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/domain"
@@ -149,7 +150,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 		messages = append(messages, domain.ItemMessage{
-			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, Title: entry.Title,
+			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, ExternalURL: entry.ExternalURL, PostType: entry.PostType, Title: entry.Title,
 			SummaryRaw: truncateBytes(entry.SummaryRaw, 20<<10), ContentRaw: truncateBytes(entry.ContentRaw, 200<<10),
 			Author: entry.Author, PublishedTS: domain.Timestamp(entry.Published), DisplayDate: entry.DisplayDate, EnclosureURLs: entry.Enclosures,
 			MediaType: videoMediaType(entry.VideoID), VideoID: entry.VideoID, IsShort: entry.IsShort,
@@ -175,8 +176,10 @@ func (h *handler) process(ctx context.Context, body string) error {
 		var iconErr error
 		if feed.AvatarURL != "" {
 			icon, iconErr = h.media.Avatar(ctx, feed.AvatarURL)
-		} else if feed.SiteURL != "" {
+		} else if feed.SiteURL != "" && domain.FeedConnector(feed) != domain.ConnectorReddit {
 			icon, iconErr = h.media.Favicon(ctx, feed.SiteURL)
+		} else if domain.FeedConnector(feed) == domain.ConnectorReddit {
+			iconErr = errors.New("Reddit feed has no cached badge")
 		} else {
 			iconErr = errors.New("feed has no icon source")
 		}
@@ -206,6 +209,9 @@ func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain
 			return nil
 		}
 		return err
+	}
+	if current.URL != fetched.URL {
+		return nil
 	}
 	fetched.CustomTitle = current.CustomTitle
 	fetched.Tags = current.Tags
@@ -328,7 +334,7 @@ func main() {
 	h := &handler{
 		store: repository,
 		connectors: map[string]connector.Connector{
-			domain.ConnectorRSS: rssconnector.New(feedHTTP), domain.ConnectorYouTube: youtubeconnector.New(feedHTTP),
+			domain.ConnectorRSS: rssconnector.New(feedHTTP), domain.ConnectorReddit: redditconnector.New(feedHTTP), domain.ConnectorYouTube: youtubeconnector.New(feedHTTP),
 		},
 		shorts: youtubeconnector.NewShortsDetector(feedHTTP), media: media.New(mediaHTTP),
 		queue: sqs.NewFromConfig(config), itemsURL: itemsURL,

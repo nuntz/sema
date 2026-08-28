@@ -30,6 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/auth"
+	"github.com/nuntz/sema/internal/connector/reddit"
 	"github.com/nuntz/sema/internal/connector/rss"
 	"github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/discovery"
@@ -544,7 +545,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 			return s.failure("get item for retry", err)
 		}
 		message := domain.ItemMessage{
-			User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL, Title: item.Title, Author: item.Author,
+			User: userID, FeedID: item.FeedID, ItemID: item.ItemID, URL: item.URL, ExternalURL: item.ExternalURL, PostType: item.PostType, Title: item.Title, Author: item.Author,
 			PublishedTS: item.PublishedTS, DisplayDate: item.DisplayDate, Reprocess: true, ForceExtract: true, ForceSummary: true,
 		}
 		encoded, _ := json.Marshal(message)
@@ -745,6 +746,12 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	supported := make([]rss.Subscription, 0, len(subscriptions))
 	unsupported := make([]unsupportedFeed, 0)
 	for _, subscription := range subscriptions {
+		if reddit.Matches(subscription.URL) {
+			if _, redditErr := reddit.ParseInput(subscription.URL); redditErr != nil {
+				unsupported = append(unsupported, unsupportedFeed{Title: subscription.Title, URL: subscription.URL, Reason: redditErr.Error()})
+				continue
+			}
+		}
 		if reason := rss.UnsupportedReason(subscription.URL); reason != "" {
 			unsupported = append(unsupported, unsupportedFeed{Title: subscription.Title, URL: subscription.URL, Reason: reason})
 			continue
@@ -759,6 +766,13 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 		feedURL, normalizeErr := normalizeFeedURL(subscriptions[index].URL)
 		if normalizeErr != nil {
 			return badRequest(fmt.Errorf("invalid OPML feed URL %q", subscriptions[index].URL))
+		}
+		if parsed, redditErr := reddit.ParseInput(feedURL); redditErr == nil {
+			feedURL = reddit.CanonicalURL(parsed.Subreddit, parsed.Sort)
+			subscriptions[index].IntervalH = reddit.IntervalHours(parsed.Sort)
+			if strings.TrimSpace(subscriptions[index].Title) == "" {
+				subscriptions[index].Title = reddit.Title(parsed.Subreddit)
+			}
 		}
 		tags, tagsErr := normalizeTags(subscriptions[index].Tags)
 		if tagsErr != nil {
@@ -785,12 +799,19 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 			defer func() { <-semaphore }()
 			feedID := domain.FeedID(subscription.URL)
 			connectorName := domain.ConnectorRSS
+			siteURL := ""
+			title := ""
 			if youtube.IsFeedURL(subscription.URL) {
 				connectorName = domain.ConnectorYouTube
+			} else if parsed, redditErr := reddit.ParseInput(subscription.URL); redditErr == nil {
+				connectorName = domain.ConnectorReddit
+				feedID = domain.FeedID(reddit.SiteURL(parsed.Subreddit))
+				siteURL = reddit.SiteURL(parsed.Subreddit)
+				title = reddit.Title(parsed.Subreddit)
 			}
 			feed := domain.Feed{
 				PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: subscription.URL,
-				CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
+				Title: title, SiteURL: siteURL, CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
 				FetchIntervalH: subscription.IntervalH, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
 			}
 			if existing, getErr := s.store.Feed(ctx, userID, feedID); getErr == nil {

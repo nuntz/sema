@@ -7,7 +7,7 @@ GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
 STACK ?= dev
 AWS_REGION ?= us-east-1
 
-.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-item-identities backfill-media-variants backfill-search-text backfill-vectors backfill-youtube-connector clean
+.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-item-identities backfill-media-variants backfill-reddit-connector backfill-search-text backfill-vectors backfill-youtube-connector clean
 
 all: test build
 
@@ -55,6 +55,9 @@ backfill-item-identities:
 
 backfill-media-variants:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-media-variants $(BACKFILL_ARGS)
+
+backfill-reddit-connector:
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-reddit-connector $(BACKFILL_ARGS)
 
 backfill-search-text:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-search-text $(BACKFILL_ARGS)

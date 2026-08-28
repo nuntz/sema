@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import { connectorKind } from "../reddit-item";
 
 export type BadgeSize = 16 | 20 | 28 | 32 | 36;
 
@@ -10,8 +11,14 @@ export function SourceBadge(props: {
   class?: string;
 }) {
   const [failed, setFailed] = createSignal(false);
-  const channel = () => props.connector === "youtube";
+  const connector = () => connectorKind(props.connector);
+  const channel = () => connector() === "youtube";
+  const reddit = () => connector() === "reddit";
   const initials = () => {
+    if (reddit()) {
+      const subreddit = (props.title || "Reddit").trim().replace(/^r\//i, "");
+      return `r/${(subreddit[0] || "r").toLowerCase()}`;
+    }
     const words = (props.title || "Feed").trim().split(/\s+/).filter(Boolean);
     return words
       .slice(0, 2)
@@ -19,7 +26,9 @@ export function SourceBadge(props: {
       .join("");
   };
   const showImage = () =>
-    Boolean(props.imageURL) && !failed() && (channel() || props.size <= 20);
+    Boolean(props.imageURL) &&
+    !failed() &&
+    (channel() || reddit() || props.size <= 20);
 
   return (
     <span

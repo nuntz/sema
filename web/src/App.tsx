@@ -698,7 +698,7 @@ export function App(props: { signOut(): void }) {
     return Promise.all([flushRead(keepalive), flushEvents(keepalive)]);
   };
 
-  const markOpened = (item: Item, archive = item.archived === true) => {
+  const recordOpened = (item: Item, archive = item.archived === true) => {
     if (!archive) api.events(item.item_id, { opened: true }).catch(handleError);
     if (!archive && !item.read) {
       replaceItem(item.item_id, { read: true });
@@ -707,8 +707,21 @@ export function App(props: { signOut(): void }) {
         handleError(caught);
       });
     }
+  };
+
+  const markOpened = (item: Item, archive = item.archived === true) => {
+    recordOpened(item, archive);
     setReaderArchive(archive);
     setReaderID(item.item_id);
+  };
+
+  const openExternalItem = (item: Item) => {
+    recordOpened(item);
+    if (!item.archived) queueEvent(item.item_id, { clicked_through: true });
+  };
+
+  const recordClickThrough = (item: Item) => {
+    if (!item.archived) queueEvent(item.item_id, { clicked_through: true });
   };
 
   const openOriginal = (item: Item) => {
@@ -1329,6 +1342,8 @@ export function App(props: { signOut(): void }) {
               pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
               onOpen={markOpened}
+              onExternalOpen={openExternalItem}
+              onDiscussion={recordClickThrough}
               onSignal={setSignal}
               onHeart={toggleHeart}
               onToggleRead={toggleRead}
@@ -1366,6 +1381,8 @@ export function App(props: { signOut(): void }) {
             linkActionID={linkActionID()}
             onFocus={setSearchFocusedID}
             onOpen={(item, archive) => markOpened(item, archive)}
+            onExternalOpen={openExternalItem}
+            onDiscussion={recordClickThrough}
             onSignal={setSignal}
             onHeart={toggleHeart}
             onCopy={copyLink}
@@ -1423,6 +1440,8 @@ export function App(props: { signOut(): void }) {
                 closeRelated();
                 markOpened(item, item.archived === true);
               }}
+              onExternalOpen={openExternalItem}
+              onDiscussion={recordClickThrough}
               onSignal={setSignal}
               onHeart={toggleHeart}
               onCopy={copyLink}

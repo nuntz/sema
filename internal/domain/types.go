@@ -65,6 +65,7 @@ type Feed struct {
 
 const (
 	ConnectorRSS     = "rss"
+	ConnectorReddit  = "reddit"
 	ConnectorYouTube = "youtube"
 )
 
@@ -104,6 +105,8 @@ type Item struct {
 	Connector      string         `dynamodbav:"connector,omitempty" json:"connector"`
 	FaviconKey     string         `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
 	URL            string         `dynamodbav:"url" json:"url"`
+	ExternalURL    string         `dynamodbav:"external_url,omitempty" json:"external_url,omitempty"`
+	PostType       string         `dynamodbav:"post_type,omitempty" json:"post_type,omitempty"`
 	Title          string         `dynamodbav:"title" json:"title"`
 	Summary        string         `dynamodbav:"summary,omitempty" json:"summary,omitempty"`
 	SearchText     string         `dynamodbav:"search_text,omitempty" json:"-"`
@@ -233,6 +236,8 @@ type Enclosure struct {
 type Entry struct {
 	GUID         string
 	URL          string
+	ExternalURL  string
+	PostType     string
 	Title        string
 	SummaryRaw   string
 	ContentRaw   string
@@ -264,6 +269,8 @@ type ItemMessage struct {
 	FeedID        string      `json:"feed_id"`
 	ItemID        string      `json:"item_id"`
 	URL           string      `json:"url"`
+	ExternalURL   string      `json:"external_url,omitempty"`
+	PostType      string      `json:"post_type,omitempty"`
 	Title         string      `json:"title"`
 	SummaryRaw    string      `json:"summary_raw,omitempty"`
 	ContentRaw    string      `json:"content_raw,omitempty"`
@@ -285,6 +292,7 @@ type FeedCandidate struct {
 	Type         string `json:"type"`
 	Connector    string `json:"connector"`
 	SiteURL      string `json:"site_url,omitempty"`
+	BadgeURL     string `json:"badge_url,omitempty"`
 	AvatarURL    string `json:"avatar_url,omitempty"`
 	Cadence      string `json:"cadence,omitempty"`
 	ItemCount    int    `json:"item_count"`

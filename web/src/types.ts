@@ -36,13 +36,18 @@ export interface MediaVariant {
   height: number;
 }
 
+export type Connector = "rss" | "youtube" | "reddit";
+export type RedditPostType = "text" | "link" | "image" | "gallery" | "video";
+
 export interface Item {
   item_id: string;
   feed_id: string;
   feed_title?: string;
-  connector?: "rss" | "youtube" | string;
+  connector?: Connector;
   favicon_url?: string;
   url: string;
+  external_url?: string;
+  post_type?: RedditPostType;
   title: string;
   summary?: string;
   summary_source: "feed" | "body" | "generated" | "";
@@ -102,7 +107,7 @@ export interface HeartResponse {
 export interface Feed {
   feed_id: string;
   url: string;
-  connector: "rss" | "youtube" | string;
+  connector: Connector;
   site_url?: string;
   title?: string;
   custom_title?: string;
@@ -110,7 +115,7 @@ export interface Feed {
   muted: boolean;
   hide_shorts: boolean;
   always_generate: boolean;
-  fetch_interval_h: 1 | 6 | 24;
+  fetch_interval_h: 1 | 3 | 6 | 24;
   favicon_url?: string;
   last_fetch_at?: string;
   last_status?: string;
@@ -130,8 +135,9 @@ export interface FeedCandidate {
   feed_url: string;
   title: string;
   type: "rss" | "atom" | "json" | string;
-  connector: "rss" | "youtube" | string;
+  connector: Connector;
   site_url?: string;
+  badge_url?: string;
   avatar_url?: string;
   cadence?: string;
   item_count: number;

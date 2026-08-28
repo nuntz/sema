@@ -35,14 +35,7 @@ type Connector struct{ client fetcher }
 func New(client *httpx.Client) *Connector { return &Connector{client: client} }
 
 func (c *Connector) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchResult, error) {
-	headers := make(http.Header)
-	if feed.ETag != "" {
-		headers.Set("If-None-Match", feed.ETag)
-	}
-	if feed.LastModified != "" {
-		headers.Set("If-Modified-Since", feed.LastModified)
-	}
-	response, err := c.client.Get(ctx, feed.URL, headers)
+	response, err := c.client.Get(ctx, feed.URL, connector.ConditionalHeaders(feed))
 	if err != nil {
 		return domain.FetchResult{}, err
 	}
@@ -215,7 +208,7 @@ func (d *Discoverer) Discover(ctx context.Context, raw string) ([]domain.FeedCan
 	}
 	return []domain.FeedCandidate{{
 		FeedURL: feedURL, Title: title, Type: "uploads", Connector: domain.ConnectorYouTube,
-		SiteURL: siteURL, AvatarURL: metadata.avatar, Cadence: cadence(result.Entries),
+		SiteURL: siteURL, BadgeURL: metadata.avatar, AvatarURL: metadata.avatar, Cadence: cadence(result.Entries),
 		ItemCount: len(result.Entries), NewestItemTS: newest,
 	}}, nil
 }

@@ -86,6 +86,43 @@ func TestArticleContentDecision(t *testing.T) {
 	}
 }
 
+func TestRedditContentURLsAvoidThreadScraping(t *testing.T) {
+	thread := "https://www.reddit.com/r/example/comments/one/title/"
+	external := "https://example.com/story"
+	for _, test := range []struct {
+		name, postType, external, wantContent, wantFetch string
+	}{
+		{"legacy", "", "", thread, thread},
+		{"text", "text", "", thread, ""},
+		{"image", "image", "https://i.redd.it/one.jpg", thread, ""},
+		{"gallery", "gallery", "https://www.reddit.com/gallery/one", thread, ""},
+		{"video", "video", "https://v.redd.it/one", thread, ""},
+		{"link", "link", external, external, external},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			content, fetch := itemContentURLs(domain.ItemMessage{URL: thread, ExternalURL: test.external, PostType: test.postType})
+			if content != test.wantContent || fetch != test.wantFetch {
+				t.Fatalf("content, fetch = %q, %q", content, fetch)
+			}
+		})
+	}
+}
+
+func TestRedditSelftextPreservesStoredFormatting(t *testing.T) {
+	thread := "https://www.reddit.com/r/example/comments/one/title/"
+	pageURL, _ := url.Parse(thread)
+	raw := `<p>Opening paragraph with an <a href="https://example.com/reference">inline link</a>.</p><ul><li>First point</li><li>Second point</li></ul><blockquote><p>Quoted text</p></blockquote>`
+	article, err := articleContent(raw, thread, "https://www.reddit.com/r/example/", pageURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"<p>", "<ul>", "<li>", "<blockquote>", `href="https://example.com/reference"`} {
+		if !strings.Contains(article.HTML, expected) {
+			t.Fatalf("sanitized selftext does not contain %q: %s", expected, article.HTML)
+		}
+	}
+}
+
 func TestChooseSummaryGenerationAndFailureFallback(t *testing.T) {
 	article := extract.Result{
 		Text:           "A first factual paragraph about the subject. A second paragraph adds detail.",
@@ -100,6 +137,15 @@ func TestChooseSummaryGenerationAndFailureFallback(t *testing.T) {
 	got, source, metrics = h.chooseSummary(context.Background(), "Title", "Read more…", article, false)
 	if got != article.FirstParagraph || source != domain.SummarySourceBody || metrics["SummaryFallbackError"] != 1 {
 		t.Fatalf("fallback summary = %q, %q, %#v", got, source, metrics)
+	}
+}
+
+func TestChooseSummaryKeepsCleanRedditExcerpt(t *testing.T) {
+	h := &handler{summarizer: stubSummarizer{value: "must not be used"}}
+	excerpt := "A cleaned subreddit excerpt with the submitter and link boilerplate removed."
+	got, source, metrics := h.chooseSummary(context.Background(), "Post title", excerpt, extract.Result{}, false)
+	if got != excerpt || source != domain.SummarySourceFeed || len(metrics) != 0 {
+		t.Fatalf("summary = %q, source = %q, metrics = %#v", got, source, metrics)
 	}
 }
 
