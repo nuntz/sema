@@ -5,7 +5,6 @@ import { justify } from "./justified";
 import {
   automaticReadEnabled,
   caughtUpBoundary,
-  caughtUpJumpPlan,
   caughtUpLabel,
   endMarkActionEnabled,
   fullyPassedRows,
@@ -150,21 +149,11 @@ describe("read state", () => {
     ).toBeUndefined();
   });
 
-  it("labels and plans the caught-up jump, with no-op when absent", () => {
+  it("labels the caught-up divider", () => {
     const boundary = { count: 34, beforeItemID: "anchor" };
     expect(caughtUpLabel(boundary.count)).toBe(
       "New since you last caught up · 34",
     );
-    expect(caughtUpJumpPlan(boundary, 300, false)).toEqual({
-      itemID: "anchor",
-      scrollTop: 284,
-    });
-    expect(caughtUpJumpPlan(boundary, 300, true)).toEqual({
-      itemID: "anchor",
-      scrollTop: 286,
-    });
-    expect(caughtUpJumpPlan(undefined, 300, false)).toBeUndefined();
-    expect(caughtUpJumpPlan(boundary, undefined, false)).toBeUndefined();
   });
 
   it("recomputes the boundary after m-style toggles and undo", () => {

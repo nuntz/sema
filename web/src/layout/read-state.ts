@@ -13,11 +13,6 @@ export interface CaughtUpBoundary {
   beforeItemID?: string;
 }
 
-export interface CaughtUpJumpPlan {
-  itemID: string;
-  scrollTop: number;
-}
-
 export function gridReadStateContext(
   archive: boolean,
   unreadOnly: boolean,
@@ -87,18 +82,6 @@ export function caughtUpBoundary(
 
 export function caughtUpLabel(count: number): string {
   return `New since you last caught up · ${count}`;
-}
-
-export function caughtUpJumpPlan(
-  boundary: CaughtUpBoundary | undefined,
-  dividerTop: number | undefined,
-  mobile: boolean,
-): CaughtUpJumpPlan | undefined {
-  if (!boundary?.beforeItemID || dividerTop === undefined) return undefined;
-  return {
-    itemID: boundary.beforeItemID,
-    scrollTop: Math.max(0, dividerTop - (mobile ? 14 : 16)),
-  };
 }
 
 export function fullyPassedRows(

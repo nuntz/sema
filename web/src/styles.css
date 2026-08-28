@@ -126,7 +126,6 @@
   --caughtup-count: var(--fg-tertiary);
   --caughtup-separator: #5d636b;
   --caughtup-gap: 12px;
-  --jump-wash: rgba(214, 242, 75, 0.1);
 
   --finish-card-bg: #101216;
   --finish-card-border: rgba(255, 255, 255, 0.07);
@@ -328,8 +327,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .caughtup-count { color: var(--caughtup-count); }
 .caughtup-separator { color: var(--caughtup-separator); }
 .caughtup-semantic { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.grid-cell.jump-landed { animation: caughtup-jump-wash 450ms ease-out forwards; }
-@keyframes caughtup-jump-wash { from { box-shadow: inset 0 0 0 999px var(--jump-wash); } to { box-shadow: none; } }
 @container (max-width: 310px) {
   .caughtup { flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; }
   .caughtup > i:first-of-type { display: none; }
@@ -834,7 +831,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .unread-dot, .unread-dot.exiting { animation: none !important; transition: none !important; }
-  .grid-cell.jump-landed { animation: none !important; }
   .finish-undo-toast__progress { width: 100%; animation: none !important; }
   .recompute-button i { animation: recompute-pulse 1.2s ease-in-out infinite !important; }
 }

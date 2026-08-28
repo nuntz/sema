@@ -1495,9 +1495,6 @@ export function App(props: { signOut(): void }) {
               onLoadMore={loadMore}
               onToggleOrder={toggleOrder}
               onUndo={undoLast}
-              onCaughtUpUnavailable={() =>
-                showToast("info", "No caught-up divider here")
-              }
               onRefresh={() => pollNew(true)}
               onScrollPosition={(top) => {
                 gridScrollTop = top;

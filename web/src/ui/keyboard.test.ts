@@ -20,7 +20,6 @@ describe("keyboard map", () => {
     ["f", "heart"],
     ["m", "read"],
     ["M", "mark-below"],
-    ["b", "caught-up"],
     ["End", "end"],
     ["G", "end"],
     ["Home", "home"],

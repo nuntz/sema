@@ -14,7 +14,6 @@ import { justify, totalHeight, visibleRows } from "../layout/justified";
 import { type LayoutDirection, nearestCell } from "../layout/navigation";
 import {
   caughtUpBoundary,
-  caughtUpJumpPlan,
   caughtUpLabel,
   endMarkActionEnabled,
   gridReadStateContext,
@@ -71,7 +70,6 @@ interface GridProps {
   onLoadMore(): void;
   onToggleOrder(): void;
   onUndo(): void;
-  onCaughtUpUnavailable(): void;
   onRefresh(): Promise<number>;
   onScrollPosition?(top: number): void;
 }
@@ -100,7 +98,6 @@ export function Grid(props: GridProps) {
   let pullTracking = false;
   let pullWasReady = false;
   let refreshNoticeTimer: number | undefined;
-  let jumpWashTimer: number | undefined;
   const refreshGate = new RefreshGate();
   let userScrolling = false;
   let programmaticScrolling = false;
@@ -118,7 +115,6 @@ export function Grid(props: GridProps) {
     "idle" | "pulling" | "ready" | "fetching" | "landed" | "up-to-date"
   >("idle");
   const [refreshCount, setRefreshCount] = createSignal(0);
-  const [jumpLandedID, setJumpLandedID] = createSignal("");
   const liveItems = createMemo(
     () => new Map(props.items.map((item) => [item.item_id, item])),
   );
@@ -426,7 +422,6 @@ export function Grid(props: GridProps) {
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
       window.clearTimeout(refreshNoticeTimer);
-      window.clearTimeout(jumpWashTimer);
     });
   });
 
@@ -519,32 +514,6 @@ export function Grid(props: GridProps) {
     continueToEnd();
   };
 
-  const jumpToCaughtUp = () => {
-    const jump = caughtUpJumpPlan(caughtUp(), dividerTop(), width() < 700);
-    if (!jump) {
-      props.onCaughtUpUnavailable();
-      return;
-    }
-
-    endRequested = false;
-    props.onFocus(jump.itemID);
-    window.clearTimeout(jumpWashTimer);
-    setJumpLandedID("");
-    programmaticScroll(() => {
-      scroller.scrollTop = jump.scrollTop;
-      setScrollTop(jump.scrollTop);
-    });
-    requestAnimationFrame(() => {
-      setJumpLandedID(jump.itemID);
-      scroller
-        .querySelector<HTMLButtonElement>(
-          `[data-item-id="${CSS.escape(jump.itemID)}"] .cell-main`,
-        )
-        ?.focus({ preventScroll: true });
-      jumpWashTimer = window.setTimeout(() => setJumpLandedID(""), 500);
-    });
-  };
-
   const finishAndClear = () => {
     const ids = unreadIDs();
     for (const id of ids) passedIDs.add(id);
@@ -623,9 +592,6 @@ export function Grid(props: GridProps) {
         break;
       case "mark-below":
         if (item && !props.archive) props.onMarkBelow(item);
-        break;
-      case "caught-up":
-        jumpToCaughtUp();
         break;
       case "end":
         goEnd();
@@ -748,7 +714,6 @@ export function Grid(props: GridProps) {
                       classList={{
                         focused: item().item_id === props.focusedID,
                         read: readVisuals().dimmed,
-                        "jump-landed": item().item_id === jumpLandedID(),
                         "all-items-cell": readContext() === "all-items",
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
