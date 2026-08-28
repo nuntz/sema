@@ -74,7 +74,7 @@ describe("Reddit item presentation", () => {
     ).toEqual({ kind: "external", url: "https://v.redd.it/one" });
   });
 
-  it("opens galleries in Reader only when a first image was cached", () => {
+  it("opens galleries in Reader when a body or first image was cached", () => {
     const gallery = item({
       connector: "reddit",
       post_type: "gallery",
@@ -84,6 +84,9 @@ describe("Reddit item presentation", () => {
     expect(redditPrimaryRoute(gallery)).toEqual({
       kind: "external",
       url: "https://www.reddit.com/gallery/one",
+    });
+    expect(redditPrimaryRoute({ ...gallery, has_body: true })).toEqual({
+      kind: "reader",
     });
     expect(
       redditPrimaryRoute({ ...gallery, media_url: "/media/one.webp" }),

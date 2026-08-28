@@ -46,7 +46,12 @@ export function redditPrimaryRoute(item: Item): RedditPrimaryRoute {
     parsed?.hostname.toLowerCase() === "v.redd.it";
   if (video && item.external_url)
     return { kind: "external", url: item.external_url };
-  if (isRedditGallery(item) && !item.media_url && item.external_url)
+  if (
+    isRedditGallery(item) &&
+    !item.has_body &&
+    !item.media_url &&
+    item.external_url
+  )
     return { kind: "external", url: item.external_url };
   return { kind: "reader" };
 }
