@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,38 @@ const (
 	feedIndexPK = "FEED"
 	userIndexPK = "USER"
 )
+
+type itemProjection struct {
+	expression string
+	names      map[string]string
+}
+
+var listItemProjection = newItemProjection("vector", "search_text")
+
+func newItemProjection(excluded ...string) itemProjection {
+	exclusions := make(map[string]bool, len(excluded))
+	for _, name := range excluded {
+		exclusions[name] = true
+	}
+
+	typeOfItem := reflect.TypeOf(domain.Item{})
+	names := make(map[string]string, typeOfItem.NumField())
+	aliases := make([]string, 0, typeOfItem.NumField())
+	for index := range typeOfItem.NumField() {
+		tag := typeOfItem.Field(index).Tag.Get("dynamodbav")
+		name := strings.Split(tag, ",")[0]
+		if name == "" || name == "-" || exclusions[name] {
+			continue
+		}
+		alias := fmt.Sprintf("#item%d", index)
+		if name == "ttl" {
+			alias = "#ttl"
+		}
+		names[alias] = name
+		aliases = append(aliases, alias)
+	}
+	return itemProjection{expression: strings.Join(aliases, ", "), names: names}
+}
 
 func New(db dynamoAPI, objects s3API, table, bucket, contentURL string) *Store {
 	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/")}
@@ -413,7 +446,8 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		TableName: aws.String(s.table), ScanIndexForward: aws.Bool(false), ExclusiveStartKey: start,
 		KeyConditionExpression:   aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 		FilterExpression:         aws.String("#ttl > :now"),
-		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+		ProjectionExpression:     aws.String(listItemProjection.expression),
+		ExpressionAttributeNames: listItemProjection.names,
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"},
 			":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
@@ -975,8 +1009,10 @@ func (s *Store) Archives(ctx context.Context, userID, encodedCursor string, limi
 		}
 	}
 	response, err := s.db.Query(ctx, &dynamodb.QueryInput{
-		TableName:              aws.String(s.table),
-		KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+		TableName:                aws.String(s.table),
+		KeyConditionExpression:   aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+		ProjectionExpression:     aws.String(listItemProjection.expression),
+		ExpressionAttributeNames: listItemProjection.names,
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
 			":prefix": &types.AttributeValueMemberS{Value: "A#"},

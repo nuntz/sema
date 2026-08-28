@@ -108,8 +108,8 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	items := []domain.Item{
-		{PK: domain.UserPK("user"), SK: domain.ItemSK(now.Add(-time.Hour), "old"), FeedPK: "F#feed", ItemID: "old", FeedID: "feed", URL: "https://example.com/old", Title: "Old", PublishedTS: domain.Timestamp(now.Add(-time.Hour)), FetchedTS: domain.Timestamp(now), Score: 0.2, Size: "S", TTL: now.Add(domain.Retention).Unix(), Vector: []byte{1, 2}},
-		{PK: domain.UserPK("user"), SK: domain.ItemSK(now, "new"), FeedPK: "F#feed", ItemID: "new", FeedID: "feed", URL: "https://example.com/new", Title: "New", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), Score: 0.9, Size: "L", TTL: now.Add(domain.Retention).Unix(), Vector: []byte{3, 4}},
+		{PK: domain.UserPK("user"), SK: domain.ItemSK(now.Add(-time.Hour), "old"), FeedPK: "F#feed", ItemID: "old", FeedID: "feed", URL: "https://example.com/old", Title: "Old", SearchText: "old story", PublishedTS: domain.Timestamp(now.Add(-time.Hour)), FetchedTS: domain.Timestamp(now), Score: 0.2, Size: "S", TTL: now.Add(domain.Retention).Unix(), Vector: []byte{1, 2}},
+		{PK: domain.UserPK("user"), SK: domain.ItemSK(now, "new"), FeedPK: "F#feed", ItemID: "new", FeedID: "feed", URL: "https://example.com/new", Title: "New", SearchText: "new story", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), Score: 0.9, Size: "L", TTL: now.Add(domain.Retention).Unix(), Vector: []byte{3, 4}},
 		{PK: domain.UserPK("user"), SK: domain.ItemSK(now.Add(-8*24*time.Hour), "expired"), FeedPK: "F#feed", ItemID: "expired", FeedID: "feed", URL: "https://example.com/expired", Title: "Expired", PublishedTS: domain.Timestamp(now.Add(-8 * 24 * time.Hour)), FetchedTS: domain.Timestamp(now), Score: 1, Size: "L", TTL: now.Add(-time.Hour).Unix()},
 	}
 	for _, item := range items {
@@ -120,6 +120,15 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	}
 	if written, err := repository.PutItem(ctx, items[0]); err != nil || written {
 		t.Fatalf("conditional dedupe = %v, %v", written, err)
+	}
+	live, err := repository.LiveItems(ctx, "user")
+	if err != nil || len(live) != 2 {
+		t.Fatalf("live items = %#v, %v", live, err)
+	}
+	for _, item := range live {
+		if len(item.Vector) == 0 || item.SearchText == "" {
+			t.Fatalf("live item lost full-row fields: %#v", item)
+		}
 	}
 	republished := items[0]
 	republished.SK = domain.ItemSK(now.Add(30*time.Second), republished.ItemID)
@@ -136,13 +145,19 @@ func TestDynamoAccessPatterns(t *testing.T) {
 		t.Fatalf("interest = %#v, %v", interest, err)
 	}
 	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
-		first, cursor, err := repository.Items(ctx, "user", order, "", 1, false)
+		first, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, "", 1, false, nil)
 		if err != nil || len(first) != 1 || first[0].ItemID != "new" || cursor == "" {
 			t.Fatalf("first unread page (%s) = %#v, cursor %q, %v", order, first, cursor, err)
 		}
-		second, cursor, err := repository.Items(ctx, "user", order, cursor, 1, false)
+		if len(first[0].Vector) != 0 || first[0].SearchText != "" {
+			t.Fatalf("first unread page (%s) included excluded fields: %#v", order, first[0])
+		}
+		second, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, cursor, 1, false, nil)
 		if err != nil || len(second) != 1 || second[0].ItemID != "old" || cursor != "" {
 			t.Fatalf("second unread page (%s) = %#v, cursor %q, %v", order, second, cursor, err)
+		}
+		if len(second[0].Vector) != 0 || second[0].SearchText != "" {
+			t.Fatalf("second unread page (%s) included excluded fields: %#v", order, second[0])
 		}
 	}
 	if err := repository.SetRead(ctx, "user", []string{"old"}, true); err != nil {
@@ -360,7 +375,7 @@ func TestArchivePaginationIsNewestHeartFirst(t *testing.T) {
 		item := domain.Item{
 			PK: domain.UserPK("keeper"), SK: domain.ItemSK(published, id), FeedPK: "F#feed", ItemID: id, FeedID: "feed",
 			URL: "https://example.com/" + id, Title: id, PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(now),
-			Score: 0.5, Size: "M", TTL: now.Add(domain.Retention).Unix(),
+			SearchText: id + " story", Score: 0.5, Size: "M", Vector: []byte(id), TTL: now.Add(domain.Retention).Unix(),
 		}
 		if written, err := repository.PutItem(ctx, item); err != nil || !written {
 			t.Fatalf("put %s = %v, %v", id, written, err)
@@ -373,9 +388,17 @@ func TestArchivePaginationIsNewestHeartFirst(t *testing.T) {
 	if err != nil || len(first) != 2 || first[0].ItemID != "third" || first[1].ItemID != "second" || cursor == "" {
 		t.Fatalf("first archive page = %#v, cursor %q, %v", first, cursor, err)
 	}
+	for _, item := range first {
+		if len(item.Vector) != 0 || item.SearchText != "" {
+			t.Fatalf("first archive page included excluded fields: %#v", item)
+		}
+	}
 	second, cursor, err := repository.Archives(ctx, "keeper", cursor, 2)
 	if err != nil || len(second) != 1 || second[0].ItemID != "first" || cursor != "" {
 		t.Fatalf("second archive page = %#v, cursor %q, %v", second, cursor, err)
+	}
+	if len(second[0].Vector) != 0 || second[0].SearchText != "" {
+		t.Fatalf("second archive page included excluded fields: %#v", second[0])
 	}
 	assertUserCounts(t, repository, "keeper", 3, 3)
 }

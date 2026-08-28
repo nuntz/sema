@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -80,6 +81,30 @@ func (f *fakeDynamoDB) TransactWriteItems(_ context.Context, input *dynamodb.Tra
 		return f.transactWrite(input)
 	}
 	return &dynamodb.TransactWriteItemsOutput{}, nil
+}
+
+func TestListItemProjectionReflectsAllStoredFieldsExceptLargeSearchFields(t *testing.T) {
+	projected := make(map[string]bool, len(listItemProjection.names))
+	for alias, name := range listItemProjection.names {
+		projected[name] = true
+		if !strings.Contains(listItemProjection.expression, alias) {
+			t.Fatalf("projection expression %q does not contain alias %q", listItemProjection.expression, alias)
+		}
+	}
+
+	typeOfItem := reflect.TypeOf(domain.Item{})
+	for index := range typeOfItem.NumField() {
+		name := strings.Split(typeOfItem.Field(index).Tag.Get("dynamodbav"), ",")[0]
+		want := name != "" && name != "-" && name != "vector" && name != "search_text"
+		if projected[name] != want {
+			t.Errorf("projected[%q] = %t, want %t", name, projected[name], want)
+		}
+	}
+	for _, required := range []string{"PK", "SK", "score", "ttl"} {
+		if !projected[required] {
+			t.Errorf("required cursor/filter attribute %q is not projected", required)
+		}
+	}
 }
 
 func TestSessionStoreLifecycleUsesHashedPrimaryKey(t *testing.T) {
