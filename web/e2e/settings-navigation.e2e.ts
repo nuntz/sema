@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-type AppState = { itemRequests: number };
+type AppState = { itemRequests: number; readBatchRequests: number };
 
 const profile = {
   email: "reader@example.com",
@@ -71,7 +71,7 @@ async function openApp(
   page: Page,
   options: OpenAppOptions = {},
 ): Promise<AppState> {
-  const state = { itemRequests: 0 };
+  const state = { itemRequests: 0, readBatchRequests: 0 };
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -81,6 +81,9 @@ async function openApp(
       return;
     }
     if (request.method() !== "GET") {
+      if (url.pathname === "/api/items/read-batch") {
+        state.readBatchRequests++;
+      }
       await route.fulfill({ status: 204 });
       return;
     }
@@ -140,6 +143,7 @@ test("empty unread grid omits the end divider and zero-item action", async ({
   await expect(page.getByRole("button", { name: /read & clear/ })).toHaveCount(
     0,
   );
+  await expect(page.getByRole("button", { name: "Clear grid" })).toHaveCount(0);
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
@@ -300,6 +304,74 @@ test("finish and clear focuses the empty grid and u restores it", async ({
     .toBe(scrollBeforeClear);
   await page.keyboard.press("Shift+G");
   await expect(action).toBeFocused();
+});
+
+test("clear-only restores the all-read grid without a read batch", async ({
+  page,
+}) => {
+  const state = await openApp(page, { initialItems: items.slice(0, 3) });
+  const cells = page.locator(".grid-cell");
+  await expect(cells).toHaveCount(3);
+  const originalIDs = await cells.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute("data-item-id") ?? ""),
+  );
+
+  for (const id of originalIDs) {
+    const cell = page.locator(`[data-item-id="${id}"]`);
+    await cell.hover();
+    await page.keyboard.press("m");
+    await expect(cell).toHaveClass(/read/);
+  }
+  const focusedID = originalIDs[1];
+  await page.locator(`[data-item-id="${focusedID}"]`).hover();
+
+  await page.keyboard.press("Shift+G");
+  const endCard = page.locator(".end-of-feed");
+  const action = page.getByRole("button", { name: "Clear grid" });
+  await expect(endCard).toHaveClass(/finish-card--all-read/);
+  await expect(
+    page.getByRole("heading", {
+      name: "All caught up — everything here is already read",
+    }),
+  ).toBeVisible();
+  await expect(endCard).toContainText(
+    "Clearing marks nothing — it just empties the grid.",
+  );
+  await expect(page.locator(".finish-card__mark")).toHaveCSS("width", "22px");
+  await expect(action).toBeFocused();
+  const scrollBeforeClear = await page
+    .locator(".grid-scroll")
+    .evaluate((element) => element.scrollTop);
+  expect(scrollBeforeClear).toBeGreaterThan(0);
+
+  await action.click();
+
+  await expect(cells).toHaveCount(0);
+  await expect(page.locator(".finish-undo-toast > span")).toHaveText(
+    "Grid cleared",
+  );
+  expect(state.readBatchRequests).toBe(0);
+
+  await page.keyboard.press("u");
+
+  await expect(cells).toHaveCount(3);
+  await expect
+    .poll(() =>
+      cells.evaluateAll((elements) =>
+        elements.map((element) => element.getAttribute("data-item-id") ?? ""),
+      ),
+    )
+    .toEqual(originalIDs);
+  await expect(page.locator(".grid-cell.focused")).toHaveAttribute(
+    "data-item-id",
+    focusedID,
+  );
+  await expect
+    .poll(() =>
+      page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
+    )
+    .toBe(scrollBeforeClear);
+  expect(state.readBatchRequests).toBe(0);
 });
 
 test("Settings inputs consume Escape and suppress g s while typing", async ({

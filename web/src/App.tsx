@@ -764,8 +764,7 @@ export function App(props: { signOut(): void }) {
     const ids = [...pendingRead];
     if (ids.length === 0) return Promise.resolve();
     pendingRead.clear();
-    const gridSnapshot = undo()?.gridSnapshot;
-    setUndo({ ids, gridSnapshot });
+    setUndo((current) => (current?.gridSnapshot ? current : { ids }));
     return writeReadBatch(ids, true, keepalive).catch(handleError);
   };
 
@@ -863,10 +862,17 @@ export function App(props: { signOut(): void }) {
   }
 
   const finishAndClear = (ids: string[]) => {
-    if (mode() !== "live" || !unreadOnly() || ids.length === 0) return;
+    if (mode() !== "live" || !unreadOnly()) return;
     const cleared = finishAndClearGrid(gridIDs(), focusedID(), gridScrollTop);
-    const queued = queueRead(ids, cleared.snapshot);
-    if (!queued || queued.length === 0) return;
+    const queued =
+      ids.length > 0 ? queueRead(ids, cleared.snapshot) : undefined;
+    if (!queued || queued.length === 0) {
+      setUndo({
+        ids: [],
+        gridSnapshot: { ...cleared.snapshot, count: 0 },
+      });
+      startFinishUndoTimer();
+    }
     gridClearVersion++;
     gridScrollTop = 0;
     setGridIDs(cleared.ids);
@@ -1630,7 +1636,12 @@ export function App(props: { signOut(): void }) {
               }}
             >
               <span>
-                Marked {operation.count} read <strong>· grid cleared</strong>
+                <Show
+                  when={operation.count > 0}
+                  fallback={<strong>Grid cleared</strong>}
+                >
+                  Marked {operation.count} read <strong>· grid cleared</strong>
+                </Show>
               </span>
               <button type="button" onClick={undoLast}>
                 Undo

@@ -344,11 +344,16 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .end-of-feed.finish-card { place-items: start; border-top: 0; text-align: left; }
 .end-of-feed.finish-card > div { width: 100%; max-width: none; padding: 26px 28px; display: flex; align-items: center; gap: 28px; border: 1px solid var(--finish-card-border); border-radius: 8px; background: var(--finish-card-bg); }
 .finish-card__copy { max-width: 52ch; flex: 1; }
+.finish-card__variant, .finish-card__button-label { animation: finish-card-variant-in 120ms ease-out both; }
 .finish-card .finish-card__copy h2 { font: 400 var(--t-20)/1.25 "Newsreader", Georgia, serif; }
 .finish-card .finish-card__copy p { margin: 0; text-wrap: pretty; }
+.finish-card--all-read .finish-card__copy h2 { display: flex; align-items: center; gap: 11px; }
+.finish-card--all-read .finish-card__copy p { padding-left: 33px; }
+.finish-card__mark { width: 22px; height: 2px; flex: none; display: block; border-radius: 1px; background: var(--unread-dot); }
 .end-of-feed.finish-card button { height: 38px; min-height: 38px; padding: 0 18px; flex: none; border-radius: 8px; background: var(--finish-button-bg); color: var(--finish-button-fg); font: 500 13.5px/1 "Instrument Sans", sans-serif; }
 .end-of-feed.finish-card button:hover { background: var(--finish-button-hover); }
 .end-of-feed.finish-card button:focus-visible { outline: 2px solid var(--finish-button-ring); outline-offset: 2px; }
+@keyframes finish-card-variant-in { from { opacity: 0; } to { opacity: 1; } }
 .end-of-feed.caughtup-empty { border-top: 0; animation: caughtup-empty-in 180ms ease-out both; }
 .end-of-feed.caughtup-empty > div { max-width: 44ch; padding: 48px 20px; transition: opacity 180ms ease-out; }
 .end-of-feed.caughtup-empty--pending > div { opacity: 0.72; }
@@ -820,6 +825,9 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @media (max-width: 520px) {
   .end-of-feed.finish-card > div { padding: 18px 16px; flex-direction: column; align-items: stretch; gap: 14px; }
   .end-of-feed.finish-card button { width: 100%; height: 46px; min-height: 46px; font-size: 14px; }
+  .finish-card--all-read .finish-card__copy h2 { display: block; }
+  .finish-card--all-read .finish-card__copy p { padding-left: 0; }
+  .finish-card__mark { margin-bottom: 11px; }
   .finish-card__hint { display: none; }
   .caughtup-empty__mark { width: 38px; }
   .end-of-feed.caughtup-empty h2 { font-size: 25px; }

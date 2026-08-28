@@ -119,6 +119,31 @@ describe("item list", () => {
     });
   });
 
+  it("preserves an undo snapshot when no grid items need marking", () => {
+    const allRead = [
+      { ...make("first"), read: true },
+      { ...make("focused"), read: true },
+    ];
+    const unreadIDs = allRead
+      .filter((item) => !item.read)
+      .map((item) => item.item_id);
+    const result = finishAndClearGrid(
+      allRead.map((item) => item.item_id),
+      "focused",
+      275,
+    );
+
+    expect(unreadIDs).toEqual([]);
+    expect(result).toEqual({
+      ids: [],
+      snapshot: {
+        ids: ["first", "focused"],
+        focusedID: "focused",
+        scrollTop: 275,
+      },
+    });
+  });
+
   it("restores the cleared snapshot and unread flags on undo", () => {
     const originalIDs = ["one", "two", "three"];
     const items = [make("one"), make("two"), make("three")];

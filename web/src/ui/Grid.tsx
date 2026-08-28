@@ -180,8 +180,11 @@ export function Grid(props: GridProps) {
   const unreadIDs = createMemo(() =>
     props.items.filter((item) => !item.read).map((item) => item.item_id),
   );
+  const showEndAction = createMemo(
+    () => endMarkActionEnabled(readContext()) && props.items.length > 0,
+  );
   const showEndMarkAction = createMemo(
-    () => endMarkActionEnabled(readContext()) && unreadIDs().length > 0,
+    () => showEndAction() && unreadIDs().length > 0,
   );
   const endTop = createMemo(() => {
     if (!props.archive && props.unreadOnly && props.items.length === 0)
@@ -958,6 +961,11 @@ export function Grid(props: GridProps) {
               "empty-grid": props.items.length === 0,
               "finish-card":
                 !props.archive && props.unreadOnly && props.items.length > 0,
+              "finish-card--all-read":
+                !props.archive &&
+                props.unreadOnly &&
+                props.items.length > 0 &&
+                unreadIDs().length === 0,
               "caughtup-empty":
                 !props.archive && props.unreadOnly && props.items.length === 0,
               "caughtup-empty--pending":
@@ -965,7 +973,7 @@ export function Grid(props: GridProps) {
                 props.unreadOnly &&
                 props.items.length === 0 &&
                 props.pendingNewCount > 0,
-              "no-action": !showEndMarkAction(),
+              "no-action": !showEndAction(),
             }}
             style={{
               top: `${endTop()}px`,
@@ -1002,13 +1010,27 @@ export function Grid(props: GridProps) {
                         </>
                       }
                     >
-                      <div class="finish-card__copy">
-                        <h2>Everything loaded is behind you</h2>
-                        <p>
-                          <Show
-                            when={showEndMarkAction()}
-                            fallback={<>Nothing left unread.</>}
-                          >
+                      <Show
+                        when={showEndMarkAction()}
+                        fallback={
+                          <div class="finish-card__copy finish-card__variant">
+                            <h2>
+                              <i class="finish-card__mark" aria-hidden="true" />
+                              All caught up — everything here is already read
+                            </h2>
+                            <p>
+                              Clearing marks nothing — it just empties the grid.
+                              <span class="finish-card__hint">
+                                {" "}
+                                New arrivals come back as a pill at the top.
+                              </span>
+                            </p>
+                          </div>
+                        }
+                      >
+                        <div class="finish-card__copy finish-card__variant">
+                          <h2>Everything loaded is behind you</h2>
+                          <p>
                             {unreadIDs().length}{" "}
                             {unreadIDs().length === 1 ? "item is" : "items are"}{" "}
                             still unread. Clearing marks them and empties the
@@ -1017,16 +1039,27 @@ export function Grid(props: GridProps) {
                               {" "}
                               — new arrivals come back as a pill at the top.
                             </span>
-                          </Show>
-                        </p>
-                      </div>
-                      <Show when={showEndMarkAction()}>
+                          </p>
+                        </div>
+                      </Show>
+                      <Show when={showEndAction()}>
                         <button
                           ref={endButton}
                           type="button"
                           onClick={finishAndClear}
                         >
-                          Mark {unreadIDs().length} read &amp; clear
+                          <Show
+                            when={showEndMarkAction()}
+                            fallback={
+                              <span class="finish-card__button-label">
+                                Clear grid
+                              </span>
+                            }
+                          >
+                            <span class="finish-card__button-label">
+                              Mark {unreadIDs().length} read &amp; clear
+                            </span>
+                          </Show>
                         </button>
                       </Show>
                     </Show>
