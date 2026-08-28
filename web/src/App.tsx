@@ -1278,6 +1278,23 @@ export function App(props: { signOut(): void }) {
             </section>
           </div>
         </Show>
+        <Show
+          when={
+            mode() === "live" &&
+            pendingNew().length > 0 &&
+            !searchActive() &&
+            !readerID() &&
+            !relatedSource()
+          }
+        >
+          <button
+            type="button"
+            class="new-items-pill"
+            onClick={insertPendingNew}
+          >
+            {pendingNew().length} new
+          </button>
+        </Show>
         <Show when={error()}>
           <div class="error-banner" role="alert">
             <span>{error()}</span>
@@ -1339,7 +1356,6 @@ export function App(props: { signOut(): void }) {
               readStateItems={items()}
               readAnchor={readAnchor()}
               linkActionID={linkActionID()}
-              pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
               onOpen={markOpened}
               onExternalOpen={openExternalItem}
@@ -1358,7 +1374,6 @@ export function App(props: { signOut(): void }) {
               onCaughtUpUnavailable={() =>
                 showToast("info", "No caught-up divider here")
               }
-              onInsertNew={insertPendingNew}
               onRefresh={() => pollNew(true)}
               onScrollPosition={(top) => {
                 gridScrollTop = top;

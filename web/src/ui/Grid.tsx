@@ -53,7 +53,6 @@ interface GridProps {
   readStateItems: Item[];
   readAnchor?: ReadAnchor;
   linkActionID: string;
-  pendingNewCount: number;
   onFocus(id: string): void;
   onOpen(item: Item): void;
   onExternalOpen(item: Item): void;
@@ -70,7 +69,6 @@ interface GridProps {
   onToggleOrder(): void;
   onUndo(): void;
   onCaughtUpUnavailable(): void;
-  onInsertNew(): void;
   onRefresh(): Promise<number>;
   onScrollPosition?(top: number): void;
 }
@@ -652,12 +650,7 @@ export function Grid(props: GridProps) {
 
   return (
     <div class="grid-scroll" ref={scroller} tabindex="-1">
-      <Show
-        when={
-          refreshState() !== "idle" ||
-          (!props.archive && props.pendingNewCount > 0)
-        }
-      >
+      <Show when={refreshState() !== "idle"}>
         <div
           class="pull-refresh"
           classList={{
@@ -687,23 +680,14 @@ export function Grid(props: GridProps) {
           <Show when={refreshState() === "up-to-date"}>
             <span>up to date</span>
           </Show>
-          <Show
-            when={
-              refreshState() === "landed" ||
-              (refreshState() === "idle" && props.pendingNewCount > 0)
-            }
-          >
+          <Show when={refreshState() === "landed"}>
             <button
               type="button"
               onClick={() => {
-                if (refreshState() === "idle") props.onInsertNew();
                 clearRefreshNotice();
               }}
             >
-              {refreshState() === "landed"
-                ? refreshCount()
-                : props.pendingNewCount}{" "}
-              new
+              {refreshCount()} new
             </button>
           </Show>
         </div>

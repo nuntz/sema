@@ -143,8 +143,45 @@ test("empty unread grid omits the end divider and zero-item action", async ({
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
-  await expect(page.locator(".pull-refresh button")).toContainText("new");
+  await expect(page.locator(".new-items-pill")).toContainText("new");
   await expect(endCard).toHaveCSS("border-top-width", "0px");
+});
+
+test("new items remain visible while the unread grid is scrolled", async ({
+  page,
+}) => {
+  const incoming = {
+    ...items[0],
+    item_id: "new-item",
+    title: "A newly fetched item",
+    url: "https://example.com/items/new",
+    published_ts: "2026-08-25T19:00:00.000Z",
+    fetched_ts: "2026-08-25T19:00:00.000Z",
+  };
+  const state = await openApp(page, {
+    initialItems: items,
+    polledItems: [incoming, ...items],
+  });
+  const scrollTop = await setMidScroll(page);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
+
+  const pill = page.getByRole("button", { name: "1 new" });
+  await expect(pill).toBeVisible();
+  await expect
+    .poll(() =>
+      pill.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.top >= 56 && rect.bottom <= window.innerHeight;
+      }),
+    )
+    .toBe(true);
+  await expect
+    .poll(() =>
+      page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
+    )
+    .toBe(scrollTop);
 });
 
 async function setMidScroll(page: Page): Promise<number> {
