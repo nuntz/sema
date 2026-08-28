@@ -32,10 +32,21 @@ describe("window activity", () => {
     documentTarget.dispatchEvent(new Event("visibilitychange"));
     expect(onReturn).toHaveBeenCalledTimes(2);
 
+    const restored = new Event("pageshow");
+    Object.defineProperty(restored, "persisted", { value: true });
+    windowTarget.dispatchEvent(restored);
+    windowTarget.dispatchEvent(new Event("online"));
+    expect(onReturn).toHaveBeenCalledTimes(4);
+
+    windowTarget.dispatchEvent(new Event("pageshow"));
+    expect(onReturn).toHaveBeenCalledTimes(4);
+
     stop();
     windowTarget.dispatchEvent(new Event("focus"));
+    windowTarget.dispatchEvent(restored);
+    windowTarget.dispatchEvent(new Event("online"));
     documentTarget.dispatchEvent(new Event("visibilitychange"));
-    expect(onReturn).toHaveBeenCalledTimes(2);
+    expect(onReturn).toHaveBeenCalledTimes(4);
     expect(onHidden).toHaveBeenCalledTimes(1);
   });
 });
