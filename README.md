@@ -4,7 +4,7 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
 
 ## Highlights
 
-- Read RSS, Atom, JSON Feed, and YouTube channel feeds.
+- Read RSS, Atom, JSON Feed, YouTube channel feeds, and public subreddit feeds.
 - Import subscriptions from OPML.
 - Triage quickly with keyboard navigation and a responsive justified grid.
 - Rank items using explicit feedback, reading behaviour, and Bedrock embeddings.
@@ -31,7 +31,7 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
                       v                                    |         |
                +-------------+   fetch + parse feeds       |         |
                | feed-worker |-- RSS / Atom / JSON Feed ---+         |
-               |   Lambda    |   YouTube connectors                  |
+               |   Lambda    |   YouTube / Reddit connectors         |
                +------+------+   (dedupe, write new items)           |
                       | enqueue per-item jobs                        |
                       v                                              |
@@ -79,6 +79,20 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
 ```
 
 The repository contains six Go Lambda functions, shared feed-processing packages, a SolidJS/TypeScript PWA, and a Pulumi Go project that provisions the AWS stack. Queue consumers are retry-safe and use dead-letter queues. DynamoDB TTL and S3 lifecycle rules enforce the rolling seven-day window; archived items and preference signals do not expire.
+
+## Connectors
+
+Feed transports implement the shared `internal/connector.Connector` interface and are registered by source type in the feed worker. RSS, Atom, and JSON Feed share the generic parser; YouTube and Reddit add source-specific discovery and item metadata while retaining the same scheduling, deduplication, ranking, retry, retention, and archive paths.
+
+The Reddit connector uses only Reddit's public Atom feeds—there is no Reddit API, OAuth, login, credential, or third-party service. Discovery accepts `r/name`, full subreddit URLs, and supported subreddit feed URLs. It canonicalizes the selected collection into the stored feed URL:
+
+- Hot: `/r/<subreddit>/.rss`, fetched every three hours.
+- Top · day: `/r/<subreddit>/top.rss?t=day`, fetched daily.
+- New: `/r/<subreddit>/new.rss`, fetched hourly.
+
+Scheduled and discovery requests send the fixed `User-Agent: linux:sema:rss`. Feed jobs retain their stable per-feed schedule offsets and generic exponential error backoff; Reddit failures remain isolated to the affected feed.
+
+Reddit items preserve the thread permalink separately from an external article or media destination. Link posts use the normal article extraction pipeline and open in Reader, text posts render sanitized selftext already present in Atom, and image posts render in Reader with a cached-thumbnail fallback. Reddit-hosted video remains external because `v.redd.it` media is delivered as split DASH streams. The message-square action on every Reddit cell opens its comment thread externally. Titles and cleaned excerpts enter the existing embedding and ranking pipeline unchanged.
 
 ## Prerequisites
 
@@ -194,6 +208,18 @@ make deploy
 ```
 
 The migration preserves feed and item identities, so history, archive pointers, signals, and read state remain connected. YouTube exposes only the latest 15 uploads through its public feed; older uploads cannot be recovered during import.
+
+### Reddit connector rollout
+
+Deploy the connector writers before migrating subreddit feeds that were previously stored as generic RSS sources:
+
+```sh
+make deploy
+make backfill-reddit-connector STACK=prod
+make backfill-reddit-connector STACK=prod BACKFILL_ARGS=--apply
+```
+
+The idempotent backfill recognizes only supported subreddit feed URLs. It keeps each existing feed ID, tags, mute state, items, archive pointers, ranking history, and read state while changing the connector to `reddit`, canonicalizing the selected Hot/Top-Day/New URL, setting its cadence, and clearing URL-specific HTTP validators when required. Unsupported Reddit listing types are left unchanged.
 
 ## Operations
 
