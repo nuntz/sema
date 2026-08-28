@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  on,
   onCleanup,
   onMount,
   Show,
@@ -140,9 +141,14 @@ export function Grid(props: GridProps) {
     if (contentWidth() < 310) return 40;
     return width() < 700 ? 24 : 28;
   });
+  const layoutItems = createMemo(
+    on(
+      () => props.layoutKey,
+      () => props.items,
+    ),
+  );
   const layout = createMemo(() => {
-    props.layoutKey;
-    const items = untrack(() => props.items);
+    const items = layoutItems();
     const boundary = caughtUp();
     if (!boundary) {
       const rows = justify(items, contentWidth(), props.hasMore);

@@ -191,7 +191,13 @@ test("new items remain visible while the unread grid is scrolled", async ({
 test("pill insertion returns a cleared grid to its new rows", async ({
   page,
 }) => {
-  const incoming = items.slice(0, 4).map((item, index) => ({
+  const prior = {
+    ...items[0],
+    item_id: "stale-before-clear",
+    title: "Stale before clear",
+    url: "https://example.com/stale-before-clear",
+  };
+  const incoming = items.slice(0, 5).map((item, index) => ({
     ...item,
     item_id: `new-after-clear-${index}`,
     title: `New after clear ${index}`,
@@ -201,13 +207,27 @@ test("pill insertion returns a cleared grid to its new rows", async ({
     read: false,
   }));
   const state = await openApp(page, {
-    initialItems: items,
-    polledItems: [...incoming, ...items],
+    initialItems: [prior],
+    polledItems: [...incoming, { ...prior, read: true }],
   });
   const scroller = page.locator(".grid-scroll");
+  const priorCell = page.locator(`[data-item-id="${prior.item_id}"]`);
+  await expect(priorCell).toHaveCount(1);
+  await priorCell.hover();
+  await page.keyboard.press("m");
+  await expect(priorCell).toHaveClass(/read/);
   await page.keyboard.press("Shift+G");
-  await page.getByRole("button", { name: /Mark \d+ read & clear/ }).click();
+  await page.getByRole("button", { name: "Clear grid" }).click();
   await expect(page.locator(".grid-cell")).toHaveCount(0);
+
+  await scroller.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      }),
+  );
 
   await scroller.evaluate((element) => {
     const canvas = element.querySelector<HTMLElement>(".virtual-canvas");
@@ -221,12 +241,12 @@ test("pill insertion returns a cleared grid to its new rows", async ({
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
-  await page.getByRole("button", { name: "4 new" }).click();
+  await page.getByRole("button", { name: "5 new" }).click();
 
   await expect
     .poll(() => scroller.evaluate((element) => element.scrollTop))
     .toBe(0);
-  await expect(page.locator(".grid-cell")).toHaveCount(4);
+  await expect(page.locator(".grid-cell")).toHaveCount(5);
   await expect
     .poll(() =>
       page
