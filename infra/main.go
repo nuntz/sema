@@ -218,7 +218,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		apiLambda, err := function(ctx, "api", apiRole, 256, 29, 0, merge(common, pulumi.StringMap{
+		apiLambda, err := function(ctx, "api", apiRole, 1024, 29, 0, merge(common, pulumi.StringMap{
 			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
 			"GOOGLE_CLIENT_ID": pulumi.String(googleClientID), "YOUTUBE_DISCOVERY_ENABLED": pulumi.Sprintf("%t", youtubeDiscoveryEnabled),
 		}))
