@@ -163,7 +163,9 @@ export function Grid(props: GridProps) {
       return { rows, height: totalHeight(rows) };
     }
 
-    const above = justify(items.slice(0, beforeIndex), contentWidth(), true);
+    const above = justify(items.slice(0, beforeIndex), contentWidth(), true, {
+      completeSegment: true,
+    });
     const aboveHeight = totalHeight(above);
     const below = justify(
       items.slice(beforeIndex),

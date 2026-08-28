@@ -477,9 +477,12 @@ export function justify(
   items: Item[],
   containerWidth: number,
   hasMore = false,
+  options: { completeSegment?: boolean } = {},
 ): LayoutRow[] {
   if (containerWidth <= 0 || items.length === 0) return [];
-  const stableLength = stablePrefixLength(items, hasMore);
+  const stableLength = options.completeSegment
+    ? items.length
+    : stablePrefixLength(items, hasMore);
   const layoutItems = items.slice(0, stableLength);
   const finalFeed = !hasMore && stableLength === items.length;
   if (containerWidth < 700)

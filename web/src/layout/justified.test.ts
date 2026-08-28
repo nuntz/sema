@@ -534,6 +534,15 @@ describe("v2 L-run bands", () => {
     );
     expect(ids(trailingRun)).toEqual(stable.map((entry) => entry.item_id));
   });
+
+  it("lays out an unresolved L tail when its section is complete", () => {
+    const section = [item("large", "L", 1.5), item("small", "S")];
+
+    expect(justify(section, 1248, true)).toEqual([]);
+    expect(
+      ids(justify(section, 1248, true, { completeSegment: true })),
+    ).toEqual(["large", "small"]);
+  });
 });
 
 describe("390px mobile bands", () => {

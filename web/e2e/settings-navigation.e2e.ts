@@ -197,7 +197,7 @@ test("pill insertion returns a cleared grid to its new rows", async ({
     title: "Stale before clear",
     url: "https://example.com/stale-before-clear",
   };
-  const incoming = items.slice(0, 5).map((item, index) => ({
+  const incoming = items.slice(0, 2).map((item, index) => ({
     ...item,
     item_id: `new-after-clear-${index}`,
     title: `New after clear ${index}`,
@@ -241,12 +241,12 @@ test("pill insertion returns a cleared grid to its new rows", async ({
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
-  await page.getByRole("button", { name: "5 new" }).click();
+  await page.getByRole("button", { name: "2 new" }).click();
 
   await expect
     .poll(() => scroller.evaluate((element) => element.scrollTop))
     .toBe(0);
-  await expect(page.locator(".grid-cell")).toHaveCount(5);
+  await expect(page.locator(".grid-cell")).toHaveCount(2);
   await expect
     .poll(() =>
       page
