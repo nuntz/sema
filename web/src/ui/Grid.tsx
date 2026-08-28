@@ -17,7 +17,9 @@ import {
   caughtUpLabel,
   endMarkActionEnabled,
   gridReadStateContext,
+  nextScrollReassert,
   readVisualState,
+  type ScrollReassertState,
   scrollReadCandidates,
   shouldLoadNextPage,
   shouldLoadToFillViewport,
@@ -101,6 +103,7 @@ export function Grid(props: GridProps) {
   const refreshGate = new RefreshGate();
   let userScrolling = false;
   let programmaticScrolling = false;
+  let userScrollIntentVersion = 0;
   let endRequested = false;
   let goPending = false;
   const [width, setWidth] = createSignal(0);
@@ -201,8 +204,15 @@ export function Grid(props: GridProps) {
     setViewportHeight(scroller.clientHeight);
   };
 
+  const cancelScrollRestore = () => {
+    cancelAnimationFrame(restoreFrame);
+    restoreFrame = 0;
+  };
+
   const noteUserScroll = () => {
     cancelLongPress();
+    userScrollIntentVersion++;
+    cancelScrollRestore();
     if (programmaticScrolling) return;
     userScrolling = true;
     endRequested = false;
@@ -346,6 +356,36 @@ export function Grid(props: GridProps) {
     });
   };
 
+  const reassertScrollTarget = (target: number) => {
+    cancelScrollRestore();
+    const intentVersion = userScrollIntentVersion;
+    let state: ScrollReassertState = { frameCount: 0, stableFrames: 0 };
+    const apply = () => {
+      programmaticScroll(() => {
+        scroller.scrollTop = target;
+      });
+      setScrollTop(scroller.scrollTop);
+      props.onScrollPosition?.(scroller.scrollTop);
+    };
+    const verify = () => {
+      const decision = nextScrollReassert(
+        state,
+        scroller.scrollTop === target,
+        userScrollIntentVersion !== intentVersion,
+      );
+      state = decision.state;
+      if (decision.reapply) apply();
+      if (decision.scheduleNext) {
+        restoreFrame = requestAnimationFrame(verify);
+      } else {
+        restoreFrame = 0;
+      }
+    };
+
+    apply();
+    restoreFrame = requestAnimationFrame(verify);
+  };
+
   const processScroll = () => {
     const top = scroller.scrollTop;
     setScrollTop(top);
@@ -400,11 +440,8 @@ export function Grid(props: GridProps) {
     const restoredTop = Math.max(0, props.initialScrollTop ?? 0);
     if (restoredTop > 0) {
       restoreFrame = requestAnimationFrame(() => {
-        programmaticScroll(() => {
-          scroller.scrollTop = restoredTop;
-        });
-        setScrollTop(scroller.scrollTop);
-        props.onScrollPosition?.(scroller.scrollTop);
+        restoreFrame = 0;
+        reassertScrollTarget(restoredTop);
       });
     }
     onCleanup(() => {
@@ -420,7 +457,7 @@ export function Grid(props: GridProps) {
       window.removeEventListener("keydown", onKeyDown);
       cancelAnimationFrame(frame);
       cancelAnimationFrame(programmaticFrame);
-      cancelAnimationFrame(restoreFrame);
+      cancelScrollRestore();
       window.clearTimeout(scrollIdle);
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
@@ -435,16 +472,7 @@ export function Grid(props: GridProps) {
     currentScrollToTopKey = nextKey;
     endRequested = false;
     const target = Math.max(0, props.scrollTarget);
-    const applyScrollTarget = () => {
-      programmaticScroll(() => {
-        scroller.scrollTop = target;
-      });
-      setScrollTop(scroller.scrollTop);
-      props.onScrollPosition?.(scroller.scrollTop);
-    };
-    applyScrollTarget();
-    cancelAnimationFrame(restoreFrame);
-    restoreFrame = requestAnimationFrame(applyScrollTarget);
+    reassertScrollTarget(target);
     passedIDs.clear();
   });
 

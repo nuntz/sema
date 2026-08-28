@@ -10,6 +10,7 @@ import {
   fullyPassedRows,
   gridReadStateContext,
   intersectingRowIDs,
+  nextScrollReassert,
   readVisualState,
   scrollReadCandidates,
   shouldLoadNextPage,
@@ -63,6 +64,56 @@ describe("read state", () => {
         unreadDot: false,
       });
     }
+  });
+
+  it("reapplies a scroll target while the viewport is drifting", () => {
+    const decision = nextScrollReassert(
+      { frameCount: 0, stableFrames: 1 },
+      false,
+      false,
+    );
+
+    expect(decision).toEqual({
+      state: { frameCount: 1, stableFrames: 0 },
+      reapply: true,
+      scheduleNext: true,
+    });
+  });
+
+  it("stops reasserting after two stable frames", () => {
+    const first = nextScrollReassert(
+      { frameCount: 0, stableFrames: 0 },
+      true,
+      false,
+    );
+    const second = nextScrollReassert(first.state, true, false);
+
+    expect(first.scheduleNext).toBe(true);
+    expect(second).toEqual({
+      state: { frameCount: 2, stableFrames: 2 },
+      reapply: false,
+      scheduleNext: false,
+    });
+  });
+
+  it("aborts scroll reassertion on new user intent", () => {
+    const state = { frameCount: 3, stableFrames: 0 };
+
+    expect(nextScrollReassert(state, false, true)).toEqual({
+      state,
+      reapply: false,
+      scheduleNext: false,
+    });
+  });
+
+  it("performs one final reapply at the frame cutoff", () => {
+    expect(
+      nextScrollReassert({ frameCount: 9, stableFrames: 0 }, false, false),
+    ).toEqual({
+      state: { frameCount: 10, stableFrames: 0 },
+      reapply: true,
+      scheduleNext: false,
+    });
   });
 
   it("enables automatic read marking only in the unread grid", () => {

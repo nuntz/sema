@@ -13,6 +13,42 @@ export interface CaughtUpBoundary {
   beforeItemID?: string;
 }
 
+export interface ScrollReassertState {
+  frameCount: number;
+  stableFrames: number;
+}
+
+export interface ScrollReassertDecision {
+  state: ScrollReassertState;
+  reapply: boolean;
+  scheduleNext: boolean;
+}
+
+export const SCROLL_REASSERT_MAX_FRAMES = 10;
+export const SCROLL_REASSERT_STABLE_FRAMES = 2;
+
+export function nextScrollReassert(
+  state: ScrollReassertState,
+  atTarget: boolean,
+  userScrolled: boolean,
+): ScrollReassertDecision {
+  if (userScrolled) {
+    return { state, reapply: false, scheduleNext: false };
+  }
+
+  const nextState = {
+    frameCount: state.frameCount + 1,
+    stableFrames: atTarget ? state.stableFrames + 1 : 0,
+  };
+  return {
+    state: nextState,
+    reapply: !atTarget,
+    scheduleNext:
+      nextState.stableFrames < SCROLL_REASSERT_STABLE_FRAMES &&
+      nextState.frameCount < SCROLL_REASSERT_MAX_FRAMES,
+  };
+}
+
 export function gridReadStateContext(
   archive: boolean,
   unreadOnly: boolean,

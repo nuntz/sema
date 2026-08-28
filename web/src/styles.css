@@ -288,7 +288,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .keys-chip { min-width: 22px; height: 22px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: rgba(255, 255, 255, 0.07); color: #c7ccd3; font: 500 var(--t-chip)/1 "IBM Plex Mono", monospace; }
 .new-items-pill { position: absolute; top: var(--header-h); left: 50%; z-index: 20; min-width: 54px; height: 44px; padding: 0 12px; transform: translateX(-50%); background: transparent; color: var(--accent); font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; isolation: isolate; }
 .new-items-pill::before { content: ""; position: absolute; height: 26px; inset: 9px 0; z-index: -1; border: 1px solid rgba(214, 242, 75, .28); border-radius: 13px; background: rgba(214, 242, 75, .14); }
-.grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; scrollbar-color: #2d3137 transparent; contain: strict; }
+.grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; scrollbar-color: #2d3137 transparent; contain: strict; }
 .searching > .grid-scroll, .searching > .cold-start, .searching > .archive-empty, .searching > .filtered-empty { visibility: hidden; }
 .search-results { position: absolute; inset: var(--hdr-h) 0 0; z-index: 16; overflow: auto; padding: 0 16px 42px; background: var(--bg); scrollbar-color: #2d3137 transparent; }
 .search-section { margin-top: 26px; }

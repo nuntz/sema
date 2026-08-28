@@ -188,6 +188,56 @@ test("new items remain visible while the unread grid is scrolled", async ({
     .toBe(scrollTop);
 });
 
+test("pill insertion returns a cleared grid to its new rows", async ({
+  page,
+}) => {
+  const incoming = items.slice(0, 4).map((item, index) => ({
+    ...item,
+    item_id: `new-after-clear-${index}`,
+    title: `New after clear ${index}`,
+    url: `https://example.com/new-after-clear/${index}`,
+    published_ts: `2026-08-25T19:0${index}:00.000Z`,
+    fetched_ts: `2026-08-25T19:0${index}:00.000Z`,
+    read: false,
+  }));
+  const state = await openApp(page, {
+    initialItems: items,
+    polledItems: [...incoming, ...items],
+  });
+  const scroller = page.locator(".grid-scroll");
+  await page.keyboard.press("Shift+G");
+  await page.getByRole("button", { name: /Mark \d+ read & clear/ }).click();
+  await expect(page.locator(".grid-cell")).toHaveCount(0);
+
+  await scroller.evaluate((element) => {
+    const canvas = element.querySelector<HTMLElement>(".virtual-canvas");
+    if (!canvas) throw new Error("virtual canvas unavailable");
+    canvas.style.minHeight = `${element.clientHeight + 20}px`;
+    element.scrollTop = 16;
+  });
+  await expect
+    .poll(() => scroller.evaluate((element) => element.scrollTop))
+    .toBe(16);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
+  await page.getByRole("button", { name: "4 new" }).click();
+
+  await expect
+    .poll(() => scroller.evaluate((element) => element.scrollTop))
+    .toBe(0);
+  await expect(page.locator(".grid-cell")).toHaveCount(4);
+  await expect
+    .poll(() =>
+      page
+        .locator(".grid-cell")
+        .evaluateAll((elements) =>
+          elements.map((element) => element.getAttribute("data-item-id")),
+        ),
+    )
+    .toEqual(incoming.map((item) => item.item_id));
+});
+
 async function setMidScroll(page: Page): Promise<number> {
   const scroller = page.locator(".grid-scroll");
   await scroller.evaluate((element) => {
