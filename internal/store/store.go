@@ -53,8 +53,9 @@ type Store struct {
 }
 
 const (
-	feedIndexPK = "FEED"
-	userIndexPK = "USER"
+	feedIndexPK             = "FEED"
+	userIndexPK             = "USER"
+	itemsForFeedsPageBudget = 5
 )
 
 type itemProjection struct {
@@ -426,7 +427,7 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
-// items while still walking the underlying pages to a stable end cursor.
+// items while still walking the underlying pages until the end or page budget.
 func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
@@ -462,7 +463,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	seenItemIDs := make(map[string]bool)
 	var newestRead *domain.Item
 	var last map[string]types.AttributeValue
-	for len(items) < limit {
+	for pages := 0; len(items) < limit && pages < itemsForFeedsPageBudget; pages++ {
 		input.Limit = aws.Int32(100)
 		response, err := s.db.Query(ctx, input)
 		if err != nil {
