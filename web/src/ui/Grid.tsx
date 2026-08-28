@@ -43,6 +43,7 @@ interface GridProps {
   items: Item[];
   layoutKey: number;
   scrollToTopKey: number;
+  scrollTarget: number;
   initialScrollTop?: number;
   focusedID: string;
   active: boolean;
@@ -53,6 +54,7 @@ interface GridProps {
   readStateItems: Item[];
   readAnchor?: ReadAnchor;
   linkActionID: string;
+  pendingNewCount: number;
   onFocus(id: string): void;
   onOpen(item: Item): void;
   onExternalOpen(item: Item): void;
@@ -65,6 +67,7 @@ interface GridProps {
   onRelated(item: Item): void;
   onMarkBelow(item: Item): void;
   onItemsPassed(ids: string[]): void;
+  onFinishAndClear(ids: string[]): void;
   onLoadMore(): void;
   onToggleOrder(): void;
   onUndo(): void;
@@ -184,7 +187,11 @@ export function Grid(props: GridProps) {
   const showEndMarkAction = createMemo(
     () => endMarkActionEnabled(readContext()) && unreadIDs().length > 0,
   );
-  const endTop = createMemo(() => layout().height + 28);
+  const endTop = createMemo(() => {
+    if (!props.archive && props.unreadOnly && props.items.length === 0)
+      return 0;
+    return layout().height + (!props.archive && props.unreadOnly ? 22 : 28);
+  });
   const canvasHeight = createMemo(
     () => endTop() + (props.hasMore ? 0 : viewportHeight()),
   );
@@ -429,11 +436,17 @@ export function Grid(props: GridProps) {
     if (!scroller || nextKey === currentScrollToTopKey) return;
     currentScrollToTopKey = nextKey;
     endRequested = false;
-    programmaticScroll(() => {
-      scroller.scrollTop = 0;
-    });
-    setScrollTop(0);
-    props.onScrollPosition?.(0);
+    const target = Math.max(0, props.scrollTarget);
+    const applyScrollTarget = () => {
+      programmaticScroll(() => {
+        scroller.scrollTop = target;
+      });
+      setScrollTop(scroller.scrollTop);
+      props.onScrollPosition?.(scroller.scrollTop);
+    };
+    applyScrollTarget();
+    cancelAnimationFrame(restoreFrame);
+    restoreFrame = requestAnimationFrame(applyScrollTarget);
     passedIDs.clear();
   });
 
@@ -532,10 +545,11 @@ export function Grid(props: GridProps) {
     });
   };
 
-  const markRemaining = () => {
+  const finishAndClear = () => {
     const ids = unreadIDs();
     for (const id of ids) passedIDs.add(id);
-    props.onItemsPassed(ids);
+    props.onFinishAndClear(ids);
+    requestAnimationFrame(() => scroller.focus({ preventScroll: true }));
   };
 
   const openPrimary = (item: Item) => {
@@ -977,30 +991,81 @@ export function Grid(props: GridProps) {
             class="end-of-feed"
             classList={{
               "empty-grid": props.items.length === 0,
+              "finish-card":
+                !props.archive && props.unreadOnly && props.items.length > 0,
+              "caughtup-empty":
+                !props.archive && props.unreadOnly && props.items.length === 0,
+              "caughtup-empty--pending":
+                !props.archive &&
+                props.unreadOnly &&
+                props.items.length === 0 &&
+                props.pendingNewCount > 0,
               "no-action": !showEndMarkAction(),
             }}
             style={{
               top: `${endTop()}px`,
-              "min-height": `${viewportHeight()}px`,
+              "min-height": `${
+                !props.archive && props.unreadOnly && props.items.length === 0
+                  ? Math.max(viewportHeight(), width() < 520 ? 474 : 520)
+                  : viewportHeight()
+              }px`,
             }}
           >
             <div>
               <Show
                 when={props.archive}
                 fallback={
-                  <>
-                    <h2>You&apos;re all caught up</h2>
-                    <p>Everything currently loaded is behind you.</p>
-                    <Show when={showEndMarkAction()}>
-                      <button
-                        ref={endButton}
-                        type="button"
-                        onClick={markRemaining}
-                      >
-                        Mark remaining {unreadIDs().length} as read
-                      </button>
+                  <Show
+                    when={props.unreadOnly}
+                    fallback={
+                      <>
+                        <h2>You&apos;re all caught up</h2>
+                        <p>Everything currently loaded is behind you.</p>
+                      </>
+                    }
+                  >
+                    <Show
+                      when={props.items.length > 0}
+                      fallback={
+                        <>
+                          <i class="caughtup-empty__mark" aria-hidden="true" />
+                          <h2>You&apos;re all caught up</h2>
+                          <p>
+                            Unread is empty. Anything that arrives from here on
+                            shows up at the top.
+                          </p>
+                        </>
+                      }
+                    >
+                      <div class="finish-card__copy">
+                        <h2>Everything loaded is behind you</h2>
+                        <p>
+                          <Show
+                            when={showEndMarkAction()}
+                            fallback={<>Nothing left unread.</>}
+                          >
+                            {unreadIDs().length}{" "}
+                            {unreadIDs().length === 1 ? "item is" : "items are"}{" "}
+                            still unread. Clearing marks them and empties the
+                            grid
+                            <span class="finish-card__hint">
+                              {" "}
+                              — new arrivals come back as a pill at the top.
+                            </span>
+                          </Show>
+                        </p>
+                      </div>
+                      <Show when={showEndMarkAction()}>
+                        <button
+                          ref={endButton}
+                          type="button"
+                          onClick={finishAndClear}
+                        >
+                          Mark {unreadIDs().length} read &amp; clear
+                        </button>
+                      </Show>
                     </Show>
-                  </>
+                  </Show>
                 }
               >
                 <small>END OF ARCHIVE</small>

@@ -18,9 +18,12 @@ import { AppHeader } from "./components/AppHeader";
 import { Icon } from "./components/Icon";
 import { Tooltip } from "./components/Tooltip";
 import {
+  finishAndClearGrid,
+  type GridClearSnapshot,
   includeReadForGrid,
   mergeNewItems,
   pollCandidates,
+  prependGridIDs,
   unreadIDsAfter,
   updateRead,
   visibleItemIDs,
@@ -51,7 +54,10 @@ import { SearchResults } from "./ui/SearchResults";
 import { TagFilter } from "./ui/TagFilter";
 import { listenForWindowReturn } from "./window-activity";
 
-type Undo = { ids: string[] };
+type Undo = {
+  ids: string[];
+  gridSnapshot?: GridClearSnapshot & { count: number };
+};
 type Toast = {
   id: number;
   kind: "success" | "info" | "error";
@@ -72,6 +78,7 @@ export function App(props: { signOut(): void }) {
   const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
   const [layoutVersion, setLayoutVersion] = createSignal(0);
   const [scrollTopVersion, setScrollTopVersion] = createSignal(0);
+  const [scrollTarget, setScrollTarget] = createSignal(0);
   const [cursor, setCursor] = createSignal("");
   const [hasPage, setHasPage] = createSignal(false);
   const [loading, setLoading] = createSignal(true);
@@ -101,6 +108,7 @@ export function App(props: { signOut(): void }) {
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
+  let gridClearVersion = 0;
   let searchVersion = 0;
   let relatedVersion = 0;
   let readTimer: number | undefined;
@@ -114,6 +122,11 @@ export function App(props: { signOut(): void }) {
   let feedFilterRefresh: Promise<void> | undefined;
   let linkActionTimer: number | undefined;
   let toastTimer: number | undefined;
+  let undoTimer: number | undefined;
+  let undoDeadline = 0;
+  let undoRemaining = 8_000;
+  let undoHovered = false;
+  let undoFocused = false;
   let toastID = 0;
   let searchInput!: HTMLInputElement;
   const pendingRead = new Set<string>();
@@ -123,6 +136,7 @@ export function App(props: { signOut(): void }) {
   const searchOpen = createMemo(
     () => searchFocused() || searchQuery().length > 0,
   );
+  const finishUndo = createMemo(() => undo()?.gridSnapshot);
   const headerTooltipDisabled = createMemo(
     () => searchOpen() || tagFilterOpen() || Boolean(headerMenu()),
   );
@@ -144,6 +158,52 @@ export function App(props: { signOut(): void }) {
     window.clearTimeout(toastTimer);
     setToast({ id: ++toastID, kind, message });
     toastTimer = window.setTimeout(() => setToast(), 2_320);
+  };
+
+  const clearUndoTimer = () => {
+    window.clearTimeout(undoTimer);
+    undoTimer = undefined;
+    undoDeadline = 0;
+  };
+
+  const expireFinishUndo = () => {
+    const snapshot = undo()?.gridSnapshot;
+    clearUndoTimer();
+    undoRemaining = 8_000;
+    setUndo((current) =>
+      current?.gridSnapshot === snapshot ? undefined : current,
+    );
+  };
+
+  const resumeFinishUndoTimer = () => {
+    if (!finishUndo() || undoTimer || undoHovered || undoFocused) return;
+    undoDeadline = Date.now() + undoRemaining;
+    undoTimer = window.setTimeout(expireFinishUndo, undoRemaining);
+  };
+
+  const pauseFinishUndoTimer = () => {
+    if (!undoTimer) return;
+    undoRemaining = Math.max(0, undoDeadline - Date.now());
+    clearUndoTimer();
+  };
+
+  const syncFinishUndoTimer = () => {
+    if (undoHovered || undoFocused) pauseFinishUndoTimer();
+    else resumeFinishUndoTimer();
+  };
+
+  const startFinishUndoTimer = () => {
+    clearUndoTimer();
+    undoRemaining = 8_000;
+    undoHovered = false;
+    undoFocused = false;
+    resumeFinishUndoTimer();
+  };
+
+  const discardFinishUndo = () => {
+    clearUndoTimer();
+    undoRemaining = 8_000;
+    setUndo((current) => (current?.gridSnapshot ? undefined : current));
   };
 
   const copyLink = async (item: Item) => {
@@ -202,6 +262,8 @@ export function App(props: { signOut(): void }) {
     nextTag = selectedTag(),
   ) => {
     const version = ++requestVersion;
+    gridClearVersion++;
+    discardFinishUndo();
     setLoading(true);
     setHasPage(false);
     setItems([]);
@@ -230,6 +292,7 @@ export function App(props: { signOut(): void }) {
           : visibleItemIDs(pageItems, nextUnreadOnly);
       setGridIDs(visibleIDs);
       setLayoutVersion((value) => value + 1);
+      setScrollTarget(0);
       setScrollTopVersion((value) => value + 1);
       setCursor(page.next_cursor ?? "");
       setHasPage(true);
@@ -244,6 +307,8 @@ export function App(props: { signOut(): void }) {
   const loadMore = async () => {
     if (loadingMore() || !hasPage() || !cursor()) return;
     setLoadingMore(true);
+    const version = requestVersion;
+    const clearVersion = gridClearVersion;
     const nextCursor = cursor();
     let continueLoading = false;
     try {
@@ -256,7 +321,12 @@ export function App(props: { signOut(): void }) {
               includeReadForGrid(unreadOnly()),
               selectedTag(),
             );
-      if (nextCursor !== cursor()) return;
+      if (
+        version !== requestVersion ||
+        clearVersion !== gridClearVersion ||
+        nextCursor !== cursor()
+      )
+        return;
       let added: Item[] = [];
       setItems((current) => {
         const seen = new Set(current.map((item) => item.item_id));
@@ -292,6 +362,7 @@ export function App(props: { signOut(): void }) {
     )
       return 0;
     const version = requestVersion;
+    const clearVersion = gridClearVersion;
     pollInFlight = true;
     try {
       const page = await api.items(
@@ -307,7 +378,7 @@ export function App(props: { signOut(): void }) {
         page.items ?? [],
         unreadOnly(),
       );
-      if (insert) {
+      if (insert && clearVersion === gridClearVersion) {
         const incoming = [...pendingNew(), ...unseen].sort((left, right) =>
           right.fetched_ts.localeCompare(left.fetched_ts),
         );
@@ -401,16 +472,30 @@ export function App(props: { signOut(): void }) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target;
+      const editing =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.matches("input, textarea, select"));
       if (
-        event.key === "/" &&
+        !editing &&
+        !event.shiftKey &&
+        !event.altKey &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === "z" &&
+        finishUndo() &&
+        view() === "grid" &&
+        mode() === "live" &&
+        unreadOnly() &&
         !readerID() &&
-        !relatedSource() &&
-        !(
-          target instanceof HTMLElement &&
-          (target.isContentEditable ||
-            target.matches("input, textarea, select"))
-        )
+        !keysOpen() &&
+        !confirmRemove() &&
+        !searchActive() &&
+        !relatedSource()
       ) {
+        event.preventDefault();
+        undoLast();
+        return;
+      }
+      if (event.key === "/" && !readerID() && !relatedSource() && !editing) {
         event.preventDefault();
         focusSearch();
         return;
@@ -420,10 +505,7 @@ export function App(props: { signOut(): void }) {
         setHeaderMenu();
         return;
       }
-      if (
-        target instanceof HTMLElement &&
-        (target.isContentEditable || target.matches("input, textarea, select"))
-      ) {
+      if (editing) {
         clearSettingsGo();
         return;
       }
@@ -486,6 +568,7 @@ export function App(props: { signOut(): void }) {
       window.clearInterval(pollTimer);
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
+      window.clearTimeout(undoTimer);
       window.clearTimeout(settingsGoTimer);
       void flushPending(true);
     });
@@ -646,7 +729,7 @@ export function App(props: { signOut(): void }) {
       ),
     );
 
-  const queueRead = (ids: string[]) => {
+  const queueRead = (ids: string[], gridSnapshot?: GridClearSnapshot) => {
     if (mode() === "archive") return;
     const requested = new Set(ids);
     const alreadyRead = new Set(
@@ -657,14 +740,22 @@ export function App(props: { signOut(): void }) {
     const unread = [...requested].filter((id) => !alreadyRead.has(id));
     if (unread.length === 0) return;
     for (const id of unread) pendingRead.add(id);
-    setUndo({ ids: [...pendingRead] });
+    if (!gridSnapshot) clearUndoTimer();
+    setUndo({
+      ids: [...pendingRead],
+      gridSnapshot: gridSnapshot
+        ? { ...gridSnapshot, count: unread.length }
+        : undefined,
+    });
+    if (gridSnapshot) startFinishUndoTimer();
     setItems((current) => updateRead(current, requested, true));
     if (document.visibilityState === "hidden") {
       void flushRead(true);
-      return;
+      return unread;
     }
     window.clearTimeout(readTimer);
     readTimer = window.setTimeout(() => void flushPending(), 5_000);
+    return unread;
   };
 
   const flushRead = (keepalive = false) => {
@@ -673,7 +764,8 @@ export function App(props: { signOut(): void }) {
     const ids = [...pendingRead];
     if (ids.length === 0) return Promise.resolve();
     pendingRead.clear();
-    setUndo({ ids });
+    const gridSnapshot = undo()?.gridSnapshot;
+    setUndo({ ids, gridSnapshot });
     return writeReadBatch(ids, true, keepalive).catch(handleError);
   };
 
@@ -743,9 +835,11 @@ export function App(props: { signOut(): void }) {
     });
   };
 
-  const undoLast = () => {
+  function undoLast() {
     const operation = undo();
     if (!operation) return;
+    clearUndoTimer();
+    undoRemaining = 8_000;
     setUndo(undefined);
     const unsent = new Set(
       operation.ids.filter((id) => pendingRead.delete(id)),
@@ -755,14 +849,38 @@ export function App(props: { signOut(): void }) {
       readTimer = undefined;
     }
     setItems((current) => updateRead(current, operation.ids, false));
+    if (operation.gridSnapshot && mode() === "live" && unreadOnly()) {
+      gridClearVersion++;
+      gridScrollTop = operation.gridSnapshot.scrollTop;
+      setGridIDs([...operation.gridSnapshot.ids]);
+      setFocusedID(operation.gridSnapshot.focusedID);
+      setScrollTarget(operation.gridSnapshot.scrollTop);
+      setLayoutVersion((value) => value + 1);
+      setScrollTopVersion((value) => value + 1);
+    }
     const sent = operation.ids.filter((id) => !unsent.has(id));
     if (sent.length > 0) writeReadBatch(sent, false).catch(handleError);
+  }
+
+  const finishAndClear = (ids: string[]) => {
+    if (mode() !== "live" || !unreadOnly() || ids.length === 0) return;
+    const cleared = finishAndClearGrid(gridIDs(), focusedID(), gridScrollTop);
+    const queued = queueRead(ids, cleared.snapshot);
+    if (!queued || queued.length === 0) return;
+    gridClearVersion++;
+    gridScrollTop = 0;
+    setGridIDs(cleared.ids);
+    setFocusedID("");
+    setScrollTarget(0);
+    setLayoutVersion((value) => value + 1);
+    setScrollTopVersion((value) => value + 1);
   };
 
   const markBelow = async (item: Item) => {
     if (mode() === "archive" || markBelowInFlight) return;
     markBelowInFlight = true;
     const version = requestVersion;
+    const clearVersion = gridClearVersion;
     const markOrder = order();
     const ids = unreadIDsAfter(items(), item.item_id);
     let nextCursor = cursor();
@@ -774,7 +892,12 @@ export function App(props: { signOut(): void }) {
           includeReadForGrid(unreadOnly()),
           selectedTag(),
         );
-        if (version !== requestVersion || markOrder !== order()) return;
+        if (
+          version !== requestVersion ||
+          clearVersion !== gridClearVersion ||
+          markOrder !== order()
+        )
+          return;
         ids.push(
           ...(page.items ?? [])
             .filter((candidate) => !candidate.read)
@@ -782,7 +905,7 @@ export function App(props: { signOut(): void }) {
         );
         nextCursor = page.next_cursor ?? "";
       }
-      queueRead(ids);
+      if (clearVersion === gridClearVersion) queueRead(ids);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -808,14 +931,11 @@ export function App(props: { signOut(): void }) {
     setItems((current) => mergeNewItems(current, added));
     const visible = visibleItemIDs(added, unreadOnly());
     if (visible.length > 0) {
-      const addedIDs = new Set(visible);
-      setGridIDs((current) => [
-        ...visible,
-        ...current.filter((id) => !addedIDs.has(id)),
-      ]);
+      setGridIDs((current) => prependGridIDs(current, visible));
       setFocusedID(visible[0]);
       setLayoutVersion((value) => value + 1);
     }
+    setScrollTarget(0);
     setScrollTopVersion((value) => value + 1);
     return added.length;
   };
@@ -890,6 +1010,7 @@ export function App(props: { signOut(): void }) {
     clearSearch();
     setMode("live");
     setView("grid");
+    setScrollTarget(0);
     setScrollTopVersion((value) => value + 1);
     if (wasFeeds) await refreshFeedFilters();
     if (wasFeeds || wasArchive)
@@ -1339,6 +1460,7 @@ export function App(props: { signOut(): void }) {
               items={gridItems()}
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}
+              scrollTarget={scrollTarget()}
               initialScrollTop={gridScrollTop}
               focusedID={focusedID()}
               active={
@@ -1356,6 +1478,7 @@ export function App(props: { signOut(): void }) {
               readStateItems={items()}
               readAnchor={readAnchor()}
               linkActionID={linkActionID()}
+              pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
               onOpen={markOpened}
               onExternalOpen={openExternalItem}
@@ -1368,6 +1491,7 @@ export function App(props: { signOut(): void }) {
               onRelated={openRelated}
               onMarkBelow={markBelow}
               onItemsPassed={queueRead}
+              onFinishAndClear={finishAndClear}
               onLoadMore={loadMore}
               onToggleOrder={toggleOrder}
               onUndo={undoLast}
@@ -1478,6 +1602,44 @@ export function App(props: { signOut(): void }) {
                 )
               }
             />
+          )}
+        </Show>
+        <Show when={finishUndo()} keyed>
+          {(operation) => (
+            <div
+              class="finish-undo-toast"
+              role="status"
+              aria-live="polite"
+              onPointerEnter={() => {
+                undoHovered = true;
+                syncFinishUndoTimer();
+              }}
+              onPointerLeave={() => {
+                undoHovered = false;
+                syncFinishUndoTimer();
+              }}
+              onFocusIn={() => {
+                undoFocused = true;
+                syncFinishUndoTimer();
+              }}
+              onFocusOut={(event) => {
+                if (
+                  !event.relatedTarget ||
+                  !event.currentTarget.contains(event.relatedTarget as Node)
+                ) {
+                  undoFocused = false;
+                  syncFinishUndoTimer();
+                }
+              }}
+            >
+              <span>
+                Marked {operation.count} read <strong>· grid cleared</strong>
+              </span>
+              <button type="button" onClick={undoLast}>
+                Undo
+              </button>
+              <i class="finish-undo-toast__progress" aria-hidden="true" />
+            </div>
           )}
         </Show>
         <Show when={toast()} keyed>

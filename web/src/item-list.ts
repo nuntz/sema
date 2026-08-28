@@ -1,5 +1,35 @@
 import type { Item } from "./types";
 
+export type GridClearSnapshot = {
+  ids: string[];
+  focusedID: string;
+  scrollTop: number;
+};
+
+export function finishAndClearGrid(
+  ids: string[],
+  focusedID: string,
+  scrollTop: number,
+): { ids: string[]; snapshot: GridClearSnapshot } {
+  return {
+    ids: [],
+    snapshot: {
+      ids: [...ids],
+      focusedID,
+      scrollTop: Math.max(0, scrollTop),
+    },
+  };
+}
+
+export function prependGridIDs(
+  current: string[],
+  incoming: string[],
+): string[] {
+  if (incoming.length === 0) return current;
+  const added = new Set(incoming);
+  return [...incoming, ...current.filter((id) => !added.has(id))];
+}
+
 export function includeReadForGrid(unreadOnly: boolean): boolean {
   return !unreadOnly;
 }

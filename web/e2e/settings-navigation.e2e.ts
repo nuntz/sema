@@ -137,9 +137,9 @@ test("empty unread grid omits the end divider and zero-item action", async ({
 
   await expect(endCard).toHaveClass(/empty-grid/);
   await expect(endCard).toHaveCSS("border-top-width", "0px");
-  await expect(
-    page.getByRole("button", { name: /Mark remaining/ }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /read & clear/ })).toHaveCount(
+    0,
+  );
 
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => state.itemRequests).toBeGreaterThanOrEqual(2);
@@ -244,7 +244,7 @@ test("shift+G focuses the end action and g g returns to the top", async ({
     )
     .toBeGreaterThan(0);
   await expect(
-    page.getByRole("button", { name: /Mark remaining/ }),
+    page.getByRole("button", { name: /read & clear/ }),
   ).toBeFocused();
 
   await page.keyboard.press("g");
@@ -265,6 +265,41 @@ test("shift+G focuses the end action and g g returns to the top", async ({
   await expect(
     page.locator(".key-row").filter({ hasText: "End / ⇧ G" }),
   ).toContainText("go to caught-up card");
+});
+
+test("finish and clear focuses the empty grid and u restores it", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.keyboard.press("Shift+G");
+
+  const action = page.getByRole("button", { name: /Mark \d+ read & clear/ });
+  const scrollBeforeClear = await page
+    .locator(".grid-scroll")
+    .evaluate((element) => element.scrollTop);
+  await action.click();
+
+  await expect(page.locator(".grid-cell")).toHaveCount(0);
+  await expect(page.locator(".end-of-feed")).toHaveClass(/empty-grid/);
+  await expect(
+    page.getByRole("heading", { name: "You're all caught up" }),
+  ).toBeVisible();
+  await expect(page.locator(".grid-scroll")).toBeFocused();
+  await expect(page.locator(".finish-undo-toast")).toContainText(
+    "grid cleared",
+  );
+
+  await page.keyboard.press("u");
+
+  await expect(page.locator(".finish-undo-toast")).toHaveCount(0);
+  await expect(page.locator(".end-of-feed")).not.toHaveClass(/empty-grid/);
+  await expect
+    .poll(() =>
+      page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
+    )
+    .toBe(scrollBeforeClear);
+  await page.keyboard.press("Shift+G");
+  await expect(action).toBeFocused();
 });
 
 test("Settings inputs consume Escape and suppress g s while typing", async ({

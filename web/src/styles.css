@@ -128,6 +128,17 @@
   --caughtup-gap: 12px;
   --jump-wash: rgba(214, 242, 75, 0.1);
 
+  --finish-card-bg: #101216;
+  --finish-card-border: rgba(255, 255, 255, 0.07);
+  --finish-button-bg: #d6f24b;
+  --finish-button-hover: #e2fa6a;
+  --finish-button-fg: #12160a;
+  --finish-button-ring: #f4f2ee;
+  --finish-toast-bg: #14161a;
+  --finish-toast-border: rgba(255, 255, 255, 0.09);
+  --finish-toast-action: rgba(255, 255, 255, 0.07);
+  --finish-toast-progress: rgba(214, 242, 75, 0.55);
+
   --grid-gap: 10px;
   --grid-gap-mobile: 8px;
   --cell-radius: 10px;
@@ -150,6 +161,16 @@
   --caughtup-label: #5c6169;
   --caughtup-count: #14161a;
   --caughtup-separator: #8d9199;
+  --finish-card-bg: #fff;
+  --finish-card-border: rgba(0, 0, 0, 0.12);
+  --finish-button-bg: #6d8a10;
+  --finish-button-hover: #7d9c16;
+  --finish-button-fg: #f7fbe6;
+  --finish-button-ring: #14161a;
+  --finish-toast-bg: #fff;
+  --finish-toast-border: rgba(0, 0, 0, 0.12);
+  --finish-toast-action: rgba(0, 0, 0, 0.06);
+  --finish-toast-progress: rgba(109, 138, 16, 0.6);
 }
 
 * { box-sizing: border-box; }
@@ -323,6 +344,21 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .end-of-feed.no-action p { margin-bottom: 0; }
 .end-of-feed small { display: block; margin-bottom: 12px; color: var(--fg-quaternary); font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; letter-spacing: 0.07em; }
 .end-of-feed button { min-height: 34px; padding: 0 15px; border-radius: 7px; background: var(--accent); color: #11150a; font-weight: 600; font-size: var(--t-12); }
+.end-of-feed.finish-card { place-items: start; border-top: 0; text-align: left; }
+.end-of-feed.finish-card > div { width: 100%; max-width: none; padding: 26px 28px; display: flex; align-items: center; gap: 28px; border: 1px solid var(--finish-card-border); border-radius: 8px; background: var(--finish-card-bg); }
+.finish-card__copy { max-width: 52ch; flex: 1; }
+.finish-card .finish-card__copy h2 { font: 400 var(--t-20)/1.25 "Newsreader", Georgia, serif; }
+.finish-card .finish-card__copy p { margin: 0; text-wrap: pretty; }
+.end-of-feed.finish-card button { height: 38px; min-height: 38px; padding: 0 18px; flex: none; border-radius: 8px; background: var(--finish-button-bg); color: var(--finish-button-fg); font: 500 13.5px/1 "Instrument Sans", sans-serif; }
+.end-of-feed.finish-card button:hover { background: var(--finish-button-hover); }
+.end-of-feed.finish-card button:focus-visible { outline: 2px solid var(--finish-button-ring); outline-offset: 2px; }
+.end-of-feed.caughtup-empty { border-top: 0; animation: caughtup-empty-in 180ms ease-out both; }
+.end-of-feed.caughtup-empty > div { max-width: 44ch; padding: 48px 20px; transition: opacity 180ms ease-out; }
+.end-of-feed.caughtup-empty--pending > div { opacity: 0.72; }
+.caughtup-empty__mark { width: 44px; height: 2px; margin: 0 auto 20px; display: block; border-radius: 1px; background: var(--unread-dot); }
+.end-of-feed.caughtup-empty h2 { font-size: 30px; }
+.end-of-feed.caughtup-empty p { margin-bottom: 0; }
+@keyframes caughtup-empty-in { from { opacity: 0; } to { opacity: 1; } }
 .grid-cell {
   position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--hairline); border-radius: 10px;
   background: var(--surface); transition: opacity 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
@@ -563,6 +599,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @keyframes toast-in { to { opacity: 1; transform: translate(var(--toast-x), 0); } }
 @keyframes toast-out { from { opacity: 1; transform: translate(var(--toast-x), 0); } to { opacity: 0; transform: translate(var(--toast-x), 0); } }
 
+.finish-undo-toast { position: fixed; left: 50%; bottom: 26px; z-index: 75; height: 40px; padding: 0 8px 0 16px; display: flex; align-items: center; gap: 14px; overflow: hidden; border: 1px solid var(--finish-toast-border); border-radius: 10px; background: var(--finish-toast-bg); box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4); color: var(--fg-tertiary); font: 400 var(--t-13-5)/1 "Instrument Sans", sans-serif; transform: translateX(-50%); }
+.finish-undo-toast strong { color: var(--fg-primary); font-weight: 500; }
+.finish-undo-toast button { height: 28px; padding: 0 10px; border-radius: 6px; background: var(--finish-toast-action); color: var(--fg-primary); font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; }
+.finish-undo-toast__progress { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: var(--finish-toast-progress); animation: finish-undo-drain 8s linear forwards; }
+.finish-undo-toast:hover .finish-undo-toast__progress, .finish-undo-toast:focus-within .finish-undo-toast__progress { animation-play-state: paused; }
+@keyframes finish-undo-drain { to { width: 0; } }
+
 .modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: rgba(4, 5, 6, 0.76); backdrop-filter: blur(4px); }
 .confirm-scrim { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: rgba(6, 7, 9, 0.62); animation: confirm-scrim-in 120ms ease-out; }
 .confirm-card { width: min(352px, 100%); padding: 22px 22px 18px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 10px; background: #191c21; box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55); animation: confirm-card-in 140ms ease-out; }
@@ -777,10 +820,22 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .original-cta, .original-required button, .article-next button { min-height: var(--touch-min); }
 }
 
+@media (max-width: 520px) {
+  .end-of-feed.finish-card > div { padding: 18px 16px; flex-direction: column; align-items: stretch; gap: 14px; }
+  .end-of-feed.finish-card button { width: 100%; height: 46px; min-height: 46px; font-size: 14px; }
+  .finish-card__hint { display: none; }
+  .caughtup-empty__mark { width: 38px; }
+  .end-of-feed.caughtup-empty h2 { font-size: 25px; }
+  .finish-undo-toast { right: 12px; bottom: 14px; left: 12px; height: 44px; transform: none; }
+  .finish-undo-toast > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .finish-undo-toast button { height: 32px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .unread-dot, .unread-dot.exiting { animation: none !important; transition: none !important; }
   .grid-cell.jump-landed { animation: none !important; }
+  .finish-undo-toast__progress { width: 100%; animation: none !important; }
   .recompute-button i { animation: recompute-pulse 1.2s ease-in-out infinite !important; }
 }
 

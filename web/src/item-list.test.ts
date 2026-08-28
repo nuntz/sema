@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  finishAndClearGrid,
   includeReadForGrid,
   mergeNewItems,
   pollCandidates,
+  prependGridIDs,
   unreadIDsAfter,
   updateRead,
   visibleItemIDs,
@@ -104,6 +106,35 @@ describe("item list", () => {
 
     expect(ids).toEqual(["one", "three"]);
     expect(read.every((item) => item.read)).toBe(true);
+  });
+
+  it("clears the grid while preserving an exact undo snapshot", () => {
+    const result = finishAndClearGrid(["first", "dimmed", "last"], "last", 412);
+
+    expect(result.ids).toEqual([]);
+    expect(result.snapshot).toEqual({
+      ids: ["first", "dimmed", "last"],
+      focusedID: "last",
+      scrollTop: 412,
+    });
+  });
+
+  it("restores the cleared snapshot and unread flags on undo", () => {
+    const originalIDs = ["one", "two", "three"];
+    const items = [make("one"), make("two"), make("three")];
+    const read = updateRead(items, ["one", "three"], true);
+    const { snapshot } = finishAndClearGrid(originalIDs, "three", 300);
+    const restored = updateRead(read, ["one", "three"], false);
+
+    expect(snapshot.ids).toEqual(originalIDs);
+    expect(restored.map((item) => item.read)).toEqual([false, false, false]);
+  });
+
+  it("prepends pill items onto a cleared grid", () => {
+    expect(prependGridIDs([], ["newest", "newer"])).toEqual([
+      "newest",
+      "newer",
+    ]);
   });
 
   it("undoes an explicit read batch without changing item order", () => {
