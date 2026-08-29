@@ -39,6 +39,7 @@ import (
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
+	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 	"github.com/nuntz/sema/internal/vectorstore"
@@ -64,6 +65,7 @@ type server struct {
 	feedDetailCache map[string]cachedFeedList
 	embedder        embed.Embedder
 	vectors         vectorstore.Store
+	emit            func(map[string]float64, map[string]string)
 }
 
 type unsupportedFeed struct {
@@ -78,11 +80,29 @@ type importFeedsResult struct {
 }
 
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
-	path := strings.TrimRight(request.RawPath, "/")
-	path = strings.TrimPrefix(path, "/api")
-	if path == "" {
-		path = "/"
+	started := time.Now()
+	result, err := s.handleRequest(ctx, request)
+	status := result.StatusCode
+	if err != nil || status == 0 {
+		status = http.StatusInternalServerError
 	}
+	metrics := map[string]float64{"APIRequests": 1, "APIRequestDurationMs": float64(time.Since(started).Milliseconds())}
+	if status >= http.StatusInternalServerError {
+		metrics["APIServerErrors"] = 1
+	}
+	emit := s.emit
+	if emit == nil {
+		emit = observability.Emit
+	}
+	emit(metrics, map[string]string{
+		"Route":  apiRouteTemplate(request.RequestContext.HTTP.Method, apiPath(request.RawPath)),
+		"Status": strconv.Itoa(status),
+	})
+	return result, err
+}
+
+func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	path := apiPath(request.RawPath)
 	method := request.RequestContext.HTTP.Method
 	if crossSiteMutation(method, request.Headers) {
 		return response(http.StatusForbidden, map[string]string{"error": "forbidden"}), nil
@@ -150,6 +170,68 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 		result.Cookies = append(result.Cookies, renewedCookie)
 	}
 	return result, nil
+}
+
+func apiPath(raw string) string {
+	path := strings.TrimRight(raw, "/")
+	path = strings.TrimPrefix(path, "/api")
+	if path == "" {
+		return "/"
+	}
+	return path
+}
+
+func apiRouteTemplate(method, path string) string {
+	method = boundedMethod(method)
+	for _, static := range []string{
+		"/", "/session", "/me", "/items", "/search", "/items/read-batch", "/ranking/recompute",
+		"/archive", "/feeds", "/feeds/export.opml", "/feeds/discover", "/feeds/import",
+	} {
+		if path == static {
+			return method + " " + static
+		}
+	}
+	if parts := routeParts(path, "/archive/"); len(parts) == 1 {
+		return method + " /archive/{item_id}"
+	}
+	if parts := routeParts(path, "/items/"); len(parts) == 1 {
+		return method + " /items/{item_id}"
+	} else if len(parts) == 2 {
+		switch parts[1] {
+		case "similar", "retry", "heart", "signal", "read", "events":
+			return method + " /items/{item_id}/" + parts[1]
+		default:
+			return method + " /items/{item_id}/{action}"
+		}
+	}
+	if parts := routeParts(path, "/feeds/"); len(parts) == 1 {
+		return method + " /feeds/{feed_id}"
+	} else if len(parts) == 2 && parts[1] == "retry" {
+		return method + " /feeds/{feed_id}/retry"
+	}
+	return "$unmatched"
+}
+
+func routeParts(path, prefix string) []string {
+	if !strings.HasPrefix(path, prefix) {
+		return nil
+	}
+	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
+	for _, part := range parts {
+		if part == "" {
+			return nil
+		}
+	}
+	return parts
+}
+
+func boundedMethod(method string) string {
+	switch method {
+	case http.MethodDelete, http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPatch, http.MethodPost, http.MethodPut:
+		return method
+	default:
+		return "OTHER"
+	}
 }
 
 func (s *server) postSession(ctx context.Context, body string) events.APIGatewayV2HTTPResponse {

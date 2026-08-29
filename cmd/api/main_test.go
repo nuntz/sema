@@ -325,6 +325,58 @@ func TestHandleRejectsCrossSiteMutationsBeforeAuthentication(t *testing.T) {
 	}
 }
 
+func TestAPIRouteTemplateBoundsDynamicPaths(t *testing.T) {
+	tests := []struct {
+		method, path, want string
+	}{
+		{http.MethodGet, "/items/first", "GET /items/{item_id}"},
+		{http.MethodGet, "/items/second/similar", "GET /items/{item_id}/similar"},
+		{http.MethodPost, "/items/secret/events", "POST /items/{item_id}/events"},
+		{http.MethodPatch, "/feeds/private-feed", "PATCH /feeds/{feed_id}"},
+		{http.MethodPost, "/feeds/private-feed/retry", "POST /feeds/{feed_id}/retry"},
+		{"CUSTOM-secret", "/unknown/private", "$unmatched"},
+	}
+	for _, test := range tests {
+		if got := apiRouteTemplate(test.method, test.path); got != test.want {
+			t.Errorf("apiRouteTemplate(%q, %q) = %q, want %q", test.method, test.path, got, test.want)
+		}
+	}
+}
+
+func TestAPIEmitsOneRequestEventIncludingServerErrors(t *testing.T) {
+	db := &apiDynamo{update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		return nil, errors.New("dynamo unavailable")
+	}}
+	type metricEvent struct {
+		metrics    map[string]float64
+		dimensions map[string]string
+	}
+	events := []metricEvent{}
+	server := &server{
+		store: store.New(db, nil, "table", "", ""),
+		verifyGoogle: func(context.Context, string) (auth.Claims, error) {
+			return auth.Claims{Subject: "reader", Email: "reader@example.com"}, nil
+		},
+		emit: func(metrics map[string]float64, dimensions map[string]string) {
+			events = append(events, metricEvent{metrics: metrics, dimensions: dimensions})
+		},
+	}
+	got, err := server.handle(context.Background(), apiRequest(http.MethodPost, "/api/session", `{"credential":"token"}`))
+	if err != nil || got.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("handle = %#v, %v", got, err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("metric events = %#v", events)
+	}
+	event := events[0]
+	if event.metrics["APIRequests"] != 1 || event.metrics["APIRequestDurationMs"] < 0 || event.metrics["APIServerErrors"] != 1 {
+		t.Fatalf("metrics = %#v", event.metrics)
+	}
+	if len(event.dimensions) != 2 || event.dimensions["Route"] != "POST /session" || event.dimensions["Status"] != "500" {
+		t.Fatalf("dimensions = %#v", event.dimensions)
+	}
+}
+
 func apiRequest(method, path, body string) events.APIGatewayV2HTTPRequest {
 	return events.APIGatewayV2HTTPRequest{
 		RawPath: path, Body: body,
