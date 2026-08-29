@@ -3,6 +3,7 @@ package vectorstore
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 
 type stubS3Vectors struct {
 	put       *s3vectors.PutVectorsInput
+	puts      []*s3vectors.PutVectorsInput
 	query     *s3vectors.QueryVectorsInput
 	list      *s3vectors.ListVectorsOutput
 	deleted   []string
@@ -22,7 +24,53 @@ type stubS3Vectors struct {
 
 func (s *stubS3Vectors) PutVectors(_ context.Context, input *s3vectors.PutVectorsInput, _ ...func(*s3vectors.Options)) (*s3vectors.PutVectorsOutput, error) {
 	s.put = input
+	s.puts = append(s.puts, input)
 	return &s3vectors.PutVectorsOutput{}, nil
+}
+
+func TestS3PutBatchChunksAtServiceLimit(t *testing.T) {
+	stub := &stubS3Vectors{}
+	store := NewS3(stub, "bucket", "items")
+	records := make([]Record, putVectorsLimit*2+1)
+	for index := range records {
+		records[index] = Record{Key: fmt.Sprintf("item-%d", index), Data: []float32{1, 0}, Kind: KindLive, ExpiresTS: 42}
+	}
+	if err := store.PutBatch(context.Background(), records); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.puts) != 3 || len(stub.puts[0].Vectors) != 500 || len(stub.puts[1].Vectors) != 500 || len(stub.puts[2].Vectors) != 1 {
+		t.Fatalf("put batches = %#v", []int{len(stub.puts[0].Vectors), len(stub.puts[1].Vectors), len(stub.puts[2].Vectors)})
+	}
+	if err := store.PutBatch(context.Background(), []Record{{Key: "valid", Data: []float32{1}}, {Key: "missing-data"}}); err == nil {
+		t.Fatal("invalid batch succeeded")
+	}
+	if len(stub.puts) != 3 {
+		t.Fatalf("invalid batch made partial writes: %d calls", len(stub.puts))
+	}
+}
+
+func TestS3PutBatchAlsoRespectsPayloadLimit(t *testing.T) {
+	stub := &stubS3Vectors{}
+	store := NewS3(stub, "bucket", "items")
+	data := make([]float32, 4096)
+	for index := range data {
+		data[index] = 0.12345678
+	}
+	records := make([]Record, putVectorsLimit)
+	for index := range records {
+		records[index] = Record{Key: fmt.Sprintf("item-%d", index), Data: data, Kind: KindLive}
+	}
+	if err := store.PutBatch(context.Background(), records); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.puts) < 2 {
+		t.Fatalf("large payload used %d request, want multiple", len(stub.puts))
+	}
+	for _, input := range stub.puts {
+		if len(input.Vectors) > putVectorsLimit {
+			t.Fatalf("batch has %d vectors", len(input.Vectors))
+		}
+	}
 }
 func (s *stubS3Vectors) DeleteVectors(_ context.Context, input *s3vectors.DeleteVectorsInput, _ ...func(*s3vectors.Options)) (*s3vectors.DeleteVectorsOutput, error) {
 	s.deleted = append(s.deleted, input.Keys...)

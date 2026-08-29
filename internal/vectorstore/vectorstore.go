@@ -35,6 +35,7 @@ type Match struct {
 
 type Store interface {
 	Put(context.Context, Record) error
+	PutBatch(context.Context, []Record) error
 	Delete(context.Context, string) error
 	Get(context.Context, string) ([]float32, error)
 	Query(context.Context, []float32, int, int64) ([]Match, error)

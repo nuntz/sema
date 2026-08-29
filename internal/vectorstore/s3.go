@@ -25,13 +25,53 @@ type S3 struct {
 	index  string
 }
 
+const (
+	putVectorsLimit           = 500
+	putVectorsPayloadLimit    = 20 << 20
+	putVectorsRequestOverhead = 1024
+)
+
 func NewS3(client s3VectorsAPI, bucket, index string) *S3 {
 	return &S3{client: client, bucket: bucket, index: index}
 }
 
 func (s *S3) Put(ctx context.Context, record Record) error {
+	return s.PutBatch(ctx, []Record{record})
+}
+
+func (s *S3) PutBatch(ctx context.Context, records []Record) error {
+	vectors := make([]types.PutInputVector, len(records))
+	sizes := make([]int, len(records))
+	for index, record := range records {
+		vector, size, err := putInputVector(record)
+		if err != nil {
+			return fmt.Errorf("vector %d: %w", index, err)
+		}
+		if size+putVectorsRequestOverhead > putVectorsPayloadLimit {
+			return fmt.Errorf("vector %d exceeds PutVectors payload limit", index)
+		}
+		vectors[index] = vector
+		sizes[index] = size
+	}
+	for offset := 0; offset < len(vectors); {
+		end, payloadSize := offset, putVectorsRequestOverhead
+		for end < len(vectors) && end-offset < putVectorsLimit && payloadSize+sizes[end]+1 <= putVectorsPayloadLimit {
+			payloadSize += sizes[end] + 1
+			end++
+		}
+		if _, err := s.client.PutVectors(ctx, &s3vectors.PutVectorsInput{
+			VectorBucketName: aws.String(s.bucket), IndexName: aws.String(s.index), Vectors: vectors[offset:end],
+		}); err != nil {
+			return err
+		}
+		offset = end
+	}
+	return nil
+}
+
+func putInputVector(record Record) (types.PutInputVector, int, error) {
 	if record.Key == "" || len(record.Data) == 0 {
-		return fmt.Errorf("vector key and data are required")
+		return types.PutInputVector{}, 0, fmt.Errorf("vector key and data are required")
 	}
 	metadata := map[string]any{
 		"kind": string(record.Kind), "feed_id": record.FeedID,
@@ -40,13 +80,15 @@ func (s *S3) Put(ctx context.Context, record Record) error {
 	if record.Kind == KindLive {
 		metadata["expires_ts"] = record.ExpiresTS
 	}
-	_, err := s.client.PutVectors(ctx, &s3vectors.PutVectorsInput{
-		VectorBucketName: aws.String(s.bucket), IndexName: aws.String(s.index),
-		Vectors: []types.PutInputVector{{
-			Key: aws.String(record.Key), Data: &types.VectorDataMemberFloat32{Value: record.Data}, Metadata: document.NewLazyDocument(metadata),
-		}},
+	encoded, err := json.Marshal(map[string]any{
+		"key": record.Key, "data": map[string]any{"float32": record.Data}, "metadata": metadata,
 	})
-	return err
+	if err != nil {
+		return types.PutInputVector{}, 0, fmt.Errorf("encode vector payload: %w", err)
+	}
+	return types.PutInputVector{
+		Key: aws.String(record.Key), Data: &types.VectorDataMemberFloat32{Value: record.Data}, Metadata: document.NewLazyDocument(metadata),
+	}, len(encoded), nil
 }
 
 func (s *S3) Delete(ctx context.Context, key string) error {

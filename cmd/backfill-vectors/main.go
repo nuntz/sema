@@ -59,6 +59,7 @@ func run(ctx context.Context, repository itemStore, vectors vectorstore.Store, a
 		if err := repository.LoadItemVectors(ctx, userID, archive); err != nil {
 			return liveCount, archiveCount, err
 		}
+		records := make([]vectorstore.Record, 0, len(live)+len(archive))
 		for _, group := range []struct {
 			items []domain.Item
 			kind  vectorstore.Kind
@@ -72,11 +73,12 @@ func run(ctx context.Context, repository itemStore, vectors vectorstore.Store, a
 				} else {
 					archiveCount++
 				}
-				if apply {
-					if err := vectors.Put(ctx, vectorstore.FromItem(item, group.kind)); err != nil {
-						return liveCount, archiveCount, fmt.Errorf("put %s vector %s: %w", group.kind, item.ItemID, err)
-					}
-				}
+				records = append(records, vectorstore.FromItem(item, group.kind))
+			}
+		}
+		if apply && len(records) > 0 {
+			if err := vectors.PutBatch(ctx, records); err != nil {
+				return liveCount, archiveCount, fmt.Errorf("put vectors for user %s: %w", userID, err)
 			}
 		}
 	}
