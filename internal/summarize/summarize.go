@@ -43,8 +43,8 @@ func (s *Service) Summarize(ctx context.Context, title, body string) (string, er
 	if len(strings.Fields(generated)) > MaxWords {
 		return "", fmt.Errorf("summary provider returned more than %d words", MaxWords)
 	}
-	if sentenceCount(generated) != 2 {
-		return "", fmt.Errorf("summary provider returned %d sentences, want 2", sentenceCount(generated))
+	if sentenceCount(generated) > 3 {
+		generated = firstSentences(generated, 2)
 	}
 	return generated, nil
 }
@@ -103,16 +103,105 @@ func normalizeComparable(value string) string {
 }
 
 func sentenceCount(value string) int {
-	count := 0
-	inEnding := false
-	for _, r := range value {
-		ending := strings.ContainsRune(".!?。！？", r)
-		if ending && !inEnding {
-			count++
-		}
-		inEnding = ending
+	return len(sentenceEnds(value))
+}
+
+func firstSentences(value string, count int) string {
+	ends := sentenceEnds(value)
+	if len(ends) <= count {
+		return strings.TrimSpace(value)
 	}
-	return count
+	return strings.TrimSpace(string([]rune(value)[:ends[count-1]]))
+}
+
+func sentenceEnds(value string) []int {
+	runes := []rune(value)
+	ends := []int{}
+	lastEnd := 0
+	for index := 0; index < len(runes); index++ {
+		if !strings.ContainsRune(".!?。！？", runes[index]) {
+			continue
+		}
+		end := index
+		for end+1 < len(runes) && strings.ContainsRune(".!?。！？", runes[end+1]) {
+			end++
+		}
+		if runes[index] == '.' && !periodEndsSentence(runes, index, end) {
+			continue
+		}
+		for end+1 < len(runes) && strings.ContainsRune("\"'”’)]}", runes[end+1]) {
+			end++
+		}
+		if end+1 < len(runes) && !unicode.IsSpace(runes[end+1]) {
+			continue
+		}
+		ends = append(ends, end+1)
+		lastEnd = end + 1
+		index = end
+	}
+	if strings.TrimSpace(string(runes[lastEnd:])) != "" {
+		ends = append(ends, len(runes))
+	}
+	return ends
+}
+
+func periodEndsSentence(runes []rune, index, clusterEnd int) bool {
+	if clusterEnd > index {
+		return true
+	}
+	if index > 0 && index+1 < len(runes) && unicode.IsDigit(runes[index-1]) && unicode.IsDigit(runes[index+1]) {
+		return false
+	}
+	if index+1 < len(runes) && !unicode.IsSpace(runes[index+1]) && !strings.ContainsRune("\"'”’)]}", runes[index+1]) {
+		return false
+	}
+	start := index
+	for start > 0 && (unicode.IsLetter(runes[start-1]) || runes[start-1] == '.') {
+		start--
+	}
+	token := strings.ToLower(strings.Trim(string(runes[start:index]), "."))
+	if token == "" {
+		return true
+	}
+	if nonEndingAbbreviation(token) || dottedInitialism(token) {
+		return false
+	}
+	if token == "a.m" || token == "p.m" || token == "etc" {
+		next := nextNonSpace(runes, index+1)
+		return next < 0 || unicode.IsUpper(runes[next])
+	}
+	return true
+}
+
+func nonEndingAbbreviation(token string) bool {
+	switch token {
+	case "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "e.g", "i.e", "fig", "no", "inc", "ltd", "co":
+		return true
+	default:
+		return len([]rune(token)) == 1
+	}
+}
+
+func dottedInitialism(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if len([]rune(part)) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func nextNonSpace(runes []rune, start int) int {
+	for index := start; index < len(runes); index++ {
+		if !unicode.IsSpace(runes[index]) && !strings.ContainsRune("\"'“‘([{", runes[index]) {
+			return index
+		}
+	}
+	return -1
 }
 
 func capRunes(value string, count int) string {

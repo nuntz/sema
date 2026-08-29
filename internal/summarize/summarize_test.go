@@ -64,11 +64,39 @@ func TestPromptAndOutputContract(t *testing.T) {
 func TestSummaryProviderFailureAndInvalidOutput(t *testing.T) {
 	for _, provider := range []*stubProvider{
 		{err: errors.New("offline")},
-		{output: "Only one sentence."},
+		{output: ""},
 		{output: strings.Repeat("word ", 51) + ". Another sentence."},
 	} {
 		if _, err := New(provider).Summarize(context.Background(), "Title", "Body"); err == nil {
 			t.Fatal("Summarize() error = nil")
 		}
+	}
+}
+
+func TestSummaryAcceptsOneToThreeSentencesAndTruncatesLongerOutput(t *testing.T) {
+	tests := []struct {
+		name, output, want string
+	}{
+		{name: "one", output: "One useful sentence.", want: "One useful sentence."},
+		{name: "two", output: "First useful sentence. Second useful sentence.", want: "First useful sentence. Second useful sentence."},
+		{name: "three", output: "First sentence. Second sentence. Third sentence.", want: "First sentence. Second sentence. Third sentence."},
+		{name: "four", output: "First sentence. Second sentence. Third sentence. Fourth sentence.", want: "First sentence. Second sentence."},
+		{name: "five with final fragment", output: "First sentence. Second sentence. Third sentence. Fourth sentence. Final fragment", want: "First sentence. Second sentence."},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New(&stubProvider{output: test.output}).Summarize(context.Background(), "Title", "Body")
+			if err != nil || got != test.want {
+				t.Fatalf("Summarize() = %q, %v, want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestSummarySentenceDetectionIgnoresAbbreviationsAndDecimals(t *testing.T) {
+	output := "Dr. Rivera measured 3.14 cm at 9 a.m. during a U.S. trial. The result matched the lab estimate."
+	got, err := New(&stubProvider{output: output}).Summarize(context.Background(), "Title", "Body")
+	if err != nil || got != output || sentenceCount(output) != 2 {
+		t.Fatalf("Summarize() = %q, %v; sentence count = %d", got, err, sentenceCount(output))
 	}
 }
