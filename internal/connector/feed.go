@@ -11,8 +11,11 @@ import (
 	"github.com/mmcdole/gofeed"
 	ext "github.com/mmcdole/gofeed/extensions"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
 )
+
+const derivedTitleRunes = 160
 
 // ConditionalHeaders is shared by connectors whose validators are stored on
 // the feed row. Callers may add connector-specific headers to the returned map.
@@ -63,7 +66,7 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 			author = item.Author.Name
 		}
 		entry := domain.Entry{
-			GUID: item.GUID, URL: ResolveURL(baseURL, item.Link), Title: strings.TrimSpace(item.Title),
+			GUID: item.GUID, URL: ResolveURL(baseURL, item.Link), Title: EntryTitle(item.Title, item.Description, item.Content),
 			SummaryRaw: item.Description, ContentRaw: item.Content, Author: author,
 			Published: published, DisplayDate: displayDate,
 		}
@@ -76,6 +79,26 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 		result.Entries = append(result.Entries, entry)
 	}
 	return result, nil
+}
+
+// EntryTitle gives title-less social-feed entries a stable, readable title
+// while keeping the normal feed-provided title when one exists.
+func EntryTitle(title, summary, content string) string {
+	if value := strings.TrimSpace(title); value != "" {
+		return value
+	}
+	for _, raw := range []string{summary, content} {
+		value := strings.Join(strings.Fields(extract.PlainText(raw)), " ")
+		if value == "" {
+			continue
+		}
+		runes := []rune(value)
+		if len(runes) > derivedTitleRunes {
+			value = strings.TrimSpace(string(runes[:derivedTitleRunes])) + "…"
+		}
+		return value
+	}
+	return ""
 }
 
 func mediaRSSEnclosures(item *gofeed.Item, base *url.URL) []domain.Enclosure {

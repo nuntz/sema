@@ -466,6 +466,31 @@ func TestPutItemEnforcesStableIdentityAcrossPublishedTimestamps(t *testing.T) {
 	}
 }
 
+func TestPutItemFailureWritesExpiringIdentityMarker(t *testing.T) {
+	ttl := time.Now().Add(domain.Retention).Unix()
+	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		if got := input.Item["PK"].(*types.AttributeValueMemberS).Value; got != domain.UserPK("user") {
+			t.Fatalf("PK = %q", got)
+		}
+		if got := input.Item["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("item") {
+			t.Fatalf("SK = %q", got)
+		}
+		if _, exists := input.Item["item_sk"]; exists {
+			t.Fatal("terminal marker contains item_sk")
+		}
+		if got := input.Item["ttl"].(*types.AttributeValueMemberN).Value; got != strconv.FormatInt(ttl, 10) {
+			t.Fatalf("ttl = %q", got)
+		}
+		if aws.ToString(input.ConditionExpression) != "attribute_not_exists(SK) OR #ttl <= :now" {
+			t.Fatalf("condition = %q", aws.ToString(input.ConditionExpression))
+		}
+		return &dynamodb.PutItemOutput{}, nil
+	}}
+	if err := New(db, nil, "table", "", "").PutItemFailure(context.Background(), "user", "item", ttl); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestItemExistsReadsStableIdentityMarker(t *testing.T) {
 	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 		if got := input.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {

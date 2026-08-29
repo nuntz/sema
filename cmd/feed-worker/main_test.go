@@ -329,6 +329,25 @@ func TestRedditFullnameDeduplicatesAcrossScheduledRuns(t *testing.T) {
 	}
 }
 
+func TestTerminalFailureMarkerSuppressesReenqueue(t *testing.T) {
+	entry := domain.Entry{GUID: "post", URL: "https://example.com/post", Published: time.Now().UTC()}
+	itemID := domain.ItemID("feed", entry.GUID, entry.URL)
+	store := &fakeFeedStore{
+		feed: domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed"}, existing: map[string]bool{itemID: true},
+	}
+	queue := &fakeItemsQueue{}
+	handler := &handler{
+		store: store, connectors: map[string]connector.Connector{domain.ConnectorRSS: resultConnector{result: domain.FetchResult{Entries: []domain.Entry{entry}}}},
+		queue: queue, itemsURL: "items",
+	}
+	if err := handler.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.messages) != 0 {
+		t.Fatalf("terminal item was re-enqueued: %#v", queue.messages)
+	}
+}
+
 func TestRedditPersistentForbiddenDoesNotAffectHealthySibling(t *testing.T) {
 	store := &fakeFeedStore{feeds: map[string]domain.Feed{
 		"blocked": {PK: "U#user", SK: "F#blocked", FeedID: "blocked", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/blocked/.rss"},

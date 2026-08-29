@@ -344,6 +344,34 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 	return false, err
 }
 
+// PutItemFailure records a terminal validation failure at the same stable
+// identity key used by successful items so feed fetches do not enqueue it
+// again during the retention window.
+func (s *Store) PutItemFailure(ctx context.Context, userID, itemID string, ttl int64) error {
+	if userID == "" || itemID == "" || ttl == 0 {
+		return errors.New("item failure identity and ttl are required")
+	}
+	marker, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: domain.UserPK(userID), SK: domain.ItemIdentitySK(itemID), TTL: ttl,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.table), Item: marker,
+		ConditionExpression:      aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
+		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+		},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil
+	}
+	return err
+}
+
 // ReconcileItemIdentity creates or refreshes the stable identity marker and
 // removes known duplicate live rows as one operation. The caller chooses the
 // canonical row; read, signal, behaviour, and archive state are all keyed by

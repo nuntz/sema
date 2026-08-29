@@ -7,11 +7,44 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
+	"github.com/nuntz/sema/internal/store"
 )
+
+type fakeItemStore struct {
+	feedErr  error
+	failures []itemFailure
+}
+
+type itemFailure struct {
+	user, item string
+	ttl        int64
+}
+
+func (*fakeItemStore) Content(context.Context, string) ([]byte, string, error) {
+	return nil, "", store.ErrNotFound
+}
+func (*fakeItemStore) ContentExists(context.Context, string) (bool, error) { return false, nil }
+func (*fakeItemStore) ContentURL(string) string                            { return "" }
+func (s *fakeItemStore) Feed(context.Context, string, string) (domain.Feed, error) {
+	return domain.Feed{}, s.feedErr
+}
+func (*fakeItemStore) Item(context.Context, string, string) (domain.Item, error) {
+	return domain.Item{}, store.ErrNotFound
+}
+func (*fakeItemStore) OverwriteItem(context.Context, domain.Item) error         { return nil }
+func (*fakeItemStore) PutContent(context.Context, string, string, []byte) error { return nil }
+func (*fakeItemStore) PutItem(context.Context, domain.Item) (bool, error)       { return true, nil }
+func (s *fakeItemStore) PutItemFailure(_ context.Context, user, item string, ttl int64) error {
+	s.failures = append(s.failures, itemFailure{user: user, item: item, ttl: ttl})
+	return nil
+}
+func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) { return nil, nil }
 
 type stubSummarizer struct {
 	value string
@@ -39,6 +72,39 @@ func TestIngestSizeUsesStoredCutoffs(t *testing.T) {
 	}
 	if got := ingestSize(0.5, "1", model); got != "M" {
 		t.Fatalf("legacy ingest size = %s, want fixed-threshold M", got)
+	}
+}
+
+func TestPermanentMissingTitleWritesMarkerAndConsumesMessage(t *testing.T) {
+	published := time.Now().UTC()
+	repository := &fakeItemStore{}
+	h := &handler{store: repository}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","published_ts":"` + domain.Timestamp(published) + `"}`
+
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(repository.failures) != 1 {
+		t.Fatalf("failure markers = %#v", repository.failures)
+	}
+	marker := repository.failures[0]
+	if marker.user != "user" || marker.item != "item" || marker.ttl != published.Add(domain.Retention).Unix() {
+		t.Fatalf("marker = %#v", marker)
+	}
+}
+
+func TestTransientItemFailureStillRetries(t *testing.T) {
+	repository := &fakeItemStore{feedErr: errors.New("dynamo unavailable")}
+	h := &handler{store: repository}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
+
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 1 || response.BatchItemFailures[0].ItemIdentifier != "message" {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(repository.failures) != 0 {
+		t.Fatalf("transient failure wrote markers: %#v", repository.failures)
 	}
 }
 

@@ -223,7 +223,7 @@ type Read struct {
 type ItemIdentity struct {
 	PK     string `dynamodbav:"PK"`
 	SK     string `dynamodbav:"SK"`
-	ItemSK string `dynamodbav:"item_sk"`
+	ItemSK string `dynamodbav:"item_sk,omitempty"`
 	TTL    int64  `dynamodbav:"ttl"`
 }
 

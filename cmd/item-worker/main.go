@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
+	"github.com/nuntz/sema/internal/connector"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
@@ -37,7 +38,7 @@ type httpClient interface {
 }
 
 type handler struct {
-	store          *store.Store
+	store          itemStore
 	http           httpClient
 	media          *media.Processor
 	embedder       embed.Embedder
@@ -46,6 +47,19 @@ type handler struct {
 	modelVersion   string
 	scoringVersion string
 	vectors        vectorstore.Store
+}
+
+type itemStore interface {
+	Content(context.Context, string) ([]byte, string, error)
+	ContentExists(context.Context, string) (bool, error)
+	ContentURL(string) string
+	Feed(context.Context, string, string) (domain.Feed, error)
+	Item(context.Context, string, string) (domain.Item, error)
+	OverwriteItem(context.Context, domain.Item) error
+	PutContent(context.Context, string, string, []byte) error
+	PutItem(context.Context, domain.Item) (bool, error)
+	PutItemFailure(context.Context, string, string, int64) error
+	Signals(context.Context, string) ([]domain.Signal, error)
 }
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -85,6 +99,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if published.Before(started.Add(-domain.Retention)) {
 		return nil
 	}
+	message.Title = connector.EntryTitle(message.Title, message.SummaryRaw, message.ContentRaw)
 	var existing domain.Item
 	if message.Reprocess {
 		existing, err = h.store.Item(ctx, message.User, message.ItemID)
@@ -110,6 +125,13 @@ func (h *handler) process(ctx context.Context, body string) error {
 			message.ContentRaw = existing.Description
 		}
 		message.IsShort = message.IsShort || existing.IsShort
+	}
+	if message.Title == "" {
+		if err := h.store.PutItemFailure(ctx, message.User, message.ItemID, published.Add(domain.Retention).Unix()); err != nil {
+			return fmt.Errorf("record permanent item failure: %w", err)
+		}
+		slog.WarnContext(ctx, "item permanently rejected", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "reason", "missing title")
+		return nil
 	}
 	isVideo := message.MediaType == "video" || message.VideoID != ""
 	feed, err := h.store.Feed(ctx, message.User, message.FeedID)
