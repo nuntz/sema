@@ -11,7 +11,13 @@ import {
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
-import { justify, totalHeight, visibleRows } from "../layout/justified";
+import {
+  justify,
+  type LayoutRow,
+  reuseLayoutRows,
+  totalHeight,
+  visibleRows,
+} from "../layout/justified";
 import { type LayoutDirection, nearestCell } from "../layout/navigation";
 import {
   caughtUpBoundary,
@@ -147,11 +153,17 @@ export function Grid(props: GridProps) {
       () => props.items,
     ),
   );
+  let previousLayoutRows: LayoutRow[] = [];
+  const stableRows = (next: LayoutRow[]) => {
+    const rows = reuseLayoutRows(previousLayoutRows, next);
+    previousLayoutRows = rows;
+    return rows;
+  };
   const layout = createMemo(() => {
     const items = layoutItems();
     const boundary = caughtUp();
     if (!boundary) {
-      const rows = justify(items, contentWidth(), props.hasMore);
+      const rows = stableRows(justify(items, contentWidth(), props.hasMore));
       return { rows, height: totalHeight(rows) };
     }
 
@@ -159,7 +171,7 @@ export function Grid(props: GridProps) {
       ? items.findIndex((item) => item.item_id === boundary.beforeItemID)
       : items.length;
     if (beforeIndex < 0) {
-      const rows = justify(items, contentWidth(), props.hasMore);
+      const rows = stableRows(justify(items, contentWidth(), props.hasMore));
       return { rows, height: totalHeight(rows) };
     }
 
@@ -175,7 +187,7 @@ export function Grid(props: GridProps) {
       ...row,
       top: row.top + aboveHeight + dividerHeight(),
     }));
-    const rows = [...above, ...below];
+    const rows = stableRows([...above, ...below]);
     return {
       rows,
       dividerTop: aboveHeight + 14,

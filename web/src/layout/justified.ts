@@ -741,6 +741,55 @@ export function totalHeight(rows: LayoutRow[]): number {
   return last ? last.top + last.height : 0;
 }
 
+function sameLayoutCell(left: LayoutCell, right: LayoutCell): boolean {
+  return (
+    left.item.item_id === right.item.item_id &&
+    left.width === right.width &&
+    left.left === right.left &&
+    left.effectiveSize === right.effectiveSize &&
+    left.height === right.height &&
+    left.offsetY === right.offsetY &&
+    left.span === right.span &&
+    left.tall === right.tall
+  );
+}
+
+function sameLayoutRow(left: LayoutRow, right: LayoutRow): boolean {
+  return (
+    left.height === right.height &&
+    left.top === right.top &&
+    left.gap === right.gap &&
+    left.kind === right.kind &&
+    left.cells.length === right.cells.length &&
+    left.cells.every((cell, index) => sameLayoutCell(cell, right.cells[index]))
+  );
+}
+
+/**
+ * Preserve row references when a relayout leaves their item and geometry
+ * unchanged. Solid's keyed list then keeps those rows mounted while pagination
+ * appends or reflows only the tail of the grid.
+ */
+export function reuseLayoutRows(
+  previous: LayoutRow[],
+  next: LayoutRow[],
+): LayoutRow[] {
+  if (previous.length === 0 || next.length === 0) return next;
+
+  const previousByFirstItem = new Map<string, LayoutRow>();
+  for (const row of previous) {
+    const firstID = row.cells[0]?.item.item_id;
+    if (firstID && !previousByFirstItem.has(firstID))
+      previousByFirstItem.set(firstID, row);
+  }
+
+  return next.map((row) => {
+    const firstID = row.cells[0]?.item.item_id;
+    const prior = firstID ? previousByFirstItem.get(firstID) : undefined;
+    return prior && sameLayoutRow(prior, row) ? prior : row;
+  });
+}
+
 export function visibleRows(
   rows: LayoutRow[],
   scrollTop: number,

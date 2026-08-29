@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../types";
-import { justify, largeRunWeight, spanEligible } from "./justified";
+import {
+  justify,
+  type LayoutRow,
+  largeRunWeight,
+  reuseLayoutRows,
+  spanEligible,
+} from "./justified";
 
 const item = (
   id: string | number,
@@ -613,5 +619,50 @@ describe("390px mobile bands", () => {
     );
     expect(rows[0].cells[0].width).toBeCloseTo(191, 5);
     expect(rows[0].cells[1].width).toBeCloseTo(191, 5);
+  });
+});
+
+describe("layout row identity", () => {
+  const row = (
+    entries: Item[],
+    overrides: Partial<LayoutRow> = {},
+  ): LayoutRow => ({
+    cells: entries.map((entry, index) => ({
+      item: entry,
+      width: 120,
+      left: index * 130,
+      effectiveSize: entry.size,
+      height: 172,
+      offsetY: 0,
+    })),
+    height: 172,
+    top: 0,
+    gap: 10,
+    kind: "standard",
+    ...overrides,
+  });
+
+  it("reuses an unchanged row when pagination appends another row", () => {
+    const previous = row([item("a", "M"), item("b", "S")]);
+    const equivalent = row([
+      { ...item("a", "M"), read: true },
+      { ...item("b", "S"), read: true },
+    ]);
+    const appended = row([item("c", "M")], { top: 182 });
+
+    const stabilized = reuseLayoutRows([previous], [equivalent, appended]);
+
+    expect(stabilized[0]).toBe(previous);
+    expect(stabilized[1]).toBe(appended);
+  });
+
+  it("replaces a row whose geometry or membership changed", () => {
+    const previous = row([item("a", "M"), item("b", "S")]);
+    const resized = row([item("a", "M"), item("b", "S")]);
+    resized.cells[0].width += 1;
+    const regrouped = row([item("a", "M"), item("c", "S")]);
+
+    expect(reuseLayoutRows([previous], [resized])[0]).toBe(resized);
+    expect(reuseLayoutRows([previous], [regrouped])[0]).toBe(regrouped);
   });
 });

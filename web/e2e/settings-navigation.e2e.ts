@@ -63,6 +63,8 @@ const items = Array.from({ length: 80 }, (_, index) => ({
 
 interface OpenAppOptions {
   initialItems?: typeof items;
+  initialCursor?: string;
+  pagination?: { items: typeof items; nextCursor?: string };
   polledItems?: typeof items;
   readAnchor?: { item_id: string; published_ts: string };
 }
@@ -100,8 +102,10 @@ async function openApp(
     if (url.pathname === "/api/items") {
       state.itemRequests++;
       const includeRead = url.searchParams.get("include_read") === "true";
-      const responseItems =
-        state.itemRequests === 1
+      const cursor = url.searchParams.get("cursor");
+      const responseItems = cursor
+        ? (options.pagination?.items ?? [])
+        : state.itemRequests === 1
           ? (options.initialItems ?? items)
           : (options.polledItems ?? options.initialItems ?? items);
       await route.fulfill({
@@ -109,7 +113,11 @@ async function openApp(
           items: includeRead
             ? responseItems
             : responseItems.filter((item) => !item.read),
-          next_cursor: null,
+          next_cursor: cursor
+            ? (options.pagination?.nextCursor ?? null)
+            : state.itemRequests === 1
+              ? (options.initialCursor ?? null)
+              : null,
           ...(options.readAnchor ? { read_anchor: options.readAnchor } : {}),
         },
       });
@@ -186,6 +194,51 @@ test("new items remain visible while the unread grid is scrolled", async ({
       page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
     )
     .toBe(scrollTop);
+});
+
+test("pagination keeps settled visible grid rows mounted", async ({ page }) => {
+  const state = await openApp(page, {
+    initialItems: items.slice(0, 30),
+    initialCursor: "page-2",
+    pagination: { items: items.slice(30, 50) },
+  });
+  expect(state.itemRequests).toBe(1);
+
+  const scroller = page.locator(".grid-scroll");
+  const canvas = page.locator(".virtual-canvas");
+  const initialHeight = await canvas.evaluate(
+    (element) => element.getBoundingClientRect().height,
+  );
+  const probe = await scroller.evaluate((element) => {
+    const target = Math.max(
+      1,
+      element.scrollHeight - element.clientHeight * 3 + 2,
+    );
+    const row = [...element.querySelectorAll<HTMLElement>(".grid-row")].find(
+      (candidate) =>
+        candidate.offsetTop + candidate.offsetHeight >= target &&
+        candidate.offsetTop <= target + element.clientHeight,
+    );
+    const cell = row?.querySelector<HTMLElement>(".grid-cell");
+    const itemID = cell?.dataset.itemId;
+    if (!cell || !itemID)
+      throw new Error("stable pagination probe unavailable");
+    cell.setAttribute("data-mount-probe", "preserved");
+    return { itemID, target };
+  });
+  const probeCell = page.locator(`[data-item-id="${probe.itemID}"]`);
+
+  await scroller.evaluate((element, target) => {
+    element.scrollTop = target;
+  }, probe.target);
+
+  await expect.poll(() => state.itemRequests).toBe(2);
+  await expect
+    .poll(() =>
+      canvas.evaluate((element) => element.getBoundingClientRect().height),
+    )
+    .not.toBe(initialHeight);
+  await expect(probeCell).toHaveAttribute("data-mount-probe", "preserved");
 });
 
 test("pill insertion returns a cleared grid to its new rows", async ({
