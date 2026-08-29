@@ -76,6 +76,16 @@ func newIntegrationStore(t *testing.T) (context.Context, *Store) {
 	return ctx, New(db, nil, table, "", "")
 }
 
+func putIntegrationFeed(t *testing.T, ctx context.Context, repository *Store, userID, feedID string) {
+	t.Helper()
+	if err := repository.PutFeed(ctx, domain.Feed{
+		PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID,
+		URL: "https://example.com/feed", NextFetchAt: domain.Timestamp(time.Now()),
+	}); err != nil {
+		t.Fatalf("put feed: %v", err)
+	}
+}
+
 func TestDynamoAccessPatterns(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	if err := repository.EnsureUser(ctx, "user", "reader@example.com"); err != nil {
@@ -93,6 +103,7 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if err := repository.EnsureUser(ctx, "user", "reader@example.com"); err != nil {
 		t.Fatal(err)
 	}
+	putIntegrationFeed(t, ctx, repository, "user", "feed")
 	profile, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(repository.table), Key: key(domain.UserPK("user"), "PROFILE"),
 	})
@@ -124,6 +135,9 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	live, err := repository.LiveItems(ctx, "user")
 	if err != nil || len(live) != 2 {
 		t.Fatalf("live items = %#v, %v", live, err)
+	}
+	if err := repository.LoadItemVectors(ctx, "user", live); err != nil {
+		t.Fatalf("load live item vectors: %v", err)
 	}
 	for _, item := range live {
 		if len(item.Vector) == 0 || item.SearchText == "" {
@@ -201,6 +215,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
 		t.Fatal(err)
 	}
+	putIntegrationFeed(t, ctx, repository, "keeper", "feed")
 	objects := &archiveObjectStore{objects: map[string]bool{}}
 	repository.s3 = objects
 	repository.bucket = "content"
@@ -331,6 +346,7 @@ func TestHeartToleratesMissingContentAndRejectsExpiredItem(t *testing.T) {
 	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
 		t.Fatal(err)
 	}
+	putIntegrationFeed(t, ctx, repository, "keeper", "feed")
 	repository.s3 = &archiveObjectStore{objects: map[string]bool{}}
 	repository.bucket = "content"
 	now := time.Now().UTC()
@@ -369,6 +385,7 @@ func TestArchivePaginationIsNewestHeartFirst(t *testing.T) {
 	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
 		t.Fatal(err)
 	}
+	putIntegrationFeed(t, ctx, repository, "keeper", "feed")
 	now := time.Now().UTC()
 	for index, id := range []string{"first", "second", "third"} {
 		published := now.Add(time.Duration(index) * time.Second)
