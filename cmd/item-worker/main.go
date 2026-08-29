@@ -413,18 +413,26 @@ func (h *handler) process(ctx context.Context, body string) error {
 	} else {
 		metrics["ItemsDeduped"] = 1
 	}
+	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", observability.Emit)
+	return nil
+}
+
+func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {
+	failures := map[string]float64{}
 	if hasBody {
 		metrics["ExtractionSucceeded"] = 1
 	} else {
-		metrics["ExtractionFailed"] = 1
+		failures["ExtractionFailed"] = 1
 	}
-	if mediaKey != "" {
+	if hasMedia {
 		metrics["MediaSucceeded"] = 1
 	} else {
-		metrics["MediaFailed"] = 1
+		failures["MediaFailed"] = 1
 	}
-	observability.Emit(metrics, nil)
-	return nil
+	emit(metrics, nil)
+	if len(failures) > 0 {
+		emit(failures, map[string]string{"FeedID": feedID})
+	}
 }
 
 type contentWriter interface {

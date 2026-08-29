@@ -108,6 +108,27 @@ func TestTransientItemFailureStillRetries(t *testing.T) {
 	}
 }
 
+func TestFailureMetricsCarryOnlyFeedIDDimension(t *testing.T) {
+	type event struct {
+		metrics    map[string]float64
+		dimensions map[string]string
+	}
+	events := []event{}
+	emitItemMetrics(map[string]float64{"ItemsWritten": 1}, "feed", false, false, func(metrics map[string]float64, dimensions map[string]string) {
+		events = append(events, event{metrics: metrics, dimensions: dimensions})
+	})
+	if len(events) != 2 || events[0].dimensions != nil || events[0].metrics["ItemsWritten"] != 1 {
+		t.Fatalf("base metric event = %#v", events)
+	}
+	failure := events[1]
+	if failure.metrics["ExtractionFailed"] != 1 || failure.metrics["MediaFailed"] != 1 {
+		t.Fatalf("failure metrics = %#v", failure.metrics)
+	}
+	if len(failure.dimensions) != 1 || failure.dimensions["FeedID"] != "feed" {
+		t.Fatalf("failure dimensions = %#v", failure.dimensions)
+	}
+}
+
 func TestArticleContentDecision(t *testing.T) {
 	shortCommentary := `<p>` + strings.Repeat("feed-commentary ", 45) + `<a href="/foo">source</a></p>`
 	longCommentary := `<p>` + strings.Repeat("feed-commentary ", 220) + `</p>`
