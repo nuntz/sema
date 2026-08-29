@@ -176,6 +176,18 @@ make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
 
 The backfill keeps the newest row for each item, preserves archive pointers, and creates its identity marker. The final pass catches items written during deployment.
 
+### Split item-vector rollout and recovery
+
+Deploy the split-vector writer and targeted rescore updates before migrating older live items. Then inspect and apply the DynamoDB item-vector backfill before allowing a scheduled or on-demand rescore:
+
+```sh
+make deploy STACK=prod
+make backfill-item-vectors STACK=prod
+make backfill-item-vectors STACK=prod BACKFILL_ARGS=--apply
+```
+
+The command is idempotent and dry-run by default. It creates only missing or expired `V#` rows, preferring a surviving inline embedding and otherwise restoring the original embedding from S3 Vectors. Investigate any non-zero `unavailable` count and replay those items before rescoring. The separate `backfill-vectors` command below copies DynamoDB embeddings in the opposite direction, into the S3 vector index.
+
 ### Search rollout and vector migrations
 
 Deploy search writers first, then reindex live items and backfill search text and vectors:

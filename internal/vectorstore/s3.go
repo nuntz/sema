@@ -29,6 +29,7 @@ const (
 	putVectorsLimit           = 500
 	putVectorsPayloadLimit    = 20 << 20
 	putVectorsRequestOverhead = 1024
+	getVectorsLimit           = 100
 )
 
 func NewS3(client s3VectorsAPI, bucket, index string) *S3 {
@@ -99,20 +100,48 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 }
 
 func (s *S3) Get(ctx context.Context, key string) ([]float32, error) {
-	output, err := s.client.GetVectors(ctx, &s3vectors.GetVectorsInput{
-		VectorBucketName: aws.String(s.bucket), IndexName: aws.String(s.index), Keys: []string{key}, ReturnData: true,
-	})
+	vectors, err := s.GetBatch(ctx, []string{key})
 	if err != nil {
 		return nil, err
 	}
-	if len(output.Vectors) == 0 {
+	vector, ok := vectors[key]
+	if !ok {
 		return nil, ErrNotFound
 	}
-	data, ok := output.Vectors[0].Data.(*types.VectorDataMemberFloat32)
-	if !ok || len(data.Value) == 0 {
-		return nil, ErrNotFound
+	return vector, nil
+}
+
+// GetBatch returns every requested vector that exists, chunking requests at
+// the S3 Vectors GetVectors service limit. Missing keys are omitted.
+func (s *S3) GetBatch(ctx context.Context, keys []string) (map[string][]float32, error) {
+	unique := make([]string, 0, len(keys))
+	seen := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, key)
 	}
-	return data.Value, nil
+	result := make(map[string][]float32, len(unique))
+	for offset := 0; offset < len(unique); offset += getVectorsLimit {
+		end := min(offset+getVectorsLimit, len(unique))
+		output, err := s.client.GetVectors(ctx, &s3vectors.GetVectorsInput{
+			VectorBucketName: aws.String(s.bucket), IndexName: aws.String(s.index), Keys: unique[offset:end], ReturnData: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("get vectors %d-%d: %w", offset, end, err)
+		}
+		for _, candidate := range output.Vectors {
+			key := aws.ToString(candidate.Key)
+			data, ok := candidate.Data.(*types.VectorDataMemberFloat32)
+			if key == "" || !ok || len(data.Value) == 0 {
+				continue
+			}
+			result[key] = append([]float32(nil), data.Value...)
+		}
+	}
+	return result, nil
 }
 
 func (s *S3) Query(ctx context.Context, vector []float32, limit int, now int64) ([]Match, error) {

@@ -3,6 +3,7 @@ package vectorstore
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -14,12 +15,13 @@ import (
 )
 
 type stubS3Vectors struct {
-	put       *s3vectors.PutVectorsInput
-	puts      []*s3vectors.PutVectorsInput
-	query     *s3vectors.QueryVectorsInput
-	list      *s3vectors.ListVectorsOutput
-	deleted   []string
-	getVector []float32
+	put        *s3vectors.PutVectorsInput
+	puts       []*s3vectors.PutVectorsInput
+	query      *s3vectors.QueryVectorsInput
+	list       *s3vectors.ListVectorsOutput
+	deleted    []string
+	gets       [][]string
+	getVectors map[string][]float32
 }
 
 func (s *stubS3Vectors) PutVectors(_ context.Context, input *s3vectors.PutVectorsInput, _ ...func(*s3vectors.Options)) (*s3vectors.PutVectorsOutput, error) {
@@ -76,11 +78,15 @@ func (s *stubS3Vectors) DeleteVectors(_ context.Context, input *s3vectors.Delete
 	s.deleted = append(s.deleted, input.Keys...)
 	return &s3vectors.DeleteVectorsOutput{}, nil
 }
-func (s *stubS3Vectors) GetVectors(context.Context, *s3vectors.GetVectorsInput, ...func(*s3vectors.Options)) (*s3vectors.GetVectorsOutput, error) {
-	if len(s.getVector) == 0 {
-		return &s3vectors.GetVectorsOutput{Vectors: []types.GetOutputVector{}}, nil
+func (s *stubS3Vectors) GetVectors(_ context.Context, input *s3vectors.GetVectorsInput, _ ...func(*s3vectors.Options)) (*s3vectors.GetVectorsOutput, error) {
+	s.gets = append(s.gets, append([]string(nil), input.Keys...))
+	output := &s3vectors.GetVectorsOutput{}
+	for _, key := range input.Keys {
+		if vector, ok := s.getVectors[key]; ok {
+			output.Vectors = append(output.Vectors, types.GetOutputVector{Key: aws.String(key), Data: &types.VectorDataMemberFloat32{Value: vector}})
+		}
 	}
-	return &s3vectors.GetVectorsOutput{Vectors: []types.GetOutputVector{{Key: aws.String("item"), Data: &types.VectorDataMemberFloat32{Value: s.getVector}}}}, nil
+	return output, nil
 }
 func (s *stubS3Vectors) QueryVectors(_ context.Context, input *s3vectors.QueryVectorsInput, _ ...func(*s3vectors.Options)) (*s3vectors.QueryVectorsOutput, error) {
 	s.query = input
@@ -138,5 +144,34 @@ func TestS3VectorLifecycleAndExpiryFilter(t *testing.T) {
 	}
 	if deleted != 1 || size != 4 || !reflect.DeepEqual(stub.deleted, []string{"expired"}) {
 		t.Fatalf("cleanup = deleted %d size %d keys %#v", deleted, size, stub.deleted)
+	}
+}
+
+func TestS3GetBatchChunksDeduplicatesAndOmitsMissing(t *testing.T) {
+	stub := &stubS3Vectors{getVectors: map[string][]float32{
+		"item-0": {1, 0}, "item-100": {0, 1}, "item-200": {1, 1},
+	}}
+	store := NewS3(stub, "bucket", "items")
+	keys := make([]string, 201)
+	for index := range keys {
+		keys[index] = fmt.Sprintf("item-%d", index)
+	}
+	keys = append(keys, "item-0", "")
+	vectors, err := store.GetBatch(context.Background(), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.gets) != 3 || len(stub.gets[0]) != 100 || len(stub.gets[1]) != 100 || len(stub.gets[2]) != 1 {
+		t.Fatalf("get batches = %#v", stub.gets)
+	}
+	if len(vectors) != 3 || !reflect.DeepEqual(vectors["item-100"], []float32{0, 1}) {
+		t.Fatalf("vectors = %#v", vectors)
+	}
+	vector, err := store.Get(context.Background(), "item-0")
+	if err != nil || !reflect.DeepEqual(vector, []float32{1, 0}) {
+		t.Fatalf("single get = %#v, %v", vector, err)
+	}
+	if _, err := store.Get(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing get error = %v", err)
 	}
 }

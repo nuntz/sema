@@ -541,7 +541,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 			)
 		case "rescore":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem", "dynamodb:BatchGetItem"}, "Resource": tableResources},
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem"}, "Resource": tableResources},
 			)
 		case "vector-cleanup":
 			statements = append(statements,

@@ -11,6 +11,7 @@ import (
 )
 
 var ErrReplayActive = errors.New("embedding replay is still in progress")
+var ErrMissingItemEmbedding = errors.New("live item has no embedding")
 
 type Repository interface {
 	Model(context.Context, string) (domain.Model, error)
@@ -20,7 +21,7 @@ type Repository interface {
 	Feeds(context.Context, string) ([]domain.Feed, error)
 	LiveItems(context.Context, string) ([]domain.Item, error)
 	LoadItemVectors(context.Context, string, []domain.Item) error
-	ReplaceItems(context.Context, []domain.Item) error
+	UpdateItemRankings(context.Context, []domain.Item) error
 }
 
 type Engine struct {
@@ -76,6 +77,11 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err := e.Repository.LoadItemVectors(ctx, userID, items); err != nil {
 		return Result{}, err
 	}
+	for _, item := range items {
+		if len(item.Vector) == 0 {
+			return Result{}, fmt.Errorf("%w: %s", ErrMissingItemEmbedding, item.ItemID)
+		}
+	}
 	scores := make([]float64, len(items))
 	for index := range items {
 		published, parseErr := time.Parse(time.RFC3339Nano, items[index].PublishedTS)
@@ -92,7 +98,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	for index := range items {
 		items[index].Size = score.Size(items[index].Score, model)
 	}
-	if err := e.Repository.ReplaceItems(ctx, items); err != nil {
+	if err := e.Repository.UpdateItemRankings(ctx, items); err != nil {
 		return Result{}, err
 	}
 	model.ReplayTS, model.ReplayVersion = "", ""

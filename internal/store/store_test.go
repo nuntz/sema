@@ -897,6 +897,83 @@ func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestUpdateItemRankingsPreservesLegacyInlineVector(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		why  *domain.Why
+		want string
+	}{
+		{name: "removes stale explanation", want: "SET #score = :score, #size = :size REMOVE #why"},
+		{name: "sets explanation", why: &domain.Why{Title: "Related"}, want: "SET #score = :score, #size = :size, #why = :why"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var update *dynamodb.UpdateItemInput
+			db := &fakeDynamoDB{
+				batchWrite: func(*dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+					t.Fatal("ranking update replaced the complete item")
+					return nil, nil
+				},
+				updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+					update = input
+					return &dynamodb.UpdateItemOutput{}, nil
+				},
+			}
+			item := domain.Item{
+				PK: "U#user", SK: "I#legacy", ItemID: "legacy", Score: 0.8, Size: "L", Why: test.why,
+				Vector: []byte("legacy-inline-vector"), ArchiveSK: "A#kept", SearchText: "keep me",
+			}
+			if err := New(db, nil, "table", "", "").UpdateItemRankings(context.Background(), []domain.Item{item}); err != nil {
+				t.Fatal(err)
+			}
+			if update == nil || aws.ToString(update.UpdateExpression) != test.want {
+				t.Fatalf("ranking update = %#v, want %q", update, test.want)
+			}
+			if aws.ToString(update.ConditionExpression) != "attribute_exists(PK)" {
+				t.Fatalf("ranking condition = %q", aws.ToString(update.ConditionExpression))
+			}
+			if _, exists := update.ExpressionAttributeNames["#vector"]; exists || len(update.ExpressionAttributeNames) != 3 {
+				t.Fatalf("ranking names include non-derived fields: %#v", update.ExpressionAttributeNames)
+			}
+			if string(item.Vector) != "legacy-inline-vector" || item.ArchiveSK != "A#kept" || item.SearchText != "keep me" {
+				t.Fatalf("input item was mutated: %#v", item)
+			}
+		})
+	}
+}
+
+func TestPutItemVectorIfAbsentIsConditionalAndIdempotent(t *testing.T) {
+	var put *dynamodb.PutItemInput
+	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		put = input
+		return &dynamodb.PutItemOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	written, err := repository.PutItemVectorIfAbsent(context.Background(), "user", "item", []byte("vector"), 42)
+	if err != nil || !written {
+		t.Fatalf("put vector = written %v, err %v", written, err)
+	}
+	if got := put.Item["PK"].(*types.AttributeValueMemberS).Value; got != "U#user" {
+		t.Fatalf("vector PK = %q", got)
+	}
+	if got := put.Item["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemVectorSK("item") {
+		t.Fatalf("vector SK = %q", got)
+	}
+	if got := string(put.Item["vector"].(*types.AttributeValueMemberB).Value); got != "vector" {
+		t.Fatalf("vector data = %q", got)
+	}
+	if aws.ToString(put.ConditionExpression) != "attribute_not_exists(PK) OR #ttl <= :now" {
+		t.Fatalf("vector condition = %q", aws.ToString(put.ConditionExpression))
+	}
+
+	db.putItem = func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		return nil, &types.ConditionalCheckFailedException{}
+	}
+	written, err = repository.PutItemVectorIfAbsent(context.Background(), "user", "item", []byte("vector"), 42)
+	if err != nil || written {
+		t.Fatalf("idempotent put = written %v, err %v", written, err)
+	}
+}
+
 func TestSignalValuesRetriesUnprocessedKeys(t *testing.T) {
 	first := map[string]types.AttributeValue{
 		"SK": &types.AttributeValueMemberS{Value: "S#first"}, "value": &types.AttributeValueMemberN{Value: "1"},

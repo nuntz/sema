@@ -45,7 +45,7 @@ func (f *fakeRepository) LiveItems(context.Context, string) ([]domain.Item, erro
 	return append([]domain.Item(nil), f.items...), nil
 }
 func (*fakeRepository) LoadItemVectors(context.Context, string, []domain.Item) error { return nil }
-func (f *fakeRepository) ReplaceItems(_ context.Context, items []domain.Item) error {
+func (f *fakeRepository) UpdateItemRankings(_ context.Context, items []domain.Item) error {
 	f.replacements = append([]domain.Item(nil), items...)
 	return nil
 }
@@ -95,6 +95,25 @@ func TestNightlyGuardrailHonoursRecentReplay(t *testing.T) {
 	}
 	if _, err := engine.RunUser(context.Background(), "user", true); err != nil {
 		t.Fatalf("on-demand rescore was blocked: %v", err)
+	}
+}
+
+func TestRescoreRejectsMissingItemEmbeddingBeforeRankingWrite(t *testing.T) {
+	now := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{
+		model: domain.Model{PK: "U#user", SK: "MODEL", Version: "v"},
+		items: []domain.Item{{
+			PK: "U#user", SK: domain.ItemSK(now, "missing"), ItemID: "missing", FeedID: "feed",
+			PublishedTS: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix(),
+		}},
+	}
+	engine := Engine{Repository: repository, Version: "v", Now: func() time.Time { return now }}
+	_, err := engine.RunUser(context.Background(), "user", false)
+	if !errors.Is(err, ErrMissingItemEmbedding) {
+		t.Fatalf("rescore error = %v, want missing embedding", err)
+	}
+	if len(repository.replacements) != 0 {
+		t.Fatalf("missing embedding wrote rankings: %#v", repository.replacements)
 	}
 }
 

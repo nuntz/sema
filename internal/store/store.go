@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -956,30 +957,85 @@ func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
 	return users, nil
 }
 
-func (s *Store) ReplaceItems(ctx context.Context, items []domain.Item) error {
-	requests := make([]types.WriteRequest, 0, len(items))
-	for _, item := range items {
-		item.Vector = nil
-		encoded, err := attributevalue.MarshalMap(item)
-		if err != nil {
-			return err
-		}
-		requests = append(requests, types.WriteRequest{PutRequest: &types.PutRequest{Item: encoded}})
+const rankingUpdateConcurrency = 16
+
+// UpdateItemRankings persists only attributes derived by rescore. Item rows
+// also carry migration and archive state that may change independently, so a
+// full replacement can erase vectors or race with another item action.
+func (s *Store) UpdateItemRankings(ctx context.Context, items []domain.Item) error {
+	if len(items) == 0 {
+		return nil
 	}
-	for len(requests) > 0 {
-		count := min(25, len(requests))
-		pending := requests[:count]
-		for attempt := 0; len(pending) > 0 && attempt < 6; attempt++ {
-			response, err := s.db.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{RequestItems: map[string][]types.WriteRequest{s.table: pending}})
-			if err != nil {
-				return err
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobs := make(chan domain.Item)
+	var workers sync.WaitGroup
+	var firstErr error
+	var firstErrOnce sync.Once
+	for range min(rankingUpdateConcurrency, len(items)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for item := range jobs {
+				if err := s.updateItemRanking(ctx, item); err != nil {
+					firstErrOnce.Do(func() {
+						firstErr = err
+						cancel()
+					})
+					return
+				}
 			}
-			pending = response.UnprocessedItems[s.table]
+		}()
+	}
+
+sendItems:
+	for _, item := range items {
+		select {
+		case jobs <- item:
+		case <-ctx.Done():
+			break sendItems
 		}
-		if len(pending) > 0 {
-			return fmt.Errorf("%d rescore writes were throttled", len(pending))
+	}
+	close(jobs)
+	workers.Wait()
+	if firstErr != nil {
+		return firstErr
+	}
+	return ctx.Err()
+}
+
+func (s *Store) updateItemRanking(ctx context.Context, item domain.Item) error {
+	scoreValue, err := attributevalue.Marshal(item.Score)
+	if err != nil {
+		return fmt.Errorf("marshal score for %s: %w", item.ItemID, err)
+	}
+	sizeValue, err := attributevalue.Marshal(item.Size)
+	if err != nil {
+		return fmt.Errorf("marshal size for %s: %w", item.ItemID, err)
+	}
+	names := map[string]string{"#score": "score", "#size": "size", "#why": "why"}
+	values := map[string]types.AttributeValue{":score": scoreValue, ":size": sizeValue}
+	expression := "SET #score = :score, #size = :size REMOVE #why"
+	if item.Why != nil {
+		whyValue, marshalErr := attributevalue.Marshal(item.Why)
+		if marshalErr != nil {
+			return fmt.Errorf("marshal why for %s: %w", item.ItemID, marshalErr)
 		}
-		requests = requests[count:]
+		values[":why"] = whyValue
+		expression = "SET #score = :score, #size = :size, #why = :why"
+	}
+	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+		UpdateExpression: aws.String(expression), ConditionExpression: aws.String("attribute_exists(PK)"),
+		ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("update ranking for %s: %w", item.ItemID, err)
 	}
 	return nil
 }
@@ -1121,6 +1177,37 @@ func (s *Store) LoadItemVectors(ctx context.Context, userID string, items []doma
 		}
 	}
 	return nil
+}
+
+// PutItemVectorIfAbsent creates the split vector row used by targeted item
+// reads. An unexpired row wins over a migration write so replay and ingest can
+// safely run at the same time as a backfill.
+func (s *Store) PutItemVectorIfAbsent(ctx context.Context, userID, itemID string, vector []byte, ttl int64) (bool, error) {
+	if userID == "" || itemID == "" || len(vector) == 0 || ttl == 0 {
+		return false, errors.New("item vector identity, data, and ttl are required")
+	}
+	encoded, err := attributevalue.MarshalMap(domain.ItemVector{
+		PK: domain.UserPK(userID), SK: domain.ItemVectorSK(itemID), Vector: vector, TTL: ttl,
+	})
+	if err != nil {
+		return false, err
+	}
+	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.table), Item: encoded,
+		ConditionExpression:      aws.String("attribute_not_exists(PK) OR #ttl <= :now"),
+		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+		},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) legacyItem(ctx context.Context, userID, itemID string, now int64) (domain.Item, error) {
