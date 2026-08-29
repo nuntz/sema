@@ -365,6 +365,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--hairline); border-radius: 10px;
   background: var(--surface); transition: opacity 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
 }
+.grid-cell, .action-sheet-layer { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .grid-row > .grid-cell { position: absolute; }
 .grid-cell.size-l:not(.text-cell) { background: #20242b; }
 .grid-cell.size-m:not(.text-cell) { background: #1c1f25; }
