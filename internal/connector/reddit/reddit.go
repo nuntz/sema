@@ -27,7 +27,7 @@ type fetcher interface {
 
 type Connector struct{ client fetcher }
 
-func New(client *httpx.Client) *Connector { return &Connector{client: client} }
+func New(client fetcher) *Connector { return &Connector{client: client} }
 
 func (c *Connector) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchResult, error) {
 	input, err := ParseInput(feed.URL)
@@ -53,6 +53,37 @@ func (c *Connector) Fetch(ctx context.Context, feed domain.Feed) (domain.FetchRe
 	return result, nil
 }
 
+// FetchPost recovers a Reddit submission from its public per-post Atom feed.
+// It is used when a replay no longer has the original listing enclosures.
+func (c *Connector) FetchPost(ctx context.Context, discussionURL string) (domain.Entry, error) {
+	feedURL, err := postFeedURL(discussionURL)
+	if err != nil {
+		return domain.Entry{}, err
+	}
+	headers := make(http.Header)
+	headers.Set("User-Agent", UserAgent)
+	response, err := c.client.Get(ctx, feedURL, headers)
+	if err != nil {
+		return domain.Entry{}, fmt.Errorf("fetch Reddit post feed: %w", err)
+	}
+	result, err := connector.ParseFeedResponse(response, domain.Feed{URL: feedURL})
+	if err != nil {
+		return domain.Entry{}, fmt.Errorf("parse Reddit post feed: %w", err)
+	}
+	baseURL := response.FinalURL
+	if baseURL == nil {
+		baseURL, _ = url.Parse(feedURL)
+	}
+	for index := range result.Entries {
+		if !strings.HasPrefix(strings.TrimSpace(result.Entries[index].GUID), "t3_") {
+			continue
+		}
+		transformEntry(&result.Entries[index], baseURL)
+		return result.Entries[index], nil
+	}
+	return domain.Entry{}, fmt.Errorf("Reddit post feed contains no submission")
+}
+
 func transformEntry(entry *domain.Entry, baseURL *url.URL) {
 	entry.GUID = strings.TrimSpace(entry.GUID)
 	entry.URL = strings.TrimSpace(entry.URL)
@@ -67,7 +98,45 @@ func transformEntry(entry *domain.Entry, baseURL *url.URL) {
 	if len(entry.Enclosures) == 0 && fallbackImage != "" {
 		entry.Enclosures = append(entry.Enclosures, domain.Enclosure{URL: fallbackImage, Type: "image/*"})
 	}
+	entry.Enclosures = preferOriginalRedditImages(entry.Enclosures)
 	entry.PostType = inferPostType(externalURL, len(entry.Enclosures) > 0)
+}
+
+func preferOriginalRedditImages(enclosures []domain.Enclosure) []domain.Enclosure {
+	seen := make(map[string]bool, len(enclosures)*2)
+	result := make([]domain.Enclosure, 0, len(enclosures)*2)
+	add := func(enclosure domain.Enclosure) {
+		if enclosure.URL == "" || seen[enclosure.URL] {
+			return
+		}
+		seen[enclosure.URL] = true
+		result = append(result, enclosure)
+	}
+	for _, enclosure := range enclosures {
+		if original := originalRedditImageURL(enclosure.URL); original != "" {
+			add(domain.Enclosure{URL: original, Type: enclosure.Type})
+		}
+		add(enclosure)
+	}
+	return result
+}
+
+func originalRedditImageURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.User != nil || parsed.Port() != "" || !strings.EqualFold(strings.TrimSuffix(parsed.Hostname(), "."), "preview.redd.it") {
+		return ""
+	}
+	switch strings.ToLower(path.Ext(parsed.Path)) {
+	case ".jpg", ".jpeg", ".png", ".webp":
+	default:
+		return ""
+	}
+	parsed.Scheme = "https"
+	parsed.Host = "i.redd.it"
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
 }
 
 func redditContent(raw, discussionURL string, baseURL *url.URL) (body, externalURL, fallbackImage string) {

@@ -92,7 +92,7 @@ The Reddit connector uses only Reddit's public Atom feeds—there is no Reddit A
 
 Scheduled and discovery requests send the fixed `User-Agent: linux:sema:rss`. Feed jobs retain their stable per-feed schedule offsets and generic exponential error backoff; Reddit failures remain isolated to the affected feed.
 
-Reddit items preserve the thread permalink separately from an external article or media destination. Link posts use the normal article extraction pipeline and open in Reader, text posts render sanitized selftext already present in Atom, and image posts render in Reader with a cached-thumbnail fallback. Reddit-hosted video remains external because `v.redd.it` media is delivered as split DASH streams. The message-square action on every Reddit cell opens its comment thread externally. Titles and cleaned excerpts enter the existing embedding and ranking pipeline unchanged.
+Reddit items preserve the thread permalink separately from an external article or media destination. Link posts use the normal article extraction pipeline and open in Reader, text posts render sanitized selftext already present in Atom, and image and gallery posts render in Reader with a cached lead image. For Reddit-owned preview thumbnails, Sema prefers the corresponding full-size `i.redd.it` asset and keeps the signed Atom thumbnail as a fallback; gallery replays recover missing enclosure metadata from the public per-post Atom feed. Reddit-hosted video remains external because `v.redd.it` media is delivered as split DASH streams. The message-square action on every Reddit cell opens its comment thread externally. Titles and cleaned excerpts enter the existing embedding and ranking pipeline unchanged.
 
 ## Prerequisites
 

@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
 	"github.com/nuntz/sema/internal/connector"
+	redditconnector "github.com/nuntz/sema/internal/connector/reddit"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
@@ -227,7 +228,11 @@ func (h *handler) process(ctx context.Context, body string) error {
 			feedURL = pageURL
 		}
 		feedHTML := []byte(message.ContentRaw + "\n" + message.SummaryRaw)
-		candidates := media.Candidates(message.EnclosureURLs, pageHTML, []byte(article.HTML), feedHTML, article.LeadImage, pageURL, feedURL)
+		enclosures, recoveryErr := h.mediaEnclosures(ctx, message, feed)
+		if recoveryErr != nil {
+			slog.Warn("Reddit gallery media recovery failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", recoveryErr)
+		}
+		candidates := media.Candidates(enclosures, pageHTML, []byte(article.HTML), feedHTML, article.LeadImage, pageURL, feedURL)
 		if isVideo {
 			candidates = append([]string{"https://i.ytimg.com/vi/" + url.PathEscape(message.VideoID) + "/maxresdefault.jpg"}, candidates...)
 		}
@@ -475,6 +480,23 @@ func itemContentURLs(message domain.ItemMessage) (contentURL, fetchURL string) {
 		return message.ExternalURL, message.ExternalURL
 	}
 	return contentURL, ""
+}
+
+func (h *handler) mediaEnclosures(ctx context.Context, message domain.ItemMessage, feed domain.Feed) ([]domain.Enclosure, error) {
+	if len(message.EnclosureURLs) > 0 || domain.FeedConnector(feed) != domain.ConnectorReddit || message.PostType != "gallery" {
+		return message.EnclosureURLs, nil
+	}
+	if h.http == nil {
+		return nil, fmt.Errorf("HTTP client is unavailable")
+	}
+	entry, err := redditconnector.New(h.http).FetchPost(ctx, message.URL)
+	if err != nil {
+		return nil, err
+	}
+	if entry.PostType != "gallery" {
+		return nil, fmt.Errorf("recovered Reddit post type is %q", entry.PostType)
+	}
+	return entry.Enclosures, nil
 }
 
 func forceSummaryGeneration(alwaysGenerate bool, existingSource string) bool {

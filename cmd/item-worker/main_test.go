@@ -53,11 +53,13 @@ type stubSummarizer struct {
 
 type stubHTTP struct {
 	url      string
+	headers  http.Header
 	response httpx.Response
 }
 
-func (s *stubHTTP) Get(_ context.Context, rawURL string, _ http.Header) (httpx.Response, error) {
+func (s *stubHTTP) Get(_ context.Context, rawURL string, headers http.Header) (httpx.Response, error) {
 	s.url = rawURL
+	s.headers = headers.Clone()
 	return s.response, nil
 }
 
@@ -192,6 +194,30 @@ func TestRedditContentURLsAvoidThreadScraping(t *testing.T) {
 				t.Fatalf("content, fetch = %q, %q", content, fetch)
 			}
 		})
+	}
+}
+
+func TestReplayRecoversRedditGalleryEnclosuresFromPostFeed(t *testing.T) {
+	feedURL := "https://www.reddit.com/comments/1w1q9k6/.rss"
+	base, _ := url.Parse(feedURL)
+	body := `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <entry><id>t3_1w1q9k6</id><title>Evening vibes in Vancouver</title><published>2026-08-29T15:59:14Z</published><link href="https://www.reddit.com/r/vancouver/comments/1w1q9k6/evening_vibes_in_vancouver/"/><media:thumbnail url="https://preview.redd.it/5bpaudvx6cmh1.jpg?width=140&amp;amp;height=140&amp;amp;crop=1:1,smart&amp;amp;auto=webp&amp;amp;s=signature"/><content type="html">&lt;table&gt;&lt;tr&gt;&lt;td&gt;&lt;a href="https://www.reddit.com/gallery/1w1q9k6"&gt;[link]&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</content></entry>
+</feed>`
+	client := &stubHTTP{response: httpx.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: []byte(body), FinalURL: base}}
+	h := &handler{http: client}
+
+	enclosures, err := h.mediaEnclosures(context.Background(), domain.ItemMessage{
+		URL: "https://www.reddit.com/r/vancouver/comments/1w1q9k6/evening_vibes_in_vancouver/", PostType: "gallery",
+	}, domain.Feed{Connector: domain.ConnectorReddit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.url != feedURL || client.headers.Get("User-Agent") != "linux:sema:rss" {
+		t.Fatalf("request = %q, headers = %#v", client.url, client.headers)
+	}
+	if len(enclosures) != 2 || enclosures[0].URL != "https://i.redd.it/5bpaudvx6cmh1.jpg" {
+		t.Fatalf("enclosures = %#v", enclosures)
 	}
 }
 

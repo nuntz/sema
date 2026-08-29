@@ -21,6 +21,7 @@ type Input struct {
 }
 
 var subredditPattern = regexp.MustCompile(`^[A-Za-z0-9_]{2,21}$`)
+var postIDPattern = regexp.MustCompile(`^[A-Za-z0-9]+$`)
 
 func Matches(raw string) bool {
 	value := strings.TrimSpace(raw)
@@ -124,6 +125,25 @@ func SortLabel(sort Sort) string {
 	default:
 		return "Top · day"
 	}
+}
+
+func postFeedURL(raw string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.Port() != "" || !redditHost(parsed.Hostname()) {
+		return "", fmt.Errorf("invalid Reddit discussion URL")
+	}
+	parts := splitPath(parsed.EscapedPath())
+	for index := 0; index+1 < len(parts); index++ {
+		if !strings.EqualFold(parts[index], "comments") {
+			continue
+		}
+		postID, unescapeErr := url.PathUnescape(parts[index+1])
+		if unescapeErr != nil || !postIDPattern.MatchString(postID) {
+			break
+		}
+		return "https://www.reddit.com/comments/" + strings.ToLower(postID) + "/.rss", nil
+	}
+	return "", fmt.Errorf("invalid Reddit discussion URL")
 }
 
 func redditHost(host string) bool {

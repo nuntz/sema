@@ -57,7 +57,7 @@ func TestFetchTransformsObservedRedditAtomShapes(t *testing.T) {
 		t.Fatalf("link entry = %#v", link)
 	}
 	image := result.Entries[2]
-	if image.GUID != "t3_image" || image.PostType != "image" || image.ExternalURL != "https://i.redd.it/image.jpeg" || len(image.Enclosures) != 1 || strings.Contains(image.Enclosures[0].URL, "&amp;") {
+	if image.GUID != "t3_image" || image.PostType != "image" || image.ExternalURL != "https://i.redd.it/image.jpeg" || len(image.Enclosures) != 2 || image.Enclosures[0].URL != "https://i.redd.it/image.jpeg" || strings.Contains(image.Enclosures[1].URL, "&amp;") {
 		t.Fatalf("image entry = %#v", image)
 	}
 }
@@ -66,7 +66,7 @@ func TestImageFallbackAndVideoInference(t *testing.T) {
 	base, _ := url.Parse("https://www.reddit.com/r/example/.rss")
 	entry := domain.Entry{URL: "https://www.reddit.com/r/example/comments/one/title/", ContentRaw: `<table><tr><td><img src="https://preview.redd.it/fallback.jpeg?width=320&amp;crop=smart"></td><td><a href="https://v.redd.it/abc">[link]</a></td></tr></table>`}
 	transformEntry(&entry, base)
-	if entry.PostType != "video" || entry.ExternalURL != "https://v.redd.it/abc" || len(entry.Enclosures) != 1 || entry.Enclosures[0].URL != "https://preview.redd.it/fallback.jpeg?width=320&crop=smart" {
+	if entry.PostType != "video" || entry.ExternalURL != "https://v.redd.it/abc" || len(entry.Enclosures) != 2 || entry.Enclosures[0].URL != "https://i.redd.it/fallback.jpeg" || entry.Enclosures[1].URL != "https://preview.redd.it/fallback.jpeg?width=320&crop=smart" {
 		t.Fatalf("entry = %#v", entry)
 	}
 }
@@ -83,6 +83,82 @@ func TestThumbnailIsMediaSignalForExternalImageTarget(t *testing.T) {
 	}
 	if got := inferPostType("", true); got != "text" {
 		t.Fatalf("thumbnail-only post type = %q, want text", got)
+	}
+}
+
+func TestGalleryPrefersOriginalRedditImageOverSmallAtomThumbnail(t *testing.T) {
+	base, _ := url.Parse("https://www.reddit.com/r/vancouver/new.rss")
+	thumbnail := "https://preview.redd.it/5bpaudvx6cmh1.jpg?width=140&height=140&crop=1:1,smart&auto=webp&s=signature"
+	entry := domain.Entry{
+		GUID:       "t3_1w1q9k6",
+		URL:        "https://www.reddit.com/r/vancouver/comments/1w1q9k6/evening_vibes_in_vancouver/",
+		ContentRaw: `<table><tr><td><img src="` + thumbnail + `"></td><td><a href="https://www.reddit.com/gallery/1w1q9k6">[link]</a></td></tr></table>`,
+		Enclosures: []domain.Enclosure{{URL: thumbnail, Type: "image/*"}},
+	}
+
+	transformEntry(&entry, base)
+
+	if entry.PostType != "gallery" || entry.ExternalURL != "https://www.reddit.com/gallery/1w1q9k6" {
+		t.Fatalf("entry = %#v", entry)
+	}
+	want := []string{"https://i.redd.it/5bpaudvx6cmh1.jpg", thumbnail}
+	if len(entry.Enclosures) != len(want) {
+		t.Fatalf("enclosures = %#v, want URLs %#v", entry.Enclosures, want)
+	}
+	for index := range want {
+		if entry.Enclosures[index].URL != want[index] {
+			t.Errorf("enclosure %d = %q, want %q", index, entry.Enclosures[index].URL, want[index])
+		}
+	}
+}
+
+func TestOriginalRedditImageDoesNotRewriteExternalPreview(t *testing.T) {
+	if got := originalRedditImageURL("https://external-preview.redd.it/photo.jpg?width=140"); got != "" {
+		t.Fatalf("external preview rewrite = %q", got)
+	}
+	if got := originalRedditImageURL("https://preview.redd.it/photo.gif?width=140"); got != "" {
+		t.Fatalf("unsupported original rewrite = %q", got)
+	}
+}
+
+func TestFetchPostRecoversGalleryMediaForReplay(t *testing.T) {
+	feedURL := "https://www.reddit.com/comments/1w1q9k6/.rss"
+	base, _ := url.Parse(feedURL)
+	thumbnail := "https://preview.redd.it/5bpaudvx6cmh1.jpg?width=140&amp;height=140&amp;crop=1:1,smart&amp;auto=webp&amp;s=signature"
+	body := `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
+  <entry><id>t3_1w1q9k6</id><title>Evening vibes in Vancouver</title><published>2026-08-29T15:59:14Z</published><link href="https://www.reddit.com/r/vancouver/comments/1w1q9k6/evening_vibes_in_vancouver/"/><media:thumbnail url="` + thumbnail + `"/><content type="html">&lt;table&gt;&lt;tr&gt;&lt;td&gt;&lt;a href="https://www.reddit.com/gallery/1w1q9k6"&gt;[link]&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</content></entry>
+  <entry><id>t1_comment</id><title>A comment</title><updated>2026-08-29T16:00:00Z</updated><link href="https://www.reddit.com/comments/1w1q9k6/comment/"/></entry>
+</feed>`
+	client := fakeFetcher{
+		response: httpx.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: []byte(body), FinalURL: base},
+		check: func(rawURL string, headers http.Header) {
+			if rawURL != feedURL || headers.Get("User-Agent") != UserAgent {
+				t.Fatalf("request = %q, headers = %#v", rawURL, headers)
+			}
+		},
+	}
+
+	entry, err := New(client).FetchPost(context.Background(), "https://old.reddit.com/r/vancouver/comments/1W1Q9K6/evening_vibes_in_vancouver/?share_id=one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.GUID != "t3_1w1q9k6" || entry.PostType != "gallery" || len(entry.Enclosures) != 2 || entry.Enclosures[0].URL != "https://i.redd.it/5bpaudvx6cmh1.jpg" {
+		t.Fatalf("entry = %#v", entry)
+	}
+}
+
+func TestFetchPostRejectsNonDiscussionURLs(t *testing.T) {
+	connector := New(fakeFetcher{})
+	for _, raw := range []string{
+		"https://www.reddit.com/r/vancouver/",
+		"https://reddit.example/comments/1w1q9k6/title/",
+		"https://user@example.com/comments/1w1q9k6/title/",
+		"https://www.reddit.com/comments/not-valid!/title/",
+	} {
+		if _, err := connector.FetchPost(context.Background(), raw); err == nil {
+			t.Errorf("FetchPost(%q) succeeded", raw)
+		}
 	}
 }
 
