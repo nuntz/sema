@@ -561,31 +561,32 @@ function FeedDrawer(props: {
           </p>
         </Show>
 
+        <label class="drawer-field">
+          <span>NAME</span>
+          <input
+            ref={name}
+            value={props.feed.custom_title ?? ""}
+            placeholder={props.feed.title || domainName(props.feed.url)}
+            onBlur={(event) => {
+              const next = event.currentTarget.value.trim();
+              if (next !== (props.feed.custom_title ?? ""))
+                void patch({ custom_title: next });
+            }}
+          />
+        </label>
+        <div class="drawer-field">
+          <span>TAGS</span>
+          <TagEditor
+            tags={props.feed.tags ?? []}
+            suggestions={props.allTags}
+            onChange={(tags) => void patch({ tags })}
+          />
+        </div>
+
         <Show
           when={props.feed.connector === "reddit"}
           fallback={
             <>
-              <label class="drawer-field">
-                <span>NAME</span>
-                <input
-                  ref={name}
-                  value={props.feed.custom_title ?? ""}
-                  placeholder={props.feed.title || domainName(props.feed.url)}
-                  onBlur={(event) => {
-                    const next = event.currentTarget.value.trim();
-                    if (next !== (props.feed.custom_title ?? ""))
-                      void patch({ custom_title: next });
-                  }}
-                />
-              </label>
-              <div class="drawer-field">
-                <span>TAGS</span>
-                <TagEditor
-                  tags={props.feed.tags ?? []}
-                  suggestions={props.allTags}
-                  onChange={(tags) => void patch({ tags })}
-                />
-              </div>
               <fieldset
                 class="drawer-field interval-field"
                 disabled={props.feed.muted || working()}

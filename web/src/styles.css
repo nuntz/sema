@@ -1049,12 +1049,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .candidate-collect > .reddit-collect-options { width: max-content; display: flex; }
 .candidate-collect > .reddit-collect-options button { padding: 0 12px; }
 .candidate-collect > small { margin-top: 9px; display: block; color: var(--fg-quaternary); font: 400 var(--t-12)/1.5 "Instrument Sans", sans-serif; text-wrap: pretty; }
-.drawer-reddit-collect { min-height: 78px; padding: 18px 0; display: grid; grid-template-columns: minmax(0, 1fr) 236px; align-items: center; gap: 14px; border-bottom: 1px solid rgba(255, 255, 255, .07); }
+.drawer-reddit-collect { min-height: 78px; margin-top: 20px; padding: 18px 0; display: grid; grid-template-columns: minmax(0, 1fr) 236px; align-items: center; gap: 14px; border-top: 1px solid rgba(255, 255, 255, .07); border-bottom: 1px solid rgba(255, 255, 255, .07); }
 .drawer-reddit-collect legend { display: flex; flex-direction: column; gap: 4px; }
 .drawer-reddit-collect legend strong { color: var(--fg-primary); font: 500 var(--t-15)/1.2 "Instrument Sans", sans-serif; }
 .drawer-reddit-collect legend small { color: var(--fg-quaternary); font: 400 var(--t-13-5)/1.3 "Instrument Sans", sans-serif; }
 .drawer-reddit-collect:disabled { opacity: .4; }
 .drawer-reddit-collect + .mute-row { margin-top: 0; border-top: 0; }
+[data-theme="light"] .drawer-reddit-collect { border-top-color: rgba(0, 0, 0, .1); }
 
 .video-play { position: absolute; top: 9px; left: 9px; z-index: 2; color: var(--play-color); filter: var(--play-shadow); pointer-events: none; }
 .video-play .icon { color: currentColor; stroke-width: var(--icon-stroke-filled); }
