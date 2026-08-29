@@ -31,36 +31,41 @@ type User struct {
 }
 
 type Feed struct {
-	PK               string   `dynamodbav:"PK" json:"-"`
-	SK               string   `dynamodbav:"SK" json:"-"`
-	GSI1PK           string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
-	FeedID           string   `dynamodbav:"feed_id" json:"feed_id"`
-	Connector        string   `dynamodbav:"connector" json:"connector"`
-	URL              string   `dynamodbav:"url" json:"url"`
-	SiteURL          string   `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
-	Title            string   `dynamodbav:"title,omitempty" json:"title,omitempty"`
-	CustomTitle      string   `dynamodbav:"custom_title,omitempty" json:"custom_title,omitempty"`
-	Tags             []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
-	Muted            bool     `dynamodbav:"muted,omitempty" json:"muted"`
-	HideShorts       bool     `dynamodbav:"hide_shorts,omitempty" json:"hide_shorts"`
-	AlwaysGenerate   bool     `dynamodbav:"always_generate,omitempty" json:"always_generate"`
-	FetchIntervalH   int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
-	FaviconKey       string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
-	AvatarURL        string   `dynamodbav:"avatar_url,omitempty" json:"-"`
-	ETag             string   `dynamodbav:"etag,omitempty" json:"-"`
-	LastModified     string   `dynamodbav:"last_modified,omitempty" json:"-"`
-	LastFetchAt      string   `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
-	LastStatus       string   `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
-	LastError        string   `dynamodbav:"last_error,omitempty" json:"last_error,omitempty"`
-	ErrorCount       int      `dynamodbav:"error_count" json:"error_count"`
-	NextFetchAt      string   `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
-	Prior            float64  `dynamodbav:"-" json:"prior"`
-	PriorSignals     int      `dynamodbav:"-" json:"prior_signals"`
-	Status           string   `dynamodbav:"-" json:"status"`
-	ItemCount        int      `dynamodbav:"-" json:"item_count"`
-	ExtractionRate   *float64 `dynamodbav:"-" json:"extraction_success_rate,omitempty"`
-	MedianQuality    *float64 `dynamodbav:"-" json:"median_extract_quality,omitempty"`
-	ExtractionSample int      `dynamodbav:"-" json:"extraction_sample"`
+	PK             string   `dynamodbav:"PK" json:"-"`
+	SK             string   `dynamodbav:"SK" json:"-"`
+	GSI1PK         string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
+	FeedID         string   `dynamodbav:"feed_id" json:"feed_id"`
+	Connector      string   `dynamodbav:"connector" json:"connector"`
+	URL            string   `dynamodbav:"url" json:"url"`
+	SiteURL        string   `dynamodbav:"site_url,omitempty" json:"site_url,omitempty"`
+	Title          string   `dynamodbav:"title,omitempty" json:"title,omitempty"`
+	CustomTitle    string   `dynamodbav:"custom_title,omitempty" json:"custom_title,omitempty"`
+	Tags           []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
+	Muted          bool     `dynamodbav:"muted,omitempty" json:"muted"`
+	HideShorts     bool     `dynamodbav:"hide_shorts,omitempty" json:"hide_shorts"`
+	AlwaysGenerate bool     `dynamodbav:"always_generate,omitempty" json:"always_generate"`
+	FetchIntervalH int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
+	FaviconKey     string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	AvatarURL      string   `dynamodbav:"avatar_url,omitempty" json:"-"`
+	ETag           string   `dynamodbav:"etag,omitempty" json:"-"`
+	LastModified   string   `dynamodbav:"last_modified,omitempty" json:"-"`
+	LastFetchAt    string   `dynamodbav:"last_fetch_at,omitempty" json:"last_fetch_at,omitempty"`
+	LastStatus     string   `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
+	LastError      string   `dynamodbav:"last_error,omitempty" json:"last_error,omitempty"`
+	ErrorCount     int      `dynamodbav:"error_count" json:"error_count"`
+	NextFetchAt    string   `dynamodbav:"next_fetch_at" json:"next_fetch_at"`
+	// Ingest counters are lifetime-to-date because DynamoDB TTL expiration does
+	// not provide a reliable synchronous decrement path.
+	ItemCount              int      `dynamodbav:"item_count,omitempty" json:"item_count"`
+	ExtractionFailures     int      `dynamodbav:"extraction_failures,omitempty" json:"-"`
+	MediaFailures          int      `dynamodbav:"media_failures,omitempty" json:"-"`
+	ExtractionQualityTotal float64  `dynamodbav:"extraction_quality_total,omitempty" json:"-"`
+	ExtractionSample       int      `dynamodbav:"extraction_sample,omitempty" json:"extraction_sample"`
+	Prior                  float64  `dynamodbav:"-" json:"prior"`
+	PriorSignals           int      `dynamodbav:"-" json:"prior_signals"`
+	Status                 string   `dynamodbav:"-" json:"status"`
+	ExtractionRate         *float64 `dynamodbav:"-" json:"extraction_success_rate,omitempty"`
+	AverageQuality         *float64 `dynamodbav:"-" json:"average_extract_quality,omitempty"`
 }
 
 const (
@@ -227,6 +232,13 @@ type ItemIdentity struct {
 	TTL    int64  `dynamodbav:"ttl"`
 }
 
+type ItemVector struct {
+	PK     string `dynamodbav:"PK"`
+	SK     string `dynamodbav:"SK"`
+	Vector []byte `dynamodbav:"vector"`
+	TTL    int64  `dynamodbav:"ttl"`
+}
+
 type Enclosure struct {
 	URL    string `json:"url"`
 	Type   string `json:"type,omitempty"`
@@ -305,6 +317,7 @@ func SignalSK(id string) string       { return "S#" + id }
 func BehaviourSK(id string) string    { return "B#" + id }
 func ReadSK(id string) string         { return "R#" + id }
 func ItemIdentitySK(id string) string { return "D#" + id }
+func ItemVectorSK(id string) string   { return "V#" + id }
 
 func ArchiveSK(hearted time.Time, id string) string {
 	return "A#" + Timestamp(hearted) + "#" + id

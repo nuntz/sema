@@ -19,6 +19,7 @@ type Repository interface {
 	Signals(context.Context, string) ([]domain.Signal, error)
 	Feeds(context.Context, string) ([]domain.Feed, error)
 	LiveItems(context.Context, string) ([]domain.Item, error)
+	LoadItemVectors(context.Context, string, []domain.Item) error
 	ReplaceItems(context.Context, []domain.Item) error
 }
 
@@ -70,6 +71,9 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	}
 	items, err := e.Repository.LiveItems(ctx, userID)
 	if err != nil {
+		return Result{}, err
+	}
+	if err := e.Repository.LoadItemVectors(ctx, userID, items); err != nil {
 		return Result{}, err
 	}
 	scores := make([]float64, len(items))

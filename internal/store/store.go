@@ -65,6 +65,11 @@ type itemProjection struct {
 
 var listItemProjection = newItemProjection("vector", "search_text")
 
+var feedCounterAttributes = map[string]bool{
+	"item_count": true, "extraction_failures": true, "media_failures": true,
+	"extraction_quality_total": true, "extraction_sample": true,
+}
+
 func newItemProjection(excluded ...string) itemProjection {
 	exclusions := make(map[string]bool, len(excluded))
 	for _, name := range excluded {
@@ -165,7 +170,33 @@ func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: item})
+	names := make(map[string]string)
+	values := make(map[string]types.AttributeValue)
+	sets, removes := []string{}, []string{}
+	typeOfFeed := reflect.TypeOf(domain.Feed{})
+	for index := range typeOfFeed.NumField() {
+		name := strings.Split(typeOfFeed.Field(index).Tag.Get("dynamodbav"), ",")[0]
+		if name == "" || name == "-" || name == "PK" || name == "SK" || feedCounterAttributes[name] {
+			continue
+		}
+		alias := fmt.Sprintf("#feed%d", index)
+		names[alias] = name
+		if value, ok := item[name]; ok {
+			placeholder := fmt.Sprintf(":feed%d", index)
+			sets = append(sets, alias+" = "+placeholder)
+			values[placeholder] = value
+		} else {
+			removes = append(removes, alias)
+		}
+	}
+	expression := "SET " + strings.Join(sets, ", ")
+	if len(removes) > 0 {
+		expression += " REMOVE " + strings.Join(removes, ", ")
+	}
+	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(feed.PK, feed.SK), UpdateExpression: aws.String(expression),
+		ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+	})
 	return err
 }
 
@@ -314,6 +345,13 @@ func (s *Store) ItemExists(ctx context.Context, userID, itemID string) (bool, er
 }
 
 func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
+	vector, err := attributevalue.MarshalMap(domain.ItemVector{
+		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector, TTL: item.TTL,
+	})
+	if err != nil {
+		return false, err
+	}
+	item.Vector = nil
 	encoded, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return false, err
@@ -334,6 +372,11 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 			TableName: aws.String(s.table), Item: encoded, ConditionExpression: aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
 			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
 		}},
+		{Put: &types.Put{
+			TableName: aws.String(s.table), Item: vector, ConditionExpression: aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
+			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
+		}},
+		{Update: feedCounterUpdate(s.table, item)},
 	}})
 	if err == nil {
 		return true, nil
@@ -434,12 +477,43 @@ func (s *Store) ReconcileItemIdentity(ctx context.Context, userID string, canoni
 // OverwriteItem is reserved for replay: unlike PutItem it intentionally
 // replaces the existing live row at its stable key.
 func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
+	vector, err := attributevalue.MarshalMap(domain.ItemVector{
+		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector, TTL: item.TTL,
+	})
+	if err != nil {
+		return err
+	}
+	item.Vector = nil
 	encoded, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded})
+	_, err = s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
+		{Put: &types.Put{TableName: aws.String(s.table), Item: encoded}},
+		{Put: &types.Put{TableName: aws.String(s.table), Item: vector}},
+	}})
 	return err
+}
+
+func feedCounterUpdate(table string, item domain.Item) *types.Update {
+	extractionFailure, mediaFailure := 0, 0
+	if !item.HasBody {
+		extractionFailure = 1
+	}
+	if item.MediaKey == "" {
+		mediaFailure = 1
+	}
+	return &types.Update{
+		TableName: aws.String(table), Key: key(item.PK, domain.FeedSK(item.FeedID)),
+		UpdateExpression:    aws.String("ADD item_count :one, extraction_sample :one, extraction_failures :extraction_failure, media_failures :media_failure, extraction_quality_total :quality"),
+		ConditionExpression: aws.String("attribute_exists(PK)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":one":                &types.AttributeValueMemberN{Value: "1"},
+			":extraction_failure": &types.AttributeValueMemberN{Value: strconv.Itoa(extractionFailure)},
+			":media_failure":      &types.AttributeValueMemberN{Value: strconv.Itoa(mediaFailure)},
+			":quality":            &types.AttributeValueMemberN{Value: strconv.FormatFloat(item.ExtractQuality, 'f', -1, 64)},
+		},
+	}
 }
 
 type cursor struct {
@@ -558,42 +632,6 @@ func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, er
 			},
 			ExclusiveStartKey: start,
 			ConsistentRead:    aws.Bool(true),
-		})
-		if err != nil {
-			return nil, err
-		}
-		var page []domain.Item
-		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
-			return nil, err
-		}
-		items = append(items, page...)
-		start = response.LastEvaluatedKey
-		if len(start) == 0 {
-			return items, nil
-		}
-	}
-}
-
-// LiveItemStats returns only the fields used to decorate feed extraction
-// statistics. Unlike LiveItems, it is an eventually consistent projected read.
-func (s *Store) LiveItemStats(ctx context.Context, userID string) ([]domain.Item, error) {
-	items := []domain.Item{}
-	var start map[string]types.AttributeValue
-	for {
-		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
-			TableName:              aws.String(s.table),
-			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
-			FilterExpression:       aws.String("#ttl > :now"),
-			ProjectionExpression:   aws.String("#feed, #quality, #body"),
-			ExpressionAttributeNames: map[string]string{
-				"#ttl": "ttl", "#feed": "feed_id", "#quality": "extract_quality", "#body": "has_body",
-			},
-			ExpressionAttributeValues: map[string]types.AttributeValue{
-				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
-				":prefix": &types.AttributeValueMemberS{Value: "I#"},
-				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
-			},
-			ExclusiveStartKey: start,
 		})
 		if err != nil {
 			return nil, err
@@ -921,6 +959,7 @@ func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
 func (s *Store) ReplaceItems(ctx context.Context, items []domain.Item) error {
 	requests := make([]types.WriteRequest, 0, len(items))
 	for _, item := range items {
+		item.Vector = nil
 		encoded, err := attributevalue.MarshalMap(item)
 		if err != nil {
 			return err
@@ -1025,7 +1064,63 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 	if item.ItemID != itemID || item.TTL <= now {
 		return domain.Item{}, ErrNotFound
 	}
+	return s.loadItemVector(ctx, item, now)
+}
+
+func (s *Store) loadItemVector(ctx context.Context, item domain.Item, now int64) (domain.Item, error) {
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, domain.ItemVectorSK(item.ItemID)), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Item{}, err
+	}
+	if len(response.Item) == 0 {
+		return item, nil
+	}
+	var stored domain.ItemVector
+	if err := attributevalue.UnmarshalMap(response.Item, &stored); err != nil {
+		return domain.Item{}, err
+	}
+	if stored.TTL == 0 || stored.TTL > now {
+		item.Vector = stored.Vector
+	}
 	return item, nil
+}
+
+// LoadItemVectors batch-loads vectors for bulk targeted work such as rescore.
+// A missing V# row leaves any legacy in-row vector intact during migration.
+func (s *Store) LoadItemVectors(ctx context.Context, userID string, items []domain.Item) error {
+	pk := domain.UserPK(userID)
+	keys := make([]map[string]types.AttributeValue, 0, len(items))
+	seen := make(map[string]bool, len(items))
+	for _, item := range items {
+		if seen[item.ItemID] {
+			continue
+		}
+		seen[item.ItemID] = true
+		keys = append(keys, key(pk, domain.ItemVectorSK(item.ItemID)))
+	}
+	rows, err := s.batchGetRows(ctx, keys)
+	if err != nil {
+		return err
+	}
+	vectors := make(map[string][]byte, len(rows))
+	now := time.Now().Unix()
+	for _, row := range rows {
+		var stored domain.ItemVector
+		if err := attributevalue.UnmarshalMap(row, &stored); err != nil {
+			return err
+		}
+		if stored.TTL == 0 || stored.TTL > now {
+			vectors[strings.TrimPrefix(stored.SK, "V#")] = stored.Vector
+		}
+	}
+	for index := range items {
+		if vector, ok := vectors[items[index].ItemID]; ok {
+			items[index].Vector = vector
+		}
+	}
+	return nil
 }
 
 func (s *Store) legacyItem(ctx context.Context, userID, itemID string, now int64) (domain.Item, error) {
@@ -1407,8 +1502,8 @@ func transactionConditionFailed(err error) bool {
 	if !errors.As(err, &canceled) {
 		return false
 	}
-	for _, reason := range canceled.CancellationReasons {
-		if aws.ToString(reason.Code) == "ConditionalCheckFailed" {
+	for index, reason := range canceled.CancellationReasons {
+		if index < 3 && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
 			return true
 		}
 	}

@@ -201,7 +201,9 @@ export function TagFilter(props: {
                   onClick={() => apply(option.tag)}
                 >
                   <span>{option.tag}</span>
-                  <small>{option.count}</small>
+                  <small title={`${option.count} items ingested`}>
+                    {option.count}
+                  </small>
                 </button>
               )}
             </For>

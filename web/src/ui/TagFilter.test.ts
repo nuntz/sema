@@ -3,7 +3,7 @@ import type { Feed } from "../types";
 import { feedTagOptions } from "./tag-options";
 
 describe("grid tag filter", () => {
-  it("counts current-window items and excludes muted feeds", () => {
+  it("counts lifetime ingested items and excludes muted feeds", () => {
     const feeds = [
       { tags: ["dev", "longform"], item_count: 8 },
       { tags: ["dev"], item_count: 3 },

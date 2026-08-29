@@ -127,7 +127,7 @@ export interface Feed {
   status: "ok" | "slowed" | "broken" | "muted";
   item_count: number;
   extraction_success_rate?: number;
-  median_extract_quality?: number;
+  average_extract_quality?: number;
   extraction_sample: number;
 }
 

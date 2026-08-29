@@ -618,11 +618,7 @@ func publicFeed(repository *store.Store, feed domain.Feed) domain.Feed {
 }
 
 func (s *server) decorateFeeds(ctx context.Context, userID string, feeds []domain.Feed) error {
-	items, err := s.store.LiveItemStats(ctx, userID)
-	if err != nil {
-		return err
-	}
-	decorateExtraction(feeds, items)
+	decorateExtraction(feeds)
 	model, modelErr := s.store.Model(ctx, userID)
 	if modelErr != nil && !errors.Is(modelErr, score.ErrModelNotFound) {
 		return modelErr
@@ -637,32 +633,17 @@ func (s *server) decorateFeeds(ctx context.Context, userID string, feeds []domai
 	return nil
 }
 
-func decorateExtraction(feeds []domain.Feed, items []domain.Item) {
-	counts := make(map[string]int)
-	qualities := make(map[string][]float64)
-	successes := make(map[string]int)
-	bodyAttempts := make(map[string]int)
-	for _, item := range items {
-		counts[item.FeedID]++
-		bodyAttempts[item.FeedID]++
-		qualities[item.FeedID] = append(qualities[item.FeedID], item.ExtractQuality)
-		if item.HasBody {
-			successes[item.FeedID]++
-		}
-	}
+// These counters are lifetime-to-date. TTL expiration is asynchronous and
+// cannot atomically decrement them, so the API deliberately labels item totals
+// as ingested rather than retained/current-window counts.
+func decorateExtraction(feeds []domain.Feed) {
 	for i := range feeds {
-		feeds[i].ItemCount = counts[feeds[i].FeedID]
-		feeds[i].ExtractionSample = bodyAttempts[feeds[i].FeedID]
 		if feeds[i].ExtractionSample >= 10 {
-			values := qualities[feeds[i].FeedID]
-			sort.Float64s(values)
-			rate := float64(successes[feeds[i].FeedID]) / float64(feeds[i].ExtractionSample)
-			median := values[len(values)/2]
-			if len(values)%2 == 0 {
-				median = (values[len(values)/2-1] + values[len(values)/2]) / 2
-			}
+			successes := max(0, feeds[i].ExtractionSample-feeds[i].ExtractionFailures)
+			rate := float64(successes) / float64(feeds[i].ExtractionSample)
+			average := feeds[i].ExtractionQualityTotal / float64(feeds[i].ExtractionSample)
 			feeds[i].ExtractionRate = &rate
-			feeds[i].MedianQuality = &median
+			feeds[i].AverageQuality = &average
 		}
 	}
 }

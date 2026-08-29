@@ -17,6 +17,7 @@ type itemStore interface {
 	UserIDs(context.Context) ([]string, error)
 	LiveItems(context.Context, string) ([]domain.Item, error)
 	ArchiveItems(context.Context, string) ([]domain.Item, error)
+	LoadItemVectors(context.Context, string, []domain.Item) error
 }
 
 func main() {
@@ -50,6 +51,12 @@ func run(ctx context.Context, repository itemStore, vectors vectorstore.Store, a
 		}
 		archive, err := repository.ArchiveItems(ctx, userID)
 		if err != nil {
+			return liveCount, archiveCount, err
+		}
+		if err := repository.LoadItemVectors(ctx, userID, live); err != nil {
+			return liveCount, archiveCount, err
+		}
+		if err := repository.LoadItemVectors(ctx, userID, archive); err != nil {
 			return liveCount, archiveCount, err
 		}
 		for _, group := range []struct {

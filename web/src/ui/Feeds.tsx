@@ -96,8 +96,8 @@ export function Feeds(props: {
           return (
             (first.extraction_success_rate ?? 2) -
               (second.extraction_success_rate ?? 2) ||
-            (first.median_extract_quality ?? 2) -
-              (second.median_extract_quality ?? 2) ||
+            (first.average_extract_quality ?? 2) -
+              (second.average_extract_quality ?? 2) ||
             displayTitle(first).localeCompare(displayTitle(second))
           );
         default:
@@ -557,7 +557,7 @@ function FeedDrawer(props: {
         </header>
         <Show when={props.feed.muted}>
           <p class="paused-copy">
-            paused · {props.feed.item_count} items retained
+            paused · {props.feed.item_count} items ingested
           </p>
         </Show>
 
@@ -703,8 +703,8 @@ function FeedDrawer(props: {
                     : "Remove feed?"}
                 </strong>
                 <p>
-                  {props.feed.item_count} items from the current window will
-                  disappear. Kept items stay in the archive.
+                  Recent items from this feed will disappear. Kept items stay in
+                  the archive.
                 </p>
                 <div>
                   <button type="button" onClick={() => setConfirming(false)}>
@@ -760,10 +760,10 @@ function FeedDrawer(props: {
 function ExtractionQuality(props: { feed: Feed }) {
   const available = () =>
     props.feed.extraction_success_rate !== undefined &&
-    props.feed.median_extract_quality !== undefined;
+    props.feed.average_extract_quality !== undefined;
   const label = () => {
     if (available())
-      return `${Math.round((props.feed.extraction_success_rate ?? 0) * 100)}% · ${(props.feed.median_extract_quality ?? 0).toFixed(2)}`;
+      return `${Math.round((props.feed.extraction_success_rate ?? 0) * 100)}% · ${(props.feed.average_extract_quality ?? 0).toFixed(2)}`;
     if ((props.feed.extraction_sample ?? 0) > 0) return "not yet";
     return "— · —";
   };

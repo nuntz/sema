@@ -7,7 +7,6 @@ import (
 	"errors"
 	"mime/multipart"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -190,7 +189,27 @@ func (f *apiDynamo) Query(_ context.Context, input *dynamodb.QueryInput, _ ...fu
 }
 
 func (f *apiDynamo) UpdateItem(_ context.Context, input *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
+	if f.update == nil {
+		return &dynamodb.UpdateItemOutput{}, nil
+	}
 	return f.update(input)
+}
+
+func captureFeedUpdate(t *testing.T, destination *domain.Feed) func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+	t.Helper()
+	return func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		row := map[string]types.AttributeValue{"PK": input.Key["PK"], "SK": input.Key["SK"]}
+		for alias, name := range input.ExpressionAttributeNames {
+			placeholder := strings.Replace(alias, "#", ":", 1)
+			if value, ok := input.ExpressionAttributeValues[placeholder]; ok {
+				row[name] = value
+			}
+		}
+		if err := attributevalue.UnmarshalMap(row, destination); err != nil {
+			t.Fatal(err)
+		}
+		return &dynamodb.UpdateItemOutput{}, nil
+	}
 }
 
 func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
@@ -356,12 +375,7 @@ func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
 		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 			return &dynamodb.QueryOutput{}, nil
 		},
-		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-			if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
-				t.Fatal(err)
-			}
-			return &dynamodb.PutItemOutput{}, nil
-		},
+		update: captureFeedUpdate(t, &saved),
 	}
 	queue := &apiQueue{}
 	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
@@ -399,12 +413,7 @@ func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
 		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 			return &dynamodb.GetItemOutput{Item: item}, nil
 		},
-		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-			if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
-				t.Fatal(err)
-			}
-			return &dynamodb.PutItemOutput{}, nil
-		},
+		update: captureFeedUpdate(t, &saved),
 	}
 	queue := &apiQueue{}
 	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
@@ -437,12 +446,7 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 			return &dynamodb.GetItemOutput{Item: item}, nil
 		},
-		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-			if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
-				t.Fatal(err)
-			}
-			return &dynamodb.PutItemOutput{}, nil
-		},
+		update: captureFeedUpdate(t, &saved),
 	}
 	queue := &apiQueue{}
 	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
@@ -484,15 +488,16 @@ func TestImportFeedsInvalidatesCacheAfterPartialWriteFailure(t *testing.T) {
 		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 			return &dynamodb.GetItemOutput{}, nil
 		},
-		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 			var feed domain.Feed
-			if err := attributevalue.UnmarshalMap(input.Item, &feed); err != nil {
-				t.Fatal(err)
+			capture := captureFeedUpdate(t, &feed)
+			if _, err := capture(input); err != nil {
+				return nil, err
 			}
 			if strings.Contains(feed.URL, "failed") {
 				return nil, writeFailure
 			}
-			return &dynamodb.PutItemOutput{}, nil
+			return &dynamodb.UpdateItemOutput{}, nil
 		},
 	}
 	server := &server{
@@ -546,56 +551,28 @@ func TestEnqueueFeedsJoinsBatchErrors(t *testing.T) {
 	}
 }
 
-func TestDecorateExtractionComputesPerFeedDistribution(t *testing.T) {
-	feeds := []domain.Feed{{FeedID: "enough"}, {FeedID: "new"}}
-	items := make([]domain.Item, 0, 14)
-	for index := range 10 {
-		items = append(items, domain.Item{FeedID: "enough", HasBody: index < 8, ExtractQuality: float64(index+1) / 10})
+func TestDecorateExtractionUsesLifetimeFeedCounters(t *testing.T) {
+	feeds := []domain.Feed{
+		{FeedID: "enough", ItemCount: 10, ExtractionSample: 10, ExtractionFailures: 2, ExtractionQualityTotal: 5.5},
+		{FeedID: "new", ItemCount: 4, ExtractionSample: 4, ExtractionQualityTotal: 3.6},
 	}
-	for range 4 {
-		items = append(items, domain.Item{FeedID: "new", HasBody: true, ExtractQuality: 0.9})
-	}
-	decorateExtraction(feeds, items)
-	if feeds[0].ExtractionSample != 10 || feeds[0].ExtractionRate == nil || *feeds[0].ExtractionRate != 0.8 || feeds[0].MedianQuality == nil || *feeds[0].MedianQuality != 0.55 {
+	decorateExtraction(feeds)
+	if feeds[0].ExtractionSample != 10 || feeds[0].ExtractionRate == nil || *feeds[0].ExtractionRate != 0.8 || feeds[0].AverageQuality == nil || *feeds[0].AverageQuality != 0.55 {
 		t.Fatalf("enough feed stats = %#v", feeds[0])
 	}
-	if feeds[1].ExtractionSample != 4 || feeds[1].ExtractionRate != nil || feeds[1].MedianQuality != nil {
+	if feeds[1].ExtractionSample != 4 || feeds[1].ExtractionRate != nil || feeds[1].AverageQuality != nil {
 		t.Fatalf("new feed stats = %#v", feeds[1])
 	}
 }
 
-func TestDecorateFeedsProjectedStatsMatchFullItems(t *testing.T) {
-	fullItems := make([]domain.Item, 0, 14)
-	for index := range 10 {
-		fullItems = append(fullItems, domain.Item{
-			FeedID: "enough", HasBody: index < 8, ExtractQuality: float64(index+1) / 10,
-			Vector: []byte{1, 2, 3}, SearchText: "large search payload",
-		})
-	}
-	for range 4 {
-		fullItems = append(fullItems, domain.Item{
-			FeedID: "new", HasBody: true, ExtractQuality: 0.9,
-			Vector: []byte{4, 5, 6}, SearchText: "another large search payload",
-		})
-	}
-
-	rows := make([]map[string]types.AttributeValue, 0, len(fullItems))
-	for _, item := range fullItems {
-		rows = append(rows, map[string]types.AttributeValue{
-			"feed_id":         &types.AttributeValueMemberS{Value: item.FeedID},
-			"extract_quality": &types.AttributeValueMemberN{Value: strconv.FormatFloat(item.ExtractQuality, 'f', -1, 64)},
-			"has_body":        &types.AttributeValueMemberBOOL{Value: item.HasBody},
-		})
-	}
+func TestDecorateFeedsUsesFeedRowsWithoutScanningItems(t *testing.T) {
 	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		if input.ConsistentRead != nil || aws.ToString(input.ProjectionExpression) != "#feed, #quality, #body" {
-			t.Fatalf("feed stats query = %#v", input)
-		}
-		return &dynamodb.QueryOutput{Items: rows}, nil
+		t.Fatalf("decorate feeds queried items: %#v", input)
+		return nil, nil
 	}}
-	want := []domain.Feed{{FeedID: "enough"}, {FeedID: "new"}}
-	decorateExtraction(want, fullItems)
-	got := []domain.Feed{{FeedID: "enough"}, {FeedID: "new"}}
+	want := []domain.Feed{{FeedID: "enough", ItemCount: 10, ExtractionSample: 10, ExtractionFailures: 2, ExtractionQualityTotal: 5.5}, {FeedID: "new", ItemCount: 4, ExtractionSample: 4, ExtractionQualityTotal: 3.6}}
+	decorateExtraction(want)
+	got := []domain.Feed{{FeedID: "enough", ItemCount: 10, ExtractionSample: 10, ExtractionFailures: 2, ExtractionQualityTotal: 5.5}, {FeedID: "new", ItemCount: 4, ExtractionSample: 4, ExtractionQualityTotal: 3.6}}
 	server := &server{store: store.New(db, nil, "table", "", "")}
 	if err := server.decorateFeeds(context.Background(), "user", got); err != nil {
 		t.Fatal(err)
@@ -604,10 +581,10 @@ func TestDecorateFeedsProjectedStatsMatchFullItems(t *testing.T) {
 		if got[index].ItemCount != want[index].ItemCount || got[index].ExtractionSample != want[index].ExtractionSample {
 			t.Fatalf("feed %d counts = %#v, want %#v", index, got[index], want[index])
 		}
-		if (got[index].ExtractionRate == nil) != (want[index].ExtractionRate == nil) || (got[index].MedianQuality == nil) != (want[index].MedianQuality == nil) {
+		if (got[index].ExtractionRate == nil) != (want[index].ExtractionRate == nil) || (got[index].AverageQuality == nil) != (want[index].AverageQuality == nil) {
 			t.Fatalf("feed %d optional stats = %#v, want %#v", index, got[index], want[index])
 		}
-		if got[index].ExtractionRate != nil && (*got[index].ExtractionRate != *want[index].ExtractionRate || *got[index].MedianQuality != *want[index].MedianQuality) {
+		if got[index].ExtractionRate != nil && (*got[index].ExtractionRate != *want[index].ExtractionRate || *got[index].AverageQuality != *want[index].AverageQuality) {
 			t.Fatalf("feed %d distribution = %#v, want %#v", index, got[index], want[index])
 		}
 	}

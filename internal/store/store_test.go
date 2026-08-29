@@ -338,47 +338,6 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 	}
 }
 
-func TestLiveItemStatsUsesEventuallyConsistentProjectedPages(t *testing.T) {
-	statsItem := func(feedID string, quality float64, hasBody bool) map[string]types.AttributeValue {
-		return map[string]types.AttributeValue{
-			"feed_id":         &types.AttributeValueMemberS{Value: feedID},
-			"extract_quality": &types.AttributeValueMemberN{Value: strconv.FormatFloat(quality, 'f', -1, 64)},
-			"has_body":        &types.AttributeValueMemberBOOL{Value: hasBody},
-		}
-	}
-	pageKey := key(domain.UserPK("user"), "I#continue")
-	calls := 0
-	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		calls++
-		if input.ConsistentRead != nil {
-			t.Fatalf("stats query ConsistentRead = %v, want unset", aws.ToBool(input.ConsistentRead))
-		}
-		if aws.ToString(input.ProjectionExpression) != "#feed, #quality, #body" {
-			t.Fatalf("stats projection = %q", aws.ToString(input.ProjectionExpression))
-		}
-		for alias, name := range map[string]string{"#feed": "feed_id", "#quality": "extract_quality", "#body": "has_body"} {
-			if input.ExpressionAttributeNames[alias] != name {
-				t.Fatalf("stats projection names = %#v", input.ExpressionAttributeNames)
-			}
-		}
-		if calls == 1 {
-			if len(input.ExclusiveStartKey) != 0 {
-				t.Fatalf("first stats start key = %#v", input.ExclusiveStartKey)
-			}
-			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{statsItem("first", 0.8, true)}, LastEvaluatedKey: pageKey}, nil
-		}
-		if input.ExclusiveStartKey["SK"].(*types.AttributeValueMemberS).Value != "I#continue" {
-			t.Fatalf("second stats start key = %#v", input.ExclusiveStartKey)
-		}
-		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{statsItem("second", 0.2, false)}}, nil
-	}}
-
-	items, err := New(db, nil, "table", "", "").LiveItemStats(context.Background(), "user")
-	if err != nil || calls != 2 || len(items) != 2 || items[0].FeedID != "first" || items[0].ExtractQuality != 0.8 || !items[0].HasBody || items[1].FeedID != "second" || items[1].ExtractQuality != 0.2 || items[1].HasBody {
-		t.Fatalf("stats items = %#v, calls = %d, err = %v", items, calls, err)
-	}
-}
-
 func TestSearchItemsUsesMultiTermAndAndPageFills(t *testing.T) {
 	marshal := func(id string) map[string]types.AttributeValue {
 		item, err := attributevalue.MarshalMap(domain.Item{
@@ -434,16 +393,33 @@ func TestResolveReadDeduplicatesKeysAndFansOutState(t *testing.T) {
 	}
 }
 
-func TestPutItemEnforcesStableIdentityAcrossPublishedTimestamps(t *testing.T) {
+func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 	calls := 0
 	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 		calls++
-		if len(input.TransactItems) != 2 {
+		if len(input.TransactItems) != 4 {
 			t.Fatalf("transaction = %#v", input.TransactItems)
 		}
 		identity := input.TransactItems[0].Put.Item
 		if got := identity["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {
 			t.Fatalf("identity key = %q", got)
+		}
+		if _, exists := input.TransactItems[1].Put.Item["vector"]; exists {
+			t.Fatal("live item row contains vector")
+		}
+		storedVector := input.TransactItems[2].Put.Item
+		if got := storedVector["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemVectorSK("same") || string(storedVector["vector"].(*types.AttributeValueMemberB).Value) != "vector" {
+			t.Fatalf("vector row = %#v", storedVector)
+		}
+		counter := input.TransactItems[3].Update
+		if got := counter.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.FeedSK("feed") {
+			t.Fatalf("counter key = %q", got)
+		}
+		if aws.ToString(counter.UpdateExpression) != "ADD item_count :one, extraction_sample :one, extraction_failures :extraction_failure, media_failures :media_failure, extraction_quality_total :quality" {
+			t.Fatalf("counter update = %#v", counter)
+		}
+		if counter.ExpressionAttributeValues[":extraction_failure"].(*types.AttributeValueMemberN).Value != "1" || counter.ExpressionAttributeValues[":media_failure"].(*types.AttributeValueMemberN).Value != "1" {
+			t.Fatalf("counter outcomes = %#v", counter.ExpressionAttributeValues)
 		}
 		if calls == 2 {
 			return nil, &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{
@@ -453,7 +429,7 @@ func TestPutItemEnforcesStableIdentityAcrossPublishedTimestamps(t *testing.T) {
 		return &dynamodb.TransactWriteItemsOutput{}, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	first := domain.Item{PK: domain.UserPK("user"), SK: domain.ItemSK(time.Now(), "same"), ItemID: "same", TTL: time.Now().Add(time.Hour).Unix()}
+	first := domain.Item{PK: domain.UserPK("user"), SK: domain.ItemSK(time.Now(), "same"), ItemID: "same", FeedID: "feed", Vector: []byte("vector"), TTL: time.Now().Add(time.Hour).Unix()}
 	written, err := repository.PutItem(context.Background(), first)
 	if err != nil || !written {
 		t.Fatalf("first put = %v, %v", written, err)
@@ -523,6 +499,10 @@ func TestItemResolvesStableIdentityDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	vector, err := attributevalue.MarshalMap(domain.ItemVector{PK: live.PK, SK: domain.ItemVectorSK(live.ItemID), Vector: []byte("vector"), TTL: live.TTL})
+	if err != nil {
+		t.Fatal(err)
+	}
 	gets := 0
 	db := &fakeDynamoDB{
 		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
@@ -535,6 +515,8 @@ func TestItemResolvesStableIdentityDirectly(t *testing.T) {
 				return &dynamodb.GetItemOutput{Item: identity}, nil
 			case live.SK:
 				return &dynamodb.GetItemOutput{Item: item}, nil
+			case domain.ItemVectorSK("same"):
+				return &dynamodb.GetItemOutput{Item: vector}, nil
 			default:
 				t.Fatalf("unexpected item key: %#v", input.Key)
 				return nil, nil
@@ -546,8 +528,52 @@ func TestItemResolvesStableIdentityDirectly(t *testing.T) {
 		},
 	}
 	got, err := New(db, nil, "table", "", "").Item(context.Background(), "user", "same")
-	if err != nil || got.SK != live.SK || gets != 2 {
+	if err != nil || got.SK != live.SK || string(got.Vector) != "vector" || gets != 3 {
 		t.Fatalf("Item = %#v, gets %d, %v", got, gets, err)
+	}
+}
+
+func TestItemFallsBackToLegacyInRowVector(t *testing.T) {
+	now := time.Now()
+	live := domain.Item{PK: domain.UserPK("user"), SK: domain.ItemSK(now, "legacy"), ItemID: "legacy", Vector: []byte("legacy-vector"), TTL: now.Add(time.Hour).Unix()}
+	identity, _ := attributevalue.MarshalMap(domain.ItemIdentity{PK: live.PK, SK: domain.ItemIdentitySK(live.ItemID), ItemSK: live.SK, TTL: live.TTL})
+	item, _ := attributevalue.MarshalMap(live)
+	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+		case domain.ItemIdentitySK(live.ItemID):
+			return &dynamodb.GetItemOutput{Item: identity}, nil
+		case live.SK:
+			return &dynamodb.GetItemOutput{Item: item}, nil
+		case domain.ItemVectorSK(live.ItemID):
+			return &dynamodb.GetItemOutput{}, nil
+		default:
+			return nil, errors.New("unexpected key")
+		}
+	}}
+	got, err := New(db, nil, "table", "", "").Item(context.Background(), "user", live.ItemID)
+	if err != nil || string(got.Vector) != "legacy-vector" {
+		t.Fatalf("Item = %#v, %v", got, err)
+	}
+}
+
+func TestLoadItemVectorsUsesOneBatchAndPreservesLegacyFallback(t *testing.T) {
+	ttl := time.Now().Add(time.Hour).Unix()
+	stored, _ := attributevalue.MarshalMap(domain.ItemVector{PK: domain.UserPK("user"), SK: domain.ItemVectorSK("new"), Vector: []byte("separate"), TTL: ttl})
+	calls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		calls++
+		keys := input.RequestItems["table"].Keys
+		if len(keys) != 2 || keys[0]["SK"].(*types.AttributeValueMemberS).Value != domain.ItemVectorSK("new") || keys[1]["SK"].(*types.AttributeValueMemberS).Value != domain.ItemVectorSK("legacy") {
+			t.Fatalf("vector keys = %#v", keys)
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {stored}}}, nil
+	}}
+	items := []domain.Item{{ItemID: "new"}, {ItemID: "legacy", Vector: []byte("in-row")}}
+	if err := New(db, nil, "table", "", "").LoadItemVectors(context.Background(), "user", items); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || string(items[0].Vector) != "separate" || string(items[1].Vector) != "in-row" {
+		t.Fatalf("items = %#v, calls = %d", items, calls)
 	}
 }
 
@@ -754,13 +780,8 @@ func TestUserIDsCombineProfileMarkersAndLegacyFeeds(t *testing.T) {
 }
 
 func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
-	var put *dynamodb.PutItemInput
 	var update *dynamodb.UpdateItemInput
 	db := &fakeDynamoDB{
-		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-			put = input
-			return &dynamodb.PutItemOutput{}, nil
-		},
 		updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 			update = input
 			return &dynamodb.UpdateItemOutput{}, nil
@@ -771,15 +792,30 @@ func TestFeedWritesMaintainSparseIndexKey(t *testing.T) {
 	if err := repository.PutFeed(context.Background(), feed); err != nil {
 		t.Fatal(err)
 	}
-	if put.Item["gsi1pk"].(*types.AttributeValueMemberS).Value != feedIndexPK {
-		t.Fatalf("put gsi1pk = %#v", put.Item["gsi1pk"])
+	indexed := false
+	for alias, name := range update.ExpressionAttributeNames {
+		if feedCounterAttributes[name] {
+			t.Fatalf("feed write replaces counter %q", name)
+		}
+		if name == "gsi1pk" && strings.Contains(aws.ToString(update.UpdateExpression), alias+" = ") {
+			indexed = true
+		}
+	}
+	if !indexed {
+		t.Fatalf("feed write did not set sparse index: %#v", update)
 	}
 	feed.Muted = true
 	if err := repository.PutFeed(context.Background(), feed); err != nil {
 		t.Fatal(err)
 	}
-	if _, indexed := put.Item["gsi1pk"]; indexed {
-		t.Fatalf("muted feed retained sparse index: %#v", put.Item["gsi1pk"])
+	removed := false
+	for alias, name := range update.ExpressionAttributeNames {
+		if name == "gsi1pk" && strings.Contains(aws.ToString(update.UpdateExpression), "REMOVE") && strings.Contains(aws.ToString(update.UpdateExpression), alias) {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Fatalf("muted feed retained sparse index: %#v", update)
 	}
 	next := time.Date(2026, 8, 22, 13, 0, 0, 0, time.UTC)
 	if err := repository.ScheduleFeed(context.Background(), "user", "feed", next); err != nil {
@@ -822,12 +858,17 @@ func TestClaimFeedConditionallyLeasesDueFeed(t *testing.T) {
 
 func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	var writes []map[string]types.AttributeValue
-	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-		if input.ConditionExpression != nil {
-			t.Fatalf("replay overwrite retained dedupe condition %q", aws.ToString(input.ConditionExpression))
+	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		if len(input.TransactItems) != 2 {
+			t.Fatalf("replay transaction = %#v", input.TransactItems)
 		}
-		writes = append(writes, input.Item)
-		return &dynamodb.PutItemOutput{}, nil
+		for _, write := range input.TransactItems {
+			if write.Put.ConditionExpression != nil {
+				t.Fatalf("replay overwrite retained dedupe condition %q", aws.ToString(write.Put.ConditionExpression))
+			}
+			writes = append(writes, write.Put.Item)
+		}
+		return &dynamodb.TransactWriteItemsOutput{}, nil
 	}}
 	repository := New(db, nil, "table", "", "")
 	item := domain.Item{
@@ -840,8 +881,11 @@ func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	if err := repository.OverwriteItem(context.Background(), item); err != nil {
 		t.Fatal(err)
 	}
-	if len(writes) != 2 || writes[0]["score"].(*types.AttributeValueMemberN).Value != writes[1]["score"].(*types.AttributeValueMemberN).Value {
+	if len(writes) != 4 || writes[0]["score"].(*types.AttributeValueMemberN).Value != writes[2]["score"].(*types.AttributeValueMemberN).Value {
 		t.Fatalf("double replay writes = %#v", writes)
+	}
+	if _, exists := writes[0]["vector"]; exists || string(writes[1]["vector"].(*types.AttributeValueMemberB).Value) != string(item.Vector) {
+		t.Fatalf("replay vector rows = %#v", writes)
 	}
 	for _, transient := range []string{"read", "signal", "hearted"} {
 		if _, ok := writes[0][transient]; ok {

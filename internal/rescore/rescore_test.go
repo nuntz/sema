@@ -44,6 +44,7 @@ func (f *fakeRepository) Feeds(context.Context, string) ([]domain.Feed, error) {
 func (f *fakeRepository) LiveItems(context.Context, string) ([]domain.Item, error) {
 	return append([]domain.Item(nil), f.items...), nil
 }
+func (*fakeRepository) LoadItemVectors(context.Context, string, []domain.Item) error { return nil }
 func (f *fakeRepository) ReplaceItems(_ context.Context, items []domain.Item) error {
 	f.replacements = append([]domain.Item(nil), items...)
 	return nil
