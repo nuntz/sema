@@ -7,6 +7,8 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -63,6 +65,10 @@ type Processor struct{ client client }
 func New(client *httpx.Client) *Processor { return &Processor{client: client} }
 
 func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML, feedHTML []byte, articleImage string, pageURL, feedURL *url.URL) []string {
+	return candidates(enclosures, pageHTML, articleHTML, feedHTML, articleImage, pageURL, feedURL, html.Parse)
+}
+
+func candidates(enclosures []domain.Enclosure, pageHTML, articleHTML, feedHTML []byte, articleImage string, pageURL, feedURL *url.URL, parse func(io.Reader) (*html.Node, error)) []string {
 	seen := make(map[string]bool)
 	result := make([]string, 0, 4)
 	add := func(base *url.URL, raw string) {
@@ -78,23 +84,28 @@ func Candidates(enclosures []domain.Enclosure, pageHTML, articleHTML, feedHTML [
 		}
 	}
 	if len(pageHTML) > 0 {
-		doc, _ := html.Parse(bytes.NewReader(pageHTML))
-		var walk func(*html.Node)
-		walk = func(node *html.Node) {
-			if node.Type == html.ElementNode && node.Data == "meta" {
-				property, content := attr(node, "property"), attr(node, "content")
-				if property == "" {
-					property = attr(node, "name")
-				}
-				if property == "og:image" || property == "twitter:image" || property == "twitter:image:src" {
-					add(pageURL, content)
-				}
-			}
-			for child := node.FirstChild; child != nil; child = child.NextSibling {
-				walk(child)
-			}
+		doc, err := parse(bytes.NewReader(pageHTML))
+		if err != nil {
+			slog.Warn("parse page HTML failed", "page_url", pageURL, "error", err)
 		}
-		walk(doc)
+		if doc != nil {
+			var walk func(*html.Node)
+			walk = func(node *html.Node) {
+				if node.Type == html.ElementNode && node.Data == "meta" {
+					property, content := attr(node, "property"), attr(node, "content")
+					if property == "" {
+						property = attr(node, "name")
+					}
+					if property == "og:image" || property == "twitter:image" || property == "twitter:image:src" {
+						add(pageURL, content)
+					}
+				}
+				for child := node.FirstChild; child != nil; child = child.NextSibling {
+					walk(child)
+				}
+			}
+			walk(doc)
+		}
 	}
 	add(pageURL, articleImage)
 	add(pageURL, firstImage(articleHTML))

@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/nuntz/sema/internal/httpx"
+	"golang.org/x/net/html"
 )
 
 type fakeClient struct {
@@ -157,6 +159,21 @@ func TestCandidatesFallsBackToFeedContentImage(t *testing.T) {
 
 	candidates := Candidates(nil, pageHTML, nil, feedHTML, "", pageURL, feedURL)
 	want := []string{"https://cdn.example.com/page.jpg", "https://www.reddit.com/preview.jpeg?width=640"}
+	if !slices.Equal(candidates, want) {
+		t.Fatalf("candidates = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestCandidatesSkipsPageWalkWhenParsingFails(t *testing.T) {
+	pageURL, _ := url.Parse("https://example.com/story")
+	feedURL, _ := url.Parse("https://example.com/")
+	parseErr := errors.New("parse failed")
+
+	candidates := candidates(nil, []byte("unparseable"), nil, []byte(`<img src="/feed.jpg">`), "", pageURL, feedURL, func(io.Reader) (*html.Node, error) {
+		return nil, parseErr
+	})
+
+	want := []string{"https://example.com/feed.jpg"}
 	if !slices.Equal(candidates, want) {
 		t.Fatalf("candidates = %#v, want %#v", candidates, want)
 	}
