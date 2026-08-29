@@ -518,14 +518,14 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 			)
 		case "feed-worker":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem"}, "Resource": tableResources},
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": "s3:PutObject", "Resource": values[1].(string) + "/favicons/*"},
 				map[string]any{"Effect": "Allow", "Action": queueConsume, "Resource": values[2].(string)},
 				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": values[3].(string)},
 			)
 		case "item-worker":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:TransactWriteItems"}, "Resource": tableResources},
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:TransactWriteItems", "dynamodb:UpdateItem"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:GetObject"}, "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": queueConsume, "Resource": values[3].(string)},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": values[4].(string)},
@@ -541,7 +541,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 			)
 		case "rescore":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem"}, "Resource": tableResources},
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:BatchWriteItem", "dynamodb:BatchGetItem"}, "Resource": tableResources},
 			)
 		case "vector-cleanup":
 			statements = append(statements,
