@@ -35,6 +35,7 @@ import {
   LinkActionFailure,
 } from "./link-action";
 import { createMediaQuery } from "./media-query";
+import { resolveReaderItem } from "./reader-item";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
@@ -89,6 +90,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [unreadOnly, setUnreadOnly] = createSignal(true);
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
+  const [readerItem, setReaderItem] = createSignal<Item>();
   const [mode, setMode] = createSignal<"live" | "archive">("live");
   const [confirmRemove, setConfirmRemove] = createSignal<Item>();
   const [keysOpen, setKeysOpen] = createSignal(false);
@@ -597,10 +599,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   });
   const selected = createMemo(() => {
     const id = readerID();
-    return (
-      items().find((item) => item.item_id === id) ??
-      searchItems().find((item) => item.item_id === id) ??
-      relatedItems().find((item) => item.item_id === id)
+    return resolveReaderItem(
+      id,
+      [items(), searchItems(), relatedItems()],
+      readerItem(),
     );
   });
   const selectedIndex = createMemo(() =>
@@ -622,6 +624,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       ),
     );
     setRelatedSource((current) =>
+      current?.item_id === itemID ? { ...current, ...patch } : current,
+    );
+    setReaderItem((current) =>
       current?.item_id === itemID ? { ...current, ...patch } : current,
     );
   };
@@ -649,6 +654,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setRelatedSource();
     setRelatedItems([]);
     setRelatedLoading(false);
+  };
+
+  const closeReader = () => {
+    setReaderID("");
+    setReaderItem();
   };
 
   const setSignal = (item: Item, value: -1 | 0 | 1) => {
@@ -679,7 +689,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           current.filter((candidate) => candidate.item_id !== item.item_id),
         );
         setGridIDs(remainingIDs);
-        setReaderID((current) => (current === item.item_id ? "" : current));
+        if (readerID() === item.item_id) closeReader();
         setFocusedID((current) =>
           current === item.item_id ? (remainingIDs[0] ?? "") : current,
         );
@@ -803,6 +813,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const markOpened = (item: Item, archive = item.archived === true) => {
+    setReaderItem(item);
     recordOpened(item, archive);
     setReaderArchive(archive);
     setReaderID(item.item_id);
@@ -954,7 +965,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     if (mode() === "archive" || next === order()) return;
     await flushRead();
     setOrder(next);
-    setReaderID("");
+    closeReader();
     setProfile((current) =>
       current ? { ...current, order_pref: next } : current,
     );
@@ -969,7 +980,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     if (mode() === "archive" || tag === selectedTag()) return;
     await flushRead();
     setSelectedTag(tag);
-    setReaderID("");
+    closeReader();
     setProfile((current) =>
       current ? { ...current, tag_pref: tag } : current,
     );
@@ -1013,7 +1024,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setHeaderMenu();
     setKeysOpen(false);
     setRelatedSource();
-    setReaderID("");
+    closeReader();
     setReaderArchive(false);
     clearSearch();
     setMode("live");
@@ -1030,7 +1041,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setHeaderMenu();
     setKeysOpen(false);
     setRelatedSource();
-    setReaderID("");
+    closeReader();
     clearSearch();
     setView("feeds");
   };
@@ -1050,7 +1061,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const next = mode() === "live" ? "archive" : "live";
     setMode(next);
     setView("grid");
-    setReaderID("");
+    closeReader();
     setConfirmRemove();
     await reload(order(), unreadOnly(), next);
   };
@@ -1568,7 +1579,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               canNext={
                 selectedIndex() >= 0 && selectedIndex() < gridItems().length - 1
               }
-              onClose={() => setReaderID("")}
+              onClose={closeReader}
               onHome={() => void backToTop()}
               onPrevious={() => moveReader(-1)}
               onNext={() => moveReader(1)}
