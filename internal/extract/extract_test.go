@@ -287,3 +287,66 @@ func TestRemoveLeadImageRedditTable(t *testing.T) {
 		t.Fatalf("lead image cell was not pruned: %s", cleaned)
 	}
 }
+
+func TestSelectSrcsetKeepsCommasInsideCandidateURLs(t *testing.T) {
+	base, _ := url.Parse("https://newsletter.example.com/p/story")
+	const prefix = "https://cdn.example.com/image/fetch/$s_!zWz0!,w_"
+	const suffix = ",c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fassets.example.com%2Fhero.png"
+	raw := prefix + "424" + suffix + " 424w, " + prefix + "848" + suffix + " 848w, " + prefix + "1456" + suffix + " 1456w"
+	selected, candidates := selectSrcset(raw, base)
+	if want := prefix + "1456" + suffix; selected != want {
+		t.Fatalf("selected = %q, want %q", selected, want)
+	}
+	if len(candidates) != 3 {
+		t.Fatalf("candidates = %#v, want three entries", candidates)
+	}
+	for index, width := range []string{"424", "848", "1456"} {
+		if want := prefix + width + suffix + " " + width + "w"; candidates[index] != want {
+			t.Fatalf("candidates[%d] = %q, want %q", index, candidates[index], want)
+		}
+	}
+}
+
+func TestSplitSrcsetHandlesSpecShapes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{name: "no space after comma", raw: "small.jpg 1x,large.jpg 2x", want: []string{"small.jpg 1x", "large.jpg 2x"}},
+		{name: "bare url", raw: "only.jpg", want: []string{"only.jpg"}},
+		{name: "trailing comma url", raw: "first.jpg, second.jpg 2x", want: []string{"first.jpg", "second.jpg 2x"}},
+		{name: "comma in url", raw: "a,b/one.jpg 1w, a,b/two.jpg 2w", want: []string{"a,b/one.jpg 1w", "a,b/two.jpg 2w"}},
+		{name: "newline separated", raw: "one.jpg 1w,\n\ttwo.jpg 2w", want: []string{"one.jpg 1w", "two.jpg 2w"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := splitSrcset(test.raw)
+			if len(got) != len(test.want) {
+				t.Fatalf("splitSrcset(%q) = %#v, want %#v", test.raw, got, test.want)
+			}
+			for index := range got {
+				if got[index] != test.want[index] {
+					t.Fatalf("splitSrcset(%q)[%d] = %q, want %q", test.raw, index, got[index], test.want[index])
+				}
+			}
+		})
+	}
+}
+
+func TestSanitizeKeepsSubstackLeadImageSource(t *testing.T) {
+	base, _ := url.Parse("https://newsletter.example.com/p/story")
+	const prefix = "https://cdn.example.com/image/fetch/$s_!zWz0!,w_"
+	const suffix = ",c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fassets.example.com%2Fhero.png"
+	raw := `<figure><img src="` + prefix + `1456` + suffix + `" srcset="` + prefix + `424` + suffix + ` 424w, ` + prefix + `1456` + suffix + ` 1456w" width="1448" height="1086" alt=""></figure><p>` +
+		strings.Repeat("Article prose that carries the extraction. ", 20) + `</p>`
+	result, err := FeedContent(raw, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.HTML, `src="`+prefix+`1456`+suffix+`"`) {
+		t.Fatalf("lead image lost its src: %s", result.HTML)
+	}
+	if strings.Contains(result.HTML, `"fl_progressive:steep/`) {
+		t.Fatalf("srcset candidates were shredded on embedded commas: %s", result.HTML)
+	}
+}

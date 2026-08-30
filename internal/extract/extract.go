@@ -280,9 +280,57 @@ type srcsetCandidate struct {
 	width int
 }
 
+// splitSrcset splits a srcset attribute into candidates the way the HTML
+// parser does. Cloudinary-style URLs embed commas in their transform segment,
+// so splitting on every comma shreds each candidate into unusable fragments.
+func splitSrcset(raw string) []string {
+	candidates := make([]string, 0, 4)
+	for index := 0; index < len(raw); {
+		for index < len(raw) && (asciiWhitespace(raw[index]) || raw[index] == ',') {
+			index++
+		}
+		if index >= len(raw) {
+			break
+		}
+		start := index
+		for index < len(raw) && !asciiWhitespace(raw[index]) {
+			index++
+		}
+		candidate := raw[start:index]
+		if trimmed := strings.TrimRight(candidate, ","); trimmed != candidate {
+			candidates = append(candidates, trimmed)
+			continue
+		}
+		descriptors := index
+		depth := 0
+		for ; index < len(raw); index++ {
+			if raw[index] == '(' {
+				depth++
+			} else if raw[index] == ')' && depth > 0 {
+				depth--
+			} else if raw[index] == ',' && depth == 0 {
+				break
+			}
+		}
+		candidates = append(candidates, strings.TrimSpace(candidate+" "+strings.TrimSpace(raw[descriptors:index])))
+		if index < len(raw) {
+			index++
+		}
+	}
+	return candidates
+}
+
+func asciiWhitespace(character byte) bool {
+	switch character {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	}
+	return false
+}
+
 func selectSrcset(raw string, base *url.URL) (string, []string) {
 	parsed := make([]srcsetCandidate, 0)
-	for _, part := range strings.Split(raw, ",") {
+	for _, part := range splitSrcset(raw) {
 		fields := strings.Fields(strings.TrimSpace(part))
 		if len(fields) == 0 {
 			continue
