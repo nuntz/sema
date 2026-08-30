@@ -228,6 +228,14 @@
   --cell-label-fg: var(--media-fg-secondary);
   --kept-marker-bg: var(--media-action-bg-soft);
   --kept-marker-fg: var(--keep);
+  --related-action-bg: var(--media-action-bg-strong);
+  --related-action-fg: var(--fg-tertiary);
+  --related-action-hover-fg: var(--fg-primary);
+  --related-label-bg: var(--media-overlay-label);
+  --related-label-fg: var(--media-fg-secondary);
+  --related-kept-bg: var(--media-action-bg-kept);
+  --related-kept-fg: var(--play-color);
+  --related-text-scrim: var(--related-scrim);
 
   --unread-dot: #d6f24b;
   --unread-dot-ring: none;
@@ -475,6 +483,14 @@
   --cell-label-fg: var(--fg-secondary);
   --kept-marker-bg: var(--surface-selected);
   --kept-marker-fg: var(--keep);
+  --related-action-bg: var(--surface-raised-hover);
+  --related-action-fg: var(--fg-secondary);
+  --related-action-hover-fg: var(--fg-primary);
+  --related-label-bg: var(--surface-raised-hover);
+  --related-label-fg: var(--fg-secondary);
+  --related-kept-bg: var(--surface-selected);
+  --related-kept-fg: var(--keep);
+  --related-text-scrim: none;
   --unread-dot: #d6f24b;
   --unread-dot-ring: 0 0 0 1.5px #14161a;
   --caughtup-rule: rgba(0, 0, 0, 0.12);
@@ -658,6 +674,14 @@
     --cell-label-fg: var(--fg-secondary);
     --kept-marker-bg: var(--surface-selected);
     --kept-marker-fg: var(--keep);
+    --related-action-bg: var(--surface-raised-hover);
+    --related-action-fg: var(--fg-secondary);
+    --related-action-hover-fg: var(--fg-primary);
+    --related-label-bg: var(--surface-raised-hover);
+    --related-label-fg: var(--fg-secondary);
+    --related-kept-bg: var(--surface-selected);
+    --related-kept-fg: var(--keep);
+    --related-text-scrim: none;
     --unread-dot: #d6f24b;
     --unread-dot-ring: 0 0 0 1.5px #14161a;
     --caughtup-rule: rgba(0, 0, 0, 0.12);
@@ -835,7 +859,9 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .result-cell .cell-copy { padding-top: 26px; }
 .result-cell .cell-copy h2 { -webkit-line-clamp: 2; }
 .result-cell .cell-copy p { display: none; }
-.result-cell .similarity, .related-cell .similarity { padding: 4px 7px; border-radius: 4px; background: var(--media-overlay-label); color: var(--media-fg-secondary); font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; }
+.result-cell .similarity, .related-cell .similarity { padding: 4px 7px; border-radius: 4px; font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; }
+.result-cell .similarity { background: var(--media-overlay-label); color: var(--media-fg-secondary); }
+.related-cell .similarity { background: var(--related-label-bg); color: var(--related-label-fg); }
 .result-cell .cell-corner:has(.similarity) { pointer-events: none; }
 .search-empty, .related-empty { margin-top: 26px; padding: 26px 24px; border: 1px solid var(--line-medium); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow-raised); }
 .search-empty h2, .related-empty h3 { margin: 0 0 7px; color: var(--fg-primary); font: 400 var(--t-17)/1.3 "Newsreader", Georgia, serif; }
@@ -996,11 +1022,15 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .related-video-play { position: absolute; top: 7px; left: 7px; z-index: 2; color: var(--play-color); filter: var(--play-shadow); pointer-events: none; }
 .related-video-play .icon { color: currentColor; stroke-width: var(--icon-stroke-filled); }
 .related-cell-scrim { position: absolute; inset: 0; background: var(--related-scrim); }
+.related-cell:not(:has(> img)) .related-cell-scrim { background: var(--related-text-scrim); }
 .related-cell > .similarity, .related-kept { position: absolute; top: 7px; right: 7px; z-index: 2; }
-.related-kept { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--media-action-bg-kept); color: var(--play-color); }
+.related-kept { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--related-kept-bg); color: var(--related-kept-fg); }
+.related-kept .icon { color: currentColor; }
 .related-actions { position: absolute; top: 6px; left: 6px; z-index: 3; display: flex; gap: 3px; opacity: 0; }
 .related-cell:hover .related-actions, .related-cell.focused .related-actions { opacity: 1; }
-.related-actions button { width: 25px; height: 25px; padding: 0; display: grid; place-items: center; border-radius: 5px; background: var(--media-action-bg-strong); }
+.related-actions button { width: 25px; height: 25px; padding: 0; display: grid; place-items: center; border-radius: 5px; background: var(--related-action-bg); color: var(--related-action-fg); }
+.related-actions button:hover { color: var(--related-action-hover-fg); }
+.related-actions button .icon { color: currentColor; }
 .related-copy { position: absolute; inset: auto 8px 7px; z-index: 2; min-width: 0; }
 .related-copy > button { max-width: 100%; padding: 0; overflow: hidden; display: block; background: transparent; color: var(--fg-primary); font: 500 var(--t-13-5)/1.25 "Instrument Sans", sans-serif; white-space: nowrap; text-overflow: ellipsis; text-align: left; }
 .related-copy > span { margin-top: 4px; overflow: hidden; display: block; color: var(--fg-quaternary); font: 400 var(--t-chip)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
@@ -1681,6 +1711,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .related-copy > a { max-width: 100%; padding: 0; overflow: hidden; display: block; color: var(--fg-primary); font: 500 var(--t-13-5)/1.25 "Instrument Sans", sans-serif; white-space: nowrap; text-overflow: ellipsis; text-decoration: none; text-align: left; }
 .related-cell.reddit-cell .related-copy { right: 33px; }
 .related-cell.reddit-cell .reddit-discussion { right: 6px; bottom: 5px; }
+.related-cell:has(> img) .reddit-discussion { color: var(--media-fg-secondary); }
+.related-cell:has(> img) .reddit-discussion:hover { background: var(--media-control-hover); color: var(--media-fg-primary); }
+.related-cell:has(> img) .reddit-discussion:focus-visible { box-shadow: 0 0 0 2px var(--media-accent-wash); color: var(--media-fg-primary); }
+.related-cell:has(> img) .reddit-discussion .icon { color: currentColor; }
 
 .reddit-media-card { margin: 2px 0 10px; display: block; overflow: hidden; border: 1px solid var(--line-medium); border-radius: var(--media-radius); background: var(--surface); box-shadow: var(--shadow-raised); color: inherit; text-decoration: none; }
 .reddit-media-card:hover { border-color: var(--line-heavy); }
