@@ -1,4 +1,5 @@
 import type { JSX } from "solid-js";
+import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 
 const LABEL = "Sema — back to top";
@@ -31,8 +32,8 @@ export function AppMark(props: {
         aria-label={LABEL}
         onClick={activate}
       >
-        <img src="/sema-mark-small.svg" alt="" aria-hidden="true" />
-        <span>sema</span>
+        <Icon name="newspaper" size={20} />
+        <span>Sema</span>
       </a>
     </Tooltip>
   );

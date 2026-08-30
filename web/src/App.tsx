@@ -16,6 +16,7 @@ import {
 } from "./behaviour-events";
 import { AppHeader } from "./components/AppHeader";
 import { Icon } from "./components/Icon";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { Tooltip } from "./components/Tooltip";
 import {
   finishAndClearGrid,
@@ -35,6 +36,7 @@ import {
 } from "./link-action";
 import { createMediaQuery } from "./media-query";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
+import { nextThemePreference, type ThemeController } from "./theme";
 import type {
   Feed,
   Item,
@@ -65,7 +67,7 @@ type Toast = {
 };
 type HeaderMenu = "combined" | "overflow";
 
-export function App(props: { signOut(): void }) {
+export function App(props: { signOut(): void; theme: ThemeController }) {
   const api = new APIClient();
   const [, setProfile] = createSignal<Profile>();
   const [heartCount, setHeartCount] = createSignal(0);
@@ -1264,6 +1266,10 @@ export function App(props: { signOut(): void }) {
             class="chrome-divider header-tools-divider"
             aria-hidden="true"
           />
+          <ThemeToggle
+            theme={props.theme}
+            tooltipDisabled={headerTooltipDisabled()}
+          />
           <Tooltip
             name="Feeds & settings"
             shortcut="G S"
@@ -1396,6 +1402,24 @@ export function App(props: { signOut(): void }) {
               >
                 <Icon name="archive" size={18} />
                 <span>Archive</span>
+              </button>
+              <button
+                type="button"
+                aria-label={`Theme: ${props.theme.preference()} — switch to ${nextThemePreference(props.theme.preference())}`}
+                onClick={props.theme.cyclePreference}
+              >
+                <Icon
+                  name={
+                    props.theme.preference() === "system"
+                      ? "theme-system"
+                      : props.theme.preference() === "light"
+                        ? "theme-light"
+                        : "theme-dark"
+                  }
+                  size={18}
+                />
+                <span>Theme: {props.theme.preference()}</span>
+                <kbd>next</kbd>
               </button>
               <button type="button" onClick={openFeedsAndSettings}>
                 <Icon name="settings" size={18} />

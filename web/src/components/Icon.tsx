@@ -15,12 +15,16 @@ import Heart from "lucide-solid/icons/heart";
 import Link from "lucide-solid/icons/link";
 import Menu from "lucide-solid/icons/menu";
 import MessageSquare from "lucide-solid/icons/message-square";
+import Monitor from "lucide-solid/icons/monitor";
+import Moon from "lucide-solid/icons/moon";
+import Newspaper from "lucide-solid/icons/newspaper";
 import Pause from "lucide-solid/icons/pause";
 import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import Search from "lucide-solid/icons/search";
 import Settings from "lucide-solid/icons/settings";
+import Sun from "lucide-solid/icons/sun";
 import Tag from "lucide-solid/icons/tag";
 import Trash2 from "lucide-solid/icons/trash-2";
 import Unplug from "lucide-solid/icons/unplug";
@@ -78,6 +82,7 @@ const glyphs = {
   discussion: MessageSquare,
   more: Ellipsis,
   mute: Pause,
+  newspaper: Newspaper,
   "next-item": ChevronRight,
   "open-original": ExternalLink,
   "previous-item": ChevronLeft,
@@ -92,6 +97,9 @@ const glyphs = {
   "status-ok": Check,
   "status-slowed": Clock,
   tag: Tag,
+  "theme-dark": Moon,
+  "theme-light": Sun,
+  "theme-system": Monitor,
 } as const;
 
 export type IconName = keyof typeof glyphs;

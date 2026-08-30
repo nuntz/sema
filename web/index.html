@@ -4,6 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0c0e" />
+    <script>
+      (() => {
+        try {
+          const preference = localStorage.getItem("sema:theme");
+          const explicit = preference === "light" || preference === "dark";
+          if (explicit) document.documentElement.dataset.theme = preference;
+          const resolved = explicit
+            ? preference
+            : matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          document
+            .querySelector('meta[name="theme-color"]')
+            ?.setAttribute(
+              "content",
+              resolved === "light" ? "#edebe6" : "#0b0c0e",
+            );
+        } catch {
+          // CSS still resolves the system theme when storage is unavailable.
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..600&display=swap" rel="stylesheet" />
