@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The fixture mirrors the required button-based radio controls.
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
@@ -130,12 +131,13 @@ function GridHeaderFixture() {
 }
 
 function ReaderFixture() {
+  const [readerItem, setReaderItem] = createSignal(item);
   return (
     <Reader
-      item={item}
+      item={readerItem()}
       active={false}
       archive={false}
-      hearted={false}
+      hearted={readerItem().hearted}
       linkActionActive={false}
       canPrevious={true}
       canNext={true}
@@ -143,8 +145,15 @@ function ReaderFixture() {
       onHome={() => undefined}
       onPrevious={() => undefined}
       onNext={() => undefined}
-      onSignal={() => undefined}
-      onHeart={() => undefined}
+      onSignal={(signal) =>
+        setReaderItem((current) => ({ ...current, signal }))
+      }
+      onHeart={() =>
+        setReaderItem((current) => ({
+          ...current,
+          hearted: !current.hearted,
+        }))
+      }
       onCopy={() => undefined}
       onOriginal={() => undefined}
       onRelated={() => undefined}

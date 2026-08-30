@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createMemo,
   createSignal,
   For,
   onCleanup,
@@ -66,6 +67,21 @@ export function Reader(props: ReaderProps) {
   const [overflowOpen, setOverflowOpen] = createSignal(false);
   const [dragOffset, setDragOffset] = createSignal(0);
   const [swiping, setSwiping] = createSignal(false);
+  // Judgment updates replace the item object without changing article content.
+  const bodySource = createMemo(
+    () => ({
+      itemID: props.item.item_id,
+      url: props.item.body_url,
+      hasBody: props.item.has_body,
+    }),
+    undefined,
+    {
+      equals: (previous, next) =>
+        previous?.itemID === next.itemID &&
+        previous?.url === next.url &&
+        previous?.hasBody === next.hasBody,
+    },
+  );
   const narrowHeader = createMediaQuery("(max-width: 619px)");
   let trackedID = props.item.item_id;
   let dwellMS = 0;
@@ -120,9 +136,10 @@ export function Reader(props: ReaderProps) {
   });
 
   createEffect(() => {
-    const url = props.item.body_url;
+    const source = bodySource();
+    const url = source.url;
     setBody("");
-    if (!url || !props.item.has_body) return;
+    if (!url || !source.hasBody) return;
     const controller = new AbortController();
     setLoading(true);
     fetch(url, { credentials: "same-origin", signal: controller.signal })

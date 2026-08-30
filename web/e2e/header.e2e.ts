@@ -209,6 +209,43 @@ test("reader title overlays the crumb and crossfades with hysteresis", async ({
   );
 });
 
+test("reader judgments preserve article scroll and do not refetch its body", async ({
+  page,
+}) => {
+  let bodyRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/e2e/reader-body.html") {
+      bodyRequests++;
+    }
+  });
+
+  await openFixture(page, "reader");
+  await page.locator("#reader-last-line").waitFor();
+
+  const scroll = page.locator(".reader-scroll");
+  const actions = page.locator(".chrome-group--judge button");
+  for (const [index, label] of ["boost", "bury", "keep"].entries()) {
+    const before = await scroll.evaluate((element) => {
+      element.scrollTop = Math.min(
+        300,
+        element.scrollHeight - element.clientHeight,
+      );
+      return element.scrollTop;
+    });
+    expect(before).toBeGreaterThan(0);
+
+    const action = actions.nth(index);
+    await expect(action).toContainText(label);
+    await action.click();
+    await expect(action).toHaveAttribute("aria-pressed", "true");
+    await expect
+      .poll(() => scroll.evaluate((element) => element.scrollTop))
+      .toBe(before);
+  }
+
+  expect(bodyRequests).toBe(1);
+});
+
 test("responsive chrome visibility, semantics, and overflow stay valid", async ({
   page,
 }) => {
