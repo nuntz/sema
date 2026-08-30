@@ -181,6 +181,43 @@ test("desktop grid actions appear only while their cell is hovered", async ({
   await expect(allCell.locator(".cell-actions")).toHaveCSS("opacity", "0");
 });
 
+test("Reddit grid cells omit the external-link destination glyph", async ({
+  page,
+}) => {
+  const redditItems = items.map((item, index) => {
+    if (index === 0)
+      return {
+        ...item,
+        connector: "reddit",
+        post_type: "image",
+        media_url: "/media/reddit-image.webp",
+        media_w: 800,
+        media_h: 600,
+        external_url: "https://example.com/reddit-image",
+      };
+    if (index === 1)
+      return {
+        ...item,
+        connector: "reddit",
+        post_type: "video",
+        media_type: "video",
+        media_url: "/media/reddit-video.webp",
+        media_w: 1280,
+        media_h: 720,
+        external_url: "https://v.redd.it/video",
+      };
+    return item;
+  });
+  await openApp(page, { initialItems: redditItems });
+
+  await expect(
+    page.locator('[data-item-id="item-0"] .destination-glyph'),
+  ).toHaveCount(0);
+  await expect(
+    page.locator('[data-item-id="item-1"] .destination-glyph'),
+  ).toHaveCount(1);
+});
+
 test("desktop-width touch profiles do not force grid actions visible", async ({
   browser,
 }) => {

@@ -815,9 +815,7 @@ export function Grid(props: GridProps) {
                       <Show
                         when={
                           item().media_type === "video" ||
-                          (isRedditItem(item()) &&
-                            !!item().media_url &&
-                            !!item().external_url)
+                          item().post_type === "video"
                         }
                       >
                         <span
@@ -825,12 +823,7 @@ export function Grid(props: GridProps) {
                           aria-hidden="true"
                         >
                           <Icon
-                            name={
-                              item().media_type === "video" ||
-                              item().post_type === "video"
-                                ? "play"
-                                : "open-original"
-                            }
+                            name="play"
                             size={
                               row.kind === "hero" || row.kind === "pair"
                                 ? 24
@@ -842,10 +835,7 @@ export function Grid(props: GridProps) {
                                       ? 14
                                       : 12
                             }
-                            filled={
-                              item().media_type === "video" ||
-                              item().post_type === "video"
-                            }
+                            filled={true}
                           />
                         </span>
                       </Show>
