@@ -987,7 +987,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .hero-cell.text-cell .cell-copy h2 { padding-right: 36px; -webkit-line-clamp: 3; }
 .text-cell .cell-meta { margin-top: auto; }
 .cell-actions { position: absolute; top: 7px; left: 7px; z-index: 5; display: flex; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 120ms ease-out; }
-.grid-cell:hover .cell-actions, .grid-cell.focused .cell-actions { opacity: 1; pointer-events: auto; }
+.grid-cell:hover .cell-actions, .cell-actions:has(button:focus-visible) { opacity: 1; pointer-events: auto; }
 .cell-actions button { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; background: var(--cell-action-bg); color: var(--cell-action-fg); }
 .cell-actions button:hover { background: var(--cell-action-hover-bg); color: var(--cell-action-hover-fg); transition: background 90ms ease, color 90ms ease; }
 .cell-actions button:focus-visible { outline: 0; box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
@@ -1053,10 +1053,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .text-cell .cell-scrim { display: none; }
 .text-cell .cell-copy { inset: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 12px; background: none; }
 .text-cell .cell-copy h2 { color: var(--fg-primary); }
-.kept-marker { position: absolute; top: 7px; left: 7px; z-index: 4; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--kept-marker-bg); color: var(--kept-marker-fg); transition: opacity 120ms ease-out; }
+.kept-marker { position: absolute; top: 7px; left: 7px; z-index: 4; width: 14px; height: 14px; display: grid; place-items: center; background: transparent; color: var(--kept-marker-fg); pointer-events: none; transition: opacity 120ms ease-out; }
 .kept-marker .icon { color: currentColor; }
-.archive-cell:hover .kept-marker, .archive-cell.focused .kept-marker { opacity: 0; }
-.archive-cell.text-cell .kept-marker { top: 9px; left: 9px; width: 12px; height: 12px; background: transparent; }
+.grid-cell:hover .kept-marker, .grid-cell:has(.cell-actions button:focus-visible) .kept-marker { opacity: 0; }
+.archive-cell.text-cell .kept-marker { top: 9px; left: 9px; }
 
 .archive-empty { flex: 1; min-height: 340px; margin: auto; padding: 40px 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .archive-empty > .icon { margin-bottom: 18px; }
@@ -1396,11 +1396,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 
 @media (pointer: coarse) {
-  .cell-actions { top: 5px; left: 5px; gap: 8px; opacity: 1; pointer-events: auto; }
+  .cell-actions { top: 5px; left: 5px; gap: 8px; }
   .cell-actions button { position: relative; width: 44px; height: 44px; margin: -9px; background: transparent; isolation: isolate; }
   .cell-actions button::before { content: ""; position: absolute; inset: 9px; z-index: -1; border-radius: 6px; background: var(--cell-action-bg); }
   .cell-actions button:hover { background: transparent; }
+  .cell-actions button.heart.selected, .cell-actions button.heart.selected:hover { background: transparent; }
   .cell-actions button.heart.selected::before { background: var(--cell-action-kept-bg); }
+  .cell-actions button.heart.selected:hover::before { background: var(--cell-action-kept-hover-bg); }
   .feeds-header button, .tag-suggestions button, .drawer-close, .drawer-actions button, .feed-transfer button, .interval-field button, .reddit-collect-options button, .feed-add, .feed-sort select { min-width: var(--touch-min); min-height: var(--touch-min); }
   .feed-search, .drawer-field > input, .tag-editor, .generate-row, .mute-row { min-height: var(--touch-min); }
   .tag-chip button { width: 44px; height: 44px; margin: -11px -11px -11px -5px; }

@@ -882,8 +882,8 @@ export function Grid(props: GridProps) {
                           </Show>
                         </div>
                       </div>
-                      <Show when={props.archive}>
-                        <span class="kept-marker">
+                      <Show when={item().hearted}>
+                        <span class="kept-marker" aria-hidden="true">
                           <Icon name="keep" size={14} filled={true} />
                         </span>
                       </Show>

@@ -66,6 +66,7 @@ interface OpenAppOptions {
   initialCursor?: string;
   pagination?: { items: typeof items; nextCursor?: string };
   polledItems?: typeof items;
+  archiveItems?: typeof items;
   readAnchor?: { item_id: string; published_ts: string };
 }
 
@@ -123,6 +124,12 @@ async function openApp(
       });
       return;
     }
+    if (url.pathname === "/api/archive") {
+      await route.fulfill({
+        json: { items: options.archiveItems ?? [], next_cursor: null },
+      });
+      return;
+    }
     await route.fulfill({ json: {} });
   });
   await page.goto("/");
@@ -132,6 +139,120 @@ async function openApp(
   ).toBeVisible();
   return state;
 }
+
+test("desktop grid actions appear only while their cell is hovered", async ({
+  page,
+}) => {
+  const keptItems = items.map((item, index) => ({
+    ...item,
+    hearted: index === 0,
+  }));
+  await openApp(page, { initialItems: keptItems });
+  const cell = page.locator(".grid-cell").first();
+  const actions = cell.locator(".cell-actions");
+  const marker = cell.locator(".kept-marker");
+
+  await expect(cell).toHaveClass(/focused/);
+  await expect(marker).toHaveCount(1);
+  await expect(marker).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("pointer-events", "none");
+
+  await cell.hover();
+  await expect(marker).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("pointer-events", "auto");
+
+  await page.locator(".app-header").hover();
+  await expect(cell).toHaveClass(/focused/);
+  await expect(marker).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("pointer-events", "none");
+
+  await cell.getByRole("button", { name: "More actions" }).focus();
+  await expect(marker).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("pointer-events", "auto");
+
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  const allCell = page.locator(".grid-cell").first();
+  await expect(allCell).toHaveClass(/all-items-cell/);
+  await expect(allCell.locator(".kept-marker")).toHaveCSS("opacity", "1");
+  await expect(allCell.locator(".cell-actions")).toHaveCSS("opacity", "0");
+});
+
+test("desktop-width touch profiles do not force grid actions visible", async ({
+  browser,
+}) => {
+  const archiveItems = items.map((item) => ({ ...item, hearted: true }));
+  const context = await browser.newContext({
+    hasTouch: true,
+    viewport: { width: 1280, height: 720 },
+  });
+  const page = await context.newPage();
+
+  try {
+    await openApp(page, { archiveItems });
+    expect(
+      await page.evaluate(() => matchMedia("(pointer: coarse)").matches),
+    ).toBe(true);
+    const actions = page.locator(".grid-cell").first().locator(".cell-actions");
+    await expect(actions).toHaveCSS("opacity", "0");
+    await expect(actions).toHaveCSS("pointer-events", "none");
+
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    const archiveCell = page.locator(".grid-cell").first();
+    const heart = archiveCell.getByRole("button", {
+      name: "Remove from archive",
+    });
+    const more = archiveCell.getByRole("button", { name: "More actions" });
+    await expect(heart).toHaveCSS("width", "44px");
+    await expect(heart).toHaveCSS("height", "44px");
+    await expect(more).toHaveCSS("width", "44px");
+    await expect(more).toHaveCSS("height", "44px");
+    await expect(heart).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(more).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    expect(
+      await heart.evaluate(
+        (element) => getComputedStyle(element, "::before").width,
+      ),
+    ).toBe("26px");
+    expect(
+      await more.evaluate(
+        (element) => getComputedStyle(element, "::before").width,
+      ),
+    ).toBe("26px");
+  } finally {
+    await context.close();
+  }
+});
+
+test("desktop archive actions appear only while their cell is hovered", async ({
+  page,
+}) => {
+  const archiveItems = items.map((item) => ({ ...item, hearted: true }));
+  await openApp(page, { archiveItems });
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+
+  const cell = page.locator(".grid-cell").first();
+  const actions = cell.locator(".cell-actions");
+  const marker = cell.locator(".kept-marker");
+  await expect(cell).toHaveClass(/archive-cell/);
+  await expect(marker).toHaveCount(1);
+  await expect(marker).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("pointer-events", "none");
+
+  await cell.hover();
+  await expect(marker).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("pointer-events", "auto");
+
+  await page.locator(".app-header").hover();
+  await expect(marker).toHaveCSS("opacity", "1");
+  await expect(actions).toHaveCSS("opacity", "0");
+  await expect(actions).toHaveCSS("pointer-events", "none");
+});
 
 test("empty unread grid omits the end divider and zero-item action", async ({
   page,
