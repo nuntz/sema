@@ -80,6 +80,10 @@ function setup(options: { stored?: string; systemLight?: boolean } = {}) {
 }
 
 describe("theme controller", () => {
+  it("uses the resolved masthead color for browser chrome", () => {
+    expect(themeColor).toEqual({ dark: "#0b0c0e", light: "#14161a" });
+  });
+
   it("follows system theme changes live when no override is stored", () => {
     const context = setup();
 

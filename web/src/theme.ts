@@ -6,7 +6,7 @@ export type ResolvedTheme = Exclude<ThemePreference, "system">;
 export const themeStorageKey = "sema:theme";
 export const themeColor = {
   dark: "#0b0c0e",
-  light: "#edebe6",
+  light: "#14161a",
 } as const satisfies Record<ResolvedTheme, string>;
 
 export interface ThemeController {
