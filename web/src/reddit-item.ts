@@ -16,6 +16,10 @@ export type RedditPrimaryRoute =
   | { kind: "reader" }
   | { kind: "external"; url: string };
 
+export type RedditReaderImageSource =
+  | { kind: "stored" }
+  | { kind: "external"; url: string };
+
 function parsedExternalURL(item: Item): URL | undefined {
   if (!item.external_url) return;
   try {
@@ -60,6 +64,17 @@ export function redditReaderOriginalURL(item: Item): string {
   if (isRedditItem(item) && item.post_type === "link" && item.external_url)
     return item.external_url;
   return item.url;
+}
+
+export function redditReaderImageSources(
+  item: Item,
+): RedditReaderImageSource[] {
+  const sources: RedditReaderImageSource[] = [];
+  if (item.media_url) sources.push({ kind: "stored" });
+  if (!isRedditGallery(item) && item.external_url) {
+    sources.push({ kind: "external", url: item.external_url });
+  }
+  return sources;
 }
 
 export function showsReaderOriginalFallback(item: Item): boolean {

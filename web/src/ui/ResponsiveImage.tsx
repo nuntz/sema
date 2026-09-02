@@ -4,7 +4,7 @@ import type { Item } from "../types";
 
 type ResponsiveImageProps = Omit<
   JSX.ImgHTMLAttributes<HTMLImageElement>,
-  "src" | "srcset" | "sizes" | "decoding" | "alt"
+  "src" | "srcset" | "sizes" | "alt"
 > & {
   item: Item;
   sizes?: number | string;
@@ -12,7 +12,13 @@ type ResponsiveImageProps = Omit<
 };
 
 export function ResponsiveImage(props: ResponsiveImageProps) {
-  const [local, imageProps] = splitProps(props, ["item", "sizes", "alt"]);
+  const [local, imageProps] = splitProps(props, [
+    "item",
+    "sizes",
+    "alt",
+    "loading",
+    "decoding",
+  ]);
   const source = createMemo(() =>
     responsiveMediaSource(local.item, local.sizes),
   );
@@ -33,8 +39,8 @@ export function ResponsiveImage(props: ResponsiveImageProps) {
       alt={local.alt}
       srcset={source().srcset}
       sizes={source().sizes}
-      loading={imageProps.loading ?? "lazy"}
-      decoding="async"
+      loading={local.loading ?? "lazy"}
+      decoding={local.decoding ?? "async"}
     />
   );
 }

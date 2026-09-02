@@ -10,11 +10,14 @@ import {
 import { isOlderThanThirtyDays } from "../archive";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
+import { decodeImageWithin } from "../image-decode";
 import { createMediaQuery } from "../media-query";
 import {
   externalHost,
   isRedditGallery,
   isRedditItem,
+  type RedditReaderImageSource,
+  redditReaderImageSources,
   redditReaderOriginalURL,
   redditSummaryProvenance,
   showsReaderOriginalFallback,
@@ -544,11 +547,16 @@ export function Reader(props: ReaderProps) {
               </div>
             </Show>
           </Show>
-          <Show when={isRedditItem(props.item)}>
-            <RedditReaderIntro
-              item={props.item}
-              onClickThrough={props.onOriginal}
-            />
+          <Show
+            when={isRedditItem(props.item) ? props.item.item_id : undefined}
+            keyed
+          >
+            {(_itemID) => (
+              <RedditReaderIntro
+                item={props.item}
+                onClickThrough={props.onOriginal}
+              />
+            )}
           </Show>
           <Show when={props.item.summary}>
             <div class="article-summary">
@@ -800,12 +808,50 @@ function RedditDestinationCard(props: { item: Item; onClickThrough(): void }) {
 }
 
 function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
-  const [failedURL, setFailedURL] = createSignal("");
-  const gallery = () => isRedditGallery(props.item);
-  const destination = () => props.item.external_url || "";
-  const useStoredImage = () =>
-    gallery() || !destination() || failedURL() === destination();
-  const target = () => (useStoredImage() ? props.item.url : destination());
+  const [attempt, setAttempt] = createSignal<RedditImageAttempt>({
+    sourceIndex: 0,
+    decoding: "async",
+  });
+  const sources = createMemo(
+    () => redditReaderImageSources(props.item),
+    undefined,
+    { equals: sameRedditImageSources },
+  );
+  let trackedSources = sources();
+  createEffect(() => {
+    const next = sources();
+    if (next === trackedSources) return;
+    trackedSources = next;
+    setAttempt({ sourceIndex: 0, decoding: "async" });
+  });
+  const currentAttempt = createMemo(() => {
+    const state = attempt();
+    const source = sources()[state.sourceIndex];
+    return source ? { ...state, source } : undefined;
+  });
+  const target = () => props.item.external_url || props.item.url;
+
+  const advanceSource = (current: RedditResolvedImageAttempt) => {
+    if (currentAttempt() !== current) return;
+    setAttempt({ sourceIndex: current.sourceIndex + 1, decoding: "async" });
+  };
+
+  const watchDecode = (
+    current: RedditResolvedImageAttempt,
+    image: HTMLImageElement,
+  ) => {
+    void decodeImageWithin(image, READER_IMAGE_DECODE_TIMEOUT_MS).then(
+      (result) => {
+        if (currentAttempt() !== current || result === "decoded") return;
+        if (result === "timeout" && current.decoding === "async") {
+          setAttempt({ sourceIndex: current.sourceIndex, decoding: "sync" });
+          return;
+        }
+        advanceSource(current);
+      },
+    );
+  };
+
   return (
     <a
       class="reddit-media-card reddit-image-card"
@@ -816,49 +862,109 @@ function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
     >
       <span class="reddit-media-band reddit-image-band">
         <Show
-          when={!useStoredImage()}
+          when={currentAttempt()}
+          keyed
           fallback={
+            <span class="reddit-image-unavailable">
+              Image unavailable · open on Reddit
+            </span>
+          }
+        >
+          {(current) => (
             <Show
-              when={props.item.media_url}
+              when={current.source.kind === "stored"}
               fallback={
-                <span class="reddit-image-unavailable">
-                  Image unavailable · open on Reddit
-                </span>
+                <RedditExternalImage
+                  source={
+                    (current.source as { kind: "external"; url: string }).url
+                  }
+                  alt={props.item.title}
+                  decoding={current.decoding}
+                  onLoad={(image) => watchDecode(current, image)}
+                  onError={() => advanceSource(current)}
+                />
               }
             >
               <ResponsiveImage
+                class="reddit-full-image"
                 item={props.item}
                 sizes="(max-width: 700px) calc(100vw - 44px), 640px"
                 alt={props.item.title}
                 width={props.item.media_w}
                 height={props.item.media_h}
+                loading="eager"
+                decoding={current.decoding}
+                onLoad={(event) => watchDecode(current, event.currentTarget)}
+                onError={() => advanceSource(current)}
               />
             </Show>
-          }
-        >
-          <img
-            class="reddit-full-image"
-            src={destination()}
-            alt={props.item.title}
-            loading="eager"
-            decoding="async"
-            referrerpolicy="no-referrer"
-            onError={() => setFailedURL(destination())}
-          />
+          )}
         </Show>
       </span>
       <span class="reddit-provider-strip">
         <b>REDDIT</b>
         <i />
-        <span>
-          {useStoredImage() ? "reddit.com" : externalHost(destination())}
-        </span>
+        <span>{externalHost(target()) || "reddit.com"}</span>
         <strong>
-          {useStoredImage() ? "Open Reddit" : "Open"}
+          Open
           <Icon name="open-original" />
         </strong>
       </span>
     </a>
+  );
+}
+
+type RedditImageDecoding = "async" | "sync";
+
+const READER_IMAGE_DECODE_TIMEOUT_MS = 4_000;
+
+interface RedditImageAttempt {
+  sourceIndex: number;
+  decoding: RedditImageDecoding;
+}
+
+interface RedditResolvedImageAttempt extends RedditImageAttempt {
+  source: RedditReaderImageSource;
+}
+
+function sameRedditImageSources(
+  previous: RedditReaderImageSource[] | undefined,
+  next: RedditReaderImageSource[],
+): boolean {
+  return (
+    previous?.length === next.length &&
+    previous.every((source, index) => {
+      const candidate = next[index];
+      return (
+        source.kind === candidate.kind &&
+        (source.kind !== "external" ||
+          (candidate.kind === "external" && source.url === candidate.url))
+      );
+    })
+  );
+}
+
+function RedditExternalImage(props: {
+  source: string;
+  alt: string;
+  decoding: RedditImageDecoding;
+  onLoad(image: HTMLImageElement): void;
+  onError(): void;
+}) {
+  let image: HTMLImageElement | undefined;
+  onCleanup(() => image?.removeAttribute("src"));
+  return (
+    <img
+      ref={image}
+      class="reddit-full-image"
+      src={props.source}
+      alt={props.alt}
+      loading="eager"
+      decoding={props.decoding}
+      referrerpolicy="no-referrer"
+      onLoad={(event) => props.onLoad(event.currentTarget)}
+      onError={props.onError}
+    />
   );
 }
 

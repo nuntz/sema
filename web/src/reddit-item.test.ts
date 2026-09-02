@@ -5,6 +5,7 @@ import {
   isRedditGallery,
   isRedditLink,
   redditPrimaryRoute,
+  redditReaderImageSources,
   redditReaderOriginalURL,
   redditSummaryProvenance,
   showsReaderOriginalFallback,
@@ -112,6 +113,52 @@ describe("Reddit item presentation", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("prefers cached reader media before the direct Reddit image", () => {
+    expect(
+      redditReaderImageSources(
+        item({
+          connector: "reddit",
+          post_type: "image",
+          media_url: "/media/lead.jpg",
+          external_url: "https://i.redd.it/original.jpg",
+        }),
+      ),
+    ).toEqual([
+      { kind: "stored" },
+      { kind: "external", url: "https://i.redd.it/original.jpg" },
+    ]);
+  });
+
+  it("retains direct media only as a fallback when stored media is absent", () => {
+    expect(
+      redditReaderImageSources(
+        item({
+          connector: "reddit",
+          post_type: "image",
+          external_url: "https://i.redd.it/original.jpg",
+        }),
+      ),
+    ).toEqual([{ kind: "external", url: "https://i.redd.it/original.jpg" }]);
+    expect(
+      redditReaderImageSources(
+        item({ connector: "reddit", post_type: "image" }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not treat a Reddit gallery page as a direct image fallback", () => {
+    expect(
+      redditReaderImageSources(
+        item({
+          connector: "reddit",
+          post_type: "gallery",
+          media_url: "/media/gallery.jpg",
+          external_url: "https://www.reddit.com/gallery/one",
+        }),
+      ),
+    ).toEqual([{ kind: "stored" }]);
   });
 
   it("sends only failed link extraction to the linked article", () => {
