@@ -23,6 +23,10 @@ func EmbedMediaKey(userID, itemID string, index int) string {
 	return fmt.Sprintf("media/%s/%s/embed-%d.webp", userID, itemID, index)
 }
 
+func BodyImageKey(userID, itemID string, index int) string {
+	return fmt.Sprintf("media/%s/%s/body-%d.webp", userID, itemID, index)
+}
+
 func FaviconKey(feedID string) string {
 	return fmt.Sprintf("favicons/%s.png", feedID)
 }

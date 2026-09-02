@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -90,6 +91,85 @@ func TestMediaCardsAreProviderLinksWithoutThirdPartyLoadsAfterResolution(t *test
 	if len(failures) != 1 || strings.Contains(compact, "<img") || strings.Contains(compact, "i.ytimg.com") || !strings.Contains(compact, `class="video-provider-strip"`) {
 		t.Fatalf("compact card = %s, failures = %v", compact, failures)
 	}
+}
+
+func TestResolveBodyImagesRewritesEligibleImagesAndPreservesFailures(t *testing.T) {
+	offline := errors.New("offline")
+	raw := `<figure><img src="https://publisher.example/chart.png" srcset="https://publisher.example/chart-small.png 400w, https://publisher.example/chart.png 800w" sizes="100vw" alt="A chart" title="Quarterly results" width="800" height="600" loading="lazy"></figure>` +
+		`<p><img src="https://publisher.example/offline.png" srcset="https://publisher.example/offline-small.png 400w" sizes="50vw" alt="Offline"></p>` +
+		`<a class="media-card" href="https://youtube.example/watch"><span class="media-card-thumbnail"><img src="https://video.example/poster.jpg" srcset="https://video.example/poster-large.jpg 2x"></span></a>` +
+		`<img src="data:image/png;base64,abc" alt="Inline"><img src="/relative.png" alt="Relative"><img alt="Empty">`
+	var images []BodyImage
+	resolved, failures := ResolveBodyImages(raw, func(image BodyImage) (string, error) {
+		images = append(images, image)
+		if image.URL == "https://publisher.example/offline.png" {
+			return "", offline
+		}
+		return "https://content.example/media/user/item/body-0.webp", nil
+	})
+
+	if len(images) != 2 || images[0] != (BodyImage{Index: 0, URL: "https://publisher.example/chart.png"}) || images[1] != (BodyImage{Index: 1, URL: "https://publisher.example/offline.png"}) {
+		t.Fatalf("resolved images = %#v", images)
+	}
+	if len(failures) != 1 || !errors.Is(failures[0], offline) {
+		t.Fatalf("failures = %v", failures)
+	}
+	success := `<img src="https://content.example/media/user/item/body-0.webp" alt="A chart" title="Quarterly results" width="800" height="600" loading="lazy"/>`
+	if !strings.Contains(resolved, success) {
+		t.Fatalf("successful image was not rewritten with its attributes preserved: %s", resolved)
+	}
+	for _, unchanged := range []string{
+		`<img src="https://publisher.example/offline.png" srcset="https://publisher.example/offline-small.png 400w" sizes="50vw" alt="Offline"/>`,
+		`<img src="https://video.example/poster.jpg" srcset="https://video.example/poster-large.jpg 2x"/>`,
+		`<img src="data:image/png;base64,abc" alt="Inline"/>`,
+		`<img src="/relative.png" alt="Relative"/>`,
+		`<img alt="Empty"/>`,
+	} {
+		if !strings.Contains(resolved, unchanged) {
+			t.Errorf("resolved HTML does not preserve %q: %s", unchanged, resolved)
+		}
+	}
+	if strings.Contains(resolved, "chart-small.png") || strings.Contains(resolved, `sizes="100vw"`) {
+		t.Fatalf("successful image kept responsive candidates: %s", resolved)
+	}
+}
+
+func TestResolveBodyImagesStopsAtMaximumSuccessesOrAttempts(t *testing.T) {
+	buildImages := func() string {
+		var raw strings.Builder
+		for index := range MaxBodyImages + 2 {
+			fmt.Fprintf(&raw, `<img src="https://publisher.example/%d.png">`, index)
+		}
+		return raw.String()
+	}
+
+	t.Run("successes", func(t *testing.T) {
+		calls := 0
+		resolved, failures := ResolveBodyImages(buildImages(), func(image BodyImage) (string, error) {
+			calls++
+			return fmt.Sprintf("https://content.example/%d.webp", image.Index), nil
+		})
+		if calls != MaxBodyImages || len(failures) != 0 {
+			t.Fatalf("calls, failures = %d, %v", calls, failures)
+		}
+		if !strings.Contains(resolved, fmt.Sprintf(`src="https://content.example/%d.webp"`, MaxBodyImages-1)) || !strings.Contains(resolved, fmt.Sprintf(`src="https://publisher.example/%d.png"`, MaxBodyImages)) {
+			t.Fatalf("maximum was not applied at image %d: %s", MaxBodyImages, resolved)
+		}
+	})
+
+	t.Run("attempts", func(t *testing.T) {
+		calls := 0
+		resolved, failures := ResolveBodyImages(buildImages(), func(BodyImage) (string, error) {
+			calls++
+			return "", errors.New("unavailable")
+		})
+		if calls != MaxBodyImages || len(failures) != MaxBodyImages {
+			t.Fatalf("calls, failures = %d, %d", calls, len(failures))
+		}
+		if !strings.Contains(resolved, fmt.Sprintf(`src="https://publisher.example/%d.png"`, MaxBodyImages+1)) {
+			t.Fatalf("images after the attempt cap were changed: %s", resolved)
+		}
+	})
 }
 
 func TestEmbedDisplayURLStripsSchemeAndTrailingSlash(t *testing.T) {

@@ -15,10 +15,11 @@ import (
 	"path"
 	"strings"
 
+	webpcodec "github.com/deepteams/webp"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 	"golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
+	xwebp "golang.org/x/image/webp"
 	"golang.org/x/net/html"
 )
 
@@ -146,24 +147,9 @@ func (p *Processor) FetchVideoLead(ctx context.Context, candidates []string) (Le
 func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVideo bool) (Lead, error) {
 	var lastErr error
 	for _, candidate := range candidates {
-		response, err := p.client.Get(ctx, candidate, http.Header{"Accept": []string{imageAccept}})
+		decoded, contentType, err := p.fetchImage(ctx, candidate)
 		if err != nil {
-			lastErr = &LeadError{URL: candidate, Err: err}
-			continue
-		}
-		contentType := response.Header.Get("Content-Type")
-		if response.StatusCode < 200 || response.StatusCode >= 300 {
-			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("HTTP status %d", response.StatusCode)}
-			continue
-		}
-		mediaType, _, parseErr := mime.ParseMediaType(contentType)
-		if parseErr != nil || !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
-			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("unexpected content type")}
-			continue
-		}
-		decoded, err := decode(response.Body, 40_000_000)
-		if err != nil {
-			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: fmt.Errorf("decode: %w", err)}
+			lastErr = &LeadError{URL: candidate, ContentType: contentType, Err: err}
 			continue
 		}
 		if cropVideo {
@@ -193,6 +179,50 @@ func (p *Processor) fetchLead(ctx context.Context, candidates []string, cropVide
 func (p *Processor) FetchEmbed(ctx context.Context, sourceURL string) (Image, error) {
 	lead, err := p.FetchLead(ctx, []string{sourceURL})
 	return lead.Image, err
+}
+
+// FetchBodyImage downloads an inline article image and encodes one bounded
+// WebP copy without applying the lead image's minimum-width requirement.
+func (p *Processor) FetchBodyImage(ctx context.Context, sourceURL string) (Image, error) {
+	decoded, contentType, err := p.fetchImage(ctx, sourceURL)
+	if err != nil {
+		return Image{}, &LeadError{URL: sourceURL, ContentType: contentType, Err: err}
+	}
+	bounds := decoded.Bounds()
+	width, height := fit(bounds.Dx(), bounds.Dy(), 1600)
+	encoded := decoded
+	if width != bounds.Dx() || height != bounds.Dy() {
+		target := image.NewRGBA(image.Rect(0, 0, width, height))
+		draw.CatmullRom.Scale(target, target.Bounds(), decoded, bounds, draw.Over, nil)
+		encoded = target
+	}
+	options := webpcodec.DefaultOptions()
+	options.Quality = 85
+	var output bytes.Buffer
+	if err := webpcodec.Encode(&output, encoded, options); err != nil {
+		return Image{}, &LeadError{URL: sourceURL, ContentType: contentType, Err: fmt.Errorf("encode: %w", err)}
+	}
+	return Image{Bytes: output.Bytes(), ContentType: "image/webp", Extension: ".webp", SourceURL: sourceURL, Width: width, Height: height}, nil
+}
+
+func (p *Processor) fetchImage(ctx context.Context, sourceURL string) (image.Image, string, error) {
+	response, err := p.client.Get(ctx, sourceURL, http.Header{"Accept": []string{imageAccept}})
+	if err != nil {
+		return nil, "", err
+	}
+	contentType := response.Header.Get("Content-Type")
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, contentType, fmt.Errorf("HTTP status %d", response.StatusCode)
+	}
+	mediaType, _, parseErr := mime.ParseMediaType(contentType)
+	if parseErr != nil || !strings.HasPrefix(strings.ToLower(mediaType), "image/") {
+		return nil, contentType, fmt.Errorf("unexpected content type")
+	}
+	decoded, err := decode(response.Body, 40_000_000)
+	if err != nil {
+		return nil, contentType, fmt.Errorf("decode: %w", err)
+	}
+	return decoded, contentType, nil
 }
 
 func (p *Processor) Favicon(ctx context.Context, siteURL string) (Image, error) {
@@ -265,15 +295,28 @@ func (p *Processor) Avatar(ctx context.Context, sourceURL string) (Image, error)
 }
 
 func decode(body []byte, maxPixels int64) (image.Image, error) {
-	configuration, _, err := image.DecodeConfig(bytes.NewReader(body))
+	var configuration image.Config
+	var err error
+	if webpBody(body) {
+		configuration, err = xwebp.DecodeConfig(bytes.NewReader(body))
+	} else {
+		configuration, _, err = image.DecodeConfig(bytes.NewReader(body))
+	}
 	if err != nil {
 		return nil, err
 	}
 	if configuration.Width <= 0 || configuration.Height <= 0 || int64(configuration.Width)*int64(configuration.Height) > maxPixels {
 		return nil, fmt.Errorf("image dimensions %dx%d exceed the decode limit", configuration.Width, configuration.Height)
 	}
+	if webpBody(body) {
+		return xwebp.Decode(bytes.NewReader(body))
+	}
 	decoded, _, err := image.Decode(bytes.NewReader(body))
 	return decoded, err
+}
+
+func webpBody(body []byte) bool {
+	return len(body) >= 12 && bytes.Equal(body[:4], []byte("RIFF")) && bytes.Equal(body[8:12], []byte("WEBP"))
 }
 
 // EncodeLead creates JPEG encodings that fit within 384, 768, and 1280 pixel

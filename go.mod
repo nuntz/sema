@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3vectors v1.8.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.46.7
 	github.com/aws/smithy-go v1.27.8
+	github.com/deepteams/webp v1.2.7
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/mmcdole/gofeed v1.4.2

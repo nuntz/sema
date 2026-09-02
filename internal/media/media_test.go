@@ -58,6 +58,70 @@ func TestFetchLeadRequestsAndAcceptsImages(t *testing.T) {
 	}
 }
 
+func TestFetchBodyImageAcceptsSmallPNGAndReturnsWebP(t *testing.T) {
+	var body bytes.Buffer
+	if err := png.Encode(&body, image.NewRGBA(image.Rect(0, 0, 120, 80))); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{response: httpx.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"image/png"}},
+		Body:       body.Bytes(),
+	}}
+	sourceURL := "https://example.com/inline.png"
+
+	inline, err := (&Processor{client: client}).FetchBodyImage(context.Background(), sourceURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inline.ContentType != "image/webp" || inline.Extension != ".webp" || inline.SourceURL != sourceURL || inline.Width != 120 || inline.Height != 80 {
+		t.Fatalf("body image = %#v", inline)
+	}
+	configuration, format, err := image.DecodeConfig(bytes.NewReader(inline.Bytes))
+	if err != nil || format != "webp" || configuration.Width != 120 || configuration.Height != 80 {
+		t.Fatalf("encoded body image = %#v, %q, %v", configuration, format, err)
+	}
+}
+
+func TestFetchBodyImageDownscalesLongerEdgeToSixteenHundredPixels(t *testing.T) {
+	var body bytes.Buffer
+	if err := jpeg.Encode(&body, image.NewRGBA(image.Rect(0, 0, 3000, 1000)), nil); err != nil {
+		t.Fatal(err)
+	}
+	client := &fakeClient{response: httpx.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"image/jpeg"}},
+		Body:       body.Bytes(),
+	}}
+
+	inline, err := (&Processor{client: client}).FetchBodyImage(context.Background(), "https://example.com/wide.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inline.Width != 1600 || inline.Height != 533 {
+		t.Fatalf("body image dimensions = %dx%d, want 1600x533", inline.Width, inline.Height)
+	}
+	configuration, format, err := image.DecodeConfig(bytes.NewReader(inline.Bytes))
+	if err != nil || format != "webp" || configuration.Width != 1600 || configuration.Height != 533 {
+		t.Fatalf("encoded body image = %#v, %q, %v", configuration, format, err)
+	}
+}
+
+func TestFetchBodyImageRejectsNonImageContentType(t *testing.T) {
+	client := &fakeClient{response: httpx.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
+		Body:       []byte("<html></html>"),
+	}}
+	sourceURL := "https://example.com/not-an-image"
+
+	_, err := (&Processor{client: client}).FetchBodyImage(context.Background(), sourceURL)
+	var leadErr *LeadError
+	if !errors.As(err, &leadErr) || leadErr.URL != sourceURL || leadErr.ContentType != "text/html; charset=utf-8" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
 func TestEncodeLeadFitsBothDimensionsAndNeverUpscales(t *testing.T) {
 	tests := []struct {
 		name          string

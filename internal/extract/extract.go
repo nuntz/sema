@@ -188,6 +188,13 @@ type MediaCard struct {
 	ThumbnailURL string
 }
 
+const MaxBodyImages = 20
+
+type BodyImage struct {
+	Index int
+	URL   string
+}
+
 // ResolveMediaCards rewrites remote embed thumbnails to caller-provided URLs.
 // A resolver error deliberately produces the compact, no-thumbnail card.
 func ResolveMediaCards(raw string, resolver func(MediaCard) (string, error)) (string, []error) {
@@ -219,6 +226,60 @@ func ResolveMediaCards(raw string, resolver func(MediaCard) (string, error)) (st
 					thumbnail.AppendChild(&html.Node{Type: html.ElementNode, Data: "img", DataAtom: atom.Img, Attr: []html.Attribute{
 						{Key: "src", Val: cached}, {Key: "alt", Val: ""}, {Key: "loading", Val: "lazy"},
 					}})
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	var rendered strings.Builder
+	for node := root.FirstChild; node != nil; node = node.NextSibling {
+		if renderErr := html.Render(&rendered, node); renderErr != nil {
+			return raw, append(failures, renderErr)
+		}
+	}
+	return strings.TrimSpace(rendered.String()), failures
+}
+
+// ResolveBodyImages rewrites publisher-hosted article images to
+// caller-provided URLs. Resolver failures leave the original node untouched.
+func ResolveBodyImages(raw string, resolver func(BodyImage) (string, error)) (string, []error) {
+	nodes, err := html.ParseFragment(strings.NewReader(raw), &html.Node{Type: html.ElementNode, Data: "div", DataAtom: atom.Div})
+	if err != nil {
+		return raw, []error{err}
+	}
+	root := &html.Node{Type: html.DocumentNode}
+	for _, node := range nodes {
+		root.AppendChild(node)
+	}
+	var failures []error
+	attempts, successes := 0, 0
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if attempts >= MaxBodyImages || successes >= MaxBodyImages {
+			return
+		}
+		if node.Type == html.ElementNode && node.Data != "img" && hasClass(node, "media-card") {
+			return
+		}
+		if node.Type == html.ElementNode && node.Data == "img" {
+			source := attr(node, "src")
+			parsed, parseErr := url.Parse(source)
+			if source != "" && parseErr == nil && (strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")) && resolver != nil {
+				image := BodyImage{Index: attempts, URL: source}
+				attempts++
+				cached, resolveErr := resolver(image)
+				if resolveErr != nil {
+					failures = append(failures, resolveErr)
+				} else if strings.TrimSpace(cached) == "" {
+					failures = append(failures, fmt.Errorf("body image %d resolver returned an empty URL", image.Index))
+				} else {
+					setAttr(node, "src", cached)
+					removeAttr(node, "srcset")
+					removeAttr(node, "sizes")
+					successes++
 				}
 			}
 		}

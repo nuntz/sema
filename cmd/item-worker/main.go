@@ -222,6 +222,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	mediaKey, mediaW, mediaH := existing.MediaKey, existing.MediaW, existing.MediaH
 	mediaVariants := existing.MediaVariants
 	embedMediaSucceeded, embedMediaFailed := 0, 0
+	bodyImageSucceeded, bodyImageFailed := 0, 0
 	if processAssets {
 		feedURL, feedErr := url.Parse(feed.SiteURL)
 		if feedErr != nil || feedURL.Host == "" {
@@ -286,6 +287,13 @@ func (h *handler) process(ctx context.Context, body string) error {
 		}
 		for _, embedErr := range embedFailures {
 			slog.Warn("embed thumbnail failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", embedErr)
+		}
+		var bodyImageFailures []error
+		if !isVideo {
+			article.HTML, bodyImageSucceeded, bodyImageFailed, bodyImageFailures = cacheBodyImages(ctx, h.media, h.store, message.User, message.ItemID, article.HTML)
+		}
+		for _, bodyImageErr := range bodyImageFailures {
+			slog.Warn("body image failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", bodyImageErr)
 		}
 	}
 	bodyKey, hasBody := existing.BodyKey, existing.HasBody
@@ -401,6 +409,12 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if embedMediaFailed > 0 {
 		metrics["EmbedMediaFailed"] = float64(embedMediaFailed)
 	}
+	if bodyImageSucceeded > 0 {
+		metrics["BodyImageSucceeded"] = float64(bodyImageSucceeded)
+	}
+	if bodyImageFailed > 0 {
+		metrics["BodyImageFailed"] = float64(bodyImageFailed)
+	}
 	if written {
 		metrics["ItemsWritten"] = 1
 		kind := vectorstore.KindLive
@@ -442,6 +456,36 @@ func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedi
 
 type contentWriter interface {
 	PutContent(context.Context, string, string, []byte) error
+}
+
+type bodyImageFetcher interface {
+	FetchBodyImage(context.Context, string) (media.Image, error)
+}
+
+type bodyImageWriter interface {
+	contentWriter
+	ContentURL(string) string
+}
+
+func cacheBodyImages(ctx context.Context, fetcher bodyImageFetcher, writer bodyImageWriter, userID, itemID, raw string) (string, int, int, []error) {
+	bodyImageCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	succeeded, failed := 0, 0
+	rewritten, failures := extract.ResolveBodyImages(raw, func(image extract.BodyImage) (string, error) {
+		fetched, err := fetcher.FetchBodyImage(bodyImageCtx, image.URL)
+		if err != nil {
+			failed++
+			return "", err
+		}
+		key := store.BodyImageKey(userID, itemID, image.Index)
+		if err := writer.PutContent(bodyImageCtx, key, fetched.ContentType, fetched.Bytes); err != nil {
+			failed++
+			return "", fmt.Errorf("store body image: %w", err)
+		}
+		succeeded++
+		return writer.ContentURL(key), nil
+	})
+	return rewritten, succeeded, failed, failures
 }
 
 func storeLead(ctx context.Context, writer contentWriter, mediaKey string, lead media.Lead) ([]domain.MediaVariant, error) {
