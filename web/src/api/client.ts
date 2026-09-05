@@ -7,6 +7,7 @@ import type {
   Order,
   Profile,
   SearchResponse,
+  StoriesResponse,
 } from "../types";
 
 export interface FeedImportResult {
@@ -86,12 +87,22 @@ export class APIClient {
     cursor = "",
     includeRead = false,
     tag = "",
+    excludeStories = false,
   ): Promise<ItemsResponse> {
     const params = new URLSearchParams({ order, limit: "100" });
     if (cursor) params.set("cursor", cursor);
     if (includeRead) params.set("include_read", "true");
     if (tag) params.set("tag", tag === "untagged" ? "__untagged" : tag);
+    if (excludeStories) params.set("exclude_stories", "true");
     return this.request(`/items?${params}`);
+  }
+
+  stories(tag = "", includeRead = false): Promise<StoriesResponse> {
+    const params = new URLSearchParams();
+    if (includeRead) params.set("include_read", "true");
+    if (tag) params.set("tag", tag === "untagged" ? "__untagged" : tag);
+    const query = params.size > 0 ? `?${params}` : "";
+    return this.request(`/stories${query}`);
   }
 
   item(itemID: string) {

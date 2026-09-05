@@ -1,7 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { connectorKind } from "../reddit-item";
 
-export type BadgeSize = 16 | 20 | 28 | 32 | 36;
+export type BadgeSize = 12 | 16 | 20 | 28 | 32 | 36;
 
 export function SourceBadge(props: {
   connector?: string;

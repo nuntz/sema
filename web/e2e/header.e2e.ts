@@ -47,7 +47,7 @@ test("both desktop views use the same 56px mono control geometry", async ({
     await openFixture(page, view, "loaded");
     const geometry = await page.evaluate(() => {
       const header = document.querySelector(".app-header");
-      const mark = document.querySelector(".app-header__brand img");
+      const mark = document.querySelector(".app-header__brand svg");
       if (!header || !mark)
         throw new Error("Shared header geometry is missing");
       const controls = [
@@ -79,7 +79,7 @@ test("both desktop views use the same 56px mono control geometry", async ({
       true,
     );
     expect(geometry.controls.every((control) => control.y === 13)).toBe(true);
-    expect(geometry.sansCount).toBe(0);
+    expect(geometry.sansCount).toBe(1);
   }
 });
 
@@ -270,7 +270,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
 
     const geometry = await page.evaluate(() => {
       const header = document.querySelector(".app-header");
-      const mark = document.querySelector(".app-header__brand img");
+      const mark = document.querySelector(".app-header__brand svg");
       if (!header || !mark)
         throw new Error("Shared header geometry is missing");
       const controls = [...header.querySelectorAll("button, a")].filter(
@@ -283,8 +283,13 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
       };
     });
     expect(geometry.header.height).toBe(56);
-    expect(geometry.mark.x).toBe(20);
-    expect(geometry.mark.y).toBe(18);
+    if (width > 430) {
+      expect(geometry.mark.x).toBe(20);
+      expect(geometry.mark.y).toBe(18);
+    } else {
+      expect(geometry.mark.width).toBe(0);
+      expect(geometry.mark.height).toBe(0);
+    }
     expect(
       geometry.controls.every((control) =>
         width <= 430 ? control.height >= 44 : control.height >= 30,

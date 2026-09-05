@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  type JSX,
   on,
   onCleanup,
   onMount,
@@ -34,7 +35,12 @@ import {
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
-import type { Item, Order, ReadAnchor } from "../types";
+import type { Item, Order, ReadAnchor, Story } from "../types";
+import {
+  frontPageSequence,
+  horizontalStoryFocus,
+  moveFrontPageFocus,
+} from "./front-page";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -49,6 +55,9 @@ import {
 
 interface GridProps {
   items: Item[];
+  lead?: JSX.Element;
+  stories?: Story[];
+  expandedStoryIDs?: ReadonlySet<string>;
   layoutKey: number;
   scrollToTopKey: number;
   scrollTarget: number;
@@ -65,15 +74,18 @@ interface GridProps {
   pendingNewCount: number;
   onFocus(id: string): void;
   onOpen(item: Item): void;
+  onOpenStoryLead?(story: Story): void;
   onExternalOpen(item: Item): void;
   onDiscussion(item: Item): void;
   onSignal(item: Item, value: -1 | 0 | 1): void;
   onHeart(item: Item): void;
   onToggleRead(item: Item): void;
+  onToggleStoryRead?(story: Story): void;
   onCopy(item: Item): void;
   onOriginal(item: Item): void;
   onRelated(item: Item): void;
   onMarkBelow(item: Item): void;
+  onMarkStoryBelow?(storyID: string): void;
   onItemsPassed(ids: string[]): void;
   onFinishAndClear(ids: string[]): void;
   onLoadMore(): void;
@@ -114,6 +126,7 @@ export function Grid(props: GridProps) {
   let endRequested = false;
   let goPending = false;
   const [width, setWidth] = createSignal(0);
+  const [leadHeight, setLeadHeight] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(
     Math.max(0, props.initialScrollTop ?? 0),
@@ -125,6 +138,8 @@ export function Grid(props: GridProps) {
     "idle" | "pulling" | "ready" | "fetching" | "landed" | "up-to-date"
   >("idle");
   const [refreshCount, setRefreshCount] = createSignal(0);
+  let leadElement: HTMLDivElement | undefined;
+  let leadObserver: ResizeObserver | undefined;
   const liveItems = createMemo(
     () => new Map(props.items.map((item) => [item.item_id, item])),
   );
@@ -198,7 +213,19 @@ export function Grid(props: GridProps) {
   const rows = createMemo(() => layout().rows);
   const dividerTop = createMemo(() => layout().dividerTop);
   const visible = createMemo(() =>
-    visibleRows(rows(), scrollTop(), viewportHeight()),
+    visibleRows(
+      rows(),
+      Math.max(0, scrollTop() - leadHeight()),
+      viewportHeight(),
+    ),
+  );
+  const storyList = createMemo(() => props.stories ?? []);
+  const frontSequence = createMemo(() =>
+    frontPageSequence(
+      storyList(),
+      props.items,
+      props.expandedStoryIDs ?? new Set<string>(),
+    ),
   );
   const unreadIDs = createMemo(() =>
     props.items.filter((item) => !item.read).map((item) => item.item_id),
@@ -212,7 +239,11 @@ export function Grid(props: GridProps) {
   const endTop = createMemo(() => {
     if (!props.archive && props.unreadOnly && props.items.length === 0)
       return 0;
-    return layout().height + (!props.archive && props.unreadOnly ? 22 : 28);
+    return (
+      leadHeight() +
+      layout().height +
+      (!props.archive && props.unreadOnly ? 22 : 28)
+    );
   });
   const canvasHeight = createMemo(
     () => endTop() + (props.hasMore ? 0 : viewportHeight()),
@@ -416,9 +447,9 @@ export function Grid(props: GridProps) {
     const ids = scrollReadCandidates(
       readContext(),
       rows(),
-      top,
+      Math.max(0, top - leadHeight()),
       scroller.clientHeight,
-      scroller.scrollHeight,
+      Math.max(0, scroller.scrollHeight - leadHeight()),
       userScrolling && !programmaticScrolling,
       passedIDs,
       alreadyRead,
@@ -447,7 +478,11 @@ export function Grid(props: GridProps) {
 
   onMount(() => {
     const observer = new ResizeObserver(updateViewport);
+    leadObserver = new ResizeObserver(() =>
+      setLeadHeight(leadElement?.offsetHeight ?? 0),
+    );
     observer.observe(scroller);
+    if (leadElement) leadObserver.observe(leadElement);
     updateViewport();
     scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("wheel", noteUserScroll, { passive: true });
@@ -467,6 +502,7 @@ export function Grid(props: GridProps) {
     onCleanup(() => {
       props.onScrollPosition?.(scroller.scrollTop);
       observer.disconnect();
+      leadObserver?.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", noteUserScroll);
       scroller.removeEventListener("touchmove", noteUserScroll);
@@ -482,6 +518,19 @@ export function Grid(props: GridProps) {
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
       window.clearTimeout(refreshNoticeTimer);
+    });
+  });
+
+  createEffect(() => {
+    props.lead;
+    requestAnimationFrame(() => {
+      leadObserver?.disconnect();
+      if (leadElement) {
+        leadObserver?.observe(leadElement);
+        setLeadHeight(leadElement.offsetHeight);
+      } else {
+        setLeadHeight(0);
+      }
     });
   });
 
@@ -541,9 +590,42 @@ export function Grid(props: GridProps) {
     });
   };
 
+  const focusElement = (id: string) => {
+    endRequested = false;
+    props.onFocus(id);
+    requestAnimationFrame(() => {
+      programmaticScroll(() => {
+        const target = scroller.querySelector<HTMLElement>(
+          `[data-focus-id="${CSS.escape(id)}"], [data-item-id="${CSS.escape(id)}"]`,
+        );
+        target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const control = target?.matches("button, a")
+          ? target
+          : target?.querySelector<HTMLElement>(".story-lead, .cell-main");
+        control?.focus({ preventScroll: true });
+      });
+    });
+  };
+
+  const moveFront = (delta: -1 | 1) => {
+    const next = moveFrontPageFocus(frontSequence(), props.focusedID, delta);
+    if (next) focusElement(next.id);
+  };
+
+  const focusedEntry = () =>
+    frontSequence().find((entry) => entry.id === props.focusedID);
+
   const focused = () =>
+    focusedEntry()?.item ??
     props.items.find((item) => item.item_id === props.focusedID) ??
     props.items[0];
+
+  const focusedStory = () => {
+    const storyID = focusedEntry()?.storyID;
+    return storyID
+      ? storyList().find((story) => story.story_id === storyID)
+      : undefined;
+  };
 
   const clearGo = () => {
     goPending = false;
@@ -552,7 +634,14 @@ export function Grid(props: GridProps) {
 
   const goHome = () => {
     endRequested = false;
-    const first = rows()[0]?.cells[0]?.item.item_id;
+    const first = frontSequence()[0]?.id ?? rows()[0]?.cells[0]?.item.item_id;
+    if (first && storyList().length > 0) {
+      programmaticScroll(() => {
+        scroller.scrollTop = 0;
+      });
+      focusElement(first);
+      return;
+    }
     if (first) props.onFocus(first);
     programmaticScroll(() => {
       scroller.scrollTop = 0;
@@ -582,6 +671,17 @@ export function Grid(props: GridProps) {
     props.onOpen(item);
   };
 
+  const openFocused = (item: Item) => {
+    const entry = focusedEntry();
+    const story = focusedStory();
+    const route = redditPrimaryRoute(item);
+    if (entry?.kind === "story" && story && route.kind !== "external") {
+      props.onOpenStoryLead?.(story);
+      return;
+    }
+    openPrimary(item);
+  };
+
   const openDiscussion = (item: Item) => {
     props.onDiscussion(item);
     window.open(item.url, "_blank", "noopener,noreferrer");
@@ -597,6 +697,11 @@ export function Grid(props: GridProps) {
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
     if (target.matches("input, textarea, select")) return;
+    if (
+      target.closest(".story-heart, .story-more") &&
+      (event.key === "Enter" || event.key === " ")
+    )
+      return;
     if (target === endButton && (event.key === "Enter" || event.key === " "))
       return;
     const item = focused();
@@ -613,19 +718,37 @@ export function Grid(props: GridProps) {
     if (command !== "go-prefix") clearGo();
     switch (command) {
       case "down":
-        move("down");
+        if (storyList().length > 0) moveFront(1);
+        else move("down");
         break;
       case "up":
-        move("up");
+        if (storyList().length > 0) moveFront(-1);
+        else move("up");
         break;
       case "left":
-        move("left");
+        if (focusedEntry()?.kind === "story") {
+          const id = horizontalStoryFocus(
+            storyList(),
+            contentWidth(),
+            props.focusedID,
+            -1,
+          );
+          if (id) focusElement(id);
+        } else if (focusedEntry()?.kind !== "headline") move("left");
         break;
       case "right":
-        move("right");
+        if (focusedEntry()?.kind === "story") {
+          const id = horizontalStoryFocus(
+            storyList(),
+            contentWidth(),
+            props.focusedID,
+            1,
+          );
+          if (id) focusElement(id);
+        } else if (focusedEntry()?.kind !== "headline") move("right");
         break;
       case "open":
-        if (item) openPrimary(item);
+        if (item) openFocused(item);
         break;
       case "like":
         if (item && !props.archive)
@@ -639,10 +762,19 @@ export function Grid(props: GridProps) {
         if (item) props.onHeart(item);
         break;
       case "read":
-        if (item && !props.archive) props.onToggleRead(item);
+        if (item && !props.archive) {
+          const story =
+            focusedEntry()?.kind === "story" ? focusedStory() : undefined;
+          if (story) props.onToggleStoryRead?.(story);
+          else props.onToggleRead(item);
+        }
         break;
       case "mark-below":
-        if (item && !props.archive) props.onMarkBelow(item);
+        if (item && !props.archive) {
+          const storyID = focusedEntry()?.storyID;
+          if (storyID) props.onMarkStoryBelow?.(storyID);
+          else props.onMarkBelow(item);
+        }
         break;
       case "end":
         goEnd();
@@ -731,12 +863,17 @@ export function Grid(props: GridProps) {
             pullDistance() > 0 ? `translateY(${pullDistance()}px)` : undefined,
         }}
       >
+        <Show when={props.lead}>
+          <div class="grid-lead" ref={leadElement}>
+            {props.lead}
+          </div>
+        </Show>
         <For each={visible()}>
           {(row) => (
             <div
               class="grid-row"
               style={{
-                top: `${row.top + 14}px`,
+                top: `${row.top + leadHeight() + 14}px`,
                 height: `${row.height}px`,
               }}
             >
@@ -974,7 +1111,10 @@ export function Grid(props: GridProps) {
           {(top) => (
             <div
               class="caughtup-shell"
-              style={{ top: `${top}px`, height: `${dividerHeight()}px` }}
+              style={{
+                top: `${top + leadHeight()}px`,
+                height: `${dividerHeight()}px`,
+              }}
             >
               <div class="caughtup">
                 <hr
@@ -1309,7 +1449,7 @@ function CellCopy(props: {
   );
 }
 
-function UnreadDot(props: { visible: boolean }) {
+export function UnreadDot(props: { visible: boolean }) {
   let exitTimer: number | undefined;
   const [rendered, setRendered] = createSignal(props.visible);
   const [exiting, setExiting] = createSignal(false);

@@ -37,23 +37,28 @@ import {
 import { createMediaQuery } from "./media-query";
 import { resolveReaderItem } from "./reader-item";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
+import { updateStoriesRead, updateStoryItem } from "./story-state";
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
   Feed,
   Item,
+  ItemsResponse,
   Order,
   Profile,
   ReadAnchor,
   SearchResponse,
+  Story,
 } from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
+import { frontPageSequence } from "./ui/front-page";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
+import { StoryBlocks } from "./ui/StoryBlocks";
 import { TagFilter } from "./ui/TagFilter";
 import { listenForWindowReturn } from "./window-activity";
 
@@ -76,6 +81,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [selectedTag, setSelectedTag] = createSignal("");
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [items, setItems] = createSignal<Item[]>([]);
+  const [stories, setStories] = createSignal<Story[]>([]);
+  const [expandedStoryIDs, setExpandedStoryIDs] = createSignal<Set<string>>(
+    new Set(),
+  );
   const [readAnchor, setReadAnchor] = createSignal<ReadAnchor>();
   const [gridIDs, setGridIDs] = createSignal<string[]>([]);
   const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
@@ -271,24 +280,33 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setLoading(true);
     setHasPage(false);
     setItems([]);
+    setStories([]);
+    setExpandedStoryIDs(new Set<string>());
     setReadAnchor();
     setGridIDs([]);
     setPendingNew([]);
     setCursor("");
     try {
-      const page =
-        nextMode === "archive"
-          ? await api.archive()
-          : await api.items(
-              nextOrder,
-              "",
-              includeReadForGrid(nextUnreadOnly),
-              nextTag,
-            );
+      const includeRead = includeReadForGrid(nextUnreadOnly);
+      let page: ItemsResponse;
+      let nextStories: Story[] = [];
+      if (nextMode === "archive") {
+        page = await api.archive();
+      } else if (nextOrder === "interest") {
+        const [storyPage, itemPage] = await Promise.all([
+          api.stories(nextTag, includeRead),
+          api.items(nextOrder, "", includeRead, nextTag, true),
+        ]);
+        nextStories = storyPage.stories ?? [];
+        page = itemPage;
+      } else {
+        page = await api.items(nextOrder, "", includeRead, nextTag);
+      }
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
       gridScrollTop = 0;
       setItems(pageItems);
+      setStories(nextStories);
       setReadAnchor(page.read_anchor);
       const visibleIDs =
         nextMode === "archive"
@@ -300,7 +318,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       setScrollTopVersion((value) => value + 1);
       setCursor(page.next_cursor ?? "");
       setHasPage(true);
-      setFocusedID(visibleIDs[0] ?? "");
+      setFocusedID(
+        frontPageSequence(nextStories, pageItems)[0]?.id ?? visibleIDs[0] ?? "",
+      );
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -324,6 +344,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               nextCursor,
               includeReadForGrid(unreadOnly()),
               selectedTag(),
+              order() === "interest",
             );
       if (
         version !== requestVersion ||
@@ -369,6 +390,51 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const clearVersion = gridClearVersion;
     pollInFlight = true;
     try {
+      if (order() === "interest") {
+        const includeRead = includeReadForGrid(unreadOnly());
+        const [storyPage, page] = await Promise.all([
+          api.stories(selectedTag(), includeRead),
+          api.items("interest", "", includeRead, selectedTag(), true),
+        ]);
+        if (version !== requestVersion) return 0;
+        const incomingStories = storyPage.stories ?? [];
+        const incomingItems = [
+          ...incomingStories.flatMap((story) => story.items),
+          ...(page.items ?? []),
+        ];
+        const currentItems = [
+          ...stories().flatMap((story) => story.items),
+          ...items(),
+        ];
+        const unseen = pollCandidates(
+          currentItems,
+          pendingNew(),
+          incomingItems,
+          unreadOnly(),
+        );
+        if (insert && clearVersion === gridClearVersion) {
+          const pageItems = page.items ?? [];
+          setPendingNew([]);
+          setStories(incomingStories);
+          setItems(pageItems);
+          setReadAnchor(page.read_anchor);
+          const visible = visibleItemIDs(pageItems, unreadOnly());
+          setGridIDs(visible);
+          setCursor(page.next_cursor ?? "");
+          setFocusedID(
+            frontPageSequence(incomingStories, pageItems)[0]?.id ??
+              visible[0] ??
+              "",
+          );
+          gridScrollTop = 0;
+          setScrollTarget(0);
+          setLayoutVersion((value) => value + 1);
+          setScrollTopVersion((value) => value + 1);
+        } else if (unseen.length > 0) {
+          setPendingNew((current) => mergeNewItems(current, unseen));
+        }
+        return unseen.length;
+      }
       const page = await api.items(
         "chrono",
         "",
@@ -585,6 +651,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       return item ? [item] : [];
     });
   });
+  const frontPageItems = createMemo(() =>
+    mode() === "live" && order() === "interest"
+      ? frontPageSequence(stories(), gridItems(), expandedStoryIDs()).map(
+          ({ item }) => item,
+        )
+      : gridItems(),
+  );
   const searchItems = createMemo(() => {
     const result = searchResponse();
     const normalized = normalizeSearchResponse(result);
@@ -601,12 +674,17 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const id = readerID();
     return resolveReaderItem(
       id,
-      [items(), searchItems(), relatedItems()],
+      [
+        items(),
+        stories().flatMap((story) => story.items),
+        searchItems(),
+        relatedItems(),
+      ],
       readerItem(),
     );
   });
   const selectedIndex = createMemo(() =>
-    gridItems().findIndex((item) => item.item_id === readerID()),
+    frontPageItems().findIndex((item) => item.item_id === readerID()),
   );
 
   const replaceItem = (itemID: string, patch: Partial<Item>) => {
@@ -615,6 +693,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         item.item_id === itemID ? { ...item, ...patch } : item,
       ),
     );
+    setStories((current) => updateStoryItem(current, itemID, patch));
     setSearchResponse((current) =>
       current ? mapSearchItems(current, itemID, patch) : current,
     );
@@ -761,6 +840,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     });
     if (gridSnapshot) startFinishUndoTimer();
     setItems((current) => updateRead(current, requested, true));
+    setStories((current) => updateStoriesRead(current, requested, true));
     if (document.visibilityState === "hidden") {
       void flushRead(true);
       return unread;
@@ -819,6 +899,27 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setReaderID(item.item_id);
   };
 
+  const markStoryOpened = (story: Story) => {
+    const lead = story.items[0];
+    if (!lead) return;
+    const ids = story.items.map((item) => item.item_id);
+    const unread = story.items
+      .filter((item) => !item.read)
+      .map((item) => item.item_id);
+    for (const id of ids) pendingRead.delete(id);
+    setStories((current) => updateStoriesRead(current, ids, true));
+    setItems((current) => updateRead(current, ids, true));
+    api.events(lead.item_id, { opened: true }).catch(handleError);
+    api.readBatch(ids, true).catch((caught) => {
+      setStories((current) => updateStoriesRead(current, unread, false));
+      setItems((current) => updateRead(current, unread, false));
+      handleError(caught);
+    });
+    setReaderItem({ ...lead, read: true });
+    setReaderArchive(false);
+    setReaderID(lead.item_id);
+  };
+
   const openExternalItem = (item: Item) => {
     recordOpened(item);
     if (!item.archived) queueEvent(item.item_id, { clicked_through: true });
@@ -847,6 +948,33 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     });
   };
 
+  const toggleStoryRead = (story: Story) => {
+    if (mode() === "archive") return;
+    const read = story.items.some((item) => !item.read);
+    const ids = story.items.map((item) => item.item_id);
+    for (const id of ids) pendingRead.delete(id);
+    setStories((current) => updateStoriesRead(current, ids, read));
+    setItems((current) => updateRead(current, ids, read));
+    api.readBatch(ids, read).catch((caught) => {
+      setStories((current) =>
+        current.map((currentStory) =>
+          currentStory.story_id !== story.story_id
+            ? currentStory
+            : { ...currentStory, items: story.items },
+        ),
+      );
+      setItems((current) =>
+        current.map((item) => {
+          const previous = story.items.find(
+            (member) => member.item_id === item.item_id,
+          );
+          return previous ? { ...item, read: previous.read } : item;
+        }),
+      );
+      handleError(caught);
+    });
+  };
+
   function undoLast() {
     const operation = undo();
     if (!operation) return;
@@ -861,6 +989,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       readTimer = undefined;
     }
     setItems((current) => updateRead(current, operation.ids, false));
+    setStories((current) => updateStoriesRead(current, operation.ids, false));
     if (operation.gridSnapshot && mode() === "live" && unreadOnly()) {
       gridClearVersion++;
       gridScrollTop = operation.gridSnapshot.scrollTop;
@@ -910,6 +1039,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           nextCursor,
           includeReadForGrid(unreadOnly()),
           selectedTag(),
+          markOrder === "interest",
         );
         if (
           version !== requestVersion ||
@@ -921,6 +1051,57 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           ...(page.items ?? [])
             .filter((candidate) => !candidate.read)
             .map((candidate) => candidate.item_id),
+        );
+        nextCursor = page.next_cursor ?? "";
+      }
+      if (clearVersion === gridClearVersion) queueRead(ids);
+    } catch (caught) {
+      handleError(caught);
+    } finally {
+      markBelowInFlight = false;
+    }
+  };
+
+  const markStoryBelow = async (storyID: string) => {
+    if (mode() === "archive" || markBelowInFlight) return;
+    const storyIndex = stories().findIndex(
+      (story) => story.story_id === storyID,
+    );
+    if (storyIndex < 0) return;
+    markBelowInFlight = true;
+    const version = requestVersion;
+    const clearVersion = gridClearVersion;
+    const markOrder = order();
+    const ids = [
+      ...stories()
+        .slice(storyIndex)
+        .flatMap((story) => story.items)
+        .filter((item) => !item.read)
+        .map((item) => item.item_id),
+      ...items()
+        .filter((item) => !item.read)
+        .map((item) => item.item_id),
+    ];
+    let nextCursor = cursor();
+    try {
+      while (nextCursor !== "") {
+        const page = await api.items(
+          markOrder,
+          nextCursor,
+          includeReadForGrid(unreadOnly()),
+          selectedTag(),
+          markOrder === "interest",
+        );
+        if (
+          version !== requestVersion ||
+          clearVersion !== gridClearVersion ||
+          markOrder !== order()
+        )
+          return;
+        ids.push(
+          ...(page.items ?? [])
+            .filter((item) => !item.read)
+            .map((item) => item.item_id),
         );
         nextCursor = page.next_cursor ?? "";
       }
@@ -959,7 +1140,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     return added.length;
   };
 
-  const insertPendingNew = () => insertNewItems(pendingNew());
+  const insertPendingNew = () =>
+    order() === "interest" ? pollNew(true) : insertNewItems(pendingNew());
 
   const selectOrder = async (next: Order) => {
     if (mode() === "archive" || next === order()) return;
@@ -1067,8 +1249,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const moveReader = (delta: number) => {
-    const next = gridItems()[selectedIndex() + delta];
-    if (next) markOpened(next);
+    const next = frontPageItems()[selectedIndex() + delta];
+    if (!next) return;
+    const story = stories().find(
+      (candidate) => candidate.items[0]?.item_id === next.item_id,
+    );
+    if (story) markStoryOpened(story);
+    else markOpened(next);
   };
 
   return (
@@ -1470,7 +1657,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           </div>
         </Show>
         <Show
-          when={!loading() || items().length > 0}
+          when={!loading() || items().length > 0 || stories().length > 0}
           fallback={
             <div class="loading-screen">
               <i />
@@ -1483,7 +1670,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           }
         >
           <Show
-            when={items().length > 0 || Boolean(readAnchor())}
+            when={
+              items().length > 0 ||
+              stories().length > 0 ||
+              Boolean(readAnchor())
+            }
             fallback={
               mode() === "archive" ? (
                 <ArchiveEmpty />
@@ -1499,6 +1690,29 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           >
             <Grid
               items={gridItems()}
+              stories={stories()}
+              expandedStoryIDs={expandedStoryIDs()}
+              lead={
+                stories().length > 0 ? (
+                  <StoryBlocks
+                    stories={stories()}
+                    focusedID={focusedID()}
+                    expandedStoryIDs={expandedStoryIDs()}
+                    onExpand={(storyID) =>
+                      setExpandedStoryIDs((current) => {
+                        const next = new Set(current);
+                        next.add(storyID);
+                        return next;
+                      })
+                    }
+                    onFocus={setFocusedID}
+                    onOpenLead={markStoryOpened}
+                    onOpen={markOpened}
+                    onExternalOpen={openExternalItem}
+                    onHeart={toggleHeart}
+                  />
+                ) : undefined
+              }
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}
               scrollTarget={scrollTarget()}
@@ -1522,15 +1736,18 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
               onOpen={markOpened}
+              onOpenStoryLead={markStoryOpened}
               onExternalOpen={openExternalItem}
               onDiscussion={recordClickThrough}
               onSignal={setSignal}
               onHeart={toggleHeart}
               onToggleRead={toggleRead}
+              onToggleStoryRead={toggleStoryRead}
               onCopy={copyLink}
               onOriginal={openOriginal}
               onRelated={openRelated}
               onMarkBelow={markBelow}
+              onMarkStoryBelow={markStoryBelow}
               onItemsPassed={queueRead}
               onFinishAndClear={finishAndClear}
               onLoadMore={loadMore}
@@ -1577,7 +1794,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               linkActionActive={linkActionID() === item().item_id}
               canPrevious={selectedIndex() > 0}
               canNext={
-                selectedIndex() >= 0 && selectedIndex() < gridItems().length - 1
+                selectedIndex() >= 0 &&
+                selectedIndex() < frontPageItems().length - 1
               }
               onClose={closeReader}
               onHome={() => void backToTop()}

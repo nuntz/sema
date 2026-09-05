@@ -62,6 +62,32 @@ describe("read state client", () => {
   });
 });
 
+describe("story client", () => {
+  it("maps tags and excludes rendered stories from item pages", async () => {
+    const request = vi.fn(async (input: RequestInfo | URL) =>
+      input.toString().includes("/stories")
+        ? new Response(JSON.stringify({ stories: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        : new Response(JSON.stringify({ items: [], next_cursor: null }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+    );
+    vi.stubGlobal("fetch", request);
+
+    const client = new APIClient();
+    await client.stories("untagged", true);
+    await client.items("interest", "cursor", true, "untagged", true);
+
+    expect(request.mock.calls.map(([path]) => path)).toEqual([
+      "/api/stories?include_read=true&tag=__untagged",
+      "/api/items?order=interest&limit=100&cursor=cursor&include_read=true&tag=__untagged&exclude_stories=true",
+    ]);
+  });
+});
+
 describe("feed management client", () => {
   it("wires feed detail edits to the encoded PATCH route", async () => {
     const request = vi.fn(

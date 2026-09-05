@@ -41,6 +41,7 @@ export type RedditPostType = "text" | "link" | "image" | "gallery" | "video";
 
 export interface Item {
   item_id: string;
+  story_id?: string;
   feed_id: string;
   feed_title?: string;
   connector?: Connector;
@@ -75,6 +76,16 @@ export interface Item {
   archived?: boolean;
   hearted_ts?: string;
   similarity?: number;
+}
+
+export interface Story {
+  story_id: string;
+  source_count: number;
+  items: Item[];
+}
+
+export interface StoriesResponse {
+  stories: Story[];
 }
 
 export interface SearchGroup {
