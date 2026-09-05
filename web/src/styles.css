@@ -885,7 +885,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-row { position: absolute; left: 16px; right: 16px; contain: size layout style; }
 .grid-lead { position: absolute; top: 14px; left: 16px; right: 16px; }
 .story-blocks { width: 100%; }
-.story-block-row { margin-bottom: var(--grid-gap); display: grid; align-items: start; gap: var(--grid-gap); }
+.story-block-row { margin-bottom: var(--grid-gap); display: grid; align-items: stretch; gap: var(--grid-gap); }
 .story-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); content-visibility: auto; contain-intrinsic-block-size: auto 280px; }
 .story-card.focused { outline: 2px solid var(--accent-loud); outline-offset: 2px; }
 .story-media-action { width: 100%; display: block; background: transparent; color: inherit; }

@@ -178,6 +178,7 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
       })),
     };
   });
+  stories[1].items = stories[1].items.slice(0, 2);
   const firstPage = [
     stories[0].items[0],
     ...Array.from({ length: 99 }, (_, index) => ({
@@ -242,6 +243,15 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   });
 
   await page.goto("/");
+  const firstRowHeights = await page
+    .locator(".story-block-row")
+    .first()
+    .locator(".story-card")
+    .evaluateAll((cards) =>
+      cards.map((card) => card.getBoundingClientRect().height),
+    );
+  expect(firstRowHeights).toHaveLength(2);
+  expect(firstRowHeights[0]).toBe(firstRowHeights[1]);
   const deferredCardStyles = await page
     .locator(".story-card")
     .last()
