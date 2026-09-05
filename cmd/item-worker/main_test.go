@@ -14,6 +14,7 @@ import (
 	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
+	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 	storycluster "github.com/nuntz/sema/internal/story"
 	"github.com/nuntz/sema/internal/vectorstore"
@@ -294,7 +295,7 @@ func TestImageEmbeddingFailureDoesNotFailItemAndPreservesReplayVector(t *testing
 		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title", Summary: "Summary",
 		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "lead.jpg",
 		MediaVariants: []domain.MediaVariant{{Key: "lead.jpg", Width: 768}}, Vector: []byte("old-text"),
-		ImageVector: existingImage, ImageModelVersion: "image-v1", TTL: now.Add(time.Hour).Unix(),
+		ImageVector: existingImage, ImageModelVersion: "image-v0", TTL: now.Add(time.Hour).Unix(),
 	}
 	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
 	images := &stubImageEmbedder{err: errors.New("Bedrock unavailable")}
@@ -307,7 +308,7 @@ func TestImageEmbeddingFailureDoesNotFailItemAndPreservesReplayVector(t *testing
 	if err != nil || len(response.BatchItemFailures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
-	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(existingImage) || repository.overwritten.ImageModelVersion != "image-v1" {
+	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(existingImage) || repository.overwritten.ImageModelVersion != "image-v0" {
 		t.Fatalf("replay image vector was not preserved: %#v", repository.overwritten)
 	}
 }
@@ -329,6 +330,70 @@ func TestCompatibleReplayPreservesTextVectorWithoutEmbedding(t *testing.T) {
 	}
 	if embedder.calls != 0 || repository.overwritten == nil || string(repository.overwritten.Vector) != string(textVector) {
 		t.Fatalf("replay embed calls = %d, item = %#v", embedder.calls, repository.overwritten)
+	}
+}
+
+func TestCompatibleReplayReusesImageVectorAndBatchesRecord(t *testing.T) {
+	now := time.Now().UTC()
+	imageVector := score.EncodeVector([]float32{1, 0})
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "lead.jpg",
+		MediaVariants: []domain.MediaVariant{{Key: "lead.jpg", Width: 768}}, Vector: score.EncodeVector([]float32{0, 1}), ModelVersion: "text-v1",
+		ImageVector: imageVector, ImageModelVersion: "image-v1", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
+	images := &stubImageEmbedder{vector: []float32{0, 1}}
+	imageVectors := &stubVectorBatchStore{}
+	h := &handler{
+		store: repository, embedder: stubEmbedder{}, modelVersion: "text-v1", imageEmbedder: images, imageModelVersion: "image-v1",
+		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(images.images) != 0 {
+		t.Fatalf("image embed calls = %d, want 0", len(images.images))
+	}
+	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(imageVector) || repository.overwritten.ImageModelVersion != "image-v1" {
+		t.Fatalf("overwritten item = %#v", repository.overwritten)
+	}
+	if imageVectors.calls != 1 || len(imageVectors.records) != 1 || imageVectors.records[0].Key != "item" {
+		t.Fatalf("image vector batch = %#v", imageVectors)
+	}
+}
+
+func TestIncompatibleReplayRefreshesImageVector(t *testing.T) {
+	now := time.Now().UTC()
+	oldVector := score.EncodeVector([]float32{1, 0})
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "lead.jpg",
+		MediaVariants: []domain.MediaVariant{{Key: "lead.jpg", Width: 768}}, Vector: score.EncodeVector([]float32{0, 1}), ModelVersion: "text-v1",
+		ImageVector: oldVector, ImageModelVersion: "image-v0", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
+	images := &stubImageEmbedder{vector: []float32{0, 1}}
+	imageVectors := &stubVectorBatchStore{}
+	h := &handler{
+		store: repository, embedder: stubEmbedder{}, modelVersion: "text-v1", imageEmbedder: images, imageModelVersion: "image-v1",
+		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(images.images) != 1 || string(images.images[0]) != string([]byte{7}) {
+		t.Fatalf("image embed calls = %#v", images.images)
+	}
+	if repository.overwritten == nil || repository.overwritten.ImageModelVersion != "image-v1" || string(repository.overwritten.ImageVector) == string(oldVector) {
+		t.Fatalf("overwritten item = %#v", repository.overwritten)
+	}
+	if imageVectors.calls != 1 || len(imageVectors.records) != 1 {
+		t.Fatalf("image vector batch = %#v", imageVectors)
 	}
 }
 

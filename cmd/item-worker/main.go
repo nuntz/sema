@@ -369,32 +369,38 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		imageVector, imageModelVersion = existing.ImageVector, existing.ImageModelVersion
 	}
 	imageEmbedSucceeded, imageEmbedFailed := 0.0, 0.0
+	imageEmbedReused := 0.0
 	imageEmbedLatency := float64(0)
 	imageEmbedAttempted := false
 	if !isVideo && mediaKey != "" && h.imageEmbedder != nil && h.imageVectors != nil {
-		jpeg := freshImageJPEG
-		if len(jpeg) == 0 {
-			variantKey := selectedImageVariantKey(mediaVariants, mediaKey)
-			stored, _, contentErr := h.store.Content(ctx, variantKey)
-			if contentErr != nil {
-				imageEmbedFailed = 1
-				slog.WarnContext(ctx, "image embedding failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", contentErr)
-			} else {
-				jpeg = stored
+		reuseExisting := message.Reprocess && !message.ForceExtract && len(existing.ImageVector) > 0 && score.CompatibleVersion(existing.ImageModelVersion, h.imageModelVersion)
+		if reuseExisting {
+			imageEmbedReused = 1
+		} else {
+			jpeg := freshImageJPEG
+			if len(jpeg) == 0 {
+				variantKey := selectedImageVariantKey(mediaVariants, mediaKey)
+				stored, _, contentErr := h.store.Content(ctx, variantKey)
+				if contentErr != nil {
+					imageEmbedFailed = 1
+					slog.WarnContext(ctx, "image embedding failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", contentErr)
+				} else {
+					jpeg = stored
+				}
 			}
-		}
-		if len(jpeg) > 0 {
-			imageStarted := time.Now()
-			imageEmbedAttempted = true
-			embedded, imageErr := h.imageEmbedder.EmbedImage(ctx, jpeg)
-			imageEmbedLatency = float64(time.Since(imageStarted).Milliseconds())
-			if imageErr != nil {
-				imageEmbedFailed = 1
-				slog.WarnContext(ctx, "image embedding failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", imageErr)
-			} else {
-				imageVector = score.EncodeVector(score.Normalize(embedded))
-				imageModelVersion = h.imageModelVersion
-				imageEmbedSucceeded = 1
+			if len(jpeg) > 0 {
+				imageStarted := time.Now()
+				imageEmbedAttempted = true
+				embedded, imageErr := h.imageEmbedder.EmbedImage(ctx, jpeg)
+				imageEmbedLatency = float64(time.Since(imageStarted).Milliseconds())
+				if imageErr != nil {
+					imageEmbedFailed = 1
+					slog.WarnContext(ctx, "image embedding failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", imageErr)
+				} else {
+					imageVector = score.EncodeVector(score.Normalize(embedded))
+					imageModelVersion = h.imageModelVersion
+					imageEmbedSucceeded = 1
+				}
 			}
 		}
 	}
@@ -518,6 +524,9 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	}
 	if imageEmbedFailed > 0 {
 		metrics["ImageEmbedFailed"] = imageEmbedFailed
+	}
+	if imageEmbedReused > 0 {
+		metrics["ImageEmbedReused"] = imageEmbedReused
 	}
 	if imageEmbedAttempted {
 		metrics["ImageEmbedLatencyMs"] = imageEmbedLatency
