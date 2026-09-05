@@ -38,6 +38,10 @@ type httpClient interface {
 	Get(context.Context, string, http.Header) (httpx.Response, error)
 }
 
+type vectorBatchStore interface {
+	PutBatch(context.Context, []vectorstore.Record) error
+}
+
 type handler struct {
 	store          itemStore
 	http           httpClient
@@ -47,7 +51,7 @@ type handler struct {
 	models         *score.Cache
 	modelVersion   string
 	scoringVersion string
-	vectors        vectorstore.Store
+	vectors        vectorBatchStore
 }
 
 type itemStore interface {
@@ -65,47 +69,64 @@ type itemStore interface {
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
 	failures := make(chan events.SQSBatchItemFailure, len(event.Records))
+	vectors := make(chan vectorstore.Record, len(event.Records))
 	var group sync.WaitGroup
 	for _, record := range event.Records {
 		group.Add(1)
 		go func(record events.SQSMessage) {
 			defer group.Done()
-			if err := h.process(ctx, record.Body); err != nil {
+			vector, err := h.process(ctx, record.Body)
+			if err != nil {
 				var message domain.ItemMessage
 				_ = json.Unmarshal([]byte(record.Body), &message)
 				slog.Error("item failed", "message_id", record.MessageId, "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", err)
 				failures <- events.SQSBatchItemFailure{ItemIdentifier: record.MessageId}
+			} else if vector != nil {
+				vectors <- *vector
 			}
 		}(record)
 	}
 	group.Wait()
 	close(failures)
+	close(vectors)
 	response := events.SQSEventResponse{}
 	for failure := range failures {
 		response.BatchItemFailures = append(response.BatchItemFailures, failure)
 	}
+	vectorRecords := make([]vectorstore.Record, 0, len(vectors))
+	for vector := range vectors {
+		vectorRecords = append(vectorRecords, vector)
+	}
+	if h.vectors != nil && len(vectorRecords) > 0 {
+		metric := "VectorPutSucceeded"
+		if err := h.vectors.PutBatch(ctx, vectorRecords); err != nil {
+			slog.WarnContext(ctx, "vector batch write failed", "records", len(vectorRecords), "error", err)
+			metric = "VectorPutFailed"
+		}
+		observability.Emit(map[string]float64{metric: float64(len(vectorRecords))}, nil)
+	}
 	return response, nil
 }
 
-func (h *handler) process(ctx context.Context, body string) error {
+func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record, error) {
 	started := time.Now().UTC()
 	var message domain.ItemMessage
 	if err := json.Unmarshal([]byte(body), &message); err != nil {
-		return fmt.Errorf("decode message: %w", err)
+		return nil, fmt.Errorf("decode message: %w", err)
 	}
 	published, err := time.Parse(time.RFC3339Nano, message.PublishedTS)
 	if err != nil {
-		return fmt.Errorf("published_ts: %w", err)
+		return nil, fmt.Errorf("published_ts: %w", err)
 	}
 	if published.Before(started.Add(-domain.Retention)) {
-		return nil
+		return nil, nil
 	}
 	message.Title = connector.EntryTitle(message.Title, message.SummaryRaw, message.ContentRaw)
 	var existing domain.Item
 	if message.Reprocess {
 		existing, err = h.store.Item(ctx, message.User, message.ItemID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if message.Title == "" {
 			message.Title = existing.Title
@@ -129,16 +150,16 @@ func (h *handler) process(ctx context.Context, body string) error {
 	}
 	if message.Title == "" {
 		if err := h.store.PutItemFailure(ctx, message.User, message.ItemID, published.Add(domain.Retention).Unix()); err != nil {
-			return fmt.Errorf("record permanent item failure: %w", err)
+			return nil, fmt.Errorf("record permanent item failure: %w", err)
 		}
 		slog.WarnContext(ctx, "item permanently rejected", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "reason", "missing title")
-		return nil
+		return nil, nil
 	}
 	isVideo := message.MediaType == "video" || message.VideoID != ""
 	feed, err := h.store.Feed(ctx, message.User, message.FeedID)
 	if err != nil {
 		if !message.Reprocess || !errors.Is(err, store.ErrNotFound) {
-			return err
+			return nil, err
 		}
 		feed = domain.Feed{FeedID: existing.FeedID, Title: existing.FeedTitle, FaviconKey: existing.FaviconKey, Connector: existing.Connector}
 	}
@@ -159,7 +180,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		for _, objectKey := range keys {
 			exists, existsErr := h.store.ContentExists(ctx, objectKey)
 			if existsErr != nil {
-				return existsErr
+				return nil, existsErr
 			}
 			if !exists {
 				processAssets = true
@@ -249,7 +270,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			mediaKey = store.MediaKey(message.User, message.ItemID, lead.Extension)
 			mediaVariants, err = storeLead(ctx, h.store, mediaKey, lead)
 			if err != nil {
-				return fmt.Errorf("store media: %w", err)
+				return nil, fmt.Errorf("store media: %w", err)
 			}
 			mediaW, mediaH = lead.Width, lead.Height
 			if cleaned, removed := extract.RemoveLeadImage(article.HTML, lead.SourceURL); removed {
@@ -307,7 +328,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if !isVideo && article.HTML != "" {
 			bodyKey = store.BodyKey(message.User, message.ItemID)
 			if err := h.store.PutContent(ctx, bodyKey, "text/html; charset=utf-8", []byte(article.HTML)); err != nil {
-				return fmt.Errorf("store body: %w", err)
+				return nil, fmt.Errorf("store body: %w", err)
 			}
 			hasBody = extractQuality >= 0.3
 		}
@@ -320,7 +341,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	embedStarted := time.Now()
 	vector, err := h.embedder.Embed(ctx, embedInput)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	vector = score.Normalize(vector)
 	value, why := 0.0, (*domain.Why)(nil)
@@ -328,7 +349,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if h.scoringVersion == "1" {
 		rows, loadErr := h.store.Signals(ctx, message.User)
 		if loadErr != nil {
-			return loadErr
+			return nil, loadErr
 		}
 		legacy := make([]score.Signal, 0, len(rows))
 		for _, row := range rows {
@@ -338,7 +359,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 	} else {
 		loadedModel, loadErr := h.models.Get(ctx, message.User)
 		if loadErr != nil {
-			return loadErr
+			return nil, loadErr
 		}
 		model = loadedModel
 		result := score.Calculate(vector, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
@@ -346,7 +367,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 		if result.Base > 0.6 {
 			rows, signalErr := h.store.Signals(ctx, message.User)
 			if signalErr != nil {
-				return signalErr
+				return nil, signalErr
 			}
 			liked := make([]score.Candidate, 0, len(rows))
 			for _, row := range rows {
@@ -388,13 +409,13 @@ func (h *handler) process(ctx context.Context, body string) error {
 		item.FetchedTS, item.TTL = existing.FetchedTS, existing.TTL
 		item.ArchiveSK, item.HeartedTS = existing.ArchiveSK, existing.HeartedTS
 		if err := h.store.OverwriteItem(ctx, item); err != nil {
-			return err
+			return nil, err
 		}
 		written = true
 	} else {
 		written, err = h.store.PutItem(ctx, item)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	slog.Info("item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "written", written, "has_body", hasBody, "extract_quality", extractQuality, "summary_source", summarySource, "has_media", mediaKey != "", "duration_ms", time.Since(started).Milliseconds())
@@ -415,25 +436,20 @@ func (h *handler) process(ctx context.Context, body string) error {
 	if bodyImageFailed > 0 {
 		metrics["BodyImageFailed"] = float64(bodyImageFailed)
 	}
+	var vectorRecord *vectorstore.Record
 	if written {
 		metrics["ItemsWritten"] = 1
 		kind := vectorstore.KindLive
 		if item.ArchiveSK != "" {
 			kind = vectorstore.KindArchive
 		}
-		if h.vectors != nil {
-			if err := h.vectors.Put(ctx, vectorstore.FromItem(item, kind)); err != nil {
-				slog.WarnContext(ctx, "vector write failed", "user", message.User, "item_id", item.ItemID, "error", err)
-				metrics["VectorPutFailed"] = 1
-			} else {
-				metrics["VectorPutSucceeded"] = 1
-			}
-		}
+		record := vectorstore.FromItem(item, kind)
+		vectorRecord = &record
 	} else {
 		metrics["ItemsDeduped"] = 1
 	}
 	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", observability.Emit)
-	return nil
+	return vectorRecord, nil
 }
 
 func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {

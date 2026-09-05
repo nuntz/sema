@@ -13,7 +13,9 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
+	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/store"
+	"github.com/nuntz/sema/internal/vectorstore"
 )
 
 type fakeItemStore struct {
@@ -49,6 +51,23 @@ func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) 
 type stubSummarizer struct {
 	value string
 	err   error
+}
+
+type stubEmbedder struct{}
+
+func (stubEmbedder) Embed(context.Context, string) ([]float32, error) {
+	return []float32{1, 0}, nil
+}
+
+type stubVectorBatchStore struct {
+	calls   int
+	records []vectorstore.Record
+}
+
+func (s *stubVectorBatchStore) PutBatch(_ context.Context, records []vectorstore.Record) error {
+	s.calls++
+	s.records = append([]vectorstore.Record(nil), records...)
+	return nil
 }
 
 type stubHTTP struct {
@@ -107,6 +126,37 @@ func TestTransientItemFailureStillRetries(t *testing.T) {
 	}
 	if len(repository.failures) != 0 {
 		t.Fatalf("transient failure wrote markers: %#v", repository.failures)
+	}
+}
+
+func TestRunBatchesVectorsAcrossWrittenItems(t *testing.T) {
+	vectors := &stubVectorBatchStore{}
+	h := &handler{
+		store:          &fakeItemStore{},
+		media:          media.New(nil),
+		embedder:       stubEmbedder{},
+		scoringVersion: "1",
+		vectors:        vectors,
+	}
+	published := domain.Timestamp(time.Now().UTC())
+	message := func(id string) events.SQSMessage {
+		body := `{"user":"user","feed_id":"feed","item_id":"` + id + `","title":"Title","summary_raw":"Useful summary","published_ts":"` + published + `"}`
+		return events.SQSMessage{MessageId: "message-" + id, Body: body}
+	}
+
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{message("one"), message("two")}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if vectors.calls != 1 || len(vectors.records) != 2 {
+		t.Fatalf("vector batch calls = %d, records = %#v", vectors.calls, vectors.records)
+	}
+	items := map[string]bool{}
+	for _, record := range vectors.records {
+		items[record.Key] = true
+	}
+	if !items["one"] || !items["two"] {
+		t.Fatalf("vector records = %#v", vectors.records)
 	}
 }
 
