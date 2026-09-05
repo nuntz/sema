@@ -91,8 +91,6 @@ func main() {
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("PK"), Type: pulumi.String("S")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("SK"), Type: pulumi.String("S")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("score"), Type: pulumi.String("N")},
-				&dynamodb.TableAttributeArgs{Name: pulumi.String("feed_pk"), Type: pulumi.String("S")},
-				&dynamodb.TableAttributeArgs{Name: pulumi.String("published_ts"), Type: pulumi.String("S")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("gsi1pk"), Type: pulumi.String("S")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("next_fetch_at"), Type: pulumi.String("S")},
 			},
@@ -100,10 +98,6 @@ func main() {
 				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("PK"), KeyType: pulumi.String("HASH")},
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("score"), KeyType: pulumi.String("RANGE")},
-				}, ProjectionType: pulumi.String("ALL")},
-				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-feed"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
-					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("feed_pk"), KeyType: pulumi.String("HASH")},
-					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("published_ts"), KeyType: pulumi.String("RANGE")},
 				}, ProjectionType: pulumi.String("ALL")},
 				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-next-fetch"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
