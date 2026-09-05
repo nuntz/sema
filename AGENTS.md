@@ -4,6 +4,8 @@
 
 `cmd/<name>/` contains Go Lambda entry points and maintenance tools; reusable packages live in `internal/`, with `*_test.go` beside code. The SolidJS/TypeScript PWA lives in `web/`: `src/` holds code and unit tests, `e2e/` browser tests, and `public/` assets. `infra/` is a separate Pulumi Go module. Treat `bin/` and `web/dist/` as generated.
 
+Ranking uses parallel text and lead-image embedding channels; image embeddings use the largest stored JPEG variant at or below 768px, and videos are always excluded.
+
 ## Build, Test, and Development Commands
 
 - `make test` runs root Go, Pulumi, and frontend unit tests.

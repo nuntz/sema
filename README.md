@@ -40,10 +40,12 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
                       v                                              |
                +-------------+   extract article text ---------------+
                | item-worker |   fetch media/thumbnails ---> S3 (content)
-               |   Lambda    |   embed text -----------> Bedrock Titan
-               +-------------+                                |
-                                            store vectors     v
-                                            & score item   [ S3 Vectors ]
+               |   Lambda    |   embed text -----------> Bedrock Titan Text
+               |             |   embed lead image -----> Bedrock Titan Multimodal
+               +-------------+                                  |
+                                            store vectors       v
+                                            & score item   [ S3 Vectors: items
+                                                             + images indexes ]
 
 
                               SERVING & TRIAGE
@@ -102,6 +104,7 @@ Reddit items preserve the thread permalink separately from an external article o
 - `zip` on `PATH`
 - AWS credentials for the target account
 - Bedrock model access to `amazon.titan-embed-text-v2:0` in `us-east-1`
+- Bedrock model access to `amazon.titan-embed-image-v1` in `us-east-1`
 - A Google OAuth web client ID
 
 Confirm AWS access with `aws sts get-caller-identity` before deploying.
@@ -201,6 +204,20 @@ make backfill-vectors STACK=prod BACKFILL_ARGS=--apply
 ```
 
 The vector backfill reuses stored embeddings and does not invoke Bedrock or change rankings. If a new embedding model changes vector dimensions, create a new index, dual-write, replay and verify the data, switch reads, and only then remove the old index.
+
+### Image ranking rollout
+
+Deploy the image index and writer before replaying live items or changing existing preference models:
+
+```sh
+make deploy STACK=prod
+make replay STACK=prod
+make backfill-image-signals STACK=prod
+make backfill-image-signals STACK=prod BACKFILL_ARGS=--apply
+make rescore STACK=prod
+```
+
+The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout can visibly reshuffle item sizes as the new image centroids take effect.
 
 ### YouTube connector rollout
 
