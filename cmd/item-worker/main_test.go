@@ -28,6 +28,10 @@ type fakeItemStore struct {
 	addedItemID  string
 	setStoryItem string
 	setStoryID   string
+	item         domain.Item
+	content      map[string][]byte
+	contentReads []string
+	overwritten  *domain.Item
 }
 
 type itemFailure struct {
@@ -35,18 +39,31 @@ type itemFailure struct {
 	ttl        int64
 }
 
-func (*fakeItemStore) Content(context.Context, string) ([]byte, string, error) {
+func (s *fakeItemStore) Content(_ context.Context, key string) ([]byte, string, error) {
+	s.contentReads = append(s.contentReads, key)
+	if body, ok := s.content[key]; ok {
+		return append([]byte(nil), body...), "image/jpeg", nil
+	}
 	return nil, "", store.ErrNotFound
 }
-func (*fakeItemStore) ContentExists(context.Context, string) (bool, error) { return false, nil }
-func (*fakeItemStore) ContentURL(string) string                            { return "" }
+func (s *fakeItemStore) ContentExists(_ context.Context, key string) (bool, error) {
+	_, ok := s.content[key]
+	return ok, nil
+}
+func (*fakeItemStore) ContentURL(string) string { return "" }
 func (s *fakeItemStore) Feed(context.Context, string, string) (domain.Feed, error) {
 	return domain.Feed{}, s.feedErr
 }
-func (*fakeItemStore) Item(context.Context, string, string) (domain.Item, error) {
+func (s *fakeItemStore) Item(context.Context, string, string) (domain.Item, error) {
+	if s.item.ItemID != "" {
+		return s.item, nil
+	}
 	return domain.Item{}, store.ErrNotFound
 }
-func (*fakeItemStore) OverwriteItem(context.Context, domain.Item) error         { return nil }
+func (s *fakeItemStore) OverwriteItem(_ context.Context, item domain.Item) error {
+	s.overwritten = &item
+	return nil
+}
 func (*fakeItemStore) PutContent(context.Context, string, string, []byte) error { return nil }
 func (*fakeItemStore) PutItem(context.Context, domain.Item) (bool, error)       { return true, nil }
 func (s *fakeItemStore) PutItemFailure(_ context.Context, user, item string, ttl int64) error {
@@ -79,6 +96,21 @@ type stubEmbedder struct{}
 
 func (stubEmbedder) Embed(context.Context, string) ([]float32, error) {
 	return []float32{1, 0}, nil
+}
+
+type stubImageEmbedder struct {
+	vector []float32
+	err    error
+	images [][]byte
+}
+
+func (s *stubImageEmbedder) EmbedImage(_ context.Context, jpeg []byte) ([]float32, error) {
+	s.images = append(s.images, append([]byte(nil), jpeg...))
+	return append([]float32(nil), s.vector...), s.err
+}
+
+func (s *stubImageEmbedder) EmbedText(context.Context, string) ([]float32, error) {
+	return nil, errors.New("unexpected text image embedding")
 }
 
 type stubVectorBatchStore struct {
@@ -214,6 +246,106 @@ func TestRunBatchesVectorsAcrossWrittenItems(t *testing.T) {
 	}
 	if !items["one"] || !items["two"] {
 		t.Fatalf("vector records = %#v", vectors.records)
+	}
+}
+
+func TestReprocessEmbedsStored768VariantAndBatchesImageVector(t *testing.T) {
+	now := time.Now().UTC()
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title", Summary: "Summary",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "lead-1280.jpg",
+		MediaVariants: []domain.MediaVariant{{Key: "lead-384.jpg", Width: 384}, {Key: "lead-768.jpg", Width: 768}, {Key: "lead-1280.jpg", Width: 1280}},
+		Vector:        []byte("old-text"), TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead-1280.jpg": {1}, "lead-768.jpg": {7, 6, 8}}}
+	images := &stubImageEmbedder{vector: []float32{3, 4}}
+	textVectors, imageVectors := &stubVectorBatchStore{}, &stubVectorBatchStore{}
+	h := &handler{
+		store: repository, embedder: stubEmbedder{}, imageEmbedder: images, imageModelVersion: "image-v1",
+		scoringVersion: "1", vectors: textVectors, imageVectors: imageVectors,
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(images.images) != 1 || string(images.images[0]) != string([]byte{7, 6, 8}) || len(repository.contentReads) != 1 || repository.contentReads[0] != "lead-768.jpg" {
+		t.Fatalf("image calls = %#v, content reads = %#v", images.images, repository.contentReads)
+	}
+	if repository.overwritten == nil || repository.overwritten.ImageModelVersion != "image-v1" || len(repository.overwritten.ImageVector) == 0 {
+		t.Fatalf("overwritten item = %#v", repository.overwritten)
+	}
+	if imageVectors.calls != 1 || len(imageVectors.records) != 1 || imageVectors.records[0].Key != "item" {
+		t.Fatalf("image vector batch = %#v", imageVectors)
+	}
+}
+
+func TestImageEmbeddingFailureDoesNotFailItemAndPreservesReplayVector(t *testing.T) {
+	now := time.Now().UTC()
+	existingImage := []byte("existing-image-vector")
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title", Summary: "Summary",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "lead.jpg",
+		MediaVariants: []domain.MediaVariant{{Key: "lead.jpg", Width: 768}}, Vector: []byte("old-text"),
+		ImageVector: existingImage, ImageModelVersion: "image-v1", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
+	images := &stubImageEmbedder{err: errors.New("Bedrock unavailable")}
+	h := &handler{
+		store: repository, embedder: stubEmbedder{}, imageEmbedder: images, imageModelVersion: "image-v1",
+		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: &stubVectorBatchStore{},
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(existingImage) || repository.overwritten.ImageModelVersion != "image-v1" {
+		t.Fatalf("replay image vector was not preserved: %#v", repository.overwritten)
+	}
+}
+
+func TestVideoNeverEmbedsOrBatchesImageVector(t *testing.T) {
+	now := time.Now().UTC()
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "video"), ItemID: "video", FeedID: "feed", Title: "Video",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "thumbnail.jpg", MediaType: "video",
+		Vector: []byte("old-text"), ImageVector: []byte("must-clear"), ImageModelVersion: "image-v1", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing, content: map[string][]byte{"thumbnail.jpg": {1}}}
+	images := &stubImageEmbedder{vector: []float32{1, 0}}
+	imageVectors := &stubVectorBatchStore{}
+	h := &handler{
+		store: repository, embedder: stubEmbedder{}, imageEmbedder: images, imageModelVersion: "image-v1",
+		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"video","title":"Video","media_type":"video","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(images.images) != 0 || imageVectors.calls != 0 || repository.overwritten == nil || len(repository.overwritten.ImageVector) != 0 {
+		t.Fatalf("video image channel = calls %d, batch %d, item %#v", len(images.images), imageVectors.calls, repository.overwritten)
+	}
+}
+
+func TestSelectedImageVariantKey(t *testing.T) {
+	tests := []struct {
+		name     string
+		variants []domain.MediaVariant
+		fallback string
+		want     string
+	}{
+		{name: "largest within limit", variants: []domain.MediaVariant{{Key: "1280", Width: 1280}, {Key: "384", Width: 384}, {Key: "768", Width: 768}}, want: "768"},
+		{name: "smallest fallback", variants: []domain.MediaVariant{{Key: "1280", Width: 1280}, {Key: "900", Width: 900}}, want: "900"},
+		{name: "manifest absent", fallback: "lead", want: "lead"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := selectedImageVariantKey(test.variants, test.fallback); got != test.want {
+				t.Fatalf("selected key = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 

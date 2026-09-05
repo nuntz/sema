@@ -24,6 +24,7 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
+	"github.com/nuntz/sema/internal/embed/titanimage"
 	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
@@ -46,16 +47,24 @@ type vectorBatchStore interface {
 }
 
 type handler struct {
-	store          itemStore
-	http           httpClient
-	media          *media.Processor
-	embedder       embed.Embedder
-	summarizer     summarize.Summarizer
-	models         *score.Cache
-	modelVersion   string
-	scoringVersion string
-	vectors        vectorBatchStore
-	storyConfig    storycluster.Config
+	store             itemStore
+	http              httpClient
+	media             *media.Processor
+	embedder          embed.Embedder
+	imageEmbedder     embed.ImageEmbedder
+	summarizer        summarize.Summarizer
+	models            *score.Cache
+	modelVersion      string
+	imageModelVersion string
+	scoringVersion    string
+	vectors           vectorBatchStore
+	imageVectors      vectorBatchStore
+	storyConfig       storycluster.Config
+}
+
+type processedVectors struct {
+	text  vectorstore.Record
+	image *vectorstore.Record
 }
 
 type itemStore interface {
@@ -77,33 +86,37 @@ type itemStore interface {
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
 	failures := make(chan events.SQSBatchItemFailure, len(event.Records))
-	vectors := make(chan vectorstore.Record, len(event.Records))
+	processed := make(chan processedVectors, len(event.Records))
 	var group sync.WaitGroup
 	for _, record := range event.Records {
 		group.Add(1)
 		go func(record events.SQSMessage) {
 			defer group.Done()
-			vector, err := h.process(ctx, record.Body)
+			vectors, err := h.process(ctx, record.Body)
 			if err != nil {
 				var message domain.ItemMessage
 				_ = json.Unmarshal([]byte(record.Body), &message)
 				slog.Error("item failed", "message_id", record.MessageId, "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", err)
 				failures <- events.SQSBatchItemFailure{ItemIdentifier: record.MessageId}
-			} else if vector != nil {
-				vectors <- *vector
+			} else if vectors != nil {
+				processed <- *vectors
 			}
 		}(record)
 	}
 	group.Wait()
 	close(failures)
-	close(vectors)
+	close(processed)
 	response := events.SQSEventResponse{}
 	for failure := range failures {
 		response.BatchItemFailures = append(response.BatchItemFailures, failure)
 	}
-	vectorRecords := make([]vectorstore.Record, 0, len(vectors))
-	for vector := range vectors {
-		vectorRecords = append(vectorRecords, vector)
+	vectorRecords := make([]vectorstore.Record, 0, len(processed))
+	imageRecords := make([]vectorstore.Record, 0, len(processed))
+	for vectors := range processed {
+		vectorRecords = append(vectorRecords, vectors.text)
+		if vectors.image != nil {
+			imageRecords = append(imageRecords, *vectors.image)
+		}
 	}
 	if h.vectors != nil && len(vectorRecords) > 0 {
 		metric := "VectorPutSucceeded"
@@ -113,10 +126,18 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 		}
 		observability.Emit(map[string]float64{metric: float64(len(vectorRecords))}, nil)
 	}
+	if h.imageVectors != nil && len(imageRecords) > 0 {
+		metric := "ImageVectorPutSucceeded"
+		if err := h.imageVectors.PutBatch(ctx, imageRecords); err != nil {
+			slog.WarnContext(ctx, "image vector batch write failed", "records", len(imageRecords), "error", err)
+			metric = "ImageVectorPutFailed"
+		}
+		observability.Emit(map[string]float64{metric: float64(len(imageRecords))}, nil)
+	}
 	return response, nil
 }
 
-func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record, error) {
+func (h *handler) process(ctx context.Context, body string) (*processedVectors, error) {
 	started := time.Now().UTC()
 	var message domain.ItemMessage
 	if err := json.Unmarshal([]byte(body), &message); err != nil {
@@ -250,6 +271,7 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 	}
 	mediaKey, mediaW, mediaH := existing.MediaKey, existing.MediaW, existing.MediaH
 	mediaVariants := existing.MediaVariants
+	var freshImageJPEG []byte
 	embedMediaSucceeded, embedMediaFailed := 0, 0
 	bodyImageSucceeded, bodyImageFailed := 0, 0
 	if processAssets {
@@ -281,6 +303,7 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 				return nil, fmt.Errorf("store media: %w", err)
 			}
 			mediaW, mediaH = lead.Width, lead.Height
+			freshImageJPEG = selectEncodedImage(lead.Variants)
 			if cleaned, removed := extract.RemoveLeadImage(article.HTML, lead.SourceURL); removed {
 				article.HTML = cleaned
 			}
@@ -341,6 +364,40 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 			hasBody = extractQuality >= 0.3
 		}
 	}
+	imageVector, imageModelVersion := []byte(nil), ""
+	if !isVideo {
+		imageVector, imageModelVersion = existing.ImageVector, existing.ImageModelVersion
+	}
+	imageEmbedSucceeded, imageEmbedFailed := 0.0, 0.0
+	imageEmbedLatency := float64(0)
+	imageEmbedAttempted := false
+	if !isVideo && mediaKey != "" && h.imageEmbedder != nil && h.imageVectors != nil {
+		jpeg := freshImageJPEG
+		if len(jpeg) == 0 {
+			variantKey := selectedImageVariantKey(mediaVariants, mediaKey)
+			stored, _, contentErr := h.store.Content(ctx, variantKey)
+			if contentErr != nil {
+				imageEmbedFailed = 1
+				slog.WarnContext(ctx, "image embedding failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", contentErr)
+			} else {
+				jpeg = stored
+			}
+		}
+		if len(jpeg) > 0 {
+			imageStarted := time.Now()
+			imageEmbedAttempted = true
+			embedded, imageErr := h.imageEmbedder.EmbedImage(ctx, jpeg)
+			imageEmbedLatency = float64(time.Since(imageStarted).Milliseconds())
+			if imageErr != nil {
+				imageEmbedFailed = 1
+				slog.WarnContext(ctx, "image embedding failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", imageErr)
+			} else {
+				imageVector = score.EncodeVector(score.Normalize(embedded))
+				imageModelVersion = h.imageModelVersion
+				imageEmbedSucceeded = 1
+			}
+		}
+	}
 	embedTitle := message.Title
 	if embedTitle == "" {
 		embedTitle = existing.Title
@@ -370,7 +427,8 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 			return nil, loadErr
 		}
 		model = loadedModel
-		result := score.Calculate(vector, nil, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
+		decodedImageVector := score.DecodeVector(imageVector)
+		result := score.Calculate(vector, decodedImageVector, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
 		value = result.Score
 		if result.Base > 0.6 {
 			rows, signalErr := h.store.Signals(ctx, message.User)
@@ -380,10 +438,10 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 			liked := make([]score.Candidate, 0, len(rows))
 			for _, row := range rows {
 				if row.Value > 0 && score.CompatibleVersion(row.ModelVersion, h.modelVersion) {
-					liked = append(liked, score.Candidate{Title: row.Title, Vector: score.DecodeVector(row.Vector)})
+					liked = append(liked, score.Candidate{Title: row.Title, Vector: score.DecodeVector(row.Vector), ImageVector: score.DecodeVector(row.ImageVector)})
 				}
 			}
-			why = score.Why(result, vector, nil, feedTitle, liked)
+			why = score.Why(result, vector, decodedImageVector, feedTitle, liked)
 		}
 	}
 	author := strings.TrimSpace(message.Author)
@@ -407,7 +465,8 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 		SearchText:  domain.DeriveSearchText(embedTitle, summary),
 		PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(started),
 		MediaKey: mediaKey, MediaVariants: mediaVariants, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
-		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
+		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion,
+		ImageVector: imageVector, ImageModelVersion: imageModelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
 	}
 	storyMetrics := map[string]float64{}
 	if message.Reprocess && existing.StoryID != "" {
@@ -439,6 +498,15 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 	}
 	slog.Info("item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "written", written, "has_body", hasBody, "extract_quality", extractQuality, "summary_source", summarySource, "has_media", mediaKey != "", "duration_ms", time.Since(started).Milliseconds())
 	metrics := map[string]float64{"ItemWorkerDurationMs": float64(time.Since(started).Milliseconds()), "BedrockLatencyMs": float64(time.Since(embedStarted).Milliseconds())}
+	if imageEmbedSucceeded > 0 {
+		metrics["ImageEmbedSucceeded"] = imageEmbedSucceeded
+	}
+	if imageEmbedFailed > 0 {
+		metrics["ImageEmbedFailed"] = imageEmbedFailed
+	}
+	if imageEmbedAttempted {
+		metrics["ImageEmbedLatencyMs"] = imageEmbedLatency
+	}
 	for name, metric := range storyMetrics {
 		metrics[name] = metric
 	}
@@ -458,7 +526,7 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 	if bodyImageFailed > 0 {
 		metrics["BodyImageFailed"] = float64(bodyImageFailed)
 	}
-	var vectorRecord *vectorstore.Record
+	var vectorRecords *processedVectors
 	if written {
 		metrics["ItemsWritten"] = 1
 		kind := vectorstore.KindLive
@@ -466,12 +534,15 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 			kind = vectorstore.KindArchive
 		}
 		record := vectorstore.FromItem(item, kind)
-		vectorRecord = &record
+		vectorRecords = &processedVectors{text: record}
+		if imageRecord, ok := vectorstore.ImageRecordFromItem(item, kind); ok {
+			vectorRecords.image = &imageRecord
+		}
 	} else {
 		metrics["ItemsDeduped"] = 1
 	}
 	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", observability.Emit)
-	return vectorRecord, nil
+	return vectorRecords, nil
 }
 
 func (h *handler) assignStory(ctx context.Context, userID string, vector []float32, item *domain.Item) (map[string]float64, error) {
@@ -610,6 +681,43 @@ func storeLead(ctx context.Context, writer contentWriter, mediaKey string, lead 
 		variants = append(variants, domain.MediaVariant{Key: key, Width: image.Width, Height: image.Height})
 	}
 	return variants, nil
+}
+
+func selectedImageVariantKey(variants []domain.MediaVariant, fallback string) string {
+	if len(variants) == 0 {
+		return fallback
+	}
+	selected := variants[0]
+	withinLimit := false
+	for _, variant := range variants {
+		if variant.Width <= 768 && (!withinLimit || variant.Width > selected.Width) {
+			selected = variant
+			withinLimit = true
+		} else if !withinLimit && variant.Width < selected.Width {
+			selected = variant
+		}
+	}
+	if selected.Key == "" {
+		return fallback
+	}
+	return selected.Key
+}
+
+func selectEncodedImage(variants []media.Image) []byte {
+	if len(variants) == 0 {
+		return nil
+	}
+	selected := variants[0]
+	withinLimit := false
+	for _, variant := range variants {
+		if variant.Width <= 768 && (!withinLimit || variant.Width > selected.Width) {
+			selected = variant
+			withinLimit = true
+		} else if !withinLimit && variant.Width < selected.Width {
+			selected = variant
+		}
+	}
+	return selected.Bytes
 }
 
 func videoDescription(video bool, raw, existing string) string {
@@ -790,11 +898,24 @@ func main() {
 	}
 	embedder := bedrockembed.NewWithModel(runtime, modelVersion)
 	summarizer := summarize.New(bedrocksummary.NewWithModel(runtime, summaryModel))
+	imageModelVersion := strings.TrimSpace(os.Getenv("IMAGE_MODEL_VERSION"))
+	if imageModelVersion == "" {
+		imageModelVersion = titanimage.ModelID
+	}
+	imageVectorIndex := strings.TrimSpace(os.Getenv("IMAGE_VECTOR_INDEX"))
+	vectorClient := s3vectors.NewFromConfig(config)
 	h := &handler{
 		store: repository, http: articleHTTP, media: processor, embedder: embedder, summarizer: summarizer,
 		modelVersion: modelVersion, scoringVersion: scoringVersion,
-		vectors: vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex), storyConfig: storycluster.FromEnv(),
+		vectors: vectorstore.NewS3(vectorClient, vectorBucket, vectorIndex), storyConfig: storycluster.FromEnv(),
 	}
-	h.models = score.NewCache(repository, 5*time.Minute, modelVersion, "")
+	if imageVectorIndex == "" {
+		slog.Info("image embedding channel disabled", "reason", "IMAGE_VECTOR_INDEX is empty")
+	} else {
+		h.imageEmbedder = titanimage.NewWithModel(runtime, imageModelVersion)
+		h.imageModelVersion = imageModelVersion
+		h.imageVectors = vectorstore.NewS3(vectorClient, vectorBucket, imageVectorIndex)
+	}
+	h.models = score.NewCache(repository, 5*time.Minute, modelVersion, h.imageModelVersion)
 	lambda.Start(h.run)
 }

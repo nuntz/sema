@@ -53,6 +53,20 @@ func FromItem(item domain.Item, kind Kind) Record {
 	}
 }
 
+func ImageRecordFromItem(item domain.Item, kind Kind) (Record, bool) {
+	if len(item.ImageVector) == 0 {
+		return Record{}, false
+	}
+	expires := item.TTL
+	if kind == KindArchive {
+		expires = 0
+	}
+	return Record{
+		Key: item.ItemID, Data: score.DecodeVector(item.ImageVector), Kind: kind,
+		FeedID: item.FeedID, PublishedTS: item.PublishedTS, ExpiresTS: expires, Title: item.Title,
+	}, true
+}
+
 func Similarity(distance float32) int {
 	return int(math.Round(math.Max(0, math.Min(1, 1-float64(distance))) * 100))
 }
