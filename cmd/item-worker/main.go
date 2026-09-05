@@ -368,6 +368,9 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	if !isVideo {
 		imageVector, imageModelVersion = existing.ImageVector, existing.ImageModelVersion
 	}
+	if processAssets && mediaKey == "" {
+		imageVector, imageModelVersion = nil, ""
+	}
 	imageEmbedSucceeded, imageEmbedFailed := 0.0, 0.0
 	imageEmbedReused := 0.0
 	imageEmbedLatency := float64(0)

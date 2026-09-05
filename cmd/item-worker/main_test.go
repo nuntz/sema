@@ -397,6 +397,37 @@ func TestIncompatibleReplayRefreshesImageVector(t *testing.T) {
 	}
 }
 
+func TestForcedExtractClearsImageVectorWhenLeadDisappears(t *testing.T) {
+	now := time.Now().UTC()
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), MediaKey: "old-lead.jpg",
+		MediaVariants: []domain.MediaVariant{{Key: "old-lead.jpg", Width: 768}}, Vector: score.EncodeVector([]float32{0, 1}), ModelVersion: "text-v1",
+		ImageVector: score.EncodeVector([]float32{1, 0}), ImageModelVersion: "image-v1", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing}
+	images := &stubImageEmbedder{vector: []float32{0, 1}}
+	imageVectors := &stubVectorBatchStore{}
+	h := &handler{
+		store: repository, media: media.New(nil), embedder: stubEmbedder{}, modelVersion: "text-v1", imageEmbedder: images, imageModelVersion: "image-v1",
+		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true,"force_extract":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if len(images.images) != 0 {
+		t.Fatalf("image embed calls = %d, want 0", len(images.images))
+	}
+	if repository.overwritten == nil || repository.overwritten.MediaKey != "" || len(repository.overwritten.ImageVector) != 0 || repository.overwritten.ImageModelVersion != "" {
+		t.Fatalf("overwritten item = %#v", repository.overwritten)
+	}
+	if imageVectors.calls != 0 || len(imageVectors.records) != 0 {
+		t.Fatalf("image vector batch = %#v", imageVectors)
+	}
+}
+
 func TestVideoNeverEmbedsOrBatchesImageVector(t *testing.T) {
 	now := time.Now().UTC()
 	existing := domain.Item{
