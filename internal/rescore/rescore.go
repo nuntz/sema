@@ -112,7 +112,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err := e.Repository.PutModel(ctx, model); err != nil {
 		return Result{}, err
 	}
-	drift := score.Dot(score.DecodeVector(old.LikedCentroid), score.DecodeVector(model.LikedCentroid))
+	drift := centroidDrift(old.LikedCentroid, model.LikedCentroid)
 	return Result{
 		Model:                model,
 		ItemsRescored:        len(items),
@@ -120,6 +120,15 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		CentroidDrift:        drift,
 		Duration:             e.now().Sub(started),
 	}, nil
+}
+
+func centroidDrift(old, current []byte) float64 {
+	oldVector := score.DecodeVector(old)
+	currentVector := score.DecodeVector(current)
+	if len(oldVector) == 0 || len(currentVector) == 0 {
+		return 0
+	}
+	return 1 - score.Dot(oldVector, currentVector)
 }
 
 func (e *Engine) now() time.Time {

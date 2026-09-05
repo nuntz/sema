@@ -165,3 +165,24 @@ func TestRescoreDerivesCutoffsFromFreshScoresBeforeBucketing(t *testing.T) {
 		t.Fatalf("bucket counts = %#v, want S=6 M=3 L=1", counts)
 	}
 }
+
+func TestCentroidDrift(t *testing.T) {
+	unitX := score.EncodeVector([]float32{1, 0})
+	tests := []struct {
+		name    string
+		old     []byte
+		current []byte
+		want    float64
+	}{
+		{name: "empty", old: nil, current: unitX, want: 0},
+		{name: "identical", old: unitX, current: unitX, want: 0},
+		{name: "orthogonal", old: unitX, current: score.EncodeVector([]float32{0, 1}), want: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := centroidDrift(test.old, test.current); math.Abs(got-test.want) > 1e-12 {
+				t.Fatalf("centroidDrift() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
