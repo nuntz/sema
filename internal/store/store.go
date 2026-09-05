@@ -65,7 +65,7 @@ type itemProjection struct {
 	names      map[string]string
 }
 
-var listItemProjection = newItemProjection("vector", "search_text")
+var listItemProjection = newItemProjection("vector", "image_vector", "search_text")
 
 var feedCounterAttributes = map[string]bool{
 	"item_count": true, "extraction_failures": true, "media_failures": true,
@@ -345,12 +345,15 @@ func (s *Store) ItemExists(ctx context.Context, userID, itemID string) (bool, er
 
 func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 	vector, err := attributevalue.MarshalMap(domain.ItemVector{
-		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector, TTL: item.TTL,
+		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector,
+		ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion, TTL: item.TTL,
 	})
 	if err != nil {
 		return false, err
 	}
 	item.Vector = nil
+	item.ImageVector = nil
+	item.ImageModelVersion = ""
 	encoded, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return false, err
@@ -477,12 +480,15 @@ func (s *Store) ReconcileItemIdentity(ctx context.Context, userID string, canoni
 // replaces the existing live row at its stable key.
 func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
 	vector, err := attributevalue.MarshalMap(domain.ItemVector{
-		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector, TTL: item.TTL,
+		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector,
+		ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion, TTL: item.TTL,
 	})
 	if err != nil {
 		return err
 	}
 	item.Vector = nil
+	item.ImageVector = nil
+	item.ImageModelVersion = ""
 	encoded, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return err
@@ -1223,12 +1229,37 @@ func (s *Store) UpdateBehaviourEmbedding(ctx context.Context, userID, itemID str
 	return s.updateStoredEmbedding(ctx, userID, domain.BehaviourSK(itemID), vector, version)
 }
 
+func (s *Store) UpdateSignalImageEmbedding(ctx context.Context, userID, itemID string, vector []byte, version string) error {
+	return s.updateStoredImageEmbedding(ctx, userID, domain.SignalSK(itemID), vector, version)
+}
+
+func (s *Store) UpdateBehaviourImageEmbedding(ctx context.Context, userID, itemID string, vector []byte, version string) error {
+	return s.updateStoredImageEmbedding(ctx, userID, domain.BehaviourSK(itemID), vector, version)
+}
+
 func (s *Store) updateStoredEmbedding(ctx context.Context, userID, sk string, vector []byte, version string) error {
 	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
 		UpdateExpression:         aws.String("SET #vector = :vector, model_version = :version"),
 		ConditionExpression:      aws.String("attribute_exists(PK)"),
 		ExpressionAttributeNames: map[string]string{"#vector": "vector"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":vector":  &types.AttributeValueMemberB{Value: vector},
+			":version": &types.AttributeValueMemberS{Value: version},
+		},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil
+	}
+	return err
+}
+
+func (s *Store) updateStoredImageEmbedding(ctx context.Context, userID, sk string, vector []byte, version string) error {
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
+		UpdateExpression:    aws.String("SET image_vector = :vector, image_model_version = :version"),
+		ConditionExpression: aws.String("attribute_exists(PK)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":vector":  &types.AttributeValueMemberB{Value: vector},
 			":version": &types.AttributeValueMemberS{Value: version},
@@ -1302,6 +1333,8 @@ func (s *Store) loadItemVector(ctx context.Context, item domain.Item, now int64)
 	}
 	if stored.TTL == 0 || stored.TTL > now {
 		item.Vector = stored.Vector
+		item.ImageVector = stored.ImageVector
+		item.ImageModelVersion = stored.ImageModelVersion
 	}
 	return item, nil
 }
@@ -1323,7 +1356,7 @@ func (s *Store) LoadItemVectors(ctx context.Context, userID string, items []doma
 	if err != nil {
 		return err
 	}
-	vectors := make(map[string][]byte, len(rows))
+	vectors := make(map[string]domain.ItemVector, len(rows))
 	now := time.Now().Unix()
 	for _, row := range rows {
 		var stored domain.ItemVector
@@ -1331,12 +1364,14 @@ func (s *Store) LoadItemVectors(ctx context.Context, userID string, items []doma
 			return err
 		}
 		if stored.TTL == 0 || stored.TTL > now {
-			vectors[strings.TrimPrefix(stored.SK, "V#")] = stored.Vector
+			vectors[strings.TrimPrefix(stored.SK, "V#")] = stored
 		}
 	}
 	for index := range items {
 		if vector, ok := vectors[items[index].ItemID]; ok {
-			items[index].Vector = vector
+			items[index].Vector = vector.Vector
+			items[index].ImageVector = vector.ImageVector
+			items[index].ImageModelVersion = vector.ImageModelVersion
 		}
 	}
 	return nil
@@ -1371,6 +1406,28 @@ func (s *Store) PutItemVectorIfAbsent(ctx context.Context, userID, itemID string
 		return false, err
 	}
 	return true, nil
+}
+
+// SetItemImageVector adds the independent image embedding to an existing V#
+// row without modifying its text vector or creating a partial vector row.
+func (s *Store) SetItemImageVector(ctx context.Context, userID, itemID string, vector []byte, version string) error {
+	if userID == "" || itemID == "" || len(vector) == 0 || version == "" {
+		return errors.New("item image vector identity, data, and version are required")
+	}
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemVectorSK(itemID)),
+		UpdateExpression:    aws.String("SET image_vector = :vector, image_model_version = :version"),
+		ConditionExpression: aws.String("attribute_exists(PK)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":vector":  &types.AttributeValueMemberB{Value: vector},
+			":version": &types.AttributeValueMemberS{Value: version},
+		},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) legacyItem(ctx context.Context, userID, itemID string, now int64) (domain.Item, error) {
@@ -1606,6 +1663,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	heartSignal, err := attributevalue.MarshalMap(domain.Signal{
 		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
 		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
+		ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
 	})
 	if err != nil {
 		return "", 0, err
@@ -1654,6 +1712,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		signal := domain.Signal{
 			PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
 			Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
+			ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
 		}
 		if modelErr := s.applyExplicitModelUpdate(ctx, userID, nil, &signal, item.ModelVersion); modelErr != nil {
 			slog.ErrorContext(ctx, "increment heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
@@ -1727,6 +1786,7 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 		old := domain.Signal{
 			PK: domain.UserPK(userID), SK: domain.SignalSK(itemID), ItemID: itemID, Value: 1,
 			Vector: archive.Vector, Title: archive.Title, FeedID: archive.FeedID, CreatedAt: archive.HeartedTS, Source: "heart", ModelVersion: archive.ModelVersion,
+			ImageVector: archive.ImageVector, ImageModelVersion: archive.ImageModelVersion,
 		}
 		if modelErr := s.applyExplicitModelUpdate(ctx, userID, &old, nil, archive.ModelVersion); modelErr != nil {
 			slog.ErrorContext(ctx, "decrement heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
@@ -1902,6 +1962,14 @@ func (s *Store) RecordBehaviour(ctx context.Context, userID string, item domain.
 		values[":version"] = &types.AttributeValueMemberS{Value: item.ModelVersion}
 		sets = append(sets, "model_version = if_not_exists(model_version, :version)")
 	}
+	if len(item.ImageVector) > 0 {
+		values[":image_vector"] = &types.AttributeValueMemberB{Value: item.ImageVector}
+		sets = append(sets, "image_vector = if_not_exists(image_vector, :image_vector)")
+		if item.ImageModelVersion != "" {
+			values[":image_version"] = &types.AttributeValueMemberS{Value: item.ImageModelVersion}
+			sets = append(sets, "image_model_version = if_not_exists(image_model_version, :image_version)")
+		}
+	}
 	if event.Opened {
 		values[":open"] = &types.AttributeValueMemberBOOL{Value: true}
 		sets = append(sets, "opened = :open")
@@ -2057,6 +2125,7 @@ func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, 
 	signal := domain.Signal{
 		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: value,
 		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(time.Now()), ModelVersion: item.ModelVersion,
+		ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
 	}
 	if heartSource {
 		signal.Source = "heart"
@@ -2288,6 +2357,8 @@ func (s *Store) PublicItem(item domain.Item) domain.Item {
 	item.BodyKey = s.ContentURL(item.BodyKey)
 	item.FaviconKey = s.ContentURL(item.FaviconKey)
 	item.Vector = nil
+	item.ImageVector = nil
+	item.ImageModelVersion = ""
 	return item
 }
 

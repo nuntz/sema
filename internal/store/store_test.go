@@ -96,7 +96,7 @@ func TestListItemProjectionReflectsAllStoredFieldsExceptLargeSearchFields(t *tes
 	typeOfItem := reflect.TypeOf(domain.Item{})
 	for index := range typeOfItem.NumField() {
 		name := strings.Split(typeOfItem.Field(index).Tag.Get("dynamodbav"), ",")[0]
-		want := name != "" && name != "-" && name != "vector" && name != "search_text"
+		want := name != "" && name != "-" && name != "vector" && name != "image_vector" && name != "search_text"
 		if projected[name] != want {
 			t.Errorf("projected[%q] = %t, want %t", name, projected[name], want)
 		}
@@ -440,8 +440,11 @@ func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 		if _, exists := input.TransactItems[1].Put.Item["vector"]; exists {
 			t.Fatal("live item row contains vector")
 		}
+		if _, exists := input.TransactItems[1].Put.Item["image_vector"]; exists {
+			t.Fatal("live item row contains image vector")
+		}
 		storedVector := input.TransactItems[2].Put.Item
-		if got := storedVector["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemVectorSK("same") || string(storedVector["vector"].(*types.AttributeValueMemberB).Value) != "vector" {
+		if got := storedVector["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemVectorSK("same") || string(storedVector["vector"].(*types.AttributeValueMemberB).Value) != "vector" || string(storedVector["image_vector"].(*types.AttributeValueMemberB).Value) != "image" || storedVector["image_model_version"].(*types.AttributeValueMemberS).Value != "image-v1" {
 			t.Fatalf("vector row = %#v", storedVector)
 		}
 		counter := input.TransactItems[3].Update
@@ -462,7 +465,7 @@ func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 		return &dynamodb.TransactWriteItemsOutput{}, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	first := domain.Item{PK: domain.UserPK("user"), SK: domain.ItemSK(time.Now(), "same"), ItemID: "same", FeedID: "feed", Vector: []byte("vector"), TTL: time.Now().Add(time.Hour).Unix()}
+	first := domain.Item{PK: domain.UserPK("user"), SK: domain.ItemSK(time.Now(), "same"), ItemID: "same", FeedID: "feed", Vector: []byte("vector"), ImageVector: []byte("image"), ImageModelVersion: "image-v1", TTL: time.Now().Add(time.Hour).Unix()}
 	written, err := repository.PutItem(context.Background(), first)
 	if err != nil || !written {
 		t.Fatalf("first put = %v, %v", written, err)
@@ -591,7 +594,7 @@ func TestItemFallsBackToLegacyInRowVector(t *testing.T) {
 
 func TestLoadItemVectorsUsesOneBatchAndPreservesLegacyFallback(t *testing.T) {
 	ttl := time.Now().Add(time.Hour).Unix()
-	stored, _ := attributevalue.MarshalMap(domain.ItemVector{PK: domain.UserPK("user"), SK: domain.ItemVectorSK("new"), Vector: []byte("separate"), TTL: ttl})
+	stored, _ := attributevalue.MarshalMap(domain.ItemVector{PK: domain.UserPK("user"), SK: domain.ItemVectorSK("new"), Vector: []byte("separate"), ImageVector: []byte("image"), ImageModelVersion: "image-v1", TTL: ttl})
 	calls := 0
 	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
 		calls++
@@ -605,7 +608,7 @@ func TestLoadItemVectorsUsesOneBatchAndPreservesLegacyFallback(t *testing.T) {
 	if err := New(db, nil, "table", "", "").LoadItemVectors(context.Background(), "user", items); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || string(items[0].Vector) != "separate" || string(items[1].Vector) != "in-row" {
+	if calls != 1 || string(items[0].Vector) != "separate" || string(items[0].ImageVector) != "image" || items[0].ImageModelVersion != "image-v1" || string(items[1].Vector) != "in-row" {
 		t.Fatalf("items = %#v, calls = %d", items, calls)
 	}
 }
@@ -906,6 +909,7 @@ func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	repository := New(db, nil, "table", "", "")
 	item := domain.Item{
 		PK: "U#user", SK: "I#item", ItemID: "item", Score: 0.8, Size: "L", Summary: "new summary", Vector: []byte{1, 2},
+		ImageVector: []byte{3, 4}, ImageModelVersion: "image-v1",
 		Read: true, Signal: -1, Hearted: true, ArchiveSK: "A#kept", HeartedTS: "2026-08-20T12:00:00Z",
 	}
 	if err := repository.OverwriteItem(context.Background(), item); err != nil {
@@ -919,6 +923,9 @@ func TestReplayOverwriteIsIdempotent(t *testing.T) {
 	}
 	if _, exists := writes[0]["vector"]; exists || string(writes[1]["vector"].(*types.AttributeValueMemberB).Value) != string(item.Vector) {
 		t.Fatalf("replay vector rows = %#v", writes)
+	}
+	if _, exists := writes[0]["image_vector"]; exists || string(writes[1]["image_vector"].(*types.AttributeValueMemberB).Value) != string(item.ImageVector) || writes[1]["image_model_version"].(*types.AttributeValueMemberS).Value != item.ImageModelVersion {
+		t.Fatalf("replay image vector rows = %#v", writes)
 	}
 	for _, transient := range []string{"read", "signal", "hearted"} {
 		if _, ok := writes[0][transient]; ok {
@@ -1090,7 +1097,7 @@ func TestBehaviourMergeIsMonotonic(t *testing.T) {
 		return &dynamodb.UpdateItemOutput{}, nil
 	}}
 	dwell := int64(31_000)
-	item := domain.Item{ItemID: "item", FeedID: "feed", Title: "Title", Vector: []byte{1, 2}, ModelVersion: "v"}
+	item := domain.Item{ItemID: "item", FeedID: "feed", Title: "Title", Vector: []byte{1, 2}, ModelVersion: "v", ImageVector: []byte{3, 4}, ImageModelVersion: "image-v1"}
 	err := New(db, nil, "table", "", "").RecordBehaviour(context.Background(), "user", item, BehaviourEvent{
 		Opened: true, DwellMS: &dwell, ClickedThrough: true, Shared: true,
 	})
@@ -1105,6 +1112,8 @@ func TestBehaviourMergeIsMonotonic(t *testing.T) {
 		"opened_at = if_not_exists(opened_at, :opened)",
 		"#vector = if_not_exists(#vector, :vector)",
 		"#ttl = if_not_exists(#ttl, :ttl)",
+		"image_vector = if_not_exists(image_vector, :image_vector)",
+		"image_model_version = if_not_exists(image_model_version, :image_version)",
 		"clicked_through = :clicked",
 		"#shared = :shared",
 	} {
@@ -1166,7 +1175,7 @@ func TestSetSignalMaintainsProfileCount(t *testing.T) {
 		},
 	}
 	repository := New(db, nil, "table", "", "")
-	item := domain.Item{ItemID: "item", FeedID: "feed", Title: "title", Vector: []byte{1}}
+	item := domain.Item{ItemID: "item", FeedID: "feed", Title: "title", Vector: []byte{1}, ImageVector: []byte{2}, ImageModelVersion: "image-v1"}
 	for _, value := range []int{1, -1, 0, 0} {
 		if err := repository.SetSignal(context.Background(), "user", item, value); err != nil {
 			t.Fatalf("SetSignal(%d): %v", value, err)
@@ -1182,6 +1191,26 @@ func TestSetSignalMaintainsProfileCount(t *testing.T) {
 	if signal["source"].(*types.AttributeValueMemberS).Value != "heart" {
 		t.Fatalf("restored signal = %#v", signal)
 	}
+	if string(signal["image_vector"].(*types.AttributeValueMemberB).Value) != string(item.ImageVector) || signal["image_model_version"].(*types.AttributeValueMemberS).Value != item.ImageModelVersion {
+		t.Fatalf("restored signal image embedding = %#v", signal)
+	}
+}
+
+func TestSetItemImageVectorUpdatesExistingSplitRowOnly(t *testing.T) {
+	var update *dynamodb.UpdateItemInput
+	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		update = input
+		return nil, &types.ConditionalCheckFailedException{}
+	}}
+	if err := New(db, nil, "table", "", "").SetItemImageVector(context.Background(), "user", "item", []byte("image"), "image-v1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := update.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemVectorSK("item") {
+		t.Fatalf("image vector key = %q", got)
+	}
+	if aws.ToString(update.UpdateExpression) != "SET image_vector = :vector, image_model_version = :version" || aws.ToString(update.ConditionExpression) != "attribute_exists(PK)" {
+		t.Fatalf("image vector update = %#v", update)
+	}
 }
 
 func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
@@ -1195,6 +1224,7 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			item := domain.Item{
 				PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "TITLE", Summary: "Summary", TTL: time.Now().Add(time.Hour).Unix(),
+				Vector: []byte("text"), ModelVersion: "text-v1", ImageVector: []byte("image"), ImageModelVersion: "image-v1",
 			}
 			encodedItem, err := attributevalue.MarshalMap(item)
 			if err != nil {
@@ -1208,6 +1238,10 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			storedVector, err := attributevalue.MarshalMap(domain.ItemVector{PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector, ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion, TTL: item.TTL})
+			if err != nil {
+				t.Fatal(err)
+			}
 			var transactions []*dynamodb.TransactWriteItemsInput
 			db := &fakeDynamoDB{
 				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
@@ -1216,6 +1250,8 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 						return &dynamodb.GetItemOutput{Item: identity}, nil
 					case item.SK:
 						return &dynamodb.GetItemOutput{Item: encodedItem}, nil
+					case domain.ItemVectorSK(item.ItemID):
+						return &dynamodb.GetItemOutput{Item: storedVector}, nil
 					default:
 						return &dynamodb.GetItemOutput{Item: profile}, nil
 					}
@@ -1238,16 +1274,22 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 				t.Fatalf("signal transaction profile update = %q", got)
 			}
 			archiveSearch := ""
+			var signalImage []byte
 			for _, write := range transactions[0].TransactItems {
 				if write.Put == nil {
 					continue
 				}
 				if value, ok := write.Put.Item["SK"].(*types.AttributeValueMemberS); ok && strings.HasPrefix(value.Value, "A#") {
 					archiveSearch = write.Put.Item["search_text"].(*types.AttributeValueMemberS).Value
+				} else if ok && strings.HasPrefix(value.Value, "S#") {
+					signalImage = write.Put.Item["image_vector"].(*types.AttributeValueMemberB).Value
 				}
 			}
 			if archiveSearch != "title summary" {
 				t.Fatalf("archive search_text = %q", archiveSearch)
+			}
+			if !test.fallback && string(signalImage) != "image" {
+				t.Fatalf("heart signal image vector = %q", signalImage)
 			}
 			if test.fallback {
 				if got := profileUpdateExpression(transactions[1]); got != "ADD heart_count :one" {

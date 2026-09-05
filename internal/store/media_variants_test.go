@@ -39,6 +39,7 @@ func TestUpdateMediaVariantsTouchesOnlyMediaManifestAndDimensions(t *testing.T) 
 
 func TestPublicItemResolvesResponsiveVariantURLs(t *testing.T) {
 	item := domain.Item{
+		Vector: []byte("text"), ImageVector: []byte("image"), ImageModelVersion: "image-v1",
 		MediaKey: "media/user/item/lead.jpg",
 		MediaVariants: []domain.MediaVariant{
 			{Key: "media/user/item/lead-384.jpg", Width: 384, Height: 256},
@@ -51,5 +52,8 @@ func TestPublicItemResolvesResponsiveVariantURLs(t *testing.T) {
 	}
 	if item.MediaVariants[0].Key != "media/user/item/lead-384.jpg" {
 		t.Fatalf("public conversion mutated stored manifest = %#v", item.MediaVariants)
+	}
+	if len(public.Vector) != 0 || len(public.ImageVector) != 0 || public.ImageModelVersion != "" {
+		t.Fatalf("public item leaked embeddings: %#v", public)
 	}
 }
