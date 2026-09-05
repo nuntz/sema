@@ -231,6 +231,18 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   });
 
   await page.goto("/");
+  const deferredRowStyles = await page
+    .locator(".story-block-row")
+    .last()
+    .evaluate((row) => {
+      const styles = getComputedStyle(row);
+      return {
+        contentVisibility: styles.contentVisibility,
+        intrinsicBlockSize: styles.containIntrinsicBlockSize,
+      };
+    });
+  expect(deferredRowStyles.contentVisibility).toBe("auto");
+  expect(deferredRowStyles.intrinsicBlockSize).toContain("280px");
   await expect(page.locator('[data-item-id="large-0"]')).toBeAttached();
   await expect(
     page.locator('.grid-row [data-item-id="story-0-0"]'),
