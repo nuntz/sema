@@ -66,14 +66,14 @@ func TestBoundedIntPreservesExplicitZero(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{raw: "", want: 35},
+		{raw: "", want: defaultImageSearchFloor},
 		{raw: "0", want: 0},
 		{raw: "100", want: 100},
 		{raw: "101", wantErr: true},
 		{raw: "nope", wantErr: true},
 	}
 	for _, test := range tests {
-		got, err := boundedInt(test.raw, 35, 0, 100)
+		got, err := boundedInt(test.raw, defaultImageSearchFloor, 0, 100)
 		if (err != nil) != test.wantErr || (!test.wantErr && got != test.want) {
 			t.Errorf("boundedInt(%q) = %d, %v; want %d, error %v", test.raw, got, err, test.want, test.wantErr)
 		}

@@ -27,6 +27,9 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 )
 
+// defaultImageSearchFloor must match cmd/api.DefaultImageSearchFloor.
+const defaultImageSearchFloor = 25
+
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		stack := ctx.Stack()
@@ -70,7 +73,7 @@ func main() {
 		if imageVectorIndexName == "" {
 			imageVectorIndexName = "images"
 		}
-		imageSearchMinSimilarity, err := boundedInt(cfg.Get("imageSearchMinSimilarity"), 35, 0, 100)
+		imageSearchMinSimilarity, err := boundedInt(cfg.Get("imageSearchMinSimilarity"), defaultImageSearchFloor, 0, 100)
 		if err != nil {
 			return fmt.Errorf("imageSearchMinSimilarity: %w", err)
 		}

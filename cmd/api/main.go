@@ -48,6 +48,9 @@ import (
 	"github.com/nuntz/sema/internal/vectorstore"
 )
 
+// DefaultImageSearchFloor must match defaultImageSearchFloor in infra/main.go.
+const DefaultImageSearchFloor = 25
+
 type queueAPI interface {
 	SendMessageBatch(context.Context, *sqs.SendMessageBatchInput, ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error)
 }
@@ -1356,7 +1359,7 @@ func main() {
 	if imageModelVersion == "" {
 		imageModelVersion = titanimage.ModelID
 	}
-	imageSearchFloor := 35
+	imageSearchFloor := DefaultImageSearchFloor
 	if raw := strings.TrimSpace(os.Getenv("IMAGE_SEARCH_MIN_SIMILARITY")); raw != "" {
 		value, parseErr := strconv.Atoi(raw)
 		if parseErr != nil || value < 0 || value > 100 {

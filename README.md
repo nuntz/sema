@@ -219,6 +219,8 @@ make rescore STACK=prod
 
 The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout will visibly reshuffle item sizes as the new image centroids take effect.
 
+The image-search similarity floor is a tuning knob for text-to-image recall. `ImageSearchTopSimilarity` and `ImageSearchMatches` in the Sema CloudWatch namespace show the live score distribution; adjust the floor with `pulumi config set sema:imageSearchMinSimilarity <n>` before deploying the stack.
+
 ### YouTube connector rollout
 
 For deployments that predate the YouTube connector, gate discovery while migrating stored channel feeds:
