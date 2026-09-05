@@ -26,6 +26,8 @@ export type ReaderCommand =
   | "close"
   | "next"
   | "previous"
+  | "page-down"
+  | "page-up"
   | "like"
   | "dislike"
   | "heart"
@@ -75,6 +77,9 @@ const readerBindings: Record<string, ReaderCommand> = {
   j: "next",
   p: "previous",
   k: "previous",
+  " ": "page-down",
+  PageDown: "page-down",
+  PageUp: "page-up",
   "+": "like",
   ".": "like",
   "-": "dislike",

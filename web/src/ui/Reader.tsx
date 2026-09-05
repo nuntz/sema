@@ -209,7 +209,17 @@ export function Reader(props: ReaderProps) {
 
   const onKey = (event: KeyboardEvent) => {
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
-    switch (readerCommand(event.key)) {
+    const command = readerCommand(event.key);
+    const target = event.target;
+    if (
+      command === "page-down" &&
+      event.key === " " &&
+      target instanceof HTMLElement &&
+      (target.isContentEditable ||
+        target.matches("button, input, select, textarea, summary"))
+    )
+      return;
+    switch (command) {
       case "close":
         props.onClose();
         break;
@@ -218,6 +228,14 @@ export function Reader(props: ReaderProps) {
         break;
       case "previous":
         if (props.canPrevious) props.onPrevious();
+        break;
+      case "page-down":
+        article.scrollBy({
+          top: article.clientHeight * (event.shiftKey ? -1 : 1),
+        });
+        break;
+      case "page-up":
+        article.scrollBy({ top: -article.clientHeight });
         break;
       case "like":
         props.onSignal(props.item.signal === 1 ? 0 : 1);

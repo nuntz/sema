@@ -135,7 +135,7 @@ function ReaderFixture() {
   return (
     <Reader
       item={readerItem()}
-      active={false}
+      active={true}
       archive={false}
       hearted={readerItem().hearted}
       linkActionActive={false}

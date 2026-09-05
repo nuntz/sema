@@ -209,6 +209,26 @@ test("reader title overlays the crumb and crossfades with hysteresis", async ({
   );
 });
 
+test("reader page keys scroll its article viewport", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await openFixture(page, "reader");
+  await page.locator("#reader-last-line").waitFor();
+
+  const scroll = page.locator(".reader-scroll");
+  const scrollTop = () => scroll.evaluate((element) => element.scrollTop);
+
+  await page.keyboard.press("Space");
+  await expect.poll(scrollTop).toBeGreaterThan(0);
+  const afterSpace = await scrollTop();
+
+  await page.keyboard.press("PageDown");
+  await expect.poll(scrollTop).toBeGreaterThan(afterSpace);
+  const afterPageDown = await scrollTop();
+
+  await page.keyboard.press("PageUp");
+  await expect.poll(scrollTop).toBeLessThan(afterPageDown);
+});
+
 test("reader judgments preserve article scroll and do not refetch its body", async ({
   page,
 }) => {

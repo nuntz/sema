@@ -7,6 +7,7 @@ const bindings = [
   ["K / ↑", "previous row"],
   ["↵ / O", "open in reader"],
   ["N / P", "next / previous in reader"],
+  ["Space / PgDn / PgUp", "page through reader"],
   ["+ / .", "boost"],
   ["− / ,", "bury"],
   ["F", "toggle heart"],
