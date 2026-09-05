@@ -920,17 +920,35 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       .filter((item) => !item.read)
       .map((item) => item.item_id);
     for (const id of ids) pendingRead.delete(id);
-    setStories((current) => updateStoriesRead(current, ids, true));
-    setItems((current) => updateRead(current, ids, true));
-    api.events(lead.item_id, { opened: true }).catch(handleError);
-    api.readBatch(ids, true).catch((caught) => {
-      setStories((current) => updateStoriesRead(current, unread, false));
-      setItems((current) => updateRead(current, unread, false));
-      handleError(caught);
-    });
     setReaderItem({ ...lead, read: true });
     setReaderArchive(false);
     setReaderID(lead.item_id);
+
+    let readUpdateApplied = false;
+    let readFailed = false;
+    // Let the reader paint before updating the much larger front-page tree.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (readFailed) return;
+        readUpdateApplied = true;
+        setStories((current) => updateStoriesRead(current, ids, true));
+        setItems((current) => updateRead(current, ids, true));
+      });
+    });
+    api.events(lead.item_id, { opened: true }).catch(handleError);
+    api.readBatch(ids, true).catch((caught) => {
+      readFailed = true;
+      if (readUpdateApplied) {
+        setStories((current) => updateStoriesRead(current, unread, false));
+        setItems((current) => updateRead(current, unread, false));
+      }
+      setReaderItem((current) =>
+        current?.item_id === lead.item_id
+          ? { ...current, read: lead.read }
+          : current,
+      );
+      handleError(caught);
+    });
   };
 
   const openExternalItem = (item: Item) => {

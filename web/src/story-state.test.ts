@@ -24,10 +24,13 @@ describe("story read state", () => {
   it("updates matching members without changing unrelated members", () => {
     const stories: Story[] = [
       { story_id: "story", source_count: 2, items: [item("a"), item("b")] },
+      { story_id: "other", source_count: 2, items: [item("c"), item("d")] },
     ];
     const updated = updateStoriesRead(stories, ["a"], true);
     expect(updated[0].items.map(({ read }) => read)).toEqual([true, false]);
     expect(stories[0].items[0].read).toBe(false);
+    expect(updated[1]).toBe(stories[1]);
+    expect(updateStoriesRead(updated, ["a"], true)).toBe(updated);
   });
 
   it("applies item patches to story copies", () => {

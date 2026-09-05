@@ -18,12 +18,19 @@ export function updateStoriesRead(
 ): Story[] {
   const changed = new Set(ids);
   if (changed.size === 0) return stories;
-  return stories.map((story) => ({
-    ...story,
-    items: story.items.map((item) =>
-      changed.has(item.item_id) ? { ...item, read } : item,
-    ),
-  }));
+  let storiesChanged = false;
+  const updated = stories.map((story) => {
+    let storyChanged = false;
+    const items = story.items.map((item) => {
+      if (!changed.has(item.item_id) || item.read === read) return item;
+      storyChanged = true;
+      return { ...item, read };
+    });
+    if (!storyChanged) return story;
+    storiesChanged = true;
+    return { ...story, items };
+  });
+  return storiesChanged ? updated : stories;
 }
 
 export function updateStoryItem(

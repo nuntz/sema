@@ -162,7 +162,7 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
 test("reuses story exclusion and renders a stable large-item prefix", async ({
   page,
 }) => {
-  const stories = Array.from({ length: 20 }, (_, storyIndex) => {
+  const stories = Array.from({ length: 215 }, (_, storyIndex) => {
     const storyID = `story-${storyIndex}`;
     return {
       story_id: storyID,
@@ -274,4 +274,49 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   ).toHaveCount(0);
   expect(itemRequests).toBe(1);
   expect(exclusionParameters).toEqual([""]);
+
+  await page.evaluate(() => {
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (
+          !(event.target instanceof Element) ||
+          !event.target.closest(".story-lead")
+        )
+          return;
+        requestAnimationFrame(() => {
+          (
+            window as typeof window & {
+              __leadFirstFrame?: { readerVisible: boolean; storyRead: boolean };
+            }
+          ).__leadFirstFrame = {
+            readerVisible: document.querySelector(".reader-scroll") !== null,
+            storyRead:
+              document
+                .querySelector('[data-story-id="story-0"] .story-lead h2')
+                ?.classList.contains("read") ?? false,
+          };
+        });
+      },
+      { capture: true, once: true },
+    );
+  });
+  await page.locator('[data-story-id="story-0"] .story-lead').click();
+  await expect(page.locator(".reader-scroll")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __leadFirstFrame?: {
+              readerVisible: boolean;
+              storyRead: boolean;
+            };
+          }
+        ).__leadFirstFrame,
+    ),
+  ).toEqual({ readerVisible: true, storyRead: false });
+  await expect(
+    page.locator('[data-story-id="story-0"] .story-lead h2'),
+  ).toHaveClass(/read/);
 });
