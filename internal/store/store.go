@@ -2120,21 +2120,23 @@ func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.I
 		keys = append(keys, key(domain.UserPK(userID), domain.ReadSK(item.ItemID)))
 	}
 	read := make(map[string]bool)
-	pending := keys
-	for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
-		response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {Keys: pending, ProjectionExpression: aws.String("SK")}}})
-		if err != nil {
-			return err
-		}
-		for _, row := range response.Responses[s.table] {
-			if value, ok := row["SK"].(*types.AttributeValueMemberS); ok {
-				read[strings.TrimPrefix(value.Value, "R#")] = true
+	for offset := 0; offset < len(keys); offset += 100 {
+		pending := keys[offset:min(offset+100, len(keys))]
+		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
+			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {Keys: pending, ProjectionExpression: aws.String("SK")}}})
+			if err != nil {
+				return err
 			}
+			for _, row := range response.Responses[s.table] {
+				if value, ok := row["SK"].(*types.AttributeValueMemberS); ok {
+					read[strings.TrimPrefix(value.Value, "R#")] = true
+				}
+			}
+			pending = response.UnprocessedKeys[s.table].Keys
 		}
-		pending = response.UnprocessedKeys[s.table].Keys
-	}
-	if len(pending) > 0 {
-		return fmt.Errorf("%d read-state lookups were throttled", len(pending))
+		if len(pending) > 0 {
+			return fmt.Errorf("%d read-state lookups were throttled", len(pending))
+		}
 	}
 	for i := range items {
 		items[i].Read = read[items[i].ItemID]

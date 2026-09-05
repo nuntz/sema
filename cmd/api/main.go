@@ -586,9 +586,6 @@ func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowe
 	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
 		return nil, nil, err
 	}
-	if err := s.store.ResolveRead(ctx, userID, items); err != nil {
-		return nil, nil, err
-	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
 		return nil, nil, err
 	}

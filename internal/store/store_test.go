@@ -384,6 +384,37 @@ func TestResolveReadDeduplicatesKeysAndFansOutState(t *testing.T) {
 	}
 }
 
+func TestResolveReadChunksAtDynamoBatchLimit(t *testing.T) {
+	batchCalls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		batchCalls++
+		request := input.RequestItems["table"]
+		if len(request.Keys) == 0 || len(request.Keys) > 100 {
+			t.Fatalf("read batch size = %d", len(request.Keys))
+		}
+		rows := make([]map[string]types.AttributeValue, 0, len(request.Keys))
+		for _, itemKey := range request.Keys {
+			rows = append(rows, map[string]types.AttributeValue{"SK": itemKey["SK"]})
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+	}}
+	items := make([]domain.Item, 205)
+	for index := range items {
+		items[index].ItemID = fmt.Sprintf("item-%03d", index)
+	}
+	if err := New(db, nil, "table", "", "").ResolveRead(context.Background(), "user", items); err != nil {
+		t.Fatal(err)
+	}
+	if batchCalls != 3 {
+		t.Fatalf("batch calls = %d, want 3", batchCalls)
+	}
+	for _, item := range items {
+		if !item.Read {
+			t.Fatalf("item %q was not resolved read", item.ItemID)
+		}
+	}
+}
+
 func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 	calls := 0
 	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
