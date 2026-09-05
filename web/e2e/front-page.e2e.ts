@@ -36,6 +36,12 @@ async function stubFrontPage(
   items: unknown[],
   readBatches: Array<{ ids: string[]; read: boolean }>,
   signals: Array<{ itemID: string; value: number }> = [],
+  pagination: {
+    nextCursor?: string;
+    nextItems?: unknown[];
+    page2Gate?: Promise<void>;
+    onPage2Request?: () => void;
+  } = {},
 ) {
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
@@ -94,12 +100,117 @@ async function stubFrontPage(
       return;
     }
     if (url.pathname === "/api/items") {
-      await route.fulfill({ json: { items, next_cursor: null } });
+      if (url.searchParams.has("cursor") && pagination.nextItems) {
+        pagination.onPage2Request?.();
+        await pagination.page2Gate;
+        await route.fulfill({
+          json: { items: pagination.nextItems, next_cursor: null },
+        });
+      } else {
+        await route.fulfill({
+          json: { items, next_cursor: pagination.nextCursor ?? null },
+        });
+      }
       return;
     }
     await route.fulfill({ json: {} });
   });
 }
+
+test("holds below-floor stories until page 2 without moving painted cells", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 5000 });
+  const firstPage = Array.from({ length: 45 }, (_, index) =>
+    item(
+      `page-1-${index}`,
+      `feed-${index}`,
+      `Page 1 item ${index}`,
+      1.3 - index * 0.01,
+      "L",
+    ),
+  );
+  const secondPage = Array.from({ length: 6 }, (_, index) =>
+    item(
+      `page-2-${index}`,
+      `later-feed-${index}`,
+      `Page 2 item ${index}`,
+      0.6 - index * 0.01,
+      "M",
+    ),
+  );
+  const heldStory = {
+    story_id: "held-story",
+    source_count: 2,
+    order_key: 0.7,
+    size: "M",
+    items: [
+      {
+        ...item("held-lead", "held-one", "Held story", 0.65, "M"),
+        story_id: "held-story",
+      },
+      {
+        ...item("held-headline", "held-two", "Held coverage", 0.64, "S"),
+        story_id: "held-story",
+      },
+    ],
+  };
+  let releasePage2 = () => {};
+  const page2Gate = new Promise<void>((resolve) => {
+    releasePage2 = resolve;
+  });
+  let page2Requests = 0;
+  await stubFrontPage(page, [heldStory], firstPage, [], [], {
+    nextCursor: "page-2",
+    nextItems: secondPage,
+    page2Gate,
+    onPage2Request: () => {
+      page2Requests++;
+    },
+  });
+
+  await page.goto("/");
+  await expect(page.locator('[data-item-id="page-1-0"]')).toBeVisible();
+  await expect.poll(() => page2Requests).toBe(1);
+  await expect(page.locator('[data-story-id="held-story"]')).toHaveCount(0);
+
+  const geometry = () =>
+    page.locator("[data-item-id]").evaluateAll((cells) =>
+      Object.fromEntries(
+        cells.map((cell) => {
+          const element = cell as HTMLElement;
+          const row = element.closest<HTMLElement>(".grid-row");
+          return [
+            element.dataset.itemId ?? "",
+            {
+              top:
+                (Number.parseFloat(row?.style.top ?? "") || 0) +
+                element.offsetTop,
+              left: element.offsetLeft,
+              width: element.offsetWidth,
+              height: element.offsetHeight,
+            },
+          ];
+        }),
+      ),
+    );
+  const before = await geometry();
+  expect(Object.keys(before).length).toBeGreaterThan(0);
+
+  releasePage2();
+  await expect(page.locator('[data-story-id="held-story"]')).toBeVisible();
+  await expect(page.locator('[data-item-id="page-2-0"]')).toBeVisible();
+  const after = await geometry();
+
+  expect(
+    Object.fromEntries(
+      Object.entries(before).filter(
+        ([id, position]) =>
+          JSON.stringify(after[id]) !== JSON.stringify(position),
+      ),
+    ),
+  ).toEqual({});
+});
 
 test("M story cells use singleton anatomy and lead-scoped sheet actions", async ({
   page,

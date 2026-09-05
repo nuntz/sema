@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FrontPageEntry, Item, Story } from "../types";
 import {
+  frontPageEntriesForState,
   frontPageSequence,
   frontPageUnreadIDsAfter,
   mergeFrontPage,
@@ -25,6 +26,26 @@ const story = (
 });
 
 describe("front-page merging", () => {
+  it("derives held-story visibility from the pagination cursor", () => {
+    const stories = [story("held", 0.4)];
+    const items = [item("loaded", 0.5)];
+
+    expect(
+      frontPageEntriesForState(
+        stories,
+        items,
+        "live",
+        "interest",
+        "next-page",
+      ).map((entry) => entry.kind),
+    ).toEqual(["item"]);
+    expect(
+      frontPageEntriesForState(stories, items, "live", "interest", "").map(
+        (entry) => entry.kind,
+      ),
+    ).toEqual(["item", "story"]);
+  });
+
   it("places stories by order key among score-ordered items", () => {
     expect(
       mergeFrontPage(

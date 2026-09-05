@@ -1,5 +1,6 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The settled header contract requires button elements with radio roles.
 import {
+  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -56,6 +57,7 @@ import type {
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import {
+  frontPageEntriesForState,
   frontPageSequence,
   frontPageUnreadIDsAfter,
   mergeFrontPage,
@@ -314,27 +316,30 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       }
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
-      gridScrollTop = 0;
-      setItems(pageItems);
-      setStories(nextStories);
-      setReadAnchor(page.read_anchor);
       const visibleIDs =
         nextMode === "archive"
           ? pageItems.map((item) => item.item_id)
           : visibleItemIDs(pageItems, nextUnreadOnly);
-      setGridIDs(visibleIDs);
-      setLayoutVersion((value) => value + 1);
-      setScrollTarget(0);
-      setScrollTopVersion((value) => value + 1);
-      setCursor(page.next_cursor ?? "");
-      setHasPage(true);
-      setFocusedID(
+      const nextCursor = page.next_cursor ?? "";
+      const nextFocusedID =
         frontPageSequence(
-          mergeFrontPage(nextStories, pageItems, Boolean(page.next_cursor)),
+          mergeFrontPage(nextStories, pageItems, Boolean(nextCursor)),
         )[0]?.id ??
-          visibleIDs[0] ??
-          "",
-      );
+        visibleIDs[0] ??
+        "";
+      batch(() => {
+        gridScrollTop = 0;
+        setItems(pageItems);
+        setStories(nextStories);
+        setReadAnchor(page.read_anchor);
+        setGridIDs(visibleIDs);
+        setScrollTarget(0);
+        setScrollTopVersion((value) => value + 1);
+        setCursor(nextCursor);
+        setHasPage(true);
+        setFocusedID(nextFocusedID);
+        setLayoutVersion((value) => value + 1);
+      });
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -369,23 +374,22 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         mode() === "live" && order() === "interest"
           ? excludeRenderedStoryItems(page.items ?? [], stories())
           : (page.items ?? []);
-      let added: Item[] = [];
-      setItems((current) => {
-        const seen = new Set(current.map((item) => item.item_id));
-        added = pageItems.filter((item) => !seen.has(item.item_id));
-        return added.length > 0 ? [...current, ...added] : current;
-      });
+      const seen = new Set(items().map((item) => item.item_id));
+      const added = pageItems.filter((item) => !seen.has(item.item_id));
       const visible =
         mode() === "archive"
           ? added.map((item) => item.item_id)
           : visibleItemIDs(added, unreadOnly());
-      if (visible.length > 0) {
-        setGridIDs((current) => [...current, ...visible]);
-      }
-      if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
-      setCursor(page.next_cursor ?? "");
-      setLayoutVersion((value) => value + 1);
-      continueLoading = visible.length === 0 && (page.next_cursor ?? "") !== "";
+      const responseCursor = page.next_cursor ?? "";
+      batch(() => {
+        if (added.length > 0) setItems((current) => [...current, ...added]);
+        if (visible.length > 0)
+          setGridIDs((current) => [...current, ...visible]);
+        if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
+        setCursor(responseCursor);
+        setLayoutVersion((value) => value + 1);
+      });
+      continueLoading = visible.length === 0 && responseCursor !== "";
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -434,28 +438,27 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           unreadOnly(),
         );
         if (insert && clearVersion === gridClearVersion) {
-          setPendingNew([]);
-          setStories(incomingStories);
-          setItems(pageItems);
-          setReadAnchor(page.read_anchor);
           const visible = visibleItemIDs(pageItems, unreadOnly());
-          setGridIDs(visible);
-          setCursor(page.next_cursor ?? "");
-          setFocusedID(
+          const nextCursor = page.next_cursor ?? "";
+          const nextFocusedID =
             frontPageSequence(
-              mergeFrontPage(
-                incomingStories,
-                pageItems,
-                Boolean(page.next_cursor),
-              ),
+              mergeFrontPage(incomingStories, pageItems, Boolean(nextCursor)),
             )[0]?.id ??
-              visible[0] ??
-              "",
-          );
-          gridScrollTop = 0;
-          setScrollTarget(0);
-          setLayoutVersion((value) => value + 1);
-          setScrollTopVersion((value) => value + 1);
+            visible[0] ??
+            "";
+          batch(() => {
+            gridScrollTop = 0;
+            setPendingNew([]);
+            setStories(incomingStories);
+            setItems(pageItems);
+            setReadAnchor(page.read_anchor);
+            setGridIDs(visible);
+            setScrollTarget(0);
+            setScrollTopVersion((value) => value + 1);
+            setCursor(nextCursor);
+            setFocusedID(nextFocusedID);
+            setLayoutVersion((value) => value + 1);
+          });
         } else if (unseen.length > 0) {
           setPendingNew((current) => mergeNewItems(current, unseen));
         }
@@ -678,9 +681,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     });
   });
   const frontPageEntries = createMemo(() =>
-    mode() === "live" && order() === "interest"
-      ? mergeFrontPage(stories(), gridItems(), cursor() !== "")
-      : gridItems().map((item) => ({ kind: "item" as const, item })),
+    frontPageEntriesForState(stories(), gridItems(), mode(), order(), cursor()),
   );
   const frontPageItems = createMemo(() =>
     frontPageSequence(frontPageEntries(), expandedStoryIDs()).map(

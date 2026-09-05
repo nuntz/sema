@@ -168,10 +168,10 @@ export function Grid(props: GridProps) {
     if (contentWidth() < 310) return 40;
     return width() < 700 ? 24 : 28;
   });
-  const layoutEntries = createMemo(
+  const layoutSnapshot = createMemo(
     on(
       () => props.layoutKey,
-      () => props.entries,
+      () => ({ entries: props.entries, hasMore: props.hasMore }),
     ),
   );
   let previousLayoutRows: LayoutRow[] = [];
@@ -181,11 +181,11 @@ export function Grid(props: GridProps) {
     return rows;
   };
   const layout = createMemo(() => {
-    const entries = layoutEntries();
+    const { entries, hasMore } = layoutSnapshot();
     const boundary = caughtUp();
     if (!boundary) {
       const rows = stableRows(
-        justify(entries, contentWidth(), props.hasMore, {
+        justify(entries, contentWidth(), hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
         }),
       );
@@ -200,7 +200,7 @@ export function Grid(props: GridProps) {
       : entries.length;
     if (beforeIndex < 0) {
       const rows = stableRows(
-        justify(entries, contentWidth(), props.hasMore, {
+        justify(entries, contentWidth(), hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
         }),
       );
@@ -212,14 +212,9 @@ export function Grid(props: GridProps) {
       expandedStoryIDs: props.expandedStoryIDs,
     });
     const aboveHeight = totalHeight(above);
-    const below = justify(
-      entries.slice(beforeIndex),
-      contentWidth(),
-      props.hasMore,
-      {
-        expandedStoryIDs: props.expandedStoryIDs,
-      },
-    ).map((row) => ({
+    const below = justify(entries.slice(beforeIndex), contentWidth(), hasMore, {
+      expandedStoryIDs: props.expandedStoryIDs,
+    }).map((row) => ({
       ...row,
       top: row.top + aboveHeight + dividerHeight(),
     }));

@@ -1,4 +1,4 @@
-import type { FrontPageEntry, Item, Story } from "../types";
+import type { FrontPageEntry, Item, Order, Story } from "../types";
 import { headlineSlice } from "./story-layout";
 
 export type FrontPageFocusKind = "story" | "headline" | "grid";
@@ -40,6 +40,18 @@ export function mergeFrontPage(
       entries.push({ kind: "story", story: orderedStories[storyIndex] });
   }
   return entries;
+}
+
+export function frontPageEntriesForState(
+  stories: Story[],
+  items: Item[],
+  mode: "live" | "archive",
+  order: Order,
+  cursor: string,
+): FrontPageEntry[] {
+  if (mode === "live" && order === "interest")
+    return mergeFrontPage(stories, items, cursor !== "");
+  return items.map((item) => ({ kind: "item", item }));
 }
 
 export function frontPageEntryItem(entry: FrontPageEntry): Item | undefined {
