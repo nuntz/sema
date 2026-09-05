@@ -75,8 +75,12 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	candidates := make([]score.Candidate, 0, len(signals))
 	for _, signal := range signals {
 		if signal.Value > 0 && score.CompatibleVersion(signal.ModelVersion, e.Version) {
+			imageVector := []float32(nil)
+			if score.CompatibleVersion(signal.ImageModelVersion, e.ImageVersion) {
+				imageVector = score.DecodeVector(signal.ImageVector)
+			}
 			candidates = append(candidates, score.Candidate{
-				Title: signal.Title, FeedTitle: feedTitles[signal.FeedID], Vector: score.DecodeVector(signal.Vector), ImageVector: score.DecodeVector(signal.ImageVector),
+				Title: signal.Title, FeedTitle: feedTitles[signal.FeedID], Vector: score.DecodeVector(signal.Vector), ImageVector: imageVector,
 			})
 		}
 	}
@@ -106,7 +110,10 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 			return Result{}, fmt.Errorf("item %s published_ts: %w", items[index].ItemID, parseErr)
 		}
 		vector := score.DecodeVector(items[index].Vector)
-		imageVector := score.DecodeVector(items[index].ImageVector)
+		imageVector := []float32(nil)
+		if score.CompatibleVersion(items[index].ImageModelVersion, e.ImageVersion) {
+			imageVector = score.DecodeVector(items[index].ImageVector)
+		}
 		calculated := score.Calculate(vector, imageVector, model, items[index].FeedID, items[index].MediaKey != "", started.Sub(published).Hours())
 		items[index].Score = calculated.Score
 		scores[index] = calculated.Score

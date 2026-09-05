@@ -120,7 +120,7 @@ func TestRescoreUsesImageVectorsForScoreAndWhy(t *testing.T) {
 		signals: signals,
 		items: []domain.Item{{
 			PK: "U#user", SK: domain.ItemSK(now, "new"), ItemID: "new", FeedID: "feed",
-			PublishedTS: domain.Timestamp(now), Vector: score.EncodeVector([]float32{1, 0}), ImageVector: image, TTL: now.Add(time.Hour).Unix(),
+			PublishedTS: domain.Timestamp(now), Vector: score.EncodeVector([]float32{1, 0}), ImageVector: image, ImageModelVersion: "image-v1", TTL: now.Add(time.Hour).Unix(),
 		}},
 	}
 	result, err := (&Engine{Repository: repository, Version: "text-v1", ImageVersion: "image-v1", Now: func() time.Time { return now }}).RunUser(context.Background(), "user", true)

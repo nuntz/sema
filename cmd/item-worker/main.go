@@ -432,7 +432,10 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 			return nil, loadErr
 		}
 		model = loadedModel
-		decodedImageVector := score.DecodeVector(imageVector)
+		decodedImageVector := []float32(nil)
+		if score.CompatibleVersion(imageModelVersion, h.imageModelVersion) {
+			decodedImageVector = score.DecodeVector(imageVector)
+		}
 		result := score.Calculate(vector, decodedImageVector, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
 		value = result.Score
 		if result.Base > 0.6 {
@@ -443,7 +446,11 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 			liked := make([]score.Candidate, 0, len(rows))
 			for _, row := range rows {
 				if row.Value > 0 && score.CompatibleVersion(row.ModelVersion, h.modelVersion) {
-					liked = append(liked, score.Candidate{Title: row.Title, Vector: score.DecodeVector(row.Vector), ImageVector: score.DecodeVector(row.ImageVector)})
+					candidateImageVector := []float32(nil)
+					if score.CompatibleVersion(row.ImageModelVersion, h.imageModelVersion) {
+						candidateImageVector = score.DecodeVector(row.ImageVector)
+					}
+					liked = append(liked, score.Candidate{Title: row.Title, Vector: score.DecodeVector(row.Vector), ImageVector: candidateImageVector})
 				}
 			}
 			why = score.Why(result, vector, decodedImageVector, feedTitle, liked)
