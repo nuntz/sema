@@ -333,6 +333,26 @@ func TestCompatibleReplayPreservesTextVectorWithoutEmbedding(t *testing.T) {
 	}
 }
 
+func TestForcedExtractRefreshesCompatibleTextVector(t *testing.T) {
+	now := time.Now().UTC()
+	oldVector := score.EncodeVector([]float32{0, 1})
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), Vector: oldVector, ModelVersion: "text-v1", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing}
+	embedder := &countingTextEmbedder{}
+	h := &handler{store: repository, media: media.New(nil), embedder: embedder, modelVersion: "text-v1", scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true,"force_extract":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if embedder.calls != 1 || repository.overwritten == nil || string(repository.overwritten.Vector) == string(oldVector) {
+		t.Fatalf("replay embed calls = %d, item = %#v", embedder.calls, repository.overwritten)
+	}
+}
+
 func TestCompatibleReplayReusesImageVectorAndBatchesRecord(t *testing.T) {
 	now := time.Now().UTC()
 	imageVector := score.EncodeVector([]float32{1, 0})

@@ -205,6 +205,8 @@ make backfill-vectors STACK=prod BACKFILL_ARGS=--apply
 
 The vector backfill reuses stored embeddings and does not invoke Bedrock or change rankings. If a new embedding model changes vector dimensions, create a new index, dual-write, replay and verify the data, switch reads, and only then remove the old index.
 
+By default, replay only re-embeds text when the stored vector is missing or belongs to a different `MODEL_VERSION`; pass `FLAGS="--force-extract"` to force a fresh text embedding.
+
 ### Image ranking rollout
 
 Deploy the image index and writer before replaying live items or changing existing preference models:
