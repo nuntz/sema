@@ -303,8 +303,7 @@ describe("17c desktop bands", () => {
       rows.forEach((row, index) => {
         const final = index === rows.length - 1;
         const shortSpan = row.kind === "span" && row.cells.length < 6;
-        const compactCap = row.kind === "compact";
-        const sanctioned = final || shortSpan || compactCap;
+        const sanctioned = final || shortSpan;
         if (fillRatio(row, 1248) < 0.9 && !sanctioned) unsanctioned++;
         if (!sanctioned)
           expect(fillRatio(row, 1248)).toBeGreaterThanOrEqual(0.98);
@@ -313,7 +312,7 @@ describe("17c desktop bands", () => {
     expect(unsanctioned).toBe(0);
   });
 
-  it("keeps all sanctioned underfill natural and left-aligned", () => {
+  it("fills compact rows while keeping partial tails natural and left-aligned", () => {
     const width = 1248;
     const shortSpan = justify(
       [
@@ -360,12 +359,23 @@ describe("17c desktop bands", () => {
     expect(compactOverflow[0].kind).toBe("compact");
     expect(compactOverflow[0].height).toBe(132);
     expect(compactOverflow[0].cells).toHaveLength(6);
-    expect(compactOverflow[0].cells.every((cell) => cell.width === 132)).toBe(
-      true,
-    );
+    expect(fillRatio(compactOverflow[0], width)).toBeCloseTo(1, 5);
     expect(compactOverflow[1].cells).toHaveLength(1);
     expect(compactOverflow[1].cells[0].left).toBe(0);
     expect(compactOverflow[1].height).toBe(132);
+  });
+
+  it("fills a terminal row of five small items", () => {
+    const width = 1248;
+    const [row] = justify(
+      Array.from({ length: 5 }, (_, index) => item(`small-${index}`, "S", 1)),
+      width,
+    );
+
+    expect(row.kind).toBe("compact");
+    expect(row.cells).toHaveLength(5);
+    expect(row.cells.every((cell) => cell.width > 132)).toBe(true);
+    expect(fillRatio(row, width)).toBeCloseTo(1, 5);
   });
 
   it("keeps one L per mosaic band, prevents adjacent spans, and alternates span sides", () => {

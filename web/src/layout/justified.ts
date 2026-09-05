@@ -480,11 +480,9 @@ function appendDesktopRegularRows(
     let cells: LayoutCell[];
     let height: number;
     if (compact) {
-      const cellWidth = Math.min(
-        compactHeight,
+      const cellWidth =
         (containerWidth - desktopGap * Math.max(0, group.length - 1)) /
-          group.length,
-      );
+        group.length;
       cells = cellsWithWidths(
         group,
         group.map(() => cellWidth),
