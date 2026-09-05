@@ -262,6 +262,23 @@ func TestChooseSummaryKeepsCleanRedditExcerpt(t *testing.T) {
 	}
 }
 
+func TestChooseSummaryReportsMissingBody(t *testing.T) {
+	h := &handler{summarizer: stubSummarizer{value: "must not be used"}}
+	got, source, metrics := h.chooseSummary(context.Background(), "Title", "", extract.Result{}, false)
+	if got != "" || source != domain.SummarySourceBody || metrics["SummaryFallbackNoBody"] != 1 || metrics["SummaryFallbackLowQuality"] != 0 {
+		t.Fatalf("summary = %q, source = %q, metrics = %#v", got, source, metrics)
+	}
+}
+
+func TestChooseSummaryReportsLowQualityBody(t *testing.T) {
+	h := &handler{summarizer: stubSummarizer{value: "must not be used"}}
+	article := extract.Result{Text: "A low-quality article body.", FirstParagraph: "A low-quality article body.", Quality: 0.2}
+	got, source, metrics := h.chooseSummary(context.Background(), "Title", "", article, false)
+	if got != article.FirstParagraph || source != domain.SummarySourceBody || metrics["SummaryFallbackLowQuality"] != 1 || metrics["SummaryFallbackNoBody"] != 0 {
+		t.Fatalf("summary = %q, source = %q, metrics = %#v", got, source, metrics)
+	}
+}
+
 func TestForcedSummaryReplayStillKeepsHealthyFeedSummaries(t *testing.T) {
 	if forceSummaryGeneration(false, domain.SummarySourceFeed) {
 		t.Fatal("healthy feed summary was forced through generation")

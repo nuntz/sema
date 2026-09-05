@@ -588,8 +588,15 @@ func (h *handler) chooseSummary(ctx context.Context, title, summaryRaw string, a
 	if bodyFallback == "" {
 		bodyFallback = extract.Summary("", article.Text)
 	}
-	if article.Quality < 0.3 || strings.TrimSpace(article.Text) == "" {
+	if strings.TrimSpace(article.Text) == "" {
 		metrics["SummaryFallbackNoBody"] = 1
+		if feedSummary != "" {
+			return feedSummary, domain.SummarySourceFeed, metrics
+		}
+		return bodyFallback, domain.SummarySourceBody, metrics
+	}
+	if article.Quality < 0.3 {
+		metrics["SummaryFallbackLowQuality"] = 1
 		if feedSummary != "" {
 			return feedSummary, domain.SummarySourceFeed, metrics
 		}
