@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -172,6 +173,73 @@ func TestGetStoriesReturnsArray(t *testing.T) {
 	got := server.getStories(context.Background(), "user", map[string]string{})
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
 		t.Fatalf("stories response = %d, %s", got.StatusCode, got.Body)
+	}
+}
+
+func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
+	now := time.Now().UTC()
+	pk := domain.UserPK("user")
+	marshal := func(value any) map[string]types.AttributeValue {
+		row, err := attributevalue.MarshalMap(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+	items := []domain.Item{
+		{PK: pk, SK: domain.ItemSK(now, "lead"), ItemID: "lead", FeedID: "one", URL: "https://example.com/lead", Title: "Lead", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), Score: 1, Size: "L", TTL: now.Add(time.Hour).Unix()},
+		{PK: pk, SK: domain.ItemSK(now.Add(-time.Minute), "member"), ItemID: "member", FeedID: "two", URL: "https://example.com/member", Title: "Member", PublishedTS: domain.Timestamp(now.Add(-time.Minute)), FetchedTS: domain.Timestamp(now), Score: 0.8, Size: "M", TTL: now.Add(time.Hour).Unix()},
+	}
+	rowsBySK := make(map[string]map[string]types.AttributeValue)
+	for _, item := range items {
+		rowsBySK[item.SK] = marshal(item)
+		identity := domain.ItemIdentity{PK: pk, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL}
+		rowsBySK[identity.SK] = marshal(identity)
+	}
+	storyRow := domain.Story{PK: pk, SK: domain.StorySK("story"), StoryID: "story", MemberIDs: []string{"lead", "member"}, CreatedAt: domain.Timestamp(now), UpdatedAt: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
+	model := domain.Model{PK: pk, SK: "MODEL", ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.1, P90: 1.2}}
+	db := &apiDynamo{
+		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal(storyRow)}}, nil
+		},
+		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			response := []map[string]types.AttributeValue{}
+			for _, key := range input.RequestItems["table"].Keys {
+				sk := key["SK"].(*types.AttributeValueMemberS).Value
+				if row, ok := rowsBySK[sk]; ok {
+					response = append(response, row)
+				}
+			}
+			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": response}}, nil
+		},
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			if input.Key["SK"].(*types.AttributeValueMemberS).Value == "MODEL" {
+				return &dynamodb.GetItemOutput{Item: marshal(model)}, nil
+			}
+			return &dynamodb.GetItemOutput{}, nil
+		},
+	}
+	server := &server{
+		store: store.New(db, nil, "table", "", ""),
+		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+			{FeedID: "one"}, {FeedID: "two"},
+		}}},
+	}
+	got := server.getStories(context.Background(), "user", map[string]string{})
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	var body struct {
+		Stories []struct {
+			OrderKey float64 `json:"order_key"`
+			Size     string  `json:"size"`
+		} `json:"stories"`
+	}
+	if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Stories) != 1 || math.Abs(body.Stories[0].OrderKey-1.15) > 1e-9 || body.Stories[0].Size != "M" {
+		t.Fatalf("stories = %#v", body.Stories)
 	}
 }
 

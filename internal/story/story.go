@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/score"
 )
 
 const (
@@ -28,6 +29,8 @@ type Candidate struct {
 type Rendered struct {
 	StoryID     string        `json:"story_id"`
 	SourceCount int           `json:"source_count"`
+	OrderKey    float64       `json:"order_key"`
+	Size        string        `json:"size"`
 	Items       []domain.Item `json:"items"`
 }
 
@@ -109,7 +112,7 @@ func OrderKey(lead domain.Item, sourceCount int) float64 {
 	return lead.Score * (1 + 0.15*float64(breadth))
 }
 
-func Render(stories []domain.Story, members map[string][]domain.Item, allowed map[string]bool, unreadOnly bool) ([]Rendered, map[string]bool) {
+func Render(stories []domain.Story, members map[string][]domain.Item, allowed map[string]bool, unreadOnly bool, model domain.Model) ([]Rendered, map[string]bool) {
 	rendered := make([]Rendered, 0, len(stories))
 	hidden := make(map[string]bool)
 	for _, row := range stories {
@@ -142,13 +145,16 @@ func Render(stories []domain.Story, members map[string][]domain.Item, allowed ma
 		for _, item := range visible {
 			hidden[item.ItemID] = true
 		}
-		rendered = append(rendered, Rendered{StoryID: row.StoryID, SourceCount: sourceCount, Items: visible})
+		orderKey := OrderKey(lead, sourceCount)
+		rendered = append(rendered, Rendered{
+			StoryID: row.StoryID, SourceCount: sourceCount, OrderKey: orderKey,
+			Size: score.Size(orderKey, model), Items: visible,
+		})
 	}
 	sort.SliceStable(rendered, func(i, j int) bool {
 		iLead, jLead := rendered[i].Items[0], rendered[j].Items[0]
-		iKey, jKey := OrderKey(iLead, rendered[i].SourceCount), OrderKey(jLead, rendered[j].SourceCount)
-		if iKey != jKey {
-			return iKey > jKey
+		if rendered[i].OrderKey != rendered[j].OrderKey {
+			return rendered[i].OrderKey > rendered[j].OrderKey
 		}
 		if iLead.PublishedTS != jLead.PublishedTS {
 			return iLead.PublishedTS > jLead.PublishedTS
