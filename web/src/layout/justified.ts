@@ -1,7 +1,8 @@
-import type { Item } from "../types";
+import type { FrontPageEntry, Item, Story } from "../types";
 
 export interface LayoutCell {
   item: Item;
+  story?: Story;
   width: number;
   left: number;
   effectiveSize: "S" | "M" | "L";
@@ -9,6 +10,7 @@ export interface LayoutCell {
   offsetY?: number;
   span?: 2;
   tall?: true;
+  headlineHeight?: number;
 }
 
 export interface LayoutRow {
@@ -16,7 +18,18 @@ export interface LayoutRow {
   height: number;
   top: number;
   gap: number;
-  kind: "span" | "tall" | "hero" | "pair" | "standard" | "compact";
+  kind: "span" | "tall" | "hero" | "pair" | "standard" | "compact" | "story";
+}
+
+export interface JustifyOptions {
+  completeSegment?: boolean;
+  expandedStoryIDs?: ReadonlySet<string>;
+  focusedID?: string;
+}
+
+interface LayoutItem extends Item {
+  layoutStory?: Story;
+  layoutHeadlineMode?: "collapsed" | "expanded";
 }
 
 const desktopGap = 10;
@@ -31,6 +44,47 @@ const tallCompanionCount = 3;
 const mosaicMinimumCompanions = 3;
 const sizeFactor = { S: 0.8, M: 1.05, L: 1.6 } as const;
 const tallLargeFactor = 1.75;
+export const storyHeadlineHeight = 33;
+
+export function storyHeadlineRowCount(story: Story, expanded = false): number {
+  const count = Math.max(0, story.items.length - 1);
+  if (expanded || count <= 5) return count;
+  return 6;
+}
+
+function storyFor(item: Item): Story | undefined {
+  return (item as LayoutItem).layoutStory;
+}
+
+function toLayoutItems(
+  entries: Array<Item | FrontPageEntry>,
+  options: JustifyOptions,
+): LayoutItem[] {
+  return entries.flatMap((entry) => {
+    if (!("kind" in entry)) return [entry];
+    if (entry.kind === "item") return [entry.item];
+    const lead = entry.story.items[0];
+    if (!lead) return [];
+    const focusID = options.focusedID ?? "";
+    const focused =
+      focusID === `story:${entry.story.story_id}` ||
+      entry.story.items.some((item) => item.item_id === focusID);
+    const expanded = options.expandedStoryIDs?.has(entry.story.story_id);
+    return [
+      {
+        ...lead,
+        score: entry.story.order_key,
+        size: entry.story.size,
+        layoutStory: entry.story,
+        layoutHeadlineMode: expanded
+          ? "expanded"
+          : entry.story.size === "L" || focused
+            ? "collapsed"
+            : undefined,
+      },
+    ];
+  });
+}
 
 function aspect(item: Item): number {
   if (!item.media_w || !item.media_h) return 1.4;
@@ -98,6 +152,7 @@ function cellsWithWidths(
     const width = widths[index] ?? 0;
     const cell: LayoutCell = {
       item,
+      story: storyFor(item),
       width,
       left,
       effectiveSize: item.size,
@@ -188,7 +243,7 @@ function followingCompanions(
     index < items.length && companions.length < limit;
     index++
   ) {
-    if (items[index].size === "L") break;
+    if (items[index].size === "L" || storyFor(items[index])) break;
     companions.push(items[index]);
   }
   return companions;
@@ -197,7 +252,7 @@ function followingCompanions(
 function companionCountBeforeLarge(items: Item[], start: number): number {
   let count = 0;
   for (let index = start; index < items.length; index++) {
-    if (items[index].size === "L") break;
+    if (items[index].size === "L" || storyFor(items[index])) break;
     count++;
   }
   return count;
@@ -231,6 +286,7 @@ function stablePrefixLength(
   if (!hasMore) return items.length;
   for (let index = 0; index < items.length; index++) {
     if (items[index].size !== "L") continue;
+    if (storyFor(items[index])) continue;
     let resolved = false;
     for (
       let lookahead = index + 1;
@@ -504,27 +560,52 @@ function appendAbsorbedTallBand(
 }
 
 export function justify(
-  items: Item[],
+  entries: Array<Item | FrontPageEntry>,
   containerWidth: number,
   hasMore = false,
-  options: { completeSegment?: boolean } = {},
+  options: JustifyOptions = {},
 ): LayoutRow[] {
-  if (containerWidth <= 0 || items.length === 0) return [];
+  if (containerWidth <= 0 || entries.length === 0) return [];
+  const items = toLayoutItems(entries, options);
   const stableLength = options.completeSegment
     ? items.length
     : stablePrefixLength(items, hasMore, containerWidth);
   const layoutItems = items.slice(0, stableLength);
   const finalFeed = !hasMore && stableLength === items.length;
   if (containerWidth < 700)
-    return mobileRows(layoutItems, containerWidth, finalFeed);
+    return applyStoryHeadlineHeights(
+      mobileRows(layoutItems, containerWidth, finalFeed),
+    );
 
   const rows: LayoutRow[] = [];
   let spanIndex = 0;
   for (let index = 0; index < layoutItems.length; ) {
     const item = layoutItems[index];
     if (item.size === "L") {
+      if (storyFor(item)) {
+        rows.push({
+          cells: cellsWithWidths(
+            [item],
+            [containerWidth],
+            0,
+            0,
+            tallHeight,
+            desktopGap,
+          ),
+          height: tallHeight,
+          top: topAfter(rows, desktopGap),
+          gap: desktopGap,
+          kind: "story",
+        });
+        index++;
+        continue;
+      }
       let runEnd = index + 1;
-      while (runEnd < layoutItems.length && layoutItems[runEnd].size === "L")
+      while (
+        runEnd < layoutItems.length &&
+        layoutItems[runEnd].size === "L" &&
+        !storyFor(layoutItems[runEnd])
+      )
         runEnd++;
       const runLength = runEnd - index;
       const boundaryCompanions = companionCountBeforeLarge(layoutItems, runEnd);
@@ -619,7 +700,7 @@ export function justify(
     }
     index = end;
   }
-  return rows;
+  return applyStoryHeadlineHeights(rows);
 }
 
 function appendMobileLargeBand(
@@ -685,8 +766,19 @@ function mobileRows(
   for (let index = 0; index < items.length; ) {
     const item = items[index];
     if (item.size === "L") {
+      if (storyFor(item)) {
+        appendMobileLargeBand(rows, [item], containerWidth, "tall");
+        rows[rows.length - 1].kind = "story";
+        index++;
+        continue;
+      }
       let runEnd = index + 1;
-      while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
+      while (
+        runEnd < items.length &&
+        items[runEnd].size === "L" &&
+        !storyFor(items[runEnd])
+      )
+        runEnd++;
       appendMobileLargeRun(rows, items.slice(index, runEnd), containerWidth);
       index = runEnd;
       continue;
@@ -766,21 +858,49 @@ function mobileRows(
   return rows;
 }
 
+function applyStoryHeadlineHeights(rows: LayoutRow[]): LayoutRow[] {
+  let top = 0;
+  return rows.map((row) => {
+    let height = row.height;
+    const cells = row.cells.map((cell) => {
+      const story = cell.story;
+      if (!story) return cell;
+      const mode = (cell.item as LayoutItem).layoutHeadlineMode;
+      if (!mode) return cell;
+      const headlineHeight =
+        storyHeadlineRowCount(story, mode === "expanded") * storyHeadlineHeight;
+      if (headlineHeight === 0) return cell;
+      const cellHeight = (cell.height ?? row.height) + headlineHeight;
+      height = Math.max(height, (cell.offsetY ?? 0) + cellHeight);
+      return { ...cell, height: cellHeight, headlineHeight };
+    });
+    const result = { ...row, cells, height, top };
+    top += height + row.gap;
+    return result;
+  });
+}
+
 export function totalHeight(rows: LayoutRow[]): number {
   const last = rows.at(-1);
   return last ? last.top + last.height : 0;
 }
 
 function sameLayoutCell(left: LayoutCell, right: LayoutCell): boolean {
+  const leftMembers = left.story?.items.map((item) => item.item_id) ?? [];
+  const rightMembers = right.story?.items.map((item) => item.item_id) ?? [];
   return (
     left.item.item_id === right.item.item_id &&
+    left.story?.story_id === right.story?.story_id &&
+    leftMembers.length === rightMembers.length &&
+    leftMembers.every((id, index) => id === rightMembers[index]) &&
     left.width === right.width &&
     left.left === right.left &&
     left.effectiveSize === right.effectiveSize &&
     left.height === right.height &&
     left.offsetY === right.offsetY &&
     left.span === right.span &&
-    left.tall === right.tall
+    left.tall === right.tall &&
+    left.headlineHeight === right.headlineHeight
   );
 }
 

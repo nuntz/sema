@@ -1,9 +1,14 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const published = "2026-09-04T18:00:00Z";
-const item = (itemID: string, feedID: string, title: string) => ({
+const item = (
+  itemID: string,
+  feedID: string,
+  title: string,
+  score: number,
+  size: "S" | "M" | "L",
+) => ({
   item_id: itemID,
-  story_id: itemID === "grid" ? undefined : "story-one",
   feed_id: feedID,
   feed_title: `Feed ${feedID}`,
   connector: "rss",
@@ -15,25 +20,22 @@ const item = (itemID: string, feedID: string, title: string) => ({
   fetched_ts: published,
   has_body: false,
   extract_quality: 0.8,
-  score: itemID === "lead" ? 1 : 0.7,
-  size: itemID === "lead" ? "L" : "S",
+  score,
+  size,
   read: false,
   signal: 0,
   hearted: false,
-  ...(itemID === "lead"
+  ...(size === "L"
     ? { media_url: "/sema-mark.svg", media_w: 320, media_h: 180 }
     : {}),
 });
 
-test("front-page stories precede the grid and share its keyboard/read paths", async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  const lead = item("lead", "one", "Lead coverage");
-  const headline = item("headline", "two", "Another source");
-  const grid = item("grid", "three", "Single-source item");
-  const readBatches: string[][] = [];
-
+async function stubFrontPage(
+  page: Page,
+  stories: unknown[],
+  items: unknown[],
+  readBatches: Array<{ ids: string[]; read: boolean }>,
+) {
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -44,208 +46,11 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
     }
     if (request.method() !== "GET") {
       if (url.pathname === "/api/items/read-batch") {
-        const body = request.postDataJSON() as { ids: string[] };
-        readBatches.push(body.ids);
-      }
-      await route.fulfill({ status: 204 });
-      return;
-    }
-    if (url.pathname === "/api/me") {
-      await route.fulfill({
-        json: {
-          profile: {
-            email: "reader@example.com",
-            created_at: published,
-            order_pref: "interest",
-            heart_count: 0,
-          },
-          heart_count: 0,
-          signal_count: 0,
-          model: {
-            explicit_count: 0,
-            liked_count: 0,
-            disliked_count: 0,
-            implicit_count: 0,
-          },
-        },
-      });
-      return;
-    }
-    if (url.pathname === "/api/feeds") {
-      await route.fulfill({ json: { feeds: [] } });
-      return;
-    }
-    if (url.pathname === "/api/stories") {
-      await route.fulfill({
-        json: {
-          stories: [
-            { story_id: "story-one", source_count: 2, items: [lead, headline] },
-          ],
-        },
-      });
-      return;
-    }
-    if (url.pathname === "/api/items") {
-      await route.fulfill({ json: { items: [grid], next_cursor: null } });
-      return;
-    }
-    await route.fulfill({ json: {} });
-  });
-
-  await page.goto("/");
-  const story = page.locator('[data-story-id="story-one"]');
-  const gridCell = page.locator('[data-item-id="grid"]');
-  await expect(story).toBeVisible();
-  await expect(gridCell).toBeVisible();
-  const storyBox = await story.boundingBox();
-  const gridBox = await gridCell.boundingBox();
-  expect(storyBox?.y).toBeLessThan(gridBox?.y ?? 0);
-
-  await expect(story).toHaveClass(/focused/);
-  await story.locator('[data-focus-id="headline"]').hover();
-  await expect(story.locator('[data-focus-id="headline"]')).toHaveClass(
-    /focused/,
-  );
-  await expect(story).not.toHaveClass(/focused/);
-  await story.locator(".story-lead").hover();
-  await expect(story).toHaveClass(/focused/);
-  await expect(story.locator('[data-focus-id="headline"]')).not.toHaveClass(
-    /focused/,
-  );
-  await page.mouse.move(0, 0);
-  await page.keyboard.press("j");
-  await expect(story.locator('[data-focus-id="headline"]')).toHaveClass(
-    /focused/,
-  );
-  await page.keyboard.press("j");
-  await expect(gridCell).toHaveClass(/focused/);
-  await page.keyboard.press("Home");
-  await expect(story).toHaveClass(/focused/);
-  await expect(story.locator(".story-lead")).toBeFocused();
-
-  await page.getByRole("radio", { name: "Latest", exact: true }).click();
-  await expect(story).toHaveCount(0);
-
-  await page.getByRole("radio", { name: "Front page", exact: true }).click();
-  await expect(story).toBeVisible();
-
-  for (const width of [1440, 1024, 768, 390]) {
-    await page.setViewportSize({ width, height: 900 });
-    await expect(story).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBeLessThanOrEqual(width);
-    await expect(page.locator(".app-header")).toHaveCSS("height", "56px");
-  }
-  await expect(story.locator(".story-media")).toHaveCSS("height", "144px");
-
-  for (const theme of ["dark", "light"] as const) {
-    await page.evaluate(
-      (nextTheme) =>
-        document.documentElement.setAttribute("data-theme", nextTheme),
-      theme,
-    );
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.screenshot({
-        path: `/tmp/sema-front-${width}-${theme}.png`,
-        fullPage: true,
-      });
-    }
-  }
-
-  await page.evaluate(() => {
-    document.addEventListener(
-      "click",
-      (event) => {
-        if (
-          !(event.target instanceof Element) ||
-          !event.target.closest(".story-lead")
-        )
-          return;
-        requestAnimationFrame(() => {
-          (
-            window as typeof window & {
-              __leadFirstFrame?: { readerVisible: boolean; storyRead: boolean };
-            }
-          ).__leadFirstFrame = {
-            readerVisible: document.querySelector(".reader-scroll") !== null,
-            storyRead:
-              document
-                .querySelector('[data-story-id="story-one"] .story-lead h2')
-                ?.classList.contains("read") ?? false,
-          };
-        });
-      },
-      { capture: true, once: true },
-    );
-  });
-  await page.locator('[data-story-id="story-one"] .story-lead').click();
-  await expect(page.locator(".reader-scroll")).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        (
-          window as typeof window & {
-            __leadFirstFrame?: {
-              readerVisible: boolean;
-              storyRead: boolean;
-            };
-          }
-        ).__leadFirstFrame,
-    ),
-  ).toEqual({ readerVisible: true, storyRead: false });
-  await expect.poll(() => readBatches).toContainEqual(["lead", "headline"]);
-});
-
-test("reuses story exclusion and renders a stable large-item prefix", async ({
-  page,
-}) => {
-  const stories = Array.from({ length: 215 }, (_, storyIndex) => {
-    const storyID = `story-${storyIndex}`;
-    return {
-      story_id: storyID,
-      source_count: 6,
-      items: Array.from(
-        { length: storyIndex === 0 ? 8 : 6 },
-        (_, itemIndex) => ({
-          ...item(
-            `${storyID}-${itemIndex}`,
-            `${storyIndex}-${itemIndex}`,
-            `Story ${storyIndex} coverage ${itemIndex}`,
-          ),
-          story_id: storyID,
-          size: "M",
-        }),
-      ),
-    };
-  });
-  stories[1].items = stories[1].items.slice(0, 2);
-  stories[0].items[0].read = true;
-  const firstPage = [
-    stories[0].items[0],
-    ...Array.from({ length: 99 }, (_, index) => ({
-      ...item(`large-${index}`, "single", `Large singleton ${index}`),
-      story_id: undefined,
-      size: "L",
-    })),
-  ];
-  let itemRequests = 0;
-  const exclusionParameters: string[] = [];
-  const readBatches: string[][] = [];
-
-  await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
-  await page.route("**/api/**", async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (!url.pathname.startsWith("/api/")) {
-      await route.continue();
-      return;
-    }
-    if (request.method() !== "GET") {
-      if (url.pathname === "/api/items/read-batch") {
-        const body = request.postDataJSON() as { ids: string[] };
-        readBatches.push(body.ids);
+        const body = request.postDataJSON() as {
+          ids: string[];
+          read?: boolean;
+        };
+        readBatches.push({ ids: body.ids, read: body.read ?? true });
       }
       await route.fulfill({ status: 204 });
       return;
@@ -280,57 +85,169 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
       return;
     }
     if (url.pathname === "/api/items") {
-      itemRequests++;
-      exclusionParameters.push(url.searchParams.get("exclude_stories") ?? "");
-      await route.fulfill({
-        json: { items: firstPage, next_cursor: "next" },
-      });
+      await route.fulfill({ json: { items, next_cursor: null } });
       return;
     }
     await route.fulfill({ json: {} });
   });
+}
+
+test("stories earn their position in the interest grid", async ({ page }) => {
+  const lead = {
+    ...item("lead", "one", "Lead coverage", 0.7, "L"),
+    story_id: "story-one",
+  };
+  const headline = {
+    ...item("headline", "two", "Another source", 0.6, "S"),
+    story_id: "story-one",
+  };
+  const story = {
+    story_id: "story-one",
+    source_count: 2,
+    order_key: 0.8,
+    size: "L",
+    items: [lead, headline],
+  };
+  const large = item("large", "three", "Higher-interest singleton", 0.9, "L");
+  const trailing = item(
+    "trailing",
+    "four",
+    "Lower-interest singleton",
+    0.5,
+    "S",
+  );
+  const readBatches: Array<{ ids: string[]; read: boolean }> = [];
+  await stubFrontPage(page, [story], [large, trailing], readBatches);
 
   await page.goto("/");
-  const firstRowHeights = await page
-    .locator(".story-block-row")
-    .first()
-    .locator(".story-card")
-    .evaluateAll((cards) =>
-      cards.map((card) => card.getBoundingClientRect().height),
-    );
-  expect(firstRowHeights).toHaveLength(2);
-  expect(firstRowHeights[0]).toBe(firstRowHeights[1]);
-  const deferredCardStyles = await page
-    .locator(".story-card")
-    .last()
-    .evaluate((card) => {
-      const styles = getComputedStyle(card);
-      return {
-        contentVisibility: styles.contentVisibility,
-        intrinsicBlockSize: styles.containIntrinsicBlockSize,
-      };
-    });
-  expect(deferredCardStyles.contentVisibility).toBe("auto");
-  expect(deferredCardStyles.intrinsicBlockSize).toContain("280px");
-  await expect(page.locator(".story-block-row").last()).toHaveCSS(
-    "content-visibility",
-    "visible",
-  );
-  await expect(page.locator('[data-item-id="large-0"]')).toBeAttached();
-  await expect(
-    page.locator('.grid-row [data-item-id="story-0-0"]'),
-  ).toHaveCount(0);
-  expect(itemRequests).toBe(1);
-  expect(exclusionParameters).toEqual([""]);
+  const storyCell = page.locator('[data-story-id="story-one"]');
+  const largeCell = page.locator('[data-item-id="large"]');
+  const trailingCell = page.locator('[data-item-id="trailing"]');
+  await expect(storyCell).toBeVisible();
+  await expect(largeCell).toBeVisible();
+  await expect(trailingCell).toBeVisible();
+  const largeBox = await largeCell.boundingBox();
+  const storyBox = await storyCell.boundingBox();
+  const trailingBox = await trailingCell.boundingBox();
+  expect(largeBox?.y).toBeLessThan(storyBox?.y ?? 0);
+  expect(storyBox?.y).toBeLessThan(trailingBox?.y ?? 0);
 
-  const scrollPastFirstStoryRow = async () => {
+  await expect(largeCell).toHaveClass(/focused/);
+  await page.keyboard.press("j");
+  await expect(storyCell).toHaveClass(/focused/);
+  await page.keyboard.press("j");
+  await expect(storyCell.locator('[data-focus-id="headline"]')).toHaveClass(
+    /focused/,
+  );
+
+  await page.getByRole("radio", { name: "Latest", exact: true }).click();
+  await expect(storyCell).toHaveCount(0);
+  await page.getByRole("radio", { name: "Front page", exact: true }).click();
+  await expect(storyCell).toBeVisible();
+
+  for (const width of [1440, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(storyCell).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+  }
+  await page.screenshot({ path: "/tmp/sema-front-merged-390.png" });
+
+  await page.evaluate(() => {
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (
+          !(event.target instanceof Element) ||
+          !event.target.closest(".story-lead")
+        )
+          return;
+        requestAnimationFrame(() => {
+          (
+            window as typeof window & {
+              __leadFirstFrame?: { readerVisible: boolean; storyRead: boolean };
+            }
+          ).__leadFirstFrame = {
+            readerVisible: document.querySelector(".reader-scroll") !== null,
+            storyRead:
+              document
+                .querySelector('[data-story-id="story-one"] .story-lead h2')
+                ?.classList.contains("read") ?? false,
+          };
+        });
+      },
+      { capture: true, once: true },
+    );
+  });
+  await storyCell.locator(".story-lead").click();
+  await expect(page.locator(".reader-scroll")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __leadFirstFrame?: {
+                readerVisible: boolean;
+                storyRead: boolean;
+              };
+            }
+          ).__leadFirstFrame,
+      ),
+    )
+    .toEqual({ readerVisible: true, storyRead: false });
+  await expect
+    .poll(() => readBatches.map((batch) => batch.ids))
+    .toContainEqual(["lead", "headline"]);
+});
+
+test("scroll-reading a story cell uses all of its unread members", async ({
+  page,
+}) => {
+  const members = Array.from({ length: 8 }, (_, index) => ({
+    ...item(
+      `story-0-${index}`,
+      `feed-${index}`,
+      `Story coverage ${index}`,
+      1 - index * 0.01,
+      index === 0 ? "L" : "S",
+    ),
+    story_id: "story-0",
+    read: index === 0,
+  }));
+  const story = {
+    story_id: "story-0",
+    source_count: 8,
+    order_key: 1.2,
+    size: "L",
+    items: members,
+  };
+  const singletons = Array.from({ length: 30 }, (_, index) =>
+    item(
+      `singleton-${index}`,
+      "single",
+      `Singleton ${index}`,
+      0.9 - index * 0.01,
+      index % 5 === 0 ? "M" : "S",
+    ),
+  );
+  const readBatches: Array<{ ids: string[]; read: boolean }> = [];
+  await stubFrontPage(page, [story], singletons, readBatches);
+  await page.goto("/");
+
+  const storyCell = page.locator('[data-story-id="story-0"]');
+  const scrollPastStoryRow = async () => {
     const scroller = page.locator(".grid-scroll");
-    const delta = await scroller.evaluate((element) => {
-      const row = element.querySelector<HTMLElement>(".story-block-row");
-      if (!row) throw new Error("story row unavailable");
-      const scrollerBounds = element.getBoundingClientRect();
-      const rowBounds = row.getBoundingClientRect();
-      return Math.ceil(rowBounds.bottom - scrollerBounds.top + 1);
+    const delta = await storyCell.evaluate((element) => {
+      const row = element.closest<HTMLElement>(".grid-row");
+      const scroll = element.closest<HTMLElement>(".grid-scroll");
+      if (!row || !scroll) throw new Error("story row unavailable");
+      return Math.ceil(
+        row.getBoundingClientRect().bottom -
+          scroll.getBoundingClientRect().top +
+          1,
+      );
     });
     await scroller.hover();
     await page.mouse.wheel(0, delta);
@@ -339,16 +256,10 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
       .toBeGreaterThanOrEqual(delta);
   };
 
-  readBatches.length = 0;
   await page.getByRole("radio", { name: "All", exact: true }).click();
-  await expect
-    .poll(() =>
-      page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
-    )
-    .toBe(0);
-  await scrollPastFirstStoryRow();
+  await scrollPastStoryRow();
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(100);
   expect(readBatches).toEqual([]);
 
   await page.getByRole("radio", { name: "Unread", exact: true }).click();
@@ -357,18 +268,14 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
       page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
     )
     .toBe(0);
-  await scrollPastFirstStoryRow();
-  const firstRowIDs = [...stories[0].items.slice(1), ...stories[1].items].map(
-    (entry) => entry.item_id,
+  await scrollPastStoryRow();
+  const unreadMemberIDs = members.slice(1).map((member) => member.item_id);
+  await expect(storyCell.locator(".story-headline").first()).toHaveClass(
+    /read/,
   );
-  await expect(
-    page.locator('[data-story-id="story-1"] .story-lead h2'),
-  ).toHaveClass(/read/);
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-  await expect.poll(() => readBatches.at(-1)).toEqual(firstRowIDs);
-  expect(readBatches.at(-1)).not.toContain(stories[0].items[0].item_id);
+  await expect.poll(() => readBatches.at(-1)?.ids).toEqual(unreadMemberIDs);
+  expect(readBatches.at(-1)?.ids).not.toContain(members[0].item_id);
   await page.keyboard.press("u");
-  await expect(
-    page.locator('[data-story-id="story-0"] .story-lead h2'),
-  ).toHaveClass(/read/);
+  await expect(storyCell.locator(".story-lead h2")).toHaveClass(/read/);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Item } from "../types";
+import type { Item, Story } from "../types";
 import {
   justify,
   type LayoutRow,
@@ -85,6 +85,29 @@ const expectNoOverlaps = (row: ReturnType<typeof justify>[number]) => {
 };
 
 describe("17c desktop bands", () => {
+  it("gives a large story a full row plus its fixed headline-list height", () => {
+    const lead = item("story-lead", "L", 1.5);
+    const story: Story = {
+      story_id: "story",
+      source_count: 7,
+      order_key: 0.9,
+      size: "L",
+      items: [
+        lead,
+        ...Array.from({ length: 7 }, (_, index) =>
+          item(`headline-${index}`, "S"),
+        ),
+      ],
+    };
+    const [row] = justify([{ kind: "story", story }], 1248);
+
+    expect(row.kind).toBe("story");
+    expect(row.cells).toHaveLength(1);
+    expect(row.cells[0].width).toBe(1248);
+    expect(row.cells[0].headlineHeight).toBe(6 * 33);
+    expect(row.height).toBe(288 + 6 * 33);
+  });
+
   it("matches the handoff span threshold and 354px geometry", () => {
     expect(spanEligible(item("boundary", "L", 1.2))).toBe(true);
     expect(spanEligible(item("wide", "L", 1.201))).toBe(false);

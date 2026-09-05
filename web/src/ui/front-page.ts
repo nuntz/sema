@@ -1,10 +1,5 @@
-import {
-  automaticReadEnabled,
-  type ReadStateContext,
-  shouldMarkAtBottom,
-} from "../layout/read-state";
-import type { Item, Story } from "../types";
-import { blockRows, headlineSlice } from "./story-layout";
+import type { FrontPageEntry, Item, Story } from "../types";
+import { headlineSlice } from "./story-layout";
 
 export type FrontPageFocusKind = "story" | "headline" | "grid";
 
@@ -15,52 +10,54 @@ export interface FrontPageFocus {
   storyID?: string;
 }
 
-export interface StoryBlockReadRow {
-  top: number;
-  bottom: number;
-  memberIDs: string[];
+export function mergeFrontPage(
+  stories: Story[],
+  pages: Item[],
+  hasMore: boolean,
+): FrontPageEntry[] {
+  const orderedStories = [...stories].sort((left, right) => {
+    if (left.order_key !== right.order_key)
+      return right.order_key - left.order_key;
+    const published = (right.items[0]?.published_ts ?? "").localeCompare(
+      left.items[0]?.published_ts ?? "",
+    );
+    return published || left.story_id.localeCompare(right.story_id);
+  });
+  const entries: FrontPageEntry[] = [];
+  let storyIndex = 0;
+  for (const item of pages) {
+    while (
+      storyIndex < orderedStories.length &&
+      orderedStories[storyIndex].order_key >= item.score
+    ) {
+      entries.push({ kind: "story", story: orderedStories[storyIndex] });
+      storyIndex++;
+    }
+    entries.push({ kind: "item", item });
+  }
+  if (!hasMore) {
+    for (; storyIndex < orderedStories.length; storyIndex++)
+      entries.push({ kind: "story", story: orderedStories[storyIndex] });
+  }
+  return entries;
 }
 
-export function storyScrollReadCandidates(
-  context: ReadStateContext,
-  rows: StoryBlockReadRow[],
-  scrollTop: number,
-  viewportHeight: number,
-  scrollHeight: number,
-  userInitiated: boolean,
-  alreadyPassed: ReadonlySet<string>,
-  alreadyRead: ReadonlySet<string>,
-): string[] {
-  if (!automaticReadEnabled(context) || !userInitiated) return [];
-  const viewportBottom = scrollTop + viewportHeight;
-  const atBottom = shouldMarkAtBottom(
-    userInitiated,
-    scrollTop,
-    viewportHeight,
-    scrollHeight,
-  );
-  const ids: string[] = [];
-  const selected = new Set(alreadyPassed);
-  for (const row of rows) {
-    const fullyPassed = row.bottom < scrollTop;
-    const intersects = row.bottom >= scrollTop && row.top <= viewportBottom;
-    if (!fullyPassed && !(atBottom && intersects)) continue;
-    for (const id of row.memberIDs) {
-      if (selected.has(id) || alreadyRead.has(id)) continue;
-      selected.add(id);
-      ids.push(id);
-    }
-  }
-  return ids;
+export function frontPageEntryItem(entry: FrontPageEntry): Item | undefined {
+  return entry.kind === "item" ? entry.item : entry.story.items[0];
 }
 
 export function frontPageSequence(
-  stories: Story[],
-  gridItems: Item[],
+  entries: FrontPageEntry[],
   expandedStoryIDs: ReadonlySet<string> = new Set(),
+  focusedID = "",
 ): FrontPageFocus[] {
   const sequence: FrontPageFocus[] = [];
-  for (const story of stories) {
+  for (const entry of entries) {
+    if (entry.kind === "item") {
+      sequence.push({ id: entry.item.item_id, item: entry.item, kind: "grid" });
+      continue;
+    }
+    const { story } = entry;
     const lead = story.items[0];
     if (!lead) continue;
     sequence.push({
@@ -69,6 +66,11 @@ export function frontPageSequence(
       kind: "story",
       storyID: story.story_id,
     });
+    const focused =
+      focusedID === `story:${story.story_id}` ||
+      story.items.some((item) => item.item_id === focusedID);
+    if (story.size !== "L" && !expandedStoryIDs.has(story.story_id) && !focused)
+      continue;
     const headlines = expandedStoryIDs.has(story.story_id)
       ? story.items.slice(1)
       : headlineSlice(story).items;
@@ -81,8 +83,6 @@ export function frontPageSequence(
       });
     }
   }
-  for (const item of gridItems)
-    sequence.push({ id: item.item_id, item, kind: "grid" });
   return sequence;
 }
 
@@ -98,21 +98,21 @@ export function moveFrontPageFocus(
   ];
 }
 
-export function horizontalStoryFocus(
-  stories: Story[],
-  width: number,
+export function frontPageUnreadIDsAfter(
+  entries: FrontPageEntry[],
   focusedID: string,
-  delta: -1 | 1,
-): string | undefined {
-  const storyID = focusedID.startsWith("story:")
-    ? focusedID.slice("story:".length)
-    : stories.find(({ items }) => items[0]?.item_id === focusedID)?.story_id;
-  if (!storyID) return undefined;
-  for (const row of blockRows(stories, width)) {
-    const index = row.stories.findIndex((story) => story.story_id === storyID);
-    if (index < 0) continue;
-    const target = row.stories[index + delta];
-    return target ? `story:${target.story_id}` : undefined;
+): string[] {
+  const index = entries.findIndex((entry) =>
+    entry.kind === "item"
+      ? entry.item.item_id === focusedID
+      : focusedID === `story:${entry.story.story_id}` ||
+        entry.story.items.some((item) => item.item_id === focusedID),
+  );
+  if (index < 0) return [];
+  const ids = new Set<string>();
+  for (const entry of entries.slice(index)) {
+    const items = entry.kind === "item" ? [entry.item] : entry.story.items;
+    for (const item of items) if (!item.read) ids.add(item.item_id);
   }
-  return undefined;
+  return [...ids];
 }

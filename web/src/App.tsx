@@ -55,14 +55,17 @@ import type {
 } from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
-import { frontPageSequence } from "./ui/front-page";
+import {
+  frontPageSequence,
+  frontPageUnreadIDsAfter,
+  mergeFrontPage,
+} from "./ui/front-page";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
-import { StoryBlocks } from "./ui/StoryBlocks";
 import { TagFilter } from "./ui/TagFilter";
 import { listenForWindowReturn } from "./window-activity";
 
@@ -326,7 +329,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       setCursor(page.next_cursor ?? "");
       setHasPage(true);
       setFocusedID(
-        frontPageSequence(nextStories, pageItems)[0]?.id ?? visibleIDs[0] ?? "",
+        frontPageSequence(
+          mergeFrontPage(nextStories, pageItems, Boolean(page.next_cursor)),
+        )[0]?.id ??
+          visibleIDs[0] ??
+          "",
       );
     } catch (caught) {
       handleError(caught);
@@ -374,10 +381,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           : visibleItemIDs(added, unreadOnly());
       if (visible.length > 0) {
         setGridIDs((current) => [...current, ...visible]);
-        setLayoutVersion((value) => value + 1);
       }
       if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
       setCursor(page.next_cursor ?? "");
+      setLayoutVersion((value) => value + 1);
       continueLoading = visible.length === 0 && (page.next_cursor ?? "") !== "";
     } catch (caught) {
       handleError(caught);
@@ -435,7 +442,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           setGridIDs(visible);
           setCursor(page.next_cursor ?? "");
           setFocusedID(
-            frontPageSequence(incomingStories, pageItems)[0]?.id ??
+            frontPageSequence(
+              mergeFrontPage(
+                incomingStories,
+                pageItems,
+                Boolean(page.next_cursor),
+              ),
+            )[0]?.id ??
               visible[0] ??
               "",
           );
@@ -664,12 +677,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       return item ? [item] : [];
     });
   });
-  const frontPageItems = createMemo(() =>
+  const frontPageEntries = createMemo(() =>
     mode() === "live" && order() === "interest"
-      ? frontPageSequence(stories(), gridItems(), expandedStoryIDs()).map(
-          ({ item }) => item,
-        )
-      : gridItems(),
+      ? mergeFrontPage(stories(), gridItems(), cursor() !== "")
+      : gridItems().map((item) => ({ kind: "item" as const, item })),
+  );
+  const frontPageItems = createMemo(() =>
+    frontPageSequence(frontPageEntries(), expandedStoryIDs(), focusedID()).map(
+      ({ item }) => item,
+    ),
   );
   const searchItems = createMemo(() => {
     const result = searchResponse();
@@ -1061,7 +1077,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const version = requestVersion;
     const clearVersion = gridClearVersion;
     const markOrder = order();
-    const ids = unreadIDsAfter(items(), item.item_id);
+    const ids =
+      markOrder === "interest"
+        ? frontPageUnreadIDsAfter(
+            mergeFrontPage(stories(), items(), false),
+            item.item_id,
+          )
+        : unreadIDsAfter(items(), item.item_id);
     let nextCursor = cursor();
     try {
       while (nextCursor !== "") {
@@ -1098,24 +1120,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const markStoryBelow = async (storyID: string) => {
     if (mode() === "archive" || markBelowInFlight) return;
-    const storyIndex = stories().findIndex(
-      (story) => story.story_id === storyID,
-    );
-    if (storyIndex < 0) return;
+    if (!stories().some((story) => story.story_id === storyID)) return;
     markBelowInFlight = true;
     const version = requestVersion;
     const clearVersion = gridClearVersion;
     const markOrder = order();
-    const ids = [
-      ...stories()
-        .slice(storyIndex)
-        .flatMap((story) => story.items)
-        .filter((item) => !item.read)
-        .map((item) => item.item_id),
-      ...items()
-        .filter((item) => !item.read)
-        .map((item) => item.item_id),
-    ];
+    const ids = frontPageUnreadIDsAfter(
+      mergeFrontPage(stories(), items(), false),
+      `story:${storyID}`,
+    );
     let nextCursor = cursor();
     try {
       while (nextCursor !== "") {
@@ -1725,29 +1738,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           >
             <Grid
               items={gridItems()}
+              entries={frontPageEntries()}
               stories={stories()}
               expandedStoryIDs={expandedStoryIDs()}
-              lead={
-                stories().length > 0 ? (
-                  <StoryBlocks
-                    stories={stories()}
-                    focusedID={focusedID()}
-                    expandedStoryIDs={expandedStoryIDs()}
-                    onExpand={(storyID) =>
-                      setExpandedStoryIDs((current) => {
-                        const next = new Set(current);
-                        next.add(storyID);
-                        return next;
-                      })
-                    }
-                    onFocus={setFocusedID}
-                    onOpenLead={markStoryOpened}
-                    onOpen={markOpened}
-                    onExternalOpen={openExternalItem}
-                    onHeart={toggleHeart}
-                  />
-                ) : undefined
-              }
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}
               scrollTarget={scrollTarget()}
@@ -1783,6 +1776,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               onRelated={openRelated}
               onMarkBelow={markBelow}
               onMarkStoryBelow={markStoryBelow}
+              onExpandStory={(storyID) =>
+                setExpandedStoryIDs((current) => {
+                  const next = new Set(current);
+                  next.add(storyID);
+                  return next;
+                })
+              }
               onItemsPassed={queueRead}
               onFinishAndClear={finishAndClear}
               onLoadMore={loadMore}

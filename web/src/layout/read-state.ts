@@ -179,7 +179,11 @@ export function intersectingRowIDs(
   return rows.flatMap((row) => {
     const top = row.top + rowOffset;
     if (top + row.height < scrollTop || top > bottom) return [];
-    return row.cells.map((cell) => cell.item.item_id);
+    return row.cells.flatMap((cell) =>
+      cell.story
+        ? cell.story.items.map((item) => item.item_id)
+        : [cell.item.item_id],
+    );
   });
 }
 
@@ -200,7 +204,12 @@ export function scrollReadCandidates(
     if (!alreadyPassed.has(id) && !alreadyRead.has(id)) ids.add(id);
   };
   for (const row of fullyPassedRows(rows, -1, scrollTop).rows) {
-    for (const cell of row.cells) addUnread(cell.item.item_id);
+    for (const cell of row.cells) {
+      const ids = cell.story
+        ? cell.story.items.map((item) => item.item_id)
+        : [cell.item.item_id];
+      for (const id of ids) addUnread(id);
+    }
   }
   if (shouldMarkAtBottom(true, scrollTop, clientHeight, scrollHeight)) {
     for (const id of intersectingRowIDs(rows, scrollTop, clientHeight, 14)) {

@@ -1,141 +1,118 @@
 import { describe, expect, it } from "vitest";
-import type { Item, Story } from "../types";
+import type { FrontPageEntry, Item, Story } from "../types";
 import {
   frontPageSequence,
-  horizontalStoryFocus,
+  frontPageUnreadIDsAfter,
+  mergeFrontPage,
   moveFrontPageFocus,
-  storyScrollReadCandidates,
 } from "./front-page";
 
-const item = (item_id: string) => ({ item_id }) as Item;
-const stories: Story[] = [
-  {
-    story_id: "one",
-    source_count: 2,
-    items: [item("lead-one"), item("one-a"), item("one-b")],
-  },
-  {
-    story_id: "two",
-    source_count: 2,
-    items: [item("lead-two"), item("two-a")],
-  },
-];
+const item = (item_id: string, score = 0) => ({ item_id, score }) as Item;
+const story = (
+  story_id: string,
+  order_key: number,
+  size: Story["size"] = "L",
+): Story => ({
+  story_id,
+  source_count: 2,
+  order_key,
+  size,
+  items: [
+    item(`lead-${story_id}`),
+    item(`${story_id}-a`),
+    item(`${story_id}-b`),
+  ],
+});
+
+describe("front-page merging", () => {
+  it("places stories by order key among score-ordered items", () => {
+    expect(
+      mergeFrontPage(
+        [story("middle", 0.8), story("first", 1.2)],
+        [item("large", 1.4), item("medium", 0.9), item("small", 0.5)],
+        false,
+      ).map((entry) =>
+        entry.kind === "story"
+          ? `story:${entry.story.story_id}`
+          : entry.item.item_id,
+      ),
+    ).toEqual(["large", "story:first", "medium", "story:middle", "small"]);
+  });
+
+  it("holds stories below the loaded score floor until a later page arrives", () => {
+    const stories = [story("held", 0.4)];
+    expect(
+      mergeFrontPage(stories, [item("loaded", 0.5)], true).map(
+        (entry) => entry.kind,
+      ),
+    ).toEqual(["item"]);
+    expect(
+      mergeFrontPage(
+        stories,
+        [item("loaded", 0.5), item("later", 0.3)],
+        true,
+      ).map((entry) =>
+        entry.kind === "story" ? entry.story.story_id : entry.item.item_id,
+      ),
+    ).toEqual(["loaded", "held", "later"]);
+  });
+
+  it("appends remaining stories once the final page is loaded", () => {
+    expect(
+      mergeFrontPage([story("tail", 0.1)], [item("loaded", 0.5)], false).map(
+        (entry) =>
+          entry.kind === "story" ? entry.story.story_id : entry.item.item_id,
+      ),
+    ).toEqual(["loaded", "tail"]);
+  });
+
+  it("puts a story before an item when their ordering values tie", () => {
+    const entries = mergeFrontPage(
+      [story("tie", 0.5)],
+      [item("singleton", 0.5)],
+      true,
+    );
+    expect(entries.map((entry) => entry.kind)).toEqual(["story", "item"]);
+  });
+});
 
 describe("front-page focus", () => {
-  it("walks leads, visible headlines, then grid items", () => {
-    const sequence = frontPageSequence(stories, [
-      item("grid-a"),
-      item("grid-b"),
-    ]);
+  const entries: FrontPageEntry[] = [
+    { kind: "item", item: item("grid-a") },
+    { kind: "story", story: story("one", 0.8) },
+    { kind: "story", story: story("two", 0.7, "M") },
+    { kind: "item", item: item("grid-b") },
+  ];
+
+  it("walks the merged cell order and visible large-story headlines", () => {
+    const sequence = frontPageSequence(entries);
     expect(sequence.map(({ id }) => id)).toEqual([
+      "grid-a",
       "story:one",
       "one-a",
       "one-b",
       "story:two",
-      "two-a",
-      "grid-a",
       "grid-b",
     ]);
-    expect(moveFrontPageFocus(sequence, "two-a", 1)?.id).toBe("grid-a");
-    expect(moveFrontPageFocus(sequence, "grid-a", -1)?.id).toBe("two-a");
+    expect(moveFrontPageFocus(sequence, "one-b", 1)?.id).toBe("story:two");
+    expect(moveFrontPageFocus(sequence, "story:two", -1)?.id).toBe("one-b");
   });
 
-  it("moves horizontally only between blocks in the same row", () => {
-    expect(horizontalStoryFocus(stories, 1200, "story:one", 1)).toBe(
-      "story:two",
-    );
-    expect(horizontalStoryFocus(stories, 1200, "story:two", 1)).toBeUndefined();
-    expect(horizontalStoryFocus(stories, 390, "story:one", 1)).toBeUndefined();
-  });
-});
-
-describe("front-page scroll reading", () => {
-  it("marks every member of passed blocks only for user-scrolled Unread", () => {
-    const rows = [
-      {
-        top: 0,
-        bottom: 100,
-        memberIDs: ["lead-one", "one-a", "one-hidden"],
-      },
-      { top: 110, bottom: 210, memberIDs: ["lead-two", "two-a"] },
-    ];
-    const candidates = (
-      context: "unread" | "all-items",
-      scrollTop: number,
-      userInitiated = true,
-      scrollHeight = 400,
-      alreadyPassed: ReadonlySet<string> = new Set(),
-    ) =>
-      storyScrollReadCandidates(
-        context,
-        rows,
-        scrollTop,
-        100,
-        scrollHeight,
-        userInitiated,
-        alreadyPassed,
-        new Set(),
-      );
-
-    expect(candidates("unread", 100)).toEqual([]);
-    const passed = candidates("unread", 101);
-    expect(passed).toEqual(["lead-one", "one-a", "one-hidden"]);
-    expect(candidates("unread", 101, true, 400, new Set(passed))).toEqual([]);
-    expect(candidates("unread", 101, false)).toEqual([]);
-    expect(candidates("all-items", 101)).toEqual([]);
+  it("reveals compact-story headlines while that story is focused", () => {
     expect(
-      storyScrollReadCandidates(
-        "archive",
-        rows,
-        101,
-        100,
-        400,
-        true,
-        new Set(),
-        new Set(),
-      ),
-    ).toEqual([]);
-    expect(candidates("unread", 100, true, 200)).toEqual([
-      "lead-one",
-      "one-a",
-      "one-hidden",
+      frontPageSequence(entries, new Set(), "story:two").map(({ id }) => id),
+    ).toContain("two-a");
+    expect(frontPageSequence(entries).map(({ id }) => id)).not.toContain(
+      "two-a",
+    );
+  });
+
+  it("marks from the focused merged cell and includes every story member", () => {
+    expect(frontPageUnreadIDsAfter(entries, "two-a")).toEqual([
       "lead-two",
       "two-a",
+      "two-b",
+      "grid-b",
     ]);
-  });
-
-  it("skips story members that are already read", () => {
-    const rows = [
-      {
-        top: 0,
-        bottom: 100,
-        memberIDs: ["lead", "headline-a", "headline-b"],
-      },
-    ];
-
-    expect(
-      storyScrollReadCandidates(
-        "unread",
-        rows,
-        101,
-        100,
-        400,
-        true,
-        new Set(),
-        new Set(["lead"]),
-      ),
-    ).toEqual(["headline-a", "headline-b"]);
-    expect(
-      storyScrollReadCandidates(
-        "unread",
-        rows,
-        101,
-        100,
-        400,
-        true,
-        new Set(),
-        new Set(["lead", "headline-a", "headline-b"]),
-      ),
-    ).toEqual([]);
   });
 });

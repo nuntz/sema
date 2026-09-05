@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { updateRead } from "../item-list";
-import type { Item } from "../types";
+import type { Item, Story } from "../types";
 import { justify } from "./justified";
 import {
   automaticReadEnabled,
@@ -357,6 +357,34 @@ describe("read state", () => {
       ...rows[1].cells.slice(1).map((cell) => cell.item.item_id),
       ...rows[2].cells.map((cell) => cell.item.item_id),
     ]);
+  });
+
+  it("marks every unread member when a story cell's row passes", () => {
+    const story: Story = {
+      story_id: "story",
+      source_count: 3,
+      order_key: 0.6,
+      size: "S",
+      items: [
+        { ...make(100), item_id: "lead", read: true },
+        { ...make(101), item_id: "headline" },
+        { ...make(102), item_id: "hidden" },
+      ],
+    };
+    const rows = justify([{ kind: "story", story }], 500);
+
+    expect(
+      scrollReadCandidates(
+        "unread",
+        rows,
+        rows[0].height + 1,
+        500,
+        2_000,
+        true,
+        new Set(),
+        new Set(["lead"]),
+      ),
+    ).toEqual(["headline", "hidden"]);
   });
 
   it("keeps paging before the end card appears", () => {

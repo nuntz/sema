@@ -883,14 +883,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .pull-refresh > button::before { content: ""; position: absolute; height: 26px; inset: 9px 0; z-index: -1; border: 1px solid var(--accent-wash-28); border-radius: 13px; background: var(--accent-wash-14); }
 @keyframes ptr-spin { to { transform: rotate(270deg); } }
 .grid-row { position: absolute; left: 16px; right: 16px; contain: size layout style; }
-.grid-lead { position: absolute; top: 14px; left: 16px; right: 16px; }
-.story-blocks { width: 100%; }
-.story-block-row { margin-bottom: var(--grid-gap); display: grid; align-items: stretch; gap: var(--grid-gap); }
-.story-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); content-visibility: auto; contain-intrinsic-block-size: auto 280px; }
+.story-card { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-raised); }
 .story-card.focused { outline: 2px solid var(--accent-loud); outline-offset: 2px; }
+.story-lead-shell { position: relative; overflow: hidden; }
 .story-media-action { width: 100%; display: block; background: transparent; color: inherit; }
-.story-media { width: 100%; height: 100px; overflow: hidden; background: var(--surface-fallback); }
-.story-card.tall .story-media { height: 144px; }
+.story-media { width: 100%; height: 144px; overflow: hidden; background: var(--surface-fallback); }
 .story-media > img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .story-badges { position: absolute; top: 8px; left: 10px; z-index: 3; display: flex; gap: 6px; pointer-events: none; }
 .story-badges span, .story-badges em { padding: 4px 7px; border-radius: 5px; background: var(--story-badge-bg); color: var(--fg-primary); font: 500 11.5px/1 "IBM Plex Mono", monospace; font-style: normal; letter-spacing: .04em; white-space: nowrap; }
@@ -923,8 +920,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-headline time { flex: none; color: var(--fg-quaternary); font: 400 11.5px/1 "IBM Plex Mono", monospace; }
 .story-more { justify-content: center; color: var(--fg-quaternary); font: 500 11.5px/1 "IBM Plex Mono", monospace; }
 .story-more:hover { background: var(--surface-raised-hover); color: var(--fg-secondary); }
-.single-source-rule { height: 29px; display: flex; align-items: center; gap: 12px; color: var(--fg-quaternary); font: 500 11.5px/1 "IBM Plex Mono", monospace; letter-spacing: .08em; }
-.single-source-rule i { height: 1px; flex: 1; background: var(--line); }
+.story-card.compact .story-media-action { position: absolute; inset: 0; }
+.story-card.compact .story-media { height: 100%; }
+.story-card.compact .story-lead { position: absolute; right: 0; bottom: 0; left: 0; padding: 38px 12px 12px; background: var(--cell-scrim-title); }
+.story-card.compact.no-media .story-lead { top: 0; padding-top: 43px; background: transparent; }
+.story-card.compact .story-lead h2 { font-size: var(--t-17); }
+.story-expand { position: absolute; right: 10px; bottom: 9px; z-index: 4; min-width: 28px; height: 24px; padding: 0 7px; border-radius: 5px; background: var(--story-badge-bg); color: var(--media-fg-secondary); font: 500 11.5px/1 "IBM Plex Mono", monospace; }
+.story-expand:hover { color: var(--media-fg-primary); }
 .caughtup-shell { position: absolute; left: 16px; right: 16px; z-index: 1; container-type: inline-size; pointer-events: none; }
 .caughtup { height: 100%; display: flex; align-items: center; gap: var(--caughtup-gap); }
 .caughtup > i { min-width: 16px; height: 1px; flex: 1; background: var(--caughtup-rule); }
@@ -1377,10 +1379,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .related-grabber { width: 34px; height: 4px; margin: 7px auto 0; display: block; border-radius: 2px; background: var(--line-handle); }
   .related-panel > header { min-height: 66px; padding-top: 8px; }
   .grid-row { left: 12px; right: 12px; }
-  .grid-lead { left: 12px; right: 12px; }
-  .story-block-row { margin-bottom: var(--grid-gap-mobile); gap: var(--grid-gap-mobile); }
-  .story-card { contain-intrinsic-block-size: auto 430px; }
-  .story-card .story-media { height: 144px; }
   .story-headline-feed { width: 88px; }
   .caughtup-shell { left: 12px; right: 12px; }
   .end-of-feed { left: 12px; right: 12px; }

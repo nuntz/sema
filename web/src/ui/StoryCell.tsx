@@ -1,25 +1,21 @@
-import {
-  createMemo,
-  createSignal,
-  For,
-  type JSX,
-  onCleanup,
-  onMount,
-  Show,
-} from "solid-js";
+import { createMemo, For, type JSX, Show } from "solid-js";
 import { Icon } from "../components/Icon";
+import type { LayoutCell, LayoutRow } from "../layout/justified";
 import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Story } from "../types";
 import { relativeTime, UnreadDot } from "./Grid";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
-import { blockRows, headlineSlice } from "./story-layout";
+import { headlineSlice } from "./story-layout";
 
-interface StoryBlocksProps {
-  stories: Story[];
+interface StoryCellProps {
+  story: Story;
+  cell: LayoutCell;
+  row: LayoutRow;
   focusedID: string;
-  expandedStoryIDs: ReadonlySet<string>;
+  unreadOnly: boolean;
+  expanded: boolean;
   onExpand(storyID: string): void;
   onFocus(id: string): void;
   onOpenLead(story: Story): void;
@@ -28,84 +24,47 @@ interface StoryBlocksProps {
   onHeart(item: Item): void;
 }
 
-export function StoryBlocks(props: StoryBlocksProps) {
-  let region!: HTMLElement;
-  const [width, setWidth] = createSignal(0);
-  const rows = createMemo(() => blockRows(props.stories, width()));
-  onMount(() => {
-    const observer = new ResizeObserver(() => setWidth(region.clientWidth));
-    observer.observe(region);
-    setWidth(region.clientWidth);
-    onCleanup(() => observer.disconnect());
-  });
-  return (
-    <section ref={region} class="story-blocks" aria-label="Stories">
-      <For each={rows()}>
-        {(row, rowIndex) => (
-          <div
-            class="story-block-row"
-            style={{ "grid-template-columns": row.template }}
-          >
-            <For each={row.stories}>
-              {(story) => (
-                <StoryCard
-                  story={story}
-                  tall={rowIndex() === 0}
-                  focusedID={props.focusedID}
-                  expanded={props.expandedStoryIDs.has(story.story_id)}
-                  onExpand={() => props.onExpand(story.story_id)}
-                  onFocus={props.onFocus}
-                  onOpenLead={() => props.onOpenLead(story)}
-                  onOpen={props.onOpen}
-                  onExternalOpen={props.onExternalOpen}
-                  onHeart={props.onHeart}
-                />
-              )}
-            </For>
-          </div>
-        )}
-      </For>
-      <div class="single-source-rule" aria-hidden="true">
-        <span>SINGLE-SOURCE</span>
-        <i />
-      </div>
-    </section>
-  );
-}
-
-function StoryCard(props: {
-  story: Story;
-  tall: boolean;
-  focusedID: string;
-  expanded: boolean;
-  onExpand(): void;
-  onFocus(id: string): void;
-  onOpenLead(): void;
-  onOpen(item: Item): void;
-  onExternalOpen(item: Item): void;
-  onHeart(item: Item): void;
-}) {
+export function StoryCell(props: StoryCellProps) {
   const lead = () => props.story.items[0];
   const focusID = () => `story:${props.story.story_id}`;
   const collapsed = createMemo(() => headlineSlice(props.story));
   const headlines = createMemo(() =>
     props.expanded ? props.story.items.slice(1) : collapsed().items,
   );
+  const showHeadlines = () => (props.cell.headlineHeight ?? 0) > 0;
+  const cellHeight = () => props.cell.height ?? props.row.height;
+  const leadHeight = () => cellHeight() - (props.cell.headlineHeight ?? 0);
+  const compact = () => props.story.size !== "L";
+  const fullyRead = () => props.story.items.every((item) => item.read);
   const sourceLabel = () =>
     `${Math.min(props.story.source_count, 9)}${props.story.source_count > 9 ? "+" : ""} SOURCES`;
   const focusLeadUnlessHeadline = (target: EventTarget | null) => {
-    if (!(target instanceof Element) || !target.closest(".story-headlines")) {
+    if (
+      !(target instanceof Element) ||
+      (!target.closest(".story-headlines") &&
+        !target.closest(".story-heart") &&
+        !target.closest(".story-expand"))
+    )
       props.onFocus(focusID());
-    }
   };
+
   return (
     <article
-      class="story-card"
+      class="grid-cell story-card story-cell"
       classList={{
         focused: props.focusedID === focusID(),
-        tall: props.tall,
+        read: props.unreadOnly && fullyRead(),
+        compact: compact(),
         "no-media": !lead()?.media_url,
+        [`size-${props.story.size.toLowerCase()}`]: true,
       }}
+      style={{
+        left: `${props.cell.left}px`,
+        top: `${props.cell.offsetY ?? 0}px`,
+        width: `${props.cell.width}px`,
+        height: `${cellHeight()}px`,
+      }}
+      data-item-id={focusID()}
       data-focus-id={focusID()}
       data-story-id={props.story.story_id}
       onFocus={(event) => focusLeadUnlessHeadline(event.target)}
@@ -113,27 +72,28 @@ function StoryCard(props: {
     >
       <Show when={lead()} keyed>
         {(item) => (
-          <>
+          <div class="story-lead-shell" style={{ height: `${leadHeight()}px` }}>
             <Show when={item.media_url}>
               <PrimaryAction
                 item={item}
                 class="story-media-action"
                 tabIndex={-1}
-                onOpen={props.onOpenLead}
+                onOpen={() => props.onOpenLead(props.story)}
                 onExternalOpen={props.onExternalOpen}
               >
                 <div class="story-media">
                   <ResponsiveImage
                     item={item}
-                    sizes="(min-width: 1000px) 55vw, 100vw"
+                    sizes={props.cell.width}
                     alt=""
+                    loading="lazy"
                   />
                 </div>
               </PrimaryAction>
             </Show>
             <div class="story-badges">
               <span>{sourceLabel()}</span>
-              <Show when={item.size === "L"}>
+              <Show when={props.story.size === "L"}>
                 <em>top 10%</em>
               </Show>
             </div>
@@ -160,69 +120,90 @@ function StoryCard(props: {
               item={item}
               class="story-lead"
               onFocus={() => props.onFocus(focusID())}
-              onOpen={props.onOpenLead}
+              onOpen={() => props.onOpenLead(props.story)}
               onExternalOpen={props.onExternalOpen}
             >
               <h2 classList={{ read: item.read }}>{item.title}</h2>
-              <Show when={item.summary}>
+              <Show when={!compact() && item.summary}>
                 <p>{item.summary}</p>
               </Show>
-              <div class="story-meta">
+              <Show when={!compact()}>
+                <div class="story-meta">
+                  <SourceBadge
+                    connector={item.connector}
+                    imageURL={item.favicon_url}
+                    title={item.feed_title}
+                    size={16}
+                  />
+                  <span>{item.feed_title || "Feed"}</span>
+                  <small>· {relativeTime(item.published_ts)}</small>
+                  <Show when={whyText(item)}>
+                    <em title={whyText(item)}>{whyText(item)}</em>
+                  </Show>
+                </div>
+              </Show>
+            </PrimaryAction>
+            <Show when={compact() && !showHeadlines()}>
+              <button
+                type="button"
+                class="story-expand"
+                aria-label={`Show ${props.story.items.length - 1} related headlines`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onExpand(props.story.story_id);
+                }}
+              >
+                +{props.story.items.length - 1}
+              </button>
+            </Show>
+          </div>
+        )}
+      </Show>
+      <Show when={showHeadlines()}>
+        <div class="story-headlines">
+          <For each={headlines()}>
+            {(item) => (
+              <PrimaryAction
+                item={item}
+                class="story-headline"
+                classList={{
+                  focused: props.focusedID === item.item_id,
+                  read: item.read,
+                }}
+                data-focus-id={item.item_id}
+                onFocus={() => props.onFocus(item.item_id)}
+                onMouseEnter={() => props.onFocus(item.item_id)}
+                onOpen={() => props.onOpen(item)}
+                onExternalOpen={props.onExternalOpen}
+              >
+                <span class="story-headline-dot">
+                  <UnreadDot visible={!item.read} />
+                </span>
                 <SourceBadge
                   connector={item.connector}
                   imageURL={item.favicon_url}
                   title={item.feed_title}
-                  size={16}
+                  size={12}
                 />
-                <span>{item.feed_title || "Feed"}</span>
-                <small>· {relativeTime(item.published_ts)}</small>
-                <Show when={whyText(item)}>
-                  <em title={whyText(item)}>{whyText(item)}</em>
-                </Show>
-              </div>
-            </PrimaryAction>
-          </>
-        )}
-      </Show>
-      <div class="story-headlines">
-        <For each={headlines()}>
-          {(item) => (
-            <PrimaryAction
-              item={item}
-              class="story-headline"
-              classList={{
-                focused: props.focusedID === item.item_id,
-                read: item.read,
-              }}
-              data-focus-id={item.item_id}
-              onFocus={() => props.onFocus(item.item_id)}
-              onMouseEnter={() => props.onFocus(item.item_id)}
-              onOpen={() => props.onOpen(item)}
-              onExternalOpen={props.onExternalOpen}
+                <span class="story-headline-feed">
+                  {item.feed_title || "Feed"}
+                </span>
+                <span class="story-headline-title">{item.title}</span>
+                <time>{relativeTime(item.published_ts)}</time>
+              </PrimaryAction>
+            )}
+          </For>
+          <Show when={!props.expanded && collapsed().remaining > 0}>
+            <button
+              type="button"
+              class="story-more"
+              onClick={() => props.onExpand(props.story.story_id)}
             >
-              <span class="story-headline-dot">
-                <UnreadDot visible={!item.read} />
-              </span>
-              <SourceBadge
-                connector={item.connector}
-                imageURL={item.favicon_url}
-                title={item.feed_title}
-                size={12}
-              />
-              <span class="story-headline-feed">
-                {item.feed_title || "Feed"}
-              </span>
-              <span class="story-headline-title">{item.title}</span>
-              <time>{relativeTime(item.published_ts)}</time>
-            </PrimaryAction>
-          )}
-        </For>
-        <Show when={!props.expanded && collapsed().remaining > 0}>
-          <button type="button" class="story-more" onClick={props.onExpand}>
-            +{collapsed().remaining} more
-          </button>
-        </Show>
-      </div>
+              +{collapsed().remaining} more
+            </button>
+          </Show>
+        </div>
+      </Show>
     </article>
   );
 }

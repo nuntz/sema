@@ -3,7 +3,6 @@ import {
   createMemo,
   createSignal,
   For,
-  type JSX,
   on,
   onCleanup,
   onMount,
@@ -35,18 +34,17 @@ import {
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
-import type { Item, Order, ReadAnchor, Story } from "../types";
+import type { FrontPageEntry, Item, Order, ReadAnchor, Story } from "../types";
 import {
+  frontPageEntryItem,
   frontPageSequence,
-  horizontalStoryFocus,
   moveFrontPageFocus,
-  type StoryBlockReadRow,
-  storyScrollReadCandidates,
 } from "./front-page";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
+import { StoryCell } from "./StoryCell";
 import {
   beginLongPress,
   LONG_PRESS_MS,
@@ -57,7 +55,7 @@ import {
 
 interface GridProps {
   items: Item[];
-  lead?: JSX.Element;
+  entries: FrontPageEntry[];
   stories?: Story[];
   expandedStoryIDs?: ReadonlySet<string>;
   layoutKey: number;
@@ -88,6 +86,7 @@ interface GridProps {
   onRelated(item: Item): void;
   onMarkBelow(item: Item): void;
   onMarkStoryBelow?(storyID: string): void;
+  onExpandStory?(storyID: string): void;
   onItemsPassed(ids: string[]): void;
   onFinishAndClear(ids: string[]): void;
   onLoadMore(): void;
@@ -128,7 +127,6 @@ export function Grid(props: GridProps) {
   let endRequested = false;
   let goPending = false;
   const [width, setWidth] = createSignal(0);
-  const [leadHeight, setLeadHeight] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(
     Math.max(0, props.initialScrollTop ?? 0),
@@ -140,10 +138,14 @@ export function Grid(props: GridProps) {
     "idle" | "pulling" | "ready" | "fetching" | "landed" | "up-to-date"
   >("idle");
   const [refreshCount, setRefreshCount] = createSignal(0);
-  let leadElement: HTMLDivElement | undefined;
-  let leadObserver: ResizeObserver | undefined;
   const liveItems = createMemo(
-    () => new Map(props.items.map((item) => [item.item_id, item])),
+    () =>
+      new Map(
+        [
+          ...props.items,
+          ...(props.stories ?? []).flatMap((story) => story.items),
+        ].map((item) => [item.item_id, item]),
+      ),
   );
   const readContext = createMemo(() =>
     gridReadStateContext(props.archive, props.unreadOnly),
@@ -164,10 +166,10 @@ export function Grid(props: GridProps) {
     if (contentWidth() < 310) return 40;
     return width() < 700 ? 24 : 28;
   });
-  const layoutItems = createMemo(
+  const layoutEntries = createMemo(
     on(
       () => props.layoutKey,
-      () => props.items,
+      () => props.entries,
     ),
   );
   let previousLayoutRows: LayoutRow[] = [];
@@ -177,29 +179,48 @@ export function Grid(props: GridProps) {
     return rows;
   };
   const layout = createMemo(() => {
-    const items = layoutItems();
+    const entries = layoutEntries();
     const boundary = caughtUp();
     if (!boundary) {
-      const rows = stableRows(justify(items, contentWidth(), props.hasMore));
+      const rows = stableRows(
+        justify(entries, contentWidth(), props.hasMore, {
+          expandedStoryIDs: props.expandedStoryIDs,
+          focusedID: props.focusedID,
+        }),
+      );
       return { rows, height: totalHeight(rows) };
     }
 
     const beforeIndex = boundary.beforeItemID
-      ? items.findIndex((item) => item.item_id === boundary.beforeItemID)
-      : items.length;
+      ? entries.findIndex(
+          (entry) =>
+            frontPageEntryItem(entry)?.item_id === boundary.beforeItemID,
+        )
+      : entries.length;
     if (beforeIndex < 0) {
-      const rows = stableRows(justify(items, contentWidth(), props.hasMore));
+      const rows = stableRows(
+        justify(entries, contentWidth(), props.hasMore, {
+          expandedStoryIDs: props.expandedStoryIDs,
+          focusedID: props.focusedID,
+        }),
+      );
       return { rows, height: totalHeight(rows) };
     }
 
-    const above = justify(items.slice(0, beforeIndex), contentWidth(), true, {
+    const above = justify(entries.slice(0, beforeIndex), contentWidth(), true, {
       completeSegment: true,
+      expandedStoryIDs: props.expandedStoryIDs,
+      focusedID: props.focusedID,
     });
     const aboveHeight = totalHeight(above);
     const below = justify(
-      items.slice(beforeIndex),
+      entries.slice(beforeIndex),
       contentWidth(),
       props.hasMore,
+      {
+        expandedStoryIDs: props.expandedStoryIDs,
+        focusedID: props.focusedID,
+      },
     ).map((row) => ({
       ...row,
       top: row.top + aboveHeight + dividerHeight(),
@@ -215,44 +236,36 @@ export function Grid(props: GridProps) {
   const rows = createMemo(() => layout().rows);
   const dividerTop = createMemo(() => layout().dividerTop);
   const visible = createMemo(() =>
-    visibleRows(
-      rows(),
-      Math.max(0, scrollTop() - leadHeight()),
-      viewportHeight(),
-    ),
+    visibleRows(rows(), scrollTop(), viewportHeight()),
   );
   const storyList = createMemo(() => props.stories ?? []);
-  const storyMemberIDs = createMemo(
-    () =>
-      new Map(
-        storyList().map((story) => [
-          story.story_id,
-          story.items.map((item) => item.item_id),
-        ]),
-      ),
+  const liveStories = createMemo(
+    () => new Map(storyList().map((story) => [story.story_id, story])),
   );
   const frontSequence = createMemo(() =>
     frontPageSequence(
-      storyList(),
-      props.items,
+      props.entries,
       props.expandedStoryIDs ?? new Set<string>(),
+      props.focusedID,
     ),
   );
   const unreadIDs = createMemo(() =>
-    props.items.filter((item) => !item.read).map((item) => item.item_id),
+    Array.from(liveItems().values())
+      .filter((item) => !item.read)
+      .map((item) => item.item_id),
   );
   const showEndAction = createMemo(
-    () => endMarkActionEnabled(readContext()) && props.items.length > 0,
+    () => endMarkActionEnabled(readContext()) && props.entries.length > 0,
   );
   const showEndMarkAction = createMemo(
     () => showEndAction() && unreadIDs().length > 0,
   );
   const gridEndTop = createMemo(() => {
-    if (!props.archive && props.unreadOnly && props.items.length === 0)
+    if (!props.archive && props.unreadOnly && props.entries.length === 0)
       return 0;
     return layout().height + (!props.archive && props.unreadOnly ? 22 : 28);
   });
-  const endTop = createMemo(() => leadHeight() + gridEndTop());
+  const endTop = createMemo(() => gridEndTop());
   const canvasHeight = createMemo(
     () => endTop() + (props.hasMore ? 0 : viewportHeight()),
   );
@@ -451,60 +464,21 @@ export function Grid(props: GridProps) {
     props.onScrollPosition?.(top);
     const context = readContext();
     const userInitiated = userScrolling && !programmaticScrolling;
-    const measureStoryRows =
-      context === "unread" && userInitiated && storyList().length > 0;
-    const scrollerTop = measureStoryRows
-      ? scroller.getBoundingClientRect().top
-      : 0;
-    const membersByStoryID = measureStoryRows ? storyMemberIDs() : new Map();
-    const storyRows: StoryBlockReadRow[] =
-      measureStoryRows && leadElement
-        ? Array.from(
-            leadElement.querySelectorAll<HTMLElement>(".story-block-row"),
-          ).map((row) => {
-            const bounds = row.getBoundingClientRect();
-            return {
-              top: bounds.top - scrollerTop + top,
-              bottom: bounds.bottom - scrollerTop + top,
-              memberIDs: Array.from(
-                row.querySelectorAll<HTMLElement>("[data-story-id]"),
-              ).flatMap((card) =>
-                card.dataset.storyId
-                  ? (membersByStoryID.get(card.dataset.storyId) ?? [])
-                  : [],
-              ),
-            };
-          })
-        : [];
-    const storyReadIDs = storyScrollReadCandidates(
+    const alreadyRead = new Set(
+      Array.from(liveItems().values())
+        .filter((item) => item.read)
+        .map((item) => item.item_id),
+    );
+    const ids = scrollReadCandidates(
       context,
-      storyRows,
+      rows(),
       top,
       scroller.clientHeight,
       scroller.scrollHeight,
       userInitiated,
       passedIDs,
-      new Set(
-        storyList().flatMap((story) =>
-          story.items.filter((item) => item.read).map((item) => item.item_id),
-        ),
-      ),
-    );
-    for (const id of storyReadIDs) passedIDs.add(id);
-    const alreadyRead = new Set(
-      props.items.filter((item) => item.read).map((item) => item.item_id),
-    );
-    const gridIDs = scrollReadCandidates(
-      context,
-      rows(),
-      Math.max(0, top - leadHeight()),
-      scroller.clientHeight,
-      Math.max(0, scroller.scrollHeight - leadHeight()),
-      userInitiated,
-      passedIDs,
       alreadyRead,
     );
-    const ids = [...storyReadIDs, ...gridIDs];
     for (const id of ids) passedIDs.add(id);
     if (ids.length > 0) props.onItemsPassed(ids);
     if (
@@ -529,11 +503,7 @@ export function Grid(props: GridProps) {
 
   onMount(() => {
     const observer = new ResizeObserver(updateViewport);
-    leadObserver = new ResizeObserver(() =>
-      setLeadHeight(leadElement?.offsetHeight ?? 0),
-    );
     observer.observe(scroller);
-    if (leadElement) leadObserver.observe(leadElement);
     updateViewport();
     scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("wheel", noteUserScroll, { passive: true });
@@ -553,7 +523,6 @@ export function Grid(props: GridProps) {
     onCleanup(() => {
       props.onScrollPosition?.(scroller.scrollTop);
       observer.disconnect();
-      leadObserver?.disconnect();
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", noteUserScroll);
       scroller.removeEventListener("touchmove", noteUserScroll);
@@ -569,19 +538,6 @@ export function Grid(props: GridProps) {
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
       window.clearTimeout(refreshNoticeTimer);
-    });
-  });
-
-  createEffect(() => {
-    props.lead;
-    requestAnimationFrame(() => {
-      leadObserver?.disconnect();
-      if (leadElement) {
-        leadObserver?.observe(leadElement);
-        setLeadHeight(leadElement.offsetHeight);
-      } else {
-        setLeadHeight(0);
-      }
     });
   });
 
@@ -688,7 +644,7 @@ export function Grid(props: GridProps) {
   const goHome = () => {
     endRequested = false;
     const first = frontSequence()[0]?.id ?? rows()[0]?.cells[0]?.item.item_id;
-    if (first && storyList().length > 0) {
+    if (first?.startsWith("story:")) {
       programmaticScroll(() => {
         scroller.scrollTop = 0;
       });
@@ -779,26 +735,10 @@ export function Grid(props: GridProps) {
         else move("up");
         break;
       case "left":
-        if (focusedEntry()?.kind === "story") {
-          const id = horizontalStoryFocus(
-            storyList(),
-            contentWidth(),
-            props.focusedID,
-            -1,
-          );
-          if (id) focusElement(id);
-        } else if (focusedEntry()?.kind !== "headline") move("left");
+        if (focusedEntry()?.kind !== "headline") move("left");
         break;
       case "right":
-        if (focusedEntry()?.kind === "story") {
-          const id = horizontalStoryFocus(
-            storyList(),
-            contentWidth(),
-            props.focusedID,
-            1,
-          );
-          if (id) focusElement(id);
-        } else if (focusedEntry()?.kind !== "headline") move("right");
+        if (focusedEntry()?.kind !== "headline") move("right");
         break;
       case "open":
         if (item) openFocused(item);
@@ -916,22 +856,36 @@ export function Grid(props: GridProps) {
             pullDistance() > 0 ? `translateY(${pullDistance()}px)` : undefined,
         }}
       >
-        <Show when={props.lead}>
-          <div class="grid-lead" ref={leadElement}>
-            {props.lead}
-          </div>
-        </Show>
         <For each={visible()}>
           {(row) => (
             <div
               class="grid-row"
               style={{
-                top: `${row.top + leadHeight() + 14}px`,
+                top: `${row.top + 14}px`,
                 height: `${row.height}px`,
               }}
             >
               <For each={row.cells}>
                 {(cell) => {
+                  if (cell.story) {
+                    const storyID = cell.story.story_id;
+                    return (
+                      <StoryCell
+                        story={liveStories().get(storyID) ?? cell.story}
+                        cell={cell}
+                        row={row}
+                        focusedID={props.focusedID}
+                        unreadOnly={props.unreadOnly}
+                        expanded={props.expandedStoryIDs?.has(storyID) ?? false}
+                        onExpand={(id) => props.onExpandStory?.(id)}
+                        onFocus={props.onFocus}
+                        onOpenLead={(story) => props.onOpenStoryLead?.(story)}
+                        onOpen={props.onOpen}
+                        onExternalOpen={props.onExternalOpen}
+                        onHeart={props.onHeart}
+                      />
+                    );
+                  }
                   const item = createMemo(
                     () => liveItems().get(cell.item.item_id) ?? cell.item,
                   );
@@ -1165,7 +1119,7 @@ export function Grid(props: GridProps) {
             <div
               class="caughtup-shell"
               style={{
-                top: `${top + leadHeight()}px`,
+                top: `${top}px`,
                 height: `${dividerHeight()}px`,
               }}
             >
@@ -1189,27 +1143,29 @@ export function Grid(props: GridProps) {
           <section
             class="end-of-feed"
             classList={{
-              "empty-grid": props.items.length === 0,
+              "empty-grid": props.entries.length === 0,
               "finish-card":
-                !props.archive && props.unreadOnly && props.items.length > 0,
+                !props.archive && props.unreadOnly && props.entries.length > 0,
               "finish-card--all-read":
                 !props.archive &&
                 props.unreadOnly &&
-                props.items.length > 0 &&
+                props.entries.length > 0 &&
                 unreadIDs().length === 0,
               "caughtup-empty":
-                !props.archive && props.unreadOnly && props.items.length === 0,
+                !props.archive &&
+                props.unreadOnly &&
+                props.entries.length === 0,
               "caughtup-empty--pending":
                 !props.archive &&
                 props.unreadOnly &&
-                props.items.length === 0 &&
+                props.entries.length === 0 &&
                 props.pendingNewCount > 0,
               "no-action": !showEndAction(),
             }}
             style={{
               top: `${endTop()}px`,
               "min-height": `${
-                !props.archive && props.unreadOnly && props.items.length === 0
+                !props.archive && props.unreadOnly && props.entries.length === 0
                   ? Math.max(viewportHeight(), width() < 520 ? 474 : 520)
                   : viewportHeight()
               }px`,
@@ -1229,7 +1185,7 @@ export function Grid(props: GridProps) {
                     }
                   >
                     <Show
-                      when={props.items.length > 0}
+                      when={props.entries.length > 0}
                       fallback={
                         <>
                           <i class="caughtup-empty__mark" aria-hidden="true" />

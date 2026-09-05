@@ -20,7 +20,7 @@ export function cellRects(rows: LayoutRow[]): LayoutRect[] {
       const right = left + cell.width;
       const bottom = top + (cell.height ?? row.height);
       return {
-        id: cell.item.item_id,
+        id: cell.story ? `story:${cell.story.story_id}` : cell.item.item_id,
         left,
         right,
         top,

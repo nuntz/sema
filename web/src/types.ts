@@ -81,8 +81,14 @@ export interface Item {
 export interface Story {
   story_id: string;
   source_count: number;
+  order_key: number;
+  size: "S" | "M" | "L";
   items: Item[];
 }
+
+export type FrontPageEntry =
+  | { kind: "item"; item: Item }
+  | { kind: "story"; story: Story };
 
 export interface StoriesResponse {
   stories: Story[];
