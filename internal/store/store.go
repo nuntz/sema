@@ -1949,28 +1949,30 @@ func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []strin
 		seen[itemID] = true
 		keys = append(keys, key(domain.UserPK(userID), domain.SignalSK(itemID)))
 	}
-	pending := keys
-	for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
-		response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
-			Keys: pending, ProjectionExpression: aws.String("SK, #value"), ExpressionAttributeNames: map[string]string{"#value": "value"},
-		}}})
-		if err != nil {
-			return nil, err
-		}
-		for _, row := range response.Responses[s.table] {
-			var signal struct {
-				SK    string `dynamodbav:"SK"`
-				Value int    `dynamodbav:"value"`
-			}
-			if err := attributevalue.UnmarshalMap(row, &signal); err != nil {
+	for offset := 0; offset < len(keys); offset += 100 {
+		pending := keys[offset:min(offset+100, len(keys))]
+		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
+			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
+				Keys: pending, ProjectionExpression: aws.String("SK, #value"), ExpressionAttributeNames: map[string]string{"#value": "value"},
+			}}})
+			if err != nil {
 				return nil, err
 			}
-			result[strings.TrimPrefix(signal.SK, "S#")] = signal.Value
+			for _, row := range response.Responses[s.table] {
+				var signal struct {
+					SK    string `dynamodbav:"SK"`
+					Value int    `dynamodbav:"value"`
+				}
+				if err := attributevalue.UnmarshalMap(row, &signal); err != nil {
+					return nil, err
+				}
+				result[strings.TrimPrefix(signal.SK, "S#")] = signal.Value
+			}
+			pending = response.UnprocessedKeys[s.table].Keys
 		}
-		pending = response.UnprocessedKeys[s.table].Keys
-	}
-	if len(pending) > 0 {
-		return nil, fmt.Errorf("%d signal lookups were throttled", len(pending))
+		if len(pending) > 0 {
+			return nil, fmt.Errorf("%d signal lookups were throttled", len(pending))
+		}
 	}
 	return result, nil
 }

@@ -1032,6 +1032,35 @@ func TestSignalValuesRetriesUnprocessedKeys(t *testing.T) {
 	}
 }
 
+func TestSignalValuesChunksAtDynamoBatchLimit(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		calls++
+		request := input.RequestItems["table"]
+		if len(request.Keys) == 0 || len(request.Keys) > 100 {
+			t.Fatalf("signal batch size = %d", len(request.Keys))
+		}
+		rows := make([]map[string]types.AttributeValue, 0, len(request.Keys))
+		for _, itemKey := range request.Keys {
+			rows = append(rows, map[string]types.AttributeValue{
+				"SK": itemKey["SK"], "value": &types.AttributeValueMemberN{Value: "1"},
+			})
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+	}}
+	itemIDs := make([]string, 205)
+	for index := range itemIDs {
+		itemIDs[index] = fmt.Sprintf("item-%03d", index)
+	}
+	values, err := New(db, nil, "table", "", "").SignalValues(context.Background(), "user", itemIDs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 || len(values) != len(itemIDs) {
+		t.Fatalf("calls = %d, values = %d", calls, len(values))
+	}
+}
+
 func TestSignalValuesSkipsEmptyBatch(t *testing.T) {
 	db := &fakeDynamoDB{batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
 		t.Fatal("unexpected BatchGetItem")
