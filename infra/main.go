@@ -48,6 +48,14 @@ func main() {
 		if scoringVersion == "" {
 			scoringVersion = "2"
 		}
+		storySimilarity := cfg.GetInt("storySimilarity")
+		if storySimilarity == 0 {
+			storySimilarity = 80
+		}
+		storyWindowHours := cfg.GetInt("storyWindowHours")
+		if storyWindowHours == 0 {
+			storyWindowHours = 72
+		}
 		youtubeDiscoveryEnabled := !strings.EqualFold(strings.TrimSpace(cfg.Get("youtubeDiscoveryEnabled")), "false")
 		vectorIndexName := strings.TrimSpace(cfg.Get("vectorIndex"))
 		if vectorIndexName == "" {
@@ -167,6 +175,9 @@ func main() {
 			"MODEL_VERSION": pulumi.String(modelVersion), "SCORING_VERSION": pulumi.String(scoringVersion), "SUMMARIZE_MODEL": pulumi.String(summarizeModel),
 			"VECTOR_BUCKET": vectorBucket.VectorBucketName, "VECTOR_INDEX": vectorIndex.IndexName,
 		}
+		storyEnvironment := pulumi.StringMap{
+			"STORY_SIMILARITY": pulumi.Sprintf("%d", storySimilarity), "STORY_WINDOW_HOURS": pulumi.Sprintf("%d", storyWindowHours),
+		}
 		schedulerRole, err := lambdaRole(ctx, "scheduler", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, "")
 		if err != nil {
 			return err
@@ -200,11 +211,11 @@ func main() {
 		if err != nil {
 			return err
 		}
-		itemWorker, err := function(ctx, "item-worker", itemRole, 1024, 120, 10, common)
+		itemWorker, err := function(ctx, "item-worker", itemRole, 1024, 120, 10, merge(common, storyEnvironment))
 		if err != nil {
 			return err
 		}
-		rescoreLambda, err := function(ctx, "rescore", rescoreRole, 256, 300, 0, common)
+		rescoreLambda, err := function(ctx, "rescore", rescoreRole, 256, 300, 0, merge(common, storyEnvironment))
 		if err != nil {
 			return err
 		}
@@ -212,7 +223,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		apiLambda, err := function(ctx, "api", apiRole, 1024, 29, 0, merge(common, pulumi.StringMap{
+		apiLambda, err := function(ctx, "api", apiRole, 1024, 29, 0, merge(common, storyEnvironment, pulumi.StringMap{
 			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
 			"GOOGLE_CLIENT_ID": pulumi.String(googleClientID), "YOUTUBE_DISCOVERY_ENABLED": pulumi.Sprintf("%t", youtubeDiscoveryEnabled),
 		}))

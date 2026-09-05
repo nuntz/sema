@@ -521,14 +521,14 @@ type cursor struct {
 }
 
 func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
-	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, nil)
+	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, nil, nil)
 	return items, next, err
 }
 
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages until the end or page budget.
-func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs, excludeItemIDs map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
@@ -580,6 +580,9 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 			if allowedFeedIDs != nil && !allowedFeedIDs[item.FeedID] {
 				continue
 			}
+			if excludeItemIDs[item.ItemID] {
+				continue
+			}
 			if seenItemIDs[item.ItemID] {
 				continue
 			}
@@ -612,6 +615,115 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	}
 	next, err := encodeCursor(last)
 	return items, next, newestRead, err
+}
+
+func (s *Store) PutStory(ctx context.Context, story domain.Story) error {
+	if story.PK == "" || story.SK == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
+		return errors.New("story key, ID, and members are required")
+	}
+	encoded, err := attributevalue.MarshalMap(story)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: encoded})
+	return err
+}
+
+func (s *Store) Story(ctx context.Context, userID, storyID string) (domain.Story, error) {
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return domain.Story{}, err
+	}
+	if len(response.Item) == 0 {
+		return domain.Story{}, ErrNotFound
+	}
+	var row domain.Story
+	return row, attributevalue.UnmarshalMap(response.Item, &row)
+}
+
+func (s *Store) Stories(ctx context.Context, userID string) ([]domain.Story, error) {
+	rows := []domain.Story{}
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			FilterExpression: aws.String("#ttl > :now"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "T#"},
+				":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+			},
+			ExclusiveStartKey: start, ConsistentRead: aws.Bool(true),
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Story
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		rows = append(rows, page...)
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return rows, nil
+		}
+	}
+}
+
+func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID string, ttl int64) error {
+	if userID == "" || storyID == "" || itemID == "" || ttl == 0 {
+		return errors.New("story member identity and ttl are required")
+	}
+	now := domain.Timestamp(time.Now())
+	values := map[string]types.AttributeValue{
+		":member":  &types.AttributeValueMemberSS{Value: []string{itemID}},
+		":updated": &types.AttributeValueMemberS{Value: now},
+		":ttl":     &types.AttributeValueMemberN{Value: strconv.FormatInt(ttl, 10)},
+	}
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)),
+		UpdateExpression:         aws.String("ADD member_ids :member SET updated_at = :updated, #ttl = :ttl"),
+		ConditionExpression:      aws.String("attribute_exists(PK) AND #ttl <= :ttl"),
+		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: values,
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if !errors.As(err, &conditional) {
+		return err
+	}
+	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)),
+		UpdateExpression:          aws.String("ADD member_ids :member SET updated_at = :updated"),
+		ConditionExpression:       aws.String("attribute_exists(PK)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":member": values[":member"], ":updated": values[":updated"]},
+	})
+	return err
+}
+
+func (s *Store) SetItemStory(ctx context.Context, item domain.Item, storyID string) error {
+	if item.PK == "" || item.SK == "" || item.ItemID == "" {
+		return errors.New("item key and ID are required")
+	}
+	input := &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+		ConditionExpression:       aws.String("attribute_exists(PK) AND item_id = :item"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":item": &types.AttributeValueMemberS{Value: item.ItemID}},
+	}
+	if storyID == "" {
+		input.UpdateExpression = aws.String("REMOVE story_id")
+	} else {
+		input.UpdateExpression = aws.String("SET story_id = :story")
+		input.ExpressionAttributeValues[":story"] = &types.AttributeValueMemberS{Value: storyID}
+	}
+	_, err := s.db.UpdateItem(ctx, input)
+	return err
+}
+
+func (s *Store) DeleteStory(ctx context.Context, userID, storyID string) error {
+	_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)),
+	})
+	return err
 }
 
 func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, error) {

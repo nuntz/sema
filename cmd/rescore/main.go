@@ -11,6 +11,7 @@ import (
 	"github.com/nuntz/sema/internal/observability"
 	rankingrescore "github.com/nuntz/sema/internal/rescore"
 	"github.com/nuntz/sema/internal/store"
+	storycluster "github.com/nuntz/sema/internal/story"
 )
 
 type request struct {
@@ -23,6 +24,8 @@ type response struct {
 	ItemsRescored        int `json:"items_rescored"`
 	ItemsSkippedNoVector int `json:"items_skipped_no_vector"`
 	Skipped              int `json:"skipped"`
+	StoriesConsolidated  int `json:"stories_consolidated"`
+	StoriesDeleted       int `json:"stories_deleted"`
 }
 
 type handler struct {
@@ -53,11 +56,15 @@ func (h *handler) run(ctx context.Context, input request) (response, error) {
 		output.Users++
 		output.ItemsRescored += result.ItemsRescored
 		output.ItemsSkippedNoVector += result.ItemsSkippedNoVector
+		output.StoriesConsolidated += result.StoriesConsolidated
+		output.StoriesDeleted += result.StoriesDeleted
 		observability.Emit(map[string]float64{
 			"RescoreDurationMs":           float64(result.Duration.Milliseconds()),
 			"ItemsRescored":               float64(result.ItemsRescored),
 			"RescoreItemsSkippedNoVector": float64(result.ItemsSkippedNoVector),
 			"CentroidDrift":               result.CentroidDrift,
+			"StoriesConsolidated":         float64(result.StoriesConsolidated),
+			"StoriesDeleted":              float64(result.StoriesDeleted),
 		}, map[string]string{"User": userID})
 	}
 	return output, nil
@@ -73,6 +80,6 @@ func main() {
 	if version == "" {
 		version = "amazon.titan-embed-text-v2:0"
 	}
-	engine := &rankingrescore.Engine{Repository: repository, Version: version}
+	engine := &rankingrescore.Engine{Repository: repository, Version: version, StoryConfig: storycluster.FromEnv()}
 	lambda.Start((&handler{store: repository, engine: engine}).run)
 }

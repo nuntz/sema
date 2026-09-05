@@ -12,12 +12,16 @@ import (
 )
 
 type fakeRepository struct {
-	model        domain.Model
-	signals      []domain.Signal
-	feeds        []domain.Feed
-	items        []domain.Item
-	recomputed   bool
-	replacements []domain.Item
+	model          domain.Model
+	signals        []domain.Signal
+	feeds          []domain.Feed
+	items          []domain.Item
+	recomputed     bool
+	replacements   []domain.Item
+	stories        []domain.Story
+	storedStories  []domain.Story
+	deletedStories []string
+	clearedItems   []string
 }
 
 func (f *fakeRepository) Model(context.Context, string) (domain.Model, error) {
@@ -47,6 +51,23 @@ func (f *fakeRepository) LiveItems(context.Context, string) ([]domain.Item, erro
 func (*fakeRepository) LoadItemVectors(context.Context, string, []domain.Item) error { return nil }
 func (f *fakeRepository) UpdateItemRankings(_ context.Context, items []domain.Item) error {
 	f.replacements = append([]domain.Item(nil), items...)
+	return nil
+}
+func (f *fakeRepository) Stories(context.Context, string) ([]domain.Story, error) {
+	return append([]domain.Story(nil), f.stories...), nil
+}
+func (f *fakeRepository) PutStory(_ context.Context, row domain.Story) error {
+	f.storedStories = append(f.storedStories, row)
+	return nil
+}
+func (f *fakeRepository) DeleteStory(_ context.Context, _ string, storyID string) error {
+	f.deletedStories = append(f.deletedStories, storyID)
+	return nil
+}
+func (f *fakeRepository) SetItemStory(_ context.Context, item domain.Item, storyID string) error {
+	if storyID == "" {
+		f.clearedItems = append(f.clearedItems, item.ItemID)
+	}
 	return nil
 }
 
@@ -184,5 +205,35 @@ func TestCentroidDrift(t *testing.T) {
 				t.Fatalf("centroidDrift() = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestRescoreConsolidatesAndDeletesStories(t *testing.T) {
+	now := time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC)
+	vector := score.EncodeVector([]float32{1, 0})
+	repository := &fakeRepository{
+		model: domain.Model{PK: "U#user", SK: "MODEL", Version: "v"},
+		items: []domain.Item{
+			{ItemID: "a", StoryID: "keep", FeedID: "one", PublishedTS: domain.Timestamp(now), Vector: vector, TTL: now.Add(time.Hour).Unix()},
+			{ItemID: "b", StoryID: "keep", FeedID: "two", PublishedTS: domain.Timestamp(now), Vector: vector, TTL: now.Add(2 * time.Hour).Unix()},
+			{ItemID: "only", StoryID: "delete", FeedID: "one", PublishedTS: domain.Timestamp(now), Vector: vector, TTL: now.Add(time.Hour).Unix()},
+		},
+		stories: []domain.Story{
+			{StoryID: "keep", MemberIDs: []string{"a", "expired", "b"}, CreatedAt: domain.Timestamp(now.Add(-time.Hour))},
+			{StoryID: "delete", MemberIDs: []string{"only", "gone"}},
+		},
+	}
+	result, err := (&Engine{Repository: repository, Version: "v", Now: func() time.Time { return now }}).RunUser(context.Background(), "user", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StoriesConsolidated != 1 || result.StoriesDeleted != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(repository.storedStories) != 1 || len(repository.storedStories[0].MemberIDs) != 2 || repository.storedStories[0].TTL != now.Add(2*time.Hour).Unix() {
+		t.Fatalf("stored stories = %#v", repository.storedStories)
+	}
+	if len(repository.deletedStories) != 1 || repository.deletedStories[0] != "delete" || len(repository.clearedItems) != 1 || repository.clearedItems[0] != "only" {
+		t.Fatalf("deleted = %#v, cleared = %#v", repository.deletedStories, repository.clearedItems)
 	}
 }

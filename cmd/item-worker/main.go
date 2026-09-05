@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ import (
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
+	storycluster "github.com/nuntz/sema/internal/story"
 	"github.com/nuntz/sema/internal/summarize"
 	bedrocksummary "github.com/nuntz/sema/internal/summarize/bedrock"
 	"github.com/nuntz/sema/internal/vectorstore"
@@ -40,6 +42,7 @@ type httpClient interface {
 
 type vectorBatchStore interface {
 	PutBatch(context.Context, []vectorstore.Record) error
+	Query(context.Context, []float32, int, int64) ([]vectorstore.Match, error)
 }
 
 type handler struct {
@@ -52,6 +55,7 @@ type handler struct {
 	modelVersion   string
 	scoringVersion string
 	vectors        vectorBatchStore
+	storyConfig    storycluster.Config
 }
 
 type itemStore interface {
@@ -65,6 +69,10 @@ type itemStore interface {
 	PutItem(context.Context, domain.Item) (bool, error)
 	PutItemFailure(context.Context, string, string, int64) error
 	Signals(context.Context, string) ([]domain.Signal, error)
+	ResolveItemIDs(context.Context, string, []string) ([]domain.Item, error)
+	PutStory(context.Context, domain.Story) error
+	AddStoryMember(context.Context, string, string, string, int64) error
+	SetItemStory(context.Context, domain.Item, string) error
 }
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -401,6 +409,17 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 		MediaKey: mediaKey, MediaVariants: mediaVariants, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
 		Score: value, Size: ingestSize(value, h.scoringVersion, model), Vector: score.EncodeVector(vector), ModelVersion: h.modelVersion, Why: why, TTL: published.Add(domain.Retention).Unix(),
 	}
+	storyMetrics := map[string]float64{}
+	if message.Reprocess && existing.StoryID != "" {
+		item.StoryID = existing.StoryID
+	} else if h.vectors != nil {
+		if assignmentMetrics, storyErr := h.assignStory(ctx, message.User, vector, &item); storyErr != nil {
+			item.StoryID = ""
+			slog.WarnContext(ctx, "story assignment failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", storyErr)
+		} else {
+			storyMetrics = assignmentMetrics
+		}
+	}
 	written := false
 	if message.Reprocess {
 		item.PK, item.SK, item.FeedPK = existing.PK, existing.SK, existing.FeedPK
@@ -420,6 +439,9 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 	}
 	slog.Info("item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "written", written, "has_body", hasBody, "extract_quality", extractQuality, "summary_source", summarySource, "has_media", mediaKey != "", "duration_ms", time.Since(started).Milliseconds())
 	metrics := map[string]float64{"ItemWorkerDurationMs": float64(time.Since(started).Milliseconds()), "BedrockLatencyMs": float64(time.Since(embedStarted).Milliseconds())}
+	for name, metric := range storyMetrics {
+		metrics[name] = metric
+	}
 	for name, metric := range summaryMetrics {
 		metrics[name] = metric
 	}
@@ -450,6 +472,73 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 	}
 	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", observability.Emit)
 	return vectorRecord, nil
+}
+
+func (h *handler) assignStory(ctx context.Context, userID string, vector []float32, item *domain.Item) (map[string]float64, error) {
+	metrics := map[string]float64{}
+	matches, err := h.vectors.Query(ctx, vector, 20, time.Now().Unix())
+	if err != nil {
+		return metrics, err
+	}
+	ids := make([]string, 0, len(matches))
+	similarities := make(map[string]int, len(matches))
+	for _, match := range matches {
+		if match.Key == item.ItemID {
+			continue
+		}
+		ids = append(ids, match.Key)
+		similarities[match.Key] = match.Similarity
+	}
+	resolved, err := h.store.ResolveItemIDs(ctx, userID, ids)
+	if err != nil {
+		return metrics, err
+	}
+	now := time.Now().Unix()
+	candidates := make([]storycluster.Candidate, 0, len(resolved))
+	for _, candidate := range resolved {
+		if candidate.TTL == 0 || candidate.TTL <= now {
+			continue
+		}
+		similarity, ok := similarities[candidate.ItemID]
+		if !ok || !storycluster.Qualifies(candidate, *item, similarity, h.storyConfig) {
+			continue
+		}
+		candidates = append(candidates, storycluster.Candidate{Item: candidate, Similarity: similarity})
+	}
+	metrics["story_candidates"] = float64(len(candidates))
+	if len(candidates) == 0 {
+		return metrics, nil
+	}
+	if storyID, found := storycluster.Choose(candidates); found {
+		if err := h.store.AddStoryMember(ctx, userID, storyID, item.ItemID, item.TTL); err != nil {
+			return metrics, err
+		}
+		item.StoryID = storyID
+		metrics["story_joined"] = 1
+		return metrics, nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Similarity != candidates[j].Similarity {
+			return candidates[i].Similarity > candidates[j].Similarity
+		}
+		return candidates[i].Item.ItemID < candidates[j].Item.ItemID
+	})
+	founder := candidates[0].Item
+	storyID := founder.ItemID
+	created := domain.Timestamp(time.Now())
+	row := domain.Story{
+		PK: domain.UserPK(userID), SK: domain.StorySK(storyID), StoryID: storyID,
+		MemberIDs: []string{storyID, item.ItemID}, CreatedAt: created, UpdatedAt: created, TTL: max(founder.TTL, item.TTL),
+	}
+	if err := h.store.PutStory(ctx, row); err != nil {
+		return metrics, err
+	}
+	if err := h.store.SetItemStory(ctx, founder, storyID); err != nil {
+		return metrics, err
+	}
+	item.StoryID = storyID
+	metrics["story_created"] = 1
+	return metrics, nil
 }
 
 func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {
@@ -704,7 +793,7 @@ func main() {
 	h := &handler{
 		store: repository, http: articleHTTP, media: processor, embedder: embedder, summarizer: summarizer,
 		modelVersion: modelVersion, scoringVersion: scoringVersion,
-		vectors: vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex),
+		vectors: vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex), storyConfig: storycluster.FromEnv(),
 	}
 	h.models = score.NewCache(repository, 5*time.Minute, modelVersion)
 	lambda.Start(h.run)

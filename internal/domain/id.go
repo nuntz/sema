@@ -8,13 +8,13 @@ import (
 )
 
 func FeedID(rawURL string) string {
-	return hashID(normalizeURL(rawURL))
+	return hashID(NormalizeURL(rawURL))
 }
 
 func ItemID(feedID, guid, itemURL string) string {
 	identity := strings.TrimSpace(guid)
 	if identity == "" {
-		identity = normalizeURL(itemURL)
+		identity = NormalizeURL(itemURL)
 	}
 	return hashID(feedID + "\x00" + identity)
 }
@@ -24,7 +24,8 @@ func hashID(value string) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-func normalizeURL(raw string) string {
+// NormalizeURL is the canonical URL comparison used for feed and story identity.
+func NormalizeURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		return strings.TrimSpace(raw)
@@ -33,3 +34,5 @@ func normalizeURL(raw string) string {
 	u.Host = strings.ToLower(u.Host)
 	return u.String()
 }
+
+func normalizeURL(raw string) string { return NormalizeURL(raw) }

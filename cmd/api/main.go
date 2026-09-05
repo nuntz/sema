@@ -42,6 +42,7 @@ import (
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
+	storycluster "github.com/nuntz/sema/internal/story"
 	"github.com/nuntz/sema/internal/vectorstore"
 )
 
@@ -66,6 +67,7 @@ type server struct {
 	embedder        embed.Embedder
 	vectors         vectorstore.Store
 	emit            func(map[string]float64, map[string]string)
+	storyConfig     storycluster.Config
 }
 
 type unsupportedFeed struct {
@@ -131,6 +133,8 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 		result = s.patchMe(ctx, claims.Subject, request.Body)
 	case method == http.MethodGet && path == "/items":
 		result = s.getItems(ctx, claims.Subject, request.QueryStringParameters)
+	case method == http.MethodGet && path == "/stories":
+		result = s.getStories(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/search":
 		result = s.getSearch(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
@@ -184,7 +188,7 @@ func apiPath(raw string) string {
 func apiRouteTemplate(method, path string) string {
 	method = boundedMethod(method)
 	for _, static := range []string{
-		"/", "/session", "/me", "/items", "/search", "/items/read-batch", "/ranking/recompute",
+		"/", "/session", "/me", "/items", "/stories", "/search", "/items/read-batch", "/ranking/recompute",
 		"/archive", "/feeds", "/feeds/export.opml", "/feeds/discover", "/feeds/import",
 	} {
 		if path == static {
@@ -505,7 +509,18 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 		return s.failure("load feeds for item filtering", err)
 	}
-	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, allowed)
+	excludeStories, err := parseBool(query["exclude_stories"], "exclude_stories")
+	if err != nil {
+		return badRequest(err)
+	}
+	var hidden map[string]bool
+	if excludeStories {
+		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead)
+		if err != nil {
+			return s.failure("render stories for item filtering", err)
+		}
+	}
+	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, allowed, hidden)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -526,6 +541,71 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 	}
 	return response(http.StatusOK, payload)
+}
+
+func (s *server) getStories(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	includeRead, err := parseIncludeRead(query["include_read"])
+	if err != nil {
+		return badRequest(err)
+	}
+	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"])
+	if err != nil {
+		if errors.Is(err, errInvalidFeedTag) {
+			return badRequest(err)
+		}
+		return s.failure("load feeds for story filtering", err)
+	}
+	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead)
+	if err != nil {
+		return s.failure("list stories", err)
+	}
+	return response(http.StatusOK, map[string]any{"stories": stories})
+}
+
+func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool) ([]storycluster.Rendered, map[string]bool, error) {
+	rows, err := s.store.Stories(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ids := make([]string, 0)
+	for _, row := range rows {
+		ids = append(ids, row.MemberIDs...)
+	}
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	live := items[:0]
+	now := time.Now().Unix()
+	for _, item := range items {
+		if strings.HasPrefix(item.SK, "I#") && item.TTL > now {
+			live = append(live, item)
+		}
+	}
+	items = live
+	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+		return nil, nil, err
+	}
+	if err := s.store.ResolveRead(ctx, userID, items); err != nil {
+		return nil, nil, err
+	}
+	if err := s.prepareItems(ctx, userID, items); err != nil {
+		return nil, nil, err
+	}
+	byID := make(map[string]domain.Item, len(items))
+	for _, item := range items {
+		byID[item.ItemID] = item
+	}
+	members := make(map[string][]domain.Item, len(rows))
+	for _, row := range rows {
+		for _, itemID := range row.MemberIDs {
+			if item, ok := byID[itemID]; ok {
+				members[row.StoryID] = append(members[row.StoryID], item)
+			}
+		}
+	}
+	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly)
+	return rendered, hidden, nil
 }
 
 func (s *server) getArchive(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
@@ -581,13 +661,17 @@ func (s *server) prepareItems(ctx context.Context, userID string, items []domain
 }
 
 func parseIncludeRead(value string) (bool, error) {
+	return parseBool(value, "include_read")
+}
+
+func parseBool(value, name string) (bool, error) {
 	switch value {
 	case "", "false":
 		return false, nil
 	case "true":
 		return true, nil
 	default:
-		return false, errors.New("include_read must be true or false")
+		return false, fmt.Errorf("%s must be true or false", name)
 	}
 }
 
@@ -1112,6 +1196,6 @@ func main() {
 		}, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, 10<<20)), feedCache: make(map[string]cachedFeedList),
 		embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), modelVersion),
-		vectors:  vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex),
+		vectors:  vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex), storyConfig: storycluster.FromEnv(),
 	}).handle)
 }

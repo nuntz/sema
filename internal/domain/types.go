@@ -105,6 +105,7 @@ type Item struct {
 	SK             string         `dynamodbav:"SK" json:"-"`
 	FeedPK         string         `dynamodbav:"feed_pk" json:"-"`
 	ItemID         string         `dynamodbav:"item_id" json:"item_id"`
+	StoryID        string         `dynamodbav:"story_id,omitempty" json:"story_id,omitempty"`
 	FeedID         string         `dynamodbav:"feed_id" json:"feed_id"`
 	FeedTitle      string         `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
 	Connector      string         `dynamodbav:"connector,omitempty" json:"connector"`
@@ -144,6 +145,16 @@ type Item struct {
 	Hearted        bool           `dynamodbav:"-" json:"hearted"`
 	Archived       bool           `dynamodbav:"-" json:"archived,omitempty"`
 	Similarity     *int           `dynamodbav:"-" json:"similarity,omitempty"`
+}
+
+type Story struct {
+	PK        string   `dynamodbav:"PK" json:"-"`
+	SK        string   `dynamodbav:"SK" json:"-"`
+	StoryID   string   `dynamodbav:"story_id" json:"story_id"`
+	MemberIDs []string `dynamodbav:"member_ids,stringset" json:"member_ids"`
+	CreatedAt string   `dynamodbav:"created_at" json:"created_at"`
+	UpdatedAt string   `dynamodbav:"updated_at" json:"updated_at"`
+	TTL       int64    `dynamodbav:"ttl" json:"-"`
 }
 
 // DeriveSearchText is the single writer-side definition used by live items,
@@ -318,6 +329,7 @@ func BehaviourSK(id string) string    { return "B#" + id }
 func ReadSK(id string) string         { return "R#" + id }
 func ItemIdentitySK(id string) string { return "D#" + id }
 func ItemVectorSK(id string) string   { return "V#" + id }
+func StorySK(id string) string        { return "T#" + id }
 
 func ArchiveSK(hearted time.Time, id string) string {
 	return "A#" + Timestamp(hearted) + "#" + id

@@ -152,6 +152,23 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 	}
 }
 
+func TestGetStoriesReturnsArray(t *testing.T) {
+	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value != "T#" {
+			t.Fatalf("story prefix = %#v", input.ExpressionAttributeValues)
+		}
+		return &dynamodb.QueryOutput{}, nil
+	}}
+	server := &server{
+		store:     store.New(db, nil, "table", "", ""),
+		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}},
+	}
+	got := server.getStories(context.Background(), "user", map[string]string{})
+	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
+		t.Fatalf("stories response = %d, %s", got.StatusCode, got.Body)
+	}
+}
+
 type apiQueue struct {
 	input *sqs.SendMessageBatchInput
 	send  func(*sqs.SendMessageBatchInput) (*sqs.SendMessageBatchOutput, error)
@@ -330,6 +347,7 @@ func TestAPIRouteTemplateBoundsDynamicPaths(t *testing.T) {
 		method, path, want string
 	}{
 		{http.MethodGet, "/items/first", "GET /items/{item_id}"},
+		{http.MethodGet, "/stories", "GET /stories"},
 		{http.MethodGet, "/items/second/similar", "GET /items/{item_id}/similar"},
 		{http.MethodPost, "/items/secret/events", "POST /items/{item_id}/events"},
 		{http.MethodPatch, "/feeds/private-feed", "PATCH /feeds/{feed_id}"},

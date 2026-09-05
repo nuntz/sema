@@ -9,6 +9,7 @@ import (
 
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
+	storycluster "github.com/nuntz/sema/internal/story"
 )
 
 var ErrReplayActive = errors.New("embedding replay is still in progress")
@@ -22,12 +23,17 @@ type Repository interface {
 	LiveItems(context.Context, string) ([]domain.Item, error)
 	LoadItemVectors(context.Context, string, []domain.Item) error
 	UpdateItemRankings(context.Context, []domain.Item) error
+	Stories(context.Context, string) ([]domain.Story, error)
+	PutStory(context.Context, domain.Story) error
+	DeleteStory(context.Context, string, string) error
+	SetItemStory(context.Context, domain.Item, string) error
 }
 
 type Engine struct {
-	Repository Repository
-	Version    string
-	Now        func() time.Time
+	Repository  Repository
+	Version     string
+	Now         func() time.Time
+	StoryConfig storycluster.Config
 }
 
 type Result struct {
@@ -35,6 +41,8 @@ type Result struct {
 	ItemsRescored        int
 	ItemsSkippedNoVector int
 	CentroidDrift        float64
+	StoriesConsolidated  int
+	StoriesDeleted       int
 	Duration             time.Duration
 }
 
@@ -75,6 +83,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err != nil {
 		return Result{}, err
 	}
+	allLiveItems := append([]domain.Item(nil), items...)
 	if err := e.Repository.LoadItemVectors(ctx, userID, items); err != nil {
 		return Result{}, err
 	}
@@ -108,6 +117,10 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err := e.Repository.UpdateItemRankings(ctx, items); err != nil {
 		return Result{}, err
 	}
+	storiesConsolidated, storiesDeleted, err := e.consolidateStories(ctx, userID, allLiveItems, started)
+	if err != nil {
+		return Result{}, err
+	}
 	model.ReplayTS, model.ReplayVersion = "", ""
 	if err := e.Repository.PutModel(ctx, model); err != nil {
 		return Result{}, err
@@ -118,8 +131,58 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		ItemsRescored:        len(items),
 		ItemsSkippedNoVector: itemsSkippedNoVector,
 		CentroidDrift:        drift,
+		StoriesConsolidated:  storiesConsolidated,
+		StoriesDeleted:       storiesDeleted,
 		Duration:             e.now().Sub(started),
 	}, nil
+}
+
+func (e *Engine) consolidateStories(ctx context.Context, userID string, liveItems []domain.Item, now time.Time) (int, int, error) {
+	rows, err := e.Repository.Stories(ctx, userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	live := make(map[string]domain.Item, len(liveItems))
+	for _, item := range liveItems {
+		live[item.ItemID] = item
+	}
+	consolidated, deleted := 0, 0
+	for _, row := range rows {
+		memberIDs := make([]string, 0, len(row.MemberIDs))
+		seen := make(map[string]bool, len(row.MemberIDs))
+		var ttl int64
+		for _, itemID := range row.MemberIDs {
+			item, ok := live[itemID]
+			if !ok || seen[itemID] {
+				continue
+			}
+			seen[itemID] = true
+			memberIDs = append(memberIDs, itemID)
+			ttl = max(ttl, item.TTL)
+		}
+		if len(memberIDs) < 2 {
+			if err := e.Repository.DeleteStory(ctx, userID, row.StoryID); err != nil {
+				return consolidated, deleted, err
+			}
+			for _, itemID := range memberIDs {
+				item := live[itemID]
+				if item.StoryID == row.StoryID {
+					if err := e.Repository.SetItemStory(ctx, item, ""); err != nil {
+						return consolidated, deleted, err
+					}
+				}
+			}
+			deleted++
+			continue
+		}
+		row.MemberIDs, row.TTL, row.UpdatedAt = memberIDs, ttl, domain.Timestamp(now)
+		if err := e.Repository.PutStory(ctx, row); err != nil {
+			return consolidated, deleted, err
+		}
+		consolidated++
+	}
+	// Story merging is intentionally left to a follow-up pass; consolidation only removes stale membership.
+	return consolidated, deleted, nil
 }
 
 func centroidDrift(old, current []byte) float64 {

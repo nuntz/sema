@@ -229,7 +229,7 @@ func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
 		return output, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, map[string]bool{"dev": true})
+	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, map[string]bool{"dev": true}, nil)
 	if err != nil || cursor != "" || calls != 2 || len(items) != 2 || items[0].FeedID != "dev" || items[1].FeedID != "dev" {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
 	}
@@ -262,7 +262,7 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 		},
 	}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil)
+	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil, nil)
 	if err != nil || cursor != "" || len(items) != 2 || items[0].ItemID != "new" || items[1].ItemID != "old" {
 		t.Fatalf("items = %#v, cursor = %q, err = %v", items, cursor, err)
 	}
@@ -315,7 +315,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 	}
 	repository := New(db, nil, "table", "", "")
 
-	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil)
+	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil, nil)
 	if err != nil || queryCalls != itemsForFeedsPageBudget || len(first) != 1 || first[0].ItemID != "unread-5" || cursor == "" {
 		t.Fatalf("budget page = %#v, cursor = %q, queries = %d, err = %v", first, cursor, queryCalls, err)
 	}
@@ -323,7 +323,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 		t.Fatalf("budget page anchor = %#v", anchor)
 	}
 
-	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, nil)
+	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, nil, nil)
 	if err != nil || queryCalls != itemsForFeedsPageBudget+1 || len(second) != 1 || second[0].ItemID != "unread-6" || cursor != "" || anchor != nil {
 		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, queries = %d, err = %v", second, cursor, anchor, queryCalls, err)
 	}

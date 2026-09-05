@@ -15,12 +15,19 @@ import (
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/store"
+	storycluster "github.com/nuntz/sema/internal/story"
 	"github.com/nuntz/sema/internal/vectorstore"
 )
 
 type fakeItemStore struct {
-	feedErr  error
-	failures []itemFailure
+	feedErr      error
+	failures     []itemFailure
+	resolved     []domain.Item
+	putStory     *domain.Story
+	addedStoryID string
+	addedItemID  string
+	setStoryItem string
+	setStoryID   string
 }
 
 type itemFailure struct {
@@ -47,6 +54,21 @@ func (s *fakeItemStore) PutItemFailure(_ context.Context, user, item string, ttl
 	return nil
 }
 func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) { return nil, nil }
+func (s *fakeItemStore) ResolveItemIDs(context.Context, string, []string) ([]domain.Item, error) {
+	return append([]domain.Item(nil), s.resolved...), nil
+}
+func (s *fakeItemStore) PutStory(_ context.Context, row domain.Story) error {
+	s.putStory = &row
+	return nil
+}
+func (s *fakeItemStore) AddStoryMember(_ context.Context, _ string, storyID, itemID string, _ int64) error {
+	s.addedStoryID, s.addedItemID = storyID, itemID
+	return nil
+}
+func (s *fakeItemStore) SetItemStory(_ context.Context, item domain.Item, storyID string) error {
+	s.setStoryItem, s.setStoryID = item.ItemID, storyID
+	return nil
+}
 
 type stubSummarizer struct {
 	value string
@@ -62,12 +84,47 @@ func (stubEmbedder) Embed(context.Context, string) ([]float32, error) {
 type stubVectorBatchStore struct {
 	calls   int
 	records []vectorstore.Record
+	matches []vectorstore.Match
 }
 
 func (s *stubVectorBatchStore) PutBatch(_ context.Context, records []vectorstore.Record) error {
 	s.calls++
 	s.records = append([]vectorstore.Record(nil), records...)
 	return nil
+}
+
+func (s *stubVectorBatchStore) Query(context.Context, []float32, int, int64) ([]vectorstore.Match, error) {
+	return append([]vectorstore.Match(nil), s.matches...), nil
+}
+
+func TestAssignStoryCreatesAndJoins(t *testing.T) {
+	now := time.Now().UTC()
+	config := storycluster.Config{Threshold: 80, Window: 72 * time.Hour}
+	newItem := domain.Item{ItemID: "new", FeedID: "new-feed", URL: "https://example.com/new", PublishedTS: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
+	founder := domain.Item{PK: "U#user", SK: "I#founder", ItemID: "founder", FeedID: "old-feed", URL: "https://example.com/founder", PublishedTS: domain.Timestamp(now.Add(-time.Hour)), TTL: now.Add(2 * time.Hour).Unix()}
+	repository := &fakeItemStore{resolved: []domain.Item{founder}}
+	vectors := &stubVectorBatchStore{matches: []vectorstore.Match{{Key: "new", Similarity: 100}, {Key: "other-user", Similarity: 99}, {Key: "founder", Similarity: 82}}}
+	h := &handler{store: repository, vectors: vectors, storyConfig: config}
+	metrics, err := h.assignStory(context.Background(), "user", []float32{1, 0}, &newItem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newItem.StoryID != "founder" || repository.putStory == nil || repository.putStory.TTL != founder.TTL || repository.setStoryItem != "founder" || metrics["story_created"] != 1 || metrics["story_candidates"] != 1 {
+		t.Fatalf("item = %#v, story = %#v, metrics = %#v", newItem, repository.putStory, metrics)
+	}
+
+	joined := founder
+	joined.StoryID = "existing-story"
+	repository = &fakeItemStore{resolved: []domain.Item{joined}}
+	newItem.StoryID = ""
+	h.store = repository
+	metrics, err = h.assignStory(context.Background(), "user", []float32{1, 0}, &newItem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newItem.StoryID != "existing-story" || repository.addedStoryID != "existing-story" || repository.addedItemID != "new" || metrics["story_joined"] != 1 {
+		t.Fatalf("join item = %#v, store = %#v, metrics = %#v", newItem, repository, metrics)
+	}
 }
 
 type stubHTTP struct {
