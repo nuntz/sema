@@ -11,6 +11,8 @@ export interface LayoutCell {
   span?: 2;
   tall?: true;
   headlineHeight?: number;
+  headlineItemCount?: number;
+  headlineRemaining?: number;
 }
 
 export interface LayoutRow {
@@ -18,13 +20,12 @@ export interface LayoutRow {
   height: number;
   top: number;
   gap: number;
-  kind: "span" | "tall" | "hero" | "pair" | "standard" | "compact" | "story";
+  kind: "span" | "tall" | "hero" | "pair" | "standard" | "compact";
 }
 
 export interface JustifyOptions {
   completeSegment?: boolean;
   expandedStoryIDs?: ReadonlySet<string>;
-  focusedID?: string;
 }
 
 interface LayoutItem extends Item {
@@ -45,12 +46,7 @@ const mosaicMinimumCompanions = 3;
 const sizeFactor = { S: 0.8, M: 1.05, L: 1.6 } as const;
 const tallLargeFactor = 1.75;
 export const storyHeadlineHeight = 33;
-
-export function storyHeadlineRowCount(story: Story, expanded = false): number {
-  const count = Math.max(0, story.items.length - 1);
-  if (expanded || count <= 5) return count;
-  return 6;
-}
+const storyLeadMinimumHeight = 120;
 
 function storyFor(item: Item): Story | undefined {
   return (item as LayoutItem).layoutStory;
@@ -65,10 +61,6 @@ function toLayoutItems(
     if (entry.kind === "item") return [entry.item];
     const lead = entry.story.items[0];
     if (!lead) return [];
-    const focusID = options.focusedID ?? "";
-    const focused =
-      focusID === `story:${entry.story.story_id}` ||
-      entry.story.items.some((item) => item.item_id === focusID);
     const expanded = options.expandedStoryIDs?.has(entry.story.story_id);
     return [
       {
@@ -78,7 +70,7 @@ function toLayoutItems(
         layoutStory: entry.story,
         layoutHeadlineMode: expanded
           ? "expanded"
-          : entry.story.size === "L" || focused
+          : entry.story.size === "L"
             ? "collapsed"
             : undefined,
       },
@@ -243,7 +235,7 @@ function followingCompanions(
     index < items.length && companions.length < limit;
     index++
   ) {
-    if (items[index].size === "L" || storyFor(items[index])) break;
+    if (items[index].size === "L") break;
     companions.push(items[index]);
   }
   return companions;
@@ -252,7 +244,7 @@ function followingCompanions(
 function companionCountBeforeLarge(items: Item[], start: number): number {
   let count = 0;
   for (let index = start; index < items.length; index++) {
-    if (items[index].size === "L" || storyFor(items[index])) break;
+    if (items[index].size === "L") break;
     count++;
   }
   return count;
@@ -286,7 +278,6 @@ function stablePrefixLength(
   if (!hasMore) return items.length;
   for (let index = 0; index < items.length; index++) {
     if (items[index].size !== "L") continue;
-    if (storyFor(items[index])) continue;
     let resolved = false;
     for (
       let lookahead = index + 1;
@@ -332,6 +323,7 @@ function desktopSpanBand(
   const cells: LayoutCell[] = [
     {
       item: hero,
+      story: storyFor(hero),
       width: heroWidth,
       left: heroLeft,
       effectiveSize: "L",
@@ -573,7 +565,7 @@ export function justify(
   const layoutItems = items.slice(0, stableLength);
   const finalFeed = !hasMore && stableLength === items.length;
   if (containerWidth < 700)
-    return applyStoryHeadlineHeights(
+    return layoutStoryHeadlines(
       mobileRows(layoutItems, containerWidth, finalFeed),
     );
 
@@ -582,30 +574,8 @@ export function justify(
   for (let index = 0; index < layoutItems.length; ) {
     const item = layoutItems[index];
     if (item.size === "L") {
-      if (storyFor(item)) {
-        rows.push({
-          cells: cellsWithWidths(
-            [item],
-            [containerWidth],
-            0,
-            0,
-            tallHeight,
-            desktopGap,
-          ),
-          height: tallHeight,
-          top: topAfter(rows, desktopGap),
-          gap: desktopGap,
-          kind: "story",
-        });
-        index++;
-        continue;
-      }
       let runEnd = index + 1;
-      while (
-        runEnd < layoutItems.length &&
-        layoutItems[runEnd].size === "L" &&
-        !storyFor(layoutItems[runEnd])
-      )
+      while (runEnd < layoutItems.length && layoutItems[runEnd].size === "L")
         runEnd++;
       const runLength = runEnd - index;
       const boundaryCompanions = companionCountBeforeLarge(layoutItems, runEnd);
@@ -700,7 +670,7 @@ export function justify(
     }
     index = end;
   }
-  return applyStoryHeadlineHeights(rows);
+  return layoutStoryHeadlines(rows);
 }
 
 function appendMobileLargeBand(
@@ -766,19 +736,8 @@ function mobileRows(
   for (let index = 0; index < items.length; ) {
     const item = items[index];
     if (item.size === "L") {
-      if (storyFor(item)) {
-        appendMobileLargeBand(rows, [item], containerWidth, "tall");
-        rows[rows.length - 1].kind = "story";
-        index++;
-        continue;
-      }
       let runEnd = index + 1;
-      while (
-        runEnd < items.length &&
-        items[runEnd].size === "L" &&
-        !storyFor(items[runEnd])
-      )
-        runEnd++;
+      while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
       appendMobileLargeRun(rows, items.slice(index, runEnd), containerWidth);
       index = runEnd;
       continue;
@@ -858,22 +817,64 @@ function mobileRows(
   return rows;
 }
 
-function applyStoryHeadlineHeights(rows: LayoutRow[]): LayoutRow[] {
+function horizontalOverlap(left: LayoutCell, right: LayoutCell): boolean {
+  return (
+    left.left < right.left + right.width && right.left < left.left + left.width
+  );
+}
+
+function layoutStoryHeadlines(rows: LayoutRow[]): LayoutRow[] {
   let top = 0;
   return rows.map((row) => {
-    let height = row.height;
-    const cells = row.cells.map((cell) => {
+    const cells = row.cells.map((cell) => ({ ...cell }));
+    for (const cell of cells) {
       const story = cell.story;
-      if (!story) return cell;
+      if (!story) continue;
       const mode = (cell.item as LayoutItem).layoutHeadlineMode;
-      if (!mode) return cell;
-      const headlineHeight =
-        storyHeadlineRowCount(story, mode === "expanded") * storyHeadlineHeight;
-      if (headlineHeight === 0) return cell;
-      const cellHeight = (cell.height ?? row.height) + headlineHeight;
-      height = Math.max(height, (cell.offsetY ?? 0) + cellHeight);
-      return { ...cell, height: cellHeight, headlineHeight };
-    });
+      if (!mode) continue;
+      const headlineCount = Math.max(0, story.items.length - 1);
+      if (headlineCount === 0) continue;
+      const baseHeight = cell.height ?? row.height;
+      if (mode === "collapsed") {
+        const capacity = Math.max(
+          0,
+          Math.floor(
+            (baseHeight - storyLeadMinimumHeight) / storyHeadlineHeight,
+          ),
+        );
+        const headlineItemCount =
+          headlineCount <= capacity ? headlineCount : Math.max(0, capacity - 1);
+        const headlineRemaining = headlineCount - headlineItemCount;
+        const usedRows =
+          headlineItemCount + (headlineRemaining > 0 && capacity > 0 ? 1 : 0);
+        cell.headlineHeight = usedRows * storyHeadlineHeight;
+        cell.headlineItemCount = headlineItemCount;
+        cell.headlineRemaining = headlineRemaining;
+        continue;
+      }
+
+      const expandedHeight =
+        storyLeadMinimumHeight + headlineCount * storyHeadlineHeight;
+      const growth = Math.max(0, expandedHeight - baseHeight);
+      cell.height = baseHeight + growth;
+      cell.headlineHeight = headlineCount * storyHeadlineHeight;
+      cell.headlineItemCount = headlineCount;
+      cell.headlineRemaining = 0;
+      if (growth === 0) continue;
+      const baseBottom = (cell.offsetY ?? 0) + baseHeight;
+      for (const companion of cells) {
+        if (
+          companion !== cell &&
+          (companion.offsetY ?? 0) >= baseBottom &&
+          horizontalOverlap(cell, companion)
+        )
+          companion.offsetY = (companion.offsetY ?? 0) + growth;
+      }
+    }
+    const height = Math.max(
+      row.height,
+      ...cells.map((cell) => (cell.offsetY ?? 0) + (cell.height ?? row.height)),
+    );
     const result = { ...row, cells, height, top };
     top += height + row.gap;
     return result;
@@ -900,7 +901,9 @@ function sameLayoutCell(left: LayoutCell, right: LayoutCell): boolean {
     left.offsetY === right.offsetY &&
     left.span === right.span &&
     left.tall === right.tall &&
-    left.headlineHeight === right.headlineHeight
+    left.headlineHeight === right.headlineHeight &&
+    left.headlineItemCount === right.headlineItemCount &&
+    left.headlineRemaining === right.headlineRemaining
   );
 }
 

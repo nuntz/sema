@@ -98,13 +98,13 @@ describe("front-page focus", () => {
     expect(moveFrontPageFocus(sequence, "story:two", -1)?.id).toBe("one-b");
   });
 
-  it("reveals compact-story headlines while that story is focused", () => {
-    expect(
-      frontPageSequence(entries, new Set(), "story:two").map(({ id }) => id),
-    ).toContain("two-a");
+  it("reveals compact-story headlines only after explicit expansion", () => {
     expect(frontPageSequence(entries).map(({ id }) => id)).not.toContain(
       "two-a",
     );
+    expect(
+      frontPageSequence(entries, new Set(["two"])).map(({ id }) => id),
+    ).toContain("two-a");
   });
 
   it("marks from the focused merged cell and includes every story member", () => {

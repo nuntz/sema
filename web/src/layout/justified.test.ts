@@ -85,7 +85,56 @@ const expectNoOverlaps = (row: ReturnType<typeof justify>[number]) => {
 };
 
 describe("17c desktop bands", () => {
-  it("gives a large story a full row plus its fixed headline-list height", () => {
+  it("lays out an L story as one third of a three-cell L run", () => {
+    const lead = item("story-lead", "L", 1.5);
+    const story: Story = {
+      story_id: "story",
+      source_count: 2,
+      order_key: 0.9,
+      size: "L",
+      items: [lead, item("headline", "S")],
+    };
+    const [row] = justify(
+      [
+        { kind: "story", story },
+        item("large-1", "L", 1.5),
+        item("large-2", "L", 1.5),
+      ],
+      1248,
+    );
+
+    expect(row.kind).toBe("hero");
+    expect(row.cells).toHaveLength(3);
+    expect(row.cells[0].story?.story_id).toBe("story");
+    expect(row.cells[0].width).toBeCloseTo((1248 - 20) / 3, 5);
+  });
+
+  it("keeps a singleton between two stories in their regular row", () => {
+    const makeStory = (id: string): Story => ({
+      story_id: id,
+      source_count: 2,
+      order_key: 0.6,
+      size: "M",
+      items: [item(`${id}-lead`, "M"), item(`${id}-headline`, "S")],
+    });
+    const [row] = justify(
+      [
+        { kind: "story", story: makeStory("left") },
+        item("singleton", "M"),
+        { kind: "story", story: makeStory("right") },
+      ],
+      1248,
+    );
+
+    expect(row.cells.map((cell) => cell.item.item_id)).toEqual([
+      "left-lead",
+      "singleton",
+      "right-lead",
+    ]);
+    expect(row.cells).toHaveLength(3);
+  });
+
+  it("fits collapsed story headlines inside a tall band until expanded", () => {
     const lead = item("story-lead", "L", 1.5);
     const story: Story = {
       story_id: "story",
@@ -99,13 +148,30 @@ describe("17c desktop bands", () => {
         ),
       ],
     };
-    const [row] = justify([{ kind: "story", story }], 1248);
+    const entries = [
+      { kind: "story" as const, story },
+      item("companion-1", "M"),
+      item("companion-2", "S"),
+      item("companion-3", "S"),
+    ];
+    const [collapsed] = justify(entries, 1248);
+    const collapsedStory = collapsed.cells[0];
 
-    expect(row.kind).toBe("story");
-    expect(row.cells).toHaveLength(1);
-    expect(row.cells[0].width).toBe(1248);
-    expect(row.cells[0].headlineHeight).toBe(6 * 33);
-    expect(row.height).toBe(288 + 6 * 33);
+    expect(collapsed.kind).toBe("tall");
+    expect(collapsed.height).toBe(288);
+    expect(collapsedStory.headlineHeight).toBe(5 * 33);
+    expect(collapsedStory.headlineItemCount).toBe(4);
+    expect(collapsedStory.headlineRemaining).toBe(3);
+    expect(
+      (collapsedStory.height ?? collapsed.height) - 5 * 33,
+    ).toBeGreaterThanOrEqual(120);
+
+    const [expanded] = justify(entries, 1248, false, {
+      expandedStoryIDs: new Set(["story"]),
+    });
+    expect(expanded.height).toBeGreaterThan(collapsed.height);
+    expect(expanded.cells[0].headlineItemCount).toBe(7);
+    expect(expanded.cells[0].headlineRemaining).toBe(0);
   });
 
   it("matches the handoff span threshold and 354px geometry", () => {

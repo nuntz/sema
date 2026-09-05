@@ -924,6 +924,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-card.compact .story-media { height: 100%; }
 .story-card.compact .story-lead { position: absolute; right: 0; bottom: 0; left: 0; padding: 38px 12px 12px; background: var(--cell-scrim-title); }
 .story-card.compact.no-media .story-lead { top: 0; padding-top: 43px; background: transparent; }
+.story-card.compact:not(.no-media) .story-lead h2:not(.read) { color: var(--media-fg-primary); }
 .story-card.compact .story-lead h2 { font-size: var(--t-17); }
 .story-expand { position: absolute; right: 10px; bottom: 9px; z-index: 4; min-width: 28px; height: 24px; padding: 0 7px; border-radius: 5px; background: var(--story-badge-bg); color: var(--media-fg-secondary); font: 500 11.5px/1 "IBM Plex Mono", monospace; }
 .story-expand:hover { color: var(--media-fg-primary); }

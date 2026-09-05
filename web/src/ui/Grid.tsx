@@ -185,7 +185,6 @@ export function Grid(props: GridProps) {
       const rows = stableRows(
         justify(entries, contentWidth(), props.hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
-          focusedID: props.focusedID,
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -201,7 +200,6 @@ export function Grid(props: GridProps) {
       const rows = stableRows(
         justify(entries, contentWidth(), props.hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
-          focusedID: props.focusedID,
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -210,7 +208,6 @@ export function Grid(props: GridProps) {
     const above = justify(entries.slice(0, beforeIndex), contentWidth(), true, {
       completeSegment: true,
       expandedStoryIDs: props.expandedStoryIDs,
-      focusedID: props.focusedID,
     });
     const aboveHeight = totalHeight(above);
     const below = justify(
@@ -219,7 +216,6 @@ export function Grid(props: GridProps) {
       props.hasMore,
       {
         expandedStoryIDs: props.expandedStoryIDs,
-        focusedID: props.focusedID,
       },
     ).map((row) => ({
       ...row,
@@ -246,7 +242,6 @@ export function Grid(props: GridProps) {
     frontPageSequence(
       props.entries,
       props.expandedStoryIDs ?? new Set<string>(),
-      props.focusedID,
     ),
   );
   const unreadIDs = createMemo(() =>
@@ -875,8 +870,7 @@ export function Grid(props: GridProps) {
                         cell={cell}
                         row={row}
                         focusedID={props.focusedID}
-                        unreadOnly={props.unreadOnly}
-                        expanded={props.expandedStoryIDs?.has(storyID) ?? false}
+                        readContext={readContext()}
                         onExpand={(id) => props.onExpandStory?.(id)}
                         onFocus={props.onFocus}
                         onOpenLead={(story) => props.onOpenStoryLead?.(story)}

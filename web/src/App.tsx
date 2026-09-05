@@ -683,7 +683,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       : gridItems().map((item) => ({ kind: "item" as const, item })),
   );
   const frontPageItems = createMemo(() =>
-    frontPageSequence(frontPageEntries(), expandedStoryIDs(), focusedID()).map(
+    frontPageSequence(frontPageEntries(), expandedStoryIDs()).map(
       ({ item }) => item,
     ),
   );

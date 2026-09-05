@@ -129,7 +129,13 @@ test("stories earn their position in the interest grid", async ({ page }) => {
   const largeBox = await largeCell.boundingBox();
   const storyBox = await storyCell.boundingBox();
   const trailingBox = await trailingCell.boundingBox();
-  expect(largeBox?.y).toBeLessThan(storyBox?.y ?? 0);
+  expect(largeBox).not.toBeNull();
+  expect(storyBox).not.toBeNull();
+  expect(
+    (largeBox?.y ?? 0) < (storyBox?.y ?? 0) ||
+      ((largeBox?.y ?? 0) === (storyBox?.y ?? 0) &&
+        (largeBox?.x ?? 0) < (storyBox?.x ?? 0)),
+  ).toBe(true);
   expect(storyBox?.y).toBeLessThan(trailingBox?.y ?? 0);
 
   await expect(largeCell).toHaveClass(/focused/);
@@ -151,8 +157,8 @@ test("stories earn their position in the interest grid", async ({ page }) => {
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: `/tmp/sema-front-merged-${width}.png` });
   }
-  await page.screenshot({ path: "/tmp/sema-front-merged-390.png" });
 
   await page.evaluate(() => {
     document.addEventListener(
@@ -274,8 +280,60 @@ test("scroll-reading a story cell uses all of its unread members", async ({
     /read/,
   );
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-  await expect.poll(() => readBatches.at(-1)?.ids).toEqual(unreadMemberIDs);
+  await expect
+    .poll(() =>
+      unreadMemberIDs.every((id) => readBatches.at(-1)?.ids.includes(id)),
+    )
+    .toBe(true);
   expect(readBatches.at(-1)?.ids).not.toContain(members[0].item_id);
   await page.keyboard.press("u");
   await expect(storyCell.locator(".story-lead h2")).toHaveClass(/read/);
+});
+
+test("story read visuals follow the grid's All and Unread contexts", async ({
+  page,
+}) => {
+  const members = [
+    {
+      ...item("read-lead", "read-one", "Read lead", 1, "L"),
+      story_id: "read-story",
+      read: true,
+    },
+    {
+      ...item("read-headline-1", "read-two", "Read headline one", 0.9, "S"),
+      story_id: "read-story",
+      read: true,
+    },
+    {
+      ...item("read-headline-2", "read-three", "Read headline two", 0.8, "S"),
+      story_id: "read-story",
+      read: true,
+    },
+  ];
+  const story = {
+    story_id: "read-story",
+    source_count: 3,
+    order_key: 1.2,
+    size: "L",
+    items: members,
+  };
+  const companions = Array.from({ length: 3 }, (_, index) =>
+    item(`read-companion-${index}`, "single", `Companion ${index}`, 0.7, "S"),
+  );
+  await stubFrontPage(page, [story], companions, []);
+  await page.goto("/");
+
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  const storyCell = page.locator('[data-story-id="read-story"]');
+  const leadTitle = storyCell.locator(".story-lead h2");
+  const headlines = storyCell.locator(".story-headline");
+  await expect(headlines).toHaveCount(2);
+  await expect(storyCell).not.toHaveClass(/\bread\b/);
+  await expect(leadTitle).not.toHaveClass(/\bread\b/);
+  await expect(headlines.first()).not.toHaveClass(/\bread\b/);
+  await expect(storyCell.locator(".unread-dot")).toHaveCount(0);
+
+  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await expect(headlines.first()).toHaveClass(/\bread\b/);
+  await expect(headlines.first().locator(".unread-dot")).toHaveCount(0);
 });

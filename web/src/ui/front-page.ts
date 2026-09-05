@@ -49,7 +49,6 @@ export function frontPageEntryItem(entry: FrontPageEntry): Item | undefined {
 export function frontPageSequence(
   entries: FrontPageEntry[],
   expandedStoryIDs: ReadonlySet<string> = new Set(),
-  focusedID = "",
 ): FrontPageFocus[] {
   const sequence: FrontPageFocus[] = [];
   for (const entry of entries) {
@@ -66,11 +65,7 @@ export function frontPageSequence(
       kind: "story",
       storyID: story.story_id,
     });
-    const focused =
-      focusedID === `story:${story.story_id}` ||
-      story.items.some((item) => item.item_id === focusedID);
-    if (story.size !== "L" && !expandedStoryIDs.has(story.story_id) && !focused)
-      continue;
+    if (story.size !== "L" && !expandedStoryIDs.has(story.story_id)) continue;
     const headlines = expandedStoryIDs.has(story.story_id)
       ? story.items.slice(1)
       : headlineSlice(story).items;
