@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -23,8 +22,8 @@ type imageSignalStore interface {
 	UserIDs(context.Context) ([]string, error)
 	Signals(context.Context, string) ([]domain.Signal, error)
 	Behaviours(context.Context, string) ([]domain.Behaviour, error)
-	Item(context.Context, string, string) (domain.Item, error)
-	ArchiveItem(context.Context, string, string) (domain.Item, error)
+	LiveItems(context.Context, string) ([]domain.Item, error)
+	ArchiveItems(context.Context, string) ([]domain.Item, error)
 	Content(context.Context, string) ([]byte, string, error)
 	UpdateSignalImageEmbedding(context.Context, string, string, []byte, string) error
 	UpdateBehaviourImageEmbedding(context.Context, string, string, []byte, string) error
@@ -47,6 +46,12 @@ type report struct {
 type target struct {
 	signal    bool
 	behaviour bool
+}
+
+type indexedItem struct {
+	item domain.Item
+	kind vectorstore.Kind
+	live bool
 }
 
 func main() {
@@ -111,13 +116,23 @@ func run(ctx context.Context, repository imageSignalStore, embedder embed.ImageE
 				targets[behaviour.ItemID] = entry
 			}
 		}
+		liveItems, err := repository.LiveItems(ctx, userID)
+		if err != nil {
+			return result, fmt.Errorf("load live items for %s: %w", userID, err)
+		}
+		archiveItems, err := repository.ArchiveItems(ctx, userID)
+		if err != nil {
+			return result, fmt.Errorf("load archive items for %s: %w", userID, err)
+		}
+		items := indexItems(liveItems, archiveItems)
 		for itemID, entry := range targets {
-			item, kind, live, resolveErr := resolveItem(ctx, repository, userID, itemID)
-			if resolveErr != nil {
+			resolved, ok := items[itemID]
+			if !ok {
 				result.Failed++
-				slog.WarnContext(ctx, "image signal backfill item unavailable", "user", userID, "item_id", itemID, "error", resolveErr)
+				slog.WarnContext(ctx, "image signal backfill item unavailable", "user", userID, "item_id", itemID, "error", store.ErrNotFound)
 				continue
 			}
+			item, kind, live := resolved.item, resolved.kind, resolved.live
 			if item.MediaType == "video" || item.VideoID != "" {
 				result.SkippedVideo++
 				continue
@@ -179,19 +194,22 @@ func run(ctx context.Context, repository imageSignalStore, embedder embed.ImageE
 	return result, nil
 }
 
-func resolveItem(ctx context.Context, repository imageSignalStore, userID, itemID string) (domain.Item, vectorstore.Kind, bool, error) {
-	item, err := repository.Item(ctx, userID, itemID)
-	if err == nil {
-		return item, vectorstore.KindLive, true, nil
+func indexItems(liveItems, archiveItems []domain.Item) map[string]indexedItem {
+	items := make(map[string]indexedItem, len(liveItems)+len(archiveItems))
+	for _, item := range archiveItems {
+		if item.ItemID == "" {
+			continue
+		}
+		if _, exists := items[item.ItemID]; !exists {
+			items[item.ItemID] = indexedItem{item: item, kind: vectorstore.KindArchive}
+		}
 	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return domain.Item{}, "", false, err
+	for _, item := range liveItems {
+		if item.ItemID != "" {
+			items[item.ItemID] = indexedItem{item: item, kind: vectorstore.KindLive, live: true}
+		}
 	}
-	item, err = repository.ArchiveItem(ctx, userID, itemID)
-	if err != nil {
-		return domain.Item{}, "", false, err
-	}
-	return item, vectorstore.KindArchive, false, nil
+	return items
 }
 
 func selectedVariantKey(variants []domain.MediaVariant, fallback string) string {

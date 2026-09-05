@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/nuntz/sema/internal/domain"
-	"github.com/nuntz/sema/internal/store"
 	"github.com/nuntz/sema/internal/vectorstore"
 )
 
@@ -20,6 +19,8 @@ type fakeImageSignalStore struct {
 	signalUpdates    int
 	behaviourUpdates int
 	itemUpdates      int
+	liveLoads        int
+	archiveLoads     int
 }
 
 func (*fakeImageSignalStore) UserIDs(context.Context) ([]string, error) {
@@ -31,17 +32,21 @@ func (f *fakeImageSignalStore) Signals(context.Context, string) ([]domain.Signal
 func (f *fakeImageSignalStore) Behaviours(context.Context, string) ([]domain.Behaviour, error) {
 	return append([]domain.Behaviour(nil), f.behaviours...), nil
 }
-func (f *fakeImageSignalStore) Item(_ context.Context, _ string, itemID string) (domain.Item, error) {
-	if item, ok := f.items[itemID]; ok {
-		return item, nil
+func (f *fakeImageSignalStore) LiveItems(context.Context, string) ([]domain.Item, error) {
+	f.liveLoads++
+	items := make([]domain.Item, 0, len(f.items))
+	for _, item := range f.items {
+		items = append(items, item)
 	}
-	return domain.Item{}, store.ErrNotFound
+	return items, nil
 }
-func (f *fakeImageSignalStore) ArchiveItem(_ context.Context, _ string, itemID string) (domain.Item, error) {
-	if item, ok := f.archives[itemID]; ok {
-		return item, nil
+func (f *fakeImageSignalStore) ArchiveItems(context.Context, string) ([]domain.Item, error) {
+	f.archiveLoads++
+	items := make([]domain.Item, 0, len(f.archives))
+	for _, item := range f.archives {
+		items = append(items, item)
 	}
-	return domain.Item{}, store.ErrNotFound
+	return items, nil
 }
 func (f *fakeImageSignalStore) Content(_ context.Context, key string) ([]byte, string, error) {
 	f.contentReads = append(f.contentReads, key)
@@ -124,6 +129,31 @@ func TestDryRunReportsEligibilityWithoutReadingOrWriting(t *testing.T) {
 	}
 	if len(repository.contentReads) != 0 || embedder.calls != 0 || vectors.calls != 0 || repository.signalUpdates != 0 || repository.itemUpdates != 0 {
 		t.Fatalf("dry-run performed work: store %#v, embed calls %d, vector calls %d", repository, embedder.calls, vectors.calls)
+	}
+	if repository.liveLoads != 1 || repository.archiveLoads != 1 {
+		t.Fatalf("item loads = live %d, archive %d; want one each", repository.liveLoads, repository.archiveLoads)
+	}
+}
+
+func TestRunIndexesLiveAndArchiveItemsOncePerUser(t *testing.T) {
+	repository := &fakeImageSignalStore{
+		signals: []domain.Signal{{ItemID: "live"}, {ItemID: "archive"}, {ItemID: "missing-one"}, {ItemID: "missing-two"}},
+		items: map[string]domain.Item{
+			"live": {ItemID: "live", MediaKey: "live-lead"},
+		},
+		archives: map[string]domain.Item{
+			"archive": {ItemID: "archive", MediaKey: "archive-lead"},
+		},
+	}
+	result, err := run(context.Background(), repository, &fakeImageEmbedder{}, &fakeImageVectors{}, "image-v1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Scanned != 4 || result.Eligible != 2 || result.Failed != 2 {
+		t.Fatalf("report = %#v", result)
+	}
+	if repository.liveLoads != 1 || repository.archiveLoads != 1 {
+		t.Fatalf("item loads = live %d, archive %d; want one each", repository.liveLoads, repository.archiveLoads)
 	}
 }
 
