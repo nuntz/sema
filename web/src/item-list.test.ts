@@ -95,6 +95,12 @@ describe("item list", () => {
     ).toEqual([true]);
   });
 
+  it("keeps a cleared snapshot out of a stale refresh", () => {
+    const refreshed = [make("new"), make("cleared")];
+
+    expect(visibleItemIDs(refreshed, true, ["cleared"])).toEqual(["new"]);
+  });
+
   it("marks every remaining loaded unread item from the caught-up card", () => {
     const items = [
       make("one"),

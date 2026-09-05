@@ -438,11 +438,23 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           unreadOnly(),
         );
         if (insert && clearVersion === gridClearVersion) {
-          const visible = visibleItemIDs(pageItems, unreadOnly());
+          const visible = visibleItemIDs(
+            pageItems,
+            unreadOnly(),
+            finishUndo()?.ids,
+          );
+          const visibleSet = new Set(visible);
+          const visibleItems = pageItems.filter((item) =>
+            visibleSet.has(item.item_id),
+          );
           const nextCursor = page.next_cursor ?? "";
           const nextFocusedID =
             frontPageSequence(
-              mergeFrontPage(incomingStories, pageItems, Boolean(nextCursor)),
+              mergeFrontPage(
+                incomingStories,
+                visibleItems,
+                Boolean(nextCursor),
+              ),
             )[0]?.id ??
             visible[0] ??
             "";

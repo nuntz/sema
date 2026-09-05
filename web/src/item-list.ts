@@ -63,9 +63,16 @@ export function pollCandidates(
   );
 }
 
-export function visibleItemIDs(items: Item[], unreadOnly: boolean): string[] {
+export function visibleItemIDs(
+  items: Item[],
+  unreadOnly: boolean,
+  excludedIDs: Iterable<string> = [],
+): string[] {
+  const excluded = new Set(excludedIDs);
   return items
-    .filter((item) => !unreadOnly || !item.read)
+    .filter(
+      (item) => !excluded.has(item.item_id) && (!unreadOnly || !item.read),
+    )
     .map((item) => item.item_id);
 }
 

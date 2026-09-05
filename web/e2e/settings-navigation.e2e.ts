@@ -419,7 +419,7 @@ test("pill insertion returns a cleared grid to its new rows", async ({
   }));
   const state = await openApp(page, {
     initialItems: [prior],
-    polledItems: [...incoming, { ...prior, read: true }],
+    polledItems: [...incoming, prior],
   });
   const scroller = page.locator(".grid-scroll");
   const priorCell = page.locator(`[data-item-id="${prior.item_id}"]`);
