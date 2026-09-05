@@ -34,9 +34,9 @@ func (f *fakeRepository) PutModel(_ context.Context, model domain.Model) error {
 	f.model = model
 	return nil
 }
-func (f *fakeRepository) RecomputeModel(_ context.Context, userID, version string) (domain.Model, error) {
+func (f *fakeRepository) RecomputeModel(_ context.Context, userID, version, imageVersion string) (domain.Model, error) {
 	f.recomputed = true
-	f.model = score.BuildModel(userID, f.signals, nil, time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC), version)
+	f.model = score.BuildModel(userID, f.signals, nil, time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC), version, imageVersion)
 	return f.model, nil
 }
 func (f *fakeRepository) Signals(context.Context, string) ([]domain.Signal, error) {
@@ -101,6 +101,39 @@ func TestGoldenRescoreUpdatesScoreSizeAndWhy(t *testing.T) {
 	item := repository.replacements[0]
 	if item.Score < 0.99 || item.Size != "L" || item.Why == nil || item.Why.Title != "Liked story" {
 		t.Fatalf("rescored item = %#v", item)
+	}
+}
+
+func TestRescoreUsesImageVectorsForScoreAndWhy(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	text := score.EncodeVector([]float32{0, 1})
+	image := score.EncodeVector([]float32{1, 0})
+	signals := make([]domain.Signal, 10)
+	for index := range signals {
+		signals[index] = domain.Signal{
+			ItemID: string(rune('a' + index)), Value: 1, Vector: text, ImageVector: image,
+			Title: "Kept photo", FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "text-v1", ImageModelVersion: "image-v1",
+		}
+	}
+	repository := &fakeRepository{
+		model:   domain.Model{PK: "U#user", SK: "MODEL", Version: "text-v1", ImageVersion: "image-v1"},
+		signals: signals,
+		items: []domain.Item{{
+			PK: "U#user", SK: domain.ItemSK(now, "new"), ItemID: "new", FeedID: "feed",
+			PublishedTS: domain.Timestamp(now), Vector: score.EncodeVector([]float32{1, 0}), ImageVector: image, TTL: now.Add(time.Hour).Unix(),
+		}},
+	}
+	result, err := (&Engine{Repository: repository, Version: "text-v1", ImageVersion: "image-v1", Now: func() time.Time { return now }}).RunUser(context.Background(), "user", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ItemsRescored != 1 || len(repository.replacements) != 1 {
+		t.Fatalf("result = %#v, items = %#v", result, repository.replacements)
+	}
+	item := repository.replacements[0]
+	wantScore := 0.82 + repository.model.FeedPrior["feed"]
+	if math.Abs(item.Score-wantScore) > 0.000001 || item.Why == nil || !item.Why.Image || item.Why.Title != "Kept photo" {
+		t.Fatalf("image-rescored item = %#v", item)
 	}
 }
 

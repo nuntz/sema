@@ -17,7 +17,7 @@ var ErrReplayActive = errors.New("embedding replay is still in progress")
 type Repository interface {
 	Model(context.Context, string) (domain.Model, error)
 	PutModel(context.Context, domain.Model) error
-	RecomputeModel(context.Context, string, string) (domain.Model, error)
+	RecomputeModel(context.Context, string, string, string) (domain.Model, error)
 	Signals(context.Context, string) ([]domain.Signal, error)
 	Feeds(context.Context, string) ([]domain.Feed, error)
 	LiveItems(context.Context, string) ([]domain.Item, error)
@@ -30,10 +30,11 @@ type Repository interface {
 }
 
 type Engine struct {
-	Repository  Repository
-	Version     string
-	Now         func() time.Time
-	StoryConfig storycluster.Config
+	Repository   Repository
+	Version      string
+	ImageVersion string
+	Now          func() time.Time
+	StoryConfig  storycluster.Config
 }
 
 type Result struct {
@@ -55,7 +56,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if !onDemand && replayRecent(old.ReplayTS, started) {
 		return Result{}, ErrReplayActive
 	}
-	model, err := e.Repository.RecomputeModel(ctx, userID, e.Version)
+	model, err := e.Repository.RecomputeModel(ctx, userID, e.Version, e.ImageVersion)
 	if err != nil {
 		return Result{}, err
 	}
@@ -75,7 +76,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	for _, signal := range signals {
 		if signal.Value > 0 && score.CompatibleVersion(signal.ModelVersion, e.Version) {
 			candidates = append(candidates, score.Candidate{
-				Title: signal.Title, FeedTitle: feedTitles[signal.FeedID], Vector: score.DecodeVector(signal.Vector),
+				Title: signal.Title, FeedTitle: feedTitles[signal.FeedID], Vector: score.DecodeVector(signal.Vector), ImageVector: score.DecodeVector(signal.ImageVector),
 			})
 		}
 	}
@@ -105,10 +106,11 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 			return Result{}, fmt.Errorf("item %s published_ts: %w", items[index].ItemID, parseErr)
 		}
 		vector := score.DecodeVector(items[index].Vector)
-		calculated := score.Calculate(vector, model, items[index].FeedID, items[index].MediaKey != "", started.Sub(published).Hours())
+		imageVector := score.DecodeVector(items[index].ImageVector)
+		calculated := score.Calculate(vector, imageVector, model, items[index].FeedID, items[index].MediaKey != "", started.Sub(published).Hours())
 		items[index].Score = calculated.Score
 		scores[index] = calculated.Score
-		items[index].Why = score.Why(calculated, vector, items[index].FeedTitle, candidates)
+		items[index].Why = score.Why(calculated, vector, imageVector, items[index].FeedTitle, candidates)
 	}
 	model.SizeCutoffs = score.QuantileCutoffs(scores)
 	for index := range items {

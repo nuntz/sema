@@ -370,7 +370,7 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 			return nil, loadErr
 		}
 		model = loadedModel
-		result := score.Calculate(vector, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
+		result := score.Calculate(vector, nil, model, message.FeedID, mediaKey != "", started.Sub(published).Hours())
 		value = result.Score
 		if result.Base > 0.6 {
 			rows, signalErr := h.store.Signals(ctx, message.User)
@@ -383,7 +383,7 @@ func (h *handler) process(ctx context.Context, body string) (*vectorstore.Record
 					liked = append(liked, score.Candidate{Title: row.Title, Vector: score.DecodeVector(row.Vector)})
 				}
 			}
-			why = score.Why(result, vector, feedTitle, liked)
+			why = score.Why(result, vector, nil, feedTitle, liked)
 		}
 	}
 	author := strings.TrimSpace(message.Author)
@@ -795,6 +795,6 @@ func main() {
 		modelVersion: modelVersion, scoringVersion: scoringVersion,
 		vectors: vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex), storyConfig: storycluster.FromEnv(),
 	}
-	h.models = score.NewCache(repository, 5*time.Minute, modelVersion)
+	h.models = score.NewCache(repository, 5*time.Minute, modelVersion, "")
 	lambda.Start(h.run)
 }

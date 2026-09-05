@@ -80,6 +80,10 @@ func main() {
 	if version == "" {
 		version = "amazon.titan-embed-text-v2:0"
 	}
-	engine := &rankingrescore.Engine{Repository: repository, Version: version, StoryConfig: storycluster.FromEnv()}
+	imageVersion := strings.TrimSpace(os.Getenv("IMAGE_MODEL_VERSION"))
+	if imageVersion == "" {
+		imageVersion = "amazon.titan-embed-image-v1"
+	}
+	engine := &rankingrescore.Engine{Repository: repository, Version: version, ImageVersion: imageVersion, StoryConfig: storycluster.FromEnv()}
 	lambda.Start((&handler{store: repository, engine: engine}).run)
 }

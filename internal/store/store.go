@@ -2029,7 +2029,7 @@ func (s *Store) PutModel(ctx context.Context, model domain.Model) error {
 	return err
 }
 
-func (s *Store) RecomputeModel(ctx context.Context, userID, version string) (domain.Model, error) {
+func (s *Store) RecomputeModel(ctx context.Context, userID, version, imageVersion string) (domain.Model, error) {
 	for attempt := 0; attempt < 4; attempt++ {
 		previous, getErr := s.Model(ctx, userID)
 		if getErr != nil && !errors.Is(getErr, score.ErrModelNotFound) {
@@ -2043,7 +2043,7 @@ func (s *Store) RecomputeModel(ctx context.Context, userID, version string) (dom
 		if err != nil {
 			return domain.Model{}, err
 		}
-		model := score.BuildModel(userID, signals, behaviours, time.Now().UTC(), version)
+		model := score.BuildModel(userID, signals, behaviours, time.Now().UTC(), version, imageVersion)
 		if getErr == nil {
 			model.ReplayTS, model.ReplayVersion = previous.ReplayTS, previous.ReplayVersion
 		}
@@ -2158,6 +2158,7 @@ func (s *Store) applyExplicitModelUpdate(ctx context.Context, userID string, old
 		return getErr
 	}
 	for attempt := 0; attempt < 4; attempt++ {
+		imageVersion := signalImageVersion(oldSignal, newSignal)
 		model, err := s.Model(ctx, userID)
 		if err != nil {
 			if !errors.Is(err, score.ErrModelNotFound) {
@@ -2166,19 +2167,23 @@ func (s *Store) applyExplicitModelUpdate(ctx context.Context, userID string, old
 			if version == "" {
 				version = score.LegacyEmbeddingVersion
 			}
-			_, err = s.RecomputeModel(ctx, userID, version)
+			_, err = s.RecomputeModel(ctx, userID, version, imageVersion)
 			return err
 		}
 		if version == "" {
 			version = model.Version
 		}
 		if model.Version != version && version != "" {
-			_, err = s.RecomputeModel(ctx, userID, version)
+			_, err = s.RecomputeModel(ctx, userID, version, chooseVersion(imageVersion, model.ImageVersion))
+			return err
+		}
+		if imageVersion != "" && model.ImageVersion != imageVersion {
+			_, err = s.RecomputeModel(ctx, userID, version, imageVersion)
 			return err
 		}
 		previousComputedAt := model.ComputedAt
 		if !score.ApplyExplicit(&model, oldSignal, newSignal, behaviour, time.Now().UTC()) {
-			_, err = s.RecomputeModel(ctx, userID, version)
+			_, err = s.RecomputeModel(ctx, userID, version, chooseVersion(imageVersion, model.ImageVersion))
 			return err
 		}
 		err = s.putModelIfUnchanged(ctx, model, previousComputedAt)
@@ -2189,6 +2194,22 @@ func (s *Store) applyExplicitModelUpdate(ctx context.Context, userID string, old
 		return err
 	}
 	return errors.New("ranking model changed too frequently")
+}
+
+func signalImageVersion(signals ...*domain.Signal) string {
+	for _, signal := range signals {
+		if signal != nil && len(signal.ImageVector) > 0 && signal.ImageModelVersion != "" {
+			return signal.ImageModelVersion
+		}
+	}
+	return ""
+}
+
+func chooseVersion(preferred, fallback string) string {
+	if preferred != "" {
+		return preferred
+	}
+	return fallback
 }
 
 func (s *Store) putModelIfUnchanged(ctx context.Context, model domain.Model, previousComputedAt string) error {

@@ -12,11 +12,12 @@ func TestCalculateV2(t *testing.T) {
 	unitX := []float32{1, 0}
 	unitY := []float32{0, 1}
 	tests := []struct {
-		name  string
-		model domain.Model
-		media bool
-		age   float64
-		want  float64
+		name        string
+		model       domain.Model
+		imageVector []float32
+		media       bool
+		age         float64
+		want        float64
 	}{
 		{name: "cold start", model: domain.Model{}, want: 0.5},
 		{name: "cold start media", model: domain.Model{}, media: true, want: 0.55},
@@ -24,11 +25,12 @@ func TestCalculateV2(t *testing.T) {
 		{name: "disliked cap", model: domain.Model{ExplicitCount: 10, DislikedCount: 5, DislikedCentroid: EncodeVector(unitX)}, want: 0},
 		{name: "prior only", model: domain.Model{ExplicitCount: 10, FeedPrior: map[string]float64{"feed": 0.1}}, want: 0.6},
 		{name: "taste and prior cap", model: domain.Model{ExplicitCount: 10, LikedCount: 5, DislikedCount: 5, LikedCentroid: EncodeVector(unitX), DislikedCentroid: EncodeVector(unitY), FeedPrior: map[string]float64{"feed": 0.15}}, want: 1},
+		{name: "image taste blend", model: domain.Model{ExplicitCount: 10, LikedCount: 5, LikedCentroid: EncodeVector(unitY), LikedImageCount: 5, LikedImageCentroid: EncodeVector(unitX)}, imageVector: unitX, want: 0.82},
 		{name: "old item", model: domain.Model{}, age: 96, want: 0.5 * (0.7 + 0.3*math.Exp(-2))},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := Calculate(unitX, test.model, "feed", test.media, test.age).Score
+			got := Calculate(unitX, test.imageVector, test.model, "feed", test.media, test.age).Score
 			if math.Abs(got-test.want) > 0.0001 {
 				t.Fatalf("Calculate() = %f, want %f", got, test.want)
 			}
@@ -40,19 +42,23 @@ func TestCalculatePolarityGateAtFiveSignals(t *testing.T) {
 	vector := []float32{1, 0}
 	centroid := EncodeVector(vector)
 	tests := []struct {
-		name  string
-		model domain.Model
-		want  float64
+		name        string
+		model       domain.Model
+		imageVector []float32
+		want        float64
 	}{
 		{name: "liked off at four", model: domain.Model{ExplicitCount: 10, LikedCount: 4, LikedCentroid: centroid}, want: 0},
 		{name: "liked on at five", model: domain.Model{ExplicitCount: 10, LikedCount: 5, LikedCentroid: centroid}, want: 1},
 		{name: "disliked off at four", model: domain.Model{ExplicitCount: 10, DislikedCount: 4, DislikedCentroid: centroid}, want: 0},
 		{name: "disliked on at five", model: domain.Model{ExplicitCount: 10, DislikedCount: 5, DislikedCentroid: centroid}, want: -1},
 		{name: "twenty one up two down ignores disliked centroid", model: domain.Model{ExplicitCount: 23, LikedCount: 21, DislikedCount: 2, LikedCentroid: centroid, DislikedCentroid: centroid}, want: 1},
+		{name: "image liked off at four leaves text unchanged", model: domain.Model{ExplicitCount: 10, LikedCount: 5, LikedCentroid: centroid, LikedImageCount: 4, LikedImageCentroid: centroid}, imageVector: vector, want: 1},
+		{name: "image liked on at five blends", model: domain.Model{ExplicitCount: 10, LikedImageCount: 5, LikedImageCentroid: centroid}, imageVector: vector, want: ImageTasteWeight},
+		{name: "image disliked on at five blends", model: domain.Model{ExplicitCount: 10, DislikedImageCount: 5, DislikedImageCentroid: centroid}, imageVector: vector, want: -ImageTasteWeight},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := Calculate(vector, test.model, "", false, 0).Taste; got != test.want {
+			if got := Calculate(vector, test.imageVector, test.model, "", false, 0).Taste; got != test.want {
 				t.Fatalf("taste = %f, want %f", got, test.want)
 			}
 		})
@@ -63,14 +69,14 @@ func TestBuildModelCentroidsPriorsAndExplicitSupersedesImplicit(t *testing.T) {
 	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
 	x, y := EncodeVector([]float32{1, 0}), EncodeVector([]float32{0, 1})
 	signals := []domain.Signal{
-		{ItemID: "explicit", Value: -1, Vector: x, FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"},
-		{ItemID: "liked", Value: 1, Vector: y, FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"},
+		{ItemID: "explicit", Value: -1, Vector: x, ImageVector: x, ImageModelVersion: "image-v1", FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"},
+		{ItemID: "liked", Value: 1, Vector: y, ImageVector: y, ImageModelVersion: "image-v1", FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"},
 	}
 	behaviours := []domain.Behaviour{
-		{ItemID: "explicit", OpenedAt: domain.Timestamp(now), Opened: true, DwellMS: 60_000, Vector: x, FeedID: "feed", ModelVersion: "v"},
-		{ItemID: "implicit", OpenedAt: domain.Timestamp(now), Opened: true, ClickedThrough: true, Vector: y, FeedID: "feed", ModelVersion: "v"},
+		{ItemID: "explicit", OpenedAt: domain.Timestamp(now), Opened: true, DwellMS: 60_000, Vector: x, ImageVector: x, ImageModelVersion: "image-v1", FeedID: "feed", ModelVersion: "v"},
+		{ItemID: "implicit", OpenedAt: domain.Timestamp(now), Opened: true, ClickedThrough: true, Vector: y, ImageVector: y, ImageModelVersion: "image-v1", FeedID: "feed", ModelVersion: "v"},
 	}
-	model := BuildModel("user", signals, behaviours, now, "v")
+	model := BuildModel("user", signals, behaviours, now, "v", "image-v1")
 	if model.ExplicitCount != 2 || model.LikedCount != 1 || model.DislikedCount != 1 || model.ImplicitCount != 2 {
 		t.Fatalf("counts = explicit %d liked %d disliked %d implicit %d", model.ExplicitCount, model.LikedCount, model.DislikedCount, model.ImplicitCount)
 	}
@@ -79,6 +85,9 @@ func TestBuildModelCentroidsPriorsAndExplicitSupersedesImplicit(t *testing.T) {
 	}
 	if got := Dot(DecodeVector(model.DislikedCentroid), []float32{1, 0}); math.Abs(got-1) > 0.0001 {
 		t.Fatalf("disliked centroid = %v", DecodeVector(model.DislikedCentroid))
+	}
+	if model.LikedImageCount != 1 || model.DislikedImageCount != 1 || model.LikedImageWeight != 1.5 || model.DislikedImageWeight != 1 {
+		t.Fatalf("image model counts/weights = %#v", model)
 	}
 	wantPrior := 0.15 * math.Tanh((1-1+0.3*2)/5)
 	if math.Abs(model.FeedPrior["feed"]-wantPrior) > 0.000001 || model.FeedSignalCount["feed"] != 4 {
@@ -95,8 +104,8 @@ func TestFeedPriorIsTimidAtLowCountsAndCapped(t *testing.T) {
 		}
 		return rows
 	}
-	one := BuildModel("user", makeLikes(1), nil, now, "v").FeedPrior["feed"]
-	many := BuildModel("user", makeLikes(1_000), nil, now, "v").FeedPrior["feed"]
+	one := BuildModel("user", makeLikes(1), nil, now, "v", "").FeedPrior["feed"]
+	many := BuildModel("user", makeLikes(1_000), nil, now, "v", "").FeedPrior["feed"]
 	if !(one > 0 && one < 0.04) {
 		t.Fatalf("one-signal prior = %f", one)
 	}
@@ -108,14 +117,14 @@ func TestFeedPriorIsTimidAtLowCountsAndCapped(t *testing.T) {
 func TestIncrementalExplicitUpdateMatchesFullRecompute(t *testing.T) {
 	now := time.Now().UTC()
 	x, y := EncodeVector([]float32{1, 0}), EncodeVector([]float32{0, 1})
-	first := domain.Signal{ItemID: "first", Value: 1, Vector: x, FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"}
-	implicit := domain.Behaviour{ItemID: "second", OpenedAt: domain.Timestamp(now), Opened: true, DwellMS: 35_000, Vector: y, FeedID: "feed", ModelVersion: "v"}
-	model := BuildModel("user", []domain.Signal{first}, []domain.Behaviour{implicit}, now, "v")
-	second := domain.Signal{ItemID: "second", Value: -1, Vector: y, FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"}
+	first := domain.Signal{ItemID: "first", Value: 1, Vector: x, ImageVector: x, ImageModelVersion: "image-v1", FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"}
+	implicit := domain.Behaviour{ItemID: "second", OpenedAt: domain.Timestamp(now), Opened: true, DwellMS: 35_000, Vector: y, ImageVector: y, ImageModelVersion: "image-v1", FeedID: "feed", ModelVersion: "v"}
+	model := BuildModel("user", []domain.Signal{first}, []domain.Behaviour{implicit}, now, "v", "image-v1")
+	second := domain.Signal{ItemID: "second", Value: -1, Vector: y, ImageVector: y, ImageModelVersion: "image-v1", FeedID: "feed", CreatedAt: domain.Timestamp(now), ModelVersion: "v"}
 	if !ApplyExplicit(&model, nil, &second, &implicit, now.Add(time.Second)) {
 		t.Fatal("incremental update unexpectedly requested full recompute")
 	}
-	full := BuildModel("user", []domain.Signal{first, second}, []domain.Behaviour{implicit}, now.Add(time.Second), "v")
+	full := BuildModel("user", []domain.Signal{first, second}, []domain.Behaviour{implicit}, now.Add(time.Second), "v", "image-v1")
 	for _, comparison := range []struct {
 		name string
 		got  []byte
@@ -123,12 +132,14 @@ func TestIncrementalExplicitUpdateMatchesFullRecompute(t *testing.T) {
 	}{
 		{name: "liked", got: model.LikedCentroid, want: full.LikedCentroid},
 		{name: "disliked", got: model.DislikedCentroid, want: full.DislikedCentroid},
+		{name: "liked image", got: model.LikedImageCentroid, want: full.LikedImageCentroid},
+		{name: "disliked image", got: model.DislikedImageCentroid, want: full.DislikedImageCentroid},
 	} {
 		if Cosine(DecodeVector(comparison.got), DecodeVector(comparison.want)) < 0.999999 {
 			t.Fatalf("%s centroid = %v, want %v", comparison.name, DecodeVector(comparison.got), DecodeVector(comparison.want))
 		}
 	}
-	if model.ExplicitCount != full.ExplicitCount || model.LikedCount != full.LikedCount || model.DislikedCount != full.DislikedCount || model.ImplicitCount != full.ImplicitCount ||
+	if model.ExplicitCount != full.ExplicitCount || model.LikedCount != full.LikedCount || model.DislikedCount != full.DislikedCount || model.LikedImageCount != full.LikedImageCount || model.DislikedImageCount != full.DislikedImageCount || model.ImplicitCount != full.ImplicitCount ||
 		math.Abs(model.FeedPrior["feed"]-full.FeedPrior["feed"]) > 0.000001 {
 		t.Fatalf("incremental model = %#v; full = %#v", model, full)
 	}
@@ -139,7 +150,7 @@ func TestBuildModelNeverMixesEmbeddingVersions(t *testing.T) {
 	model := BuildModel("user", []domain.Signal{
 		{ItemID: "legacy", Value: 1, Vector: EncodeVector([]float32{1, 0}), CreatedAt: domain.Timestamp(now)},
 		{ItemID: "new", Value: 1, Vector: EncodeVector([]float32{0, 1}), CreatedAt: domain.Timestamp(now), ModelVersion: "new-model"},
-	}, nil, now, "new-model")
+	}, nil, now, "new-model", "")
 	if got := DecodeVector(model.LikedCentroid); Dot(got, []float32{0, 1}) < 0.999999 {
 		t.Fatalf("mixed-version centroid = %v", got)
 	}
@@ -148,16 +159,41 @@ func TestBuildModelNeverMixesEmbeddingVersions(t *testing.T) {
 func TestWhyChoosesLikedItemOrFeed(t *testing.T) {
 	vector := []float32{1, 0}
 	candidates := []Candidate{{Title: "closest", Vector: []float32{1, 0}}, {Title: "other", Vector: []float32{0, 1}}}
-	item := Why(Result{Base: 0.8, Taste: 0.3, Prior: 0.02}, vector, "Feed", candidates)
+	item := Why(Result{Base: 0.8, Taste: 0.3, Prior: 0.02}, vector, nil, "Feed", candidates)
 	if item == nil || item.Title != "closest" {
 		t.Fatalf("item why = %#v", item)
 	}
-	feed := Why(Result{Base: 0.7, Taste: 0.05, Prior: 0.09}, vector, "Feed", candidates)
+	feed := Why(Result{Base: 0.7, Taste: 0.05, Prior: 0.09}, vector, nil, "Feed", candidates)
 	if feed == nil || feed.Title != "" || feed.FeedTitle != "Feed" {
 		t.Fatalf("feed why = %#v", feed)
 	}
-	if cold := Why(Result{Base: 0.6}, vector, "Feed", candidates); cold != nil {
+	if cold := Why(Result{Base: 0.6}, vector, nil, "Feed", candidates); cold != nil {
 		t.Fatalf("cold why = %#v", cold)
+	}
+}
+
+func TestTextOnlyItemIsUnaffectedByImageCentroids(t *testing.T) {
+	vector := []float32{1, 0}
+	base := domain.Model{ExplicitCount: 10, LikedCount: 5, LikedCentroid: EncodeVector(vector)}
+	withImages := base
+	withImages.LikedImageCount = 5
+	withImages.LikedImageCentroid = EncodeVector([]float32{0, 1})
+	want := Calculate(vector, nil, base, "", false, 0)
+	got := Calculate(vector, nil, withImages, "", false, 0)
+	if got != want {
+		t.Fatalf("text-only result = %#v, want exactly %#v", got, want)
+	}
+}
+
+func TestWhyMarksDominantImageMatch(t *testing.T) {
+	vector, imageVector := []float32{1, 0}, []float32{1, 0}
+	candidates := []Candidate{
+		{Title: "photo", Vector: []float32{0.5, 0}, ImageVector: []float32{1, 0}},
+		{Title: "text", Vector: []float32{0.6, 0}},
+	}
+	why := Why(Result{Base: 0.8, Taste: 0.3}, vector, imageVector, "", candidates)
+	if why == nil || why.Title != "photo" || !why.Image {
+		t.Fatalf("image why = %#v", why)
 	}
 }
 

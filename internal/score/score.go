@@ -18,25 +18,29 @@ const (
 	DwellThreshold         = 30_000
 	PriorWindow            = 90 * 24 * time.Hour
 	LegacyEmbeddingVersion = "amazon.titan-embed-text-v2:0"
+	ImageTasteWeight       = 0.4
 )
 
 type Result struct {
-	Score float64
-	Base  float64
-	Taste float64
-	Prior float64
+	Score      float64
+	Base       float64
+	Taste      float64
+	ImageTaste float64
+	Prior      float64
 }
 
 type Candidate struct {
-	Title     string
-	FeedTitle string
-	Vector    []float32
+	Title       string
+	FeedTitle   string
+	Vector      []float32
+	ImageVector []float32
 }
 
 // Calculate implements scoring v2. All stored vectors are normalized, but Dot
 // deliberately tolerates old unnormalized rows during the first model rebuild.
-func Calculate(vector []float32, model domain.Model, feedID string, hasMedia bool, ageHours float64) Result {
+func Calculate(vector, imageVector []float32, model domain.Model, feedID string, hasMedia bool, ageHours float64) Result {
 	base, taste := 0.5, 0.0
+	imageTaste := 0.0
 	if model.ExplicitCount >= 10 {
 		simLiked, simDisliked := 0.0, 0.0
 		if model.LikedCount >= 5 {
@@ -46,6 +50,17 @@ func Calculate(vector []float32, model domain.Model, feedID string, hasMedia boo
 			simDisliked = Dot(vector, DecodeVector(model.DislikedCentroid))
 		}
 		taste = simLiked - simDisliked
+		if len(imageVector) > 0 && (model.LikedImageCount >= 5 || model.DislikedImageCount >= 5) {
+			simLikedImage, simDislikedImage := 0.0, 0.0
+			if model.LikedImageCount >= 5 {
+				simLikedImage = Dot(imageVector, DecodeVector(model.LikedImageCentroid))
+			}
+			if model.DislikedImageCount >= 5 {
+				simDislikedImage = Dot(imageVector, DecodeVector(model.DislikedImageCentroid))
+			}
+			imageTaste = simLikedImage - simDislikedImage
+			taste = (1-ImageTasteWeight)*taste + ImageTasteWeight*imageTaste
+		}
 		base = clamp(0.5+0.8*taste, 0, 1)
 	}
 	prior := model.FeedPrior[feedID]
@@ -55,7 +70,7 @@ func Calculate(vector []float32, model domain.Model, feedID string, hasMedia boo
 	}
 	recency := math.Exp(-math.Max(0, ageHours) / 48)
 	value := clamp(base+prior+mediaBonus, 0, 1) * (0.7 + 0.3*recency)
-	return Result{Score: value, Base: base, Taste: taste, Prior: prior}
+	return Result{Score: value, Base: base, Taste: taste, ImageTaste: imageTaste, Prior: prior}
 }
 
 // LegacyCalculate remains available for a controlled scoring-version rollback.
@@ -92,7 +107,7 @@ func LegacyCalculate(vector []float32, signals []Signal, hasMedia bool, publishe
 
 // Why selects the dominant positive explanation. Prior-driven explanations do
 // not falsely attribute a score to a merely similar item.
-func Why(result Result, vector []float32, feedTitle string, candidates []Candidate) *domain.Why {
+func Why(result Result, vector, imageVector []float32, feedTitle string, candidates []Candidate) *domain.Why {
 	if result.Base <= 0.6 {
 		return nil
 	}
@@ -101,27 +116,36 @@ func Why(result Result, vector []float32, feedTitle string, candidates []Candida
 	}
 	best := -math.MaxFloat64
 	var selected Candidate
+	selectedImage := false
 	for _, candidate := range candidates {
-		value := Dot(vector, candidate.Vector)
+		textDot := Dot(vector, candidate.Vector)
+		value := textDot
+		imageDot := 0.0
+		usesImage := len(imageVector) > 0 && len(candidate.ImageVector) > 0
+		if usesImage {
+			imageDot = Dot(imageVector, candidate.ImageVector)
+			value = (1-ImageTasteWeight)*textDot + ImageTasteWeight*imageDot
+		}
 		if value > best {
 			best = value
 			selected = candidate
+			selectedImage = usesImage && imageDot > textDot
 		}
 	}
 	if selected.Title == "" {
 		return nil
 	}
-	return &domain.Why{Title: truncate(selected.Title, 80), FeedTitle: truncate(selected.FeedTitle, 80)}
+	return &domain.Why{Title: truncate(selected.Title, 80), FeedTitle: truncate(selected.FeedTitle, 80), Image: selectedImage}
 }
 
-func BuildModel(userID string, signals []domain.Signal, behaviours []domain.Behaviour, now time.Time, version string) domain.Model {
+func BuildModel(userID string, signals []domain.Signal, behaviours []domain.Behaviour, now time.Time, version, imageVersion string) domain.Model {
 	model := domain.Model{
-		PK: domain.UserPK(userID), SK: "MODEL", Version: version, ComputedAt: domain.Timestamp(now),
+		PK: domain.UserPK(userID), SK: "MODEL", Version: version, ImageVersion: imageVersion, ComputedAt: domain.Timestamp(now),
 		FeedPrior: make(map[string]float64), FeedSignalCount: make(map[string]int),
 		FeedLikes: make(map[string]int), FeedDislikes: make(map[string]int), FeedImplicit: make(map[string]int),
 	}
 	explicit := make(map[string]bool, len(signals))
-	var likedSum, dislikedSum []float32
+	var likedSum, dislikedSum, likedImageSum, dislikedImageSum []float32
 	cutoff := now.Add(-PriorWindow)
 	for _, signal := range signals {
 		model.ExplicitCount++
@@ -141,6 +165,18 @@ func BuildModel(userID string, signals []domain.Signal, behaviours []domain.Beha
 				model.DislikedWeight++
 			}
 		}
+		if len(signal.ImageVector) > 0 && CompatibleVersion(signal.ImageModelVersion, imageVersion) {
+			vector := Normalize(DecodeVector(signal.ImageVector))
+			if signal.Value > 0 {
+				likedImageSum = addWeighted(likedImageSum, vector, 1)
+				model.LikedImageWeight++
+				model.LikedImageCount++
+			} else if signal.Value < 0 {
+				dislikedImageSum = addWeighted(dislikedImageSum, vector, 1)
+				model.DislikedImageWeight++
+				model.DislikedImageCount++
+			}
+		}
 		if within(signal.CreatedAt, cutoff) {
 			if signal.Value > 0 {
 				model.FeedLikes[signal.FeedID]++
@@ -155,20 +191,30 @@ func BuildModel(userID string, signals []domain.Signal, behaviours []domain.Beha
 		}
 		model.ImplicitCount++
 		model.FeedImplicit[behaviour.FeedID]++
-		if explicit[behaviour.ItemID] || !CompatibleVersion(behaviour.ModelVersion, version) {
+		if explicit[behaviour.ItemID] {
 			continue
 		}
 		weight := BehaviourWeight(behaviour)
 		if weight == 0 {
 			continue
 		}
-		likedSum = addWeighted(likedSum, Normalize(DecodeVector(behaviour.Vector)), weight)
-		model.LikedWeight += weight
+		if CompatibleVersion(behaviour.ModelVersion, version) {
+			likedSum = addWeighted(likedSum, Normalize(DecodeVector(behaviour.Vector)), weight)
+			model.LikedWeight += weight
+		}
+		if len(behaviour.ImageVector) > 0 && CompatibleVersion(behaviour.ImageModelVersion, imageVersion) {
+			likedImageSum = addWeighted(likedImageSum, Normalize(DecodeVector(behaviour.ImageVector)), weight)
+			model.LikedImageWeight += weight
+		}
 	}
 	model.LikedSum = EncodeVector(likedSum)
 	model.DislikedSum = EncodeVector(dislikedSum)
 	model.LikedCentroid = EncodeVector(Normalize(likedSum))
 	model.DislikedCentroid = EncodeVector(Normalize(dislikedSum))
+	model.LikedImageSum = EncodeVector(likedImageSum)
+	model.DislikedImageSum = EncodeVector(dislikedImageSum)
+	model.LikedImageCentroid = EncodeVector(Normalize(likedImageSum))
+	model.DislikedImageCentroid = EncodeVector(Normalize(dislikedImageSum))
 	recomputePriors(&model)
 	return model
 }
@@ -198,7 +244,12 @@ func ApplyExplicit(model *domain.Model, oldSignal, newSignal *domain.Signal, beh
 	}
 	likedSum := DecodeVector(model.LikedSum)
 	dislikedSum := DecodeVector(model.DislikedSum)
+	likedImageSum := DecodeVector(model.LikedImageSum)
+	dislikedImageSum := DecodeVector(model.DislikedImageSum)
 	if (model.LikedWeight > 0 && len(likedSum) == 0) || (model.DislikedWeight > 0 && len(dislikedSum) == 0) {
+		return false
+	}
+	if (model.LikedImageWeight > 0 && len(likedImageSum) == 0) || (model.DislikedImageWeight > 0 && len(dislikedImageSum) == 0) {
 		return false
 	}
 	cutoff := now.Add(-PriorWindow)
@@ -217,6 +268,18 @@ func ApplyExplicit(model *domain.Model, oldSignal, newSignal *domain.Signal, beh
 			model.DislikedCount += int(direction)
 		}
 		model.ExplicitCount += int(direction)
+		if len(signal.ImageVector) > 0 && CompatibleVersion(signal.ImageModelVersion, model.ImageVersion) {
+			imageVector := Normalize(DecodeVector(signal.ImageVector))
+			if signal.Value > 0 {
+				likedImageSum = addWeighted(likedImageSum, imageVector, direction)
+				model.LikedImageWeight += direction
+				model.LikedImageCount += int(direction)
+			} else if signal.Value < 0 {
+				dislikedImageSum = addWeighted(dislikedImageSum, imageVector, direction)
+				model.DislikedImageWeight += direction
+				model.DislikedImageCount += int(direction)
+			}
+		}
 		if within(signal.CreatedAt, cutoff) {
 			if signal.Value > 0 {
 				model.FeedLikes[signal.FeedID] += int(direction)
@@ -227,14 +290,26 @@ func ApplyExplicit(model *domain.Model, oldSignal, newSignal *domain.Signal, beh
 	}
 	apply(oldSignal, -1)
 	apply(newSignal, 1)
-	if behaviour != nil && within(behaviour.OpenedAt, now.Add(-PriorWindow)) && CompatibleVersion(behaviour.ModelVersion, model.Version) {
+	if behaviour != nil && within(behaviour.OpenedAt, now.Add(-PriorWindow)) {
 		weight := BehaviourWeight(*behaviour)
-		if oldSignal == nil && newSignal != nil {
-			likedSum = addWeighted(likedSum, Normalize(DecodeVector(behaviour.Vector)), -weight)
-			model.LikedWeight -= weight
-		} else if oldSignal != nil && newSignal == nil {
-			likedSum = addWeighted(likedSum, Normalize(DecodeVector(behaviour.Vector)), weight)
-			model.LikedWeight += weight
+		if CompatibleVersion(behaviour.ModelVersion, model.Version) {
+			if oldSignal == nil && newSignal != nil {
+				likedSum = addWeighted(likedSum, Normalize(DecodeVector(behaviour.Vector)), -weight)
+				model.LikedWeight -= weight
+			} else if oldSignal != nil && newSignal == nil {
+				likedSum = addWeighted(likedSum, Normalize(DecodeVector(behaviour.Vector)), weight)
+				model.LikedWeight += weight
+			}
+		}
+		if len(behaviour.ImageVector) > 0 && CompatibleVersion(behaviour.ImageModelVersion, model.ImageVersion) {
+			imageVector := Normalize(DecodeVector(behaviour.ImageVector))
+			if oldSignal == nil && newSignal != nil {
+				likedImageSum = addWeighted(likedImageSum, imageVector, -weight)
+				model.LikedImageWeight -= weight
+			} else if oldSignal != nil && newSignal == nil {
+				likedImageSum = addWeighted(likedImageSum, imageVector, weight)
+				model.LikedImageWeight += weight
+			}
 		}
 	}
 	if model.LikedWeight < 1e-9 {
@@ -243,10 +318,20 @@ func ApplyExplicit(model *domain.Model, oldSignal, newSignal *domain.Signal, beh
 	if model.DislikedWeight < 1e-9 {
 		model.DislikedWeight, dislikedSum = 0, nil
 	}
+	if model.LikedImageWeight < 1e-9 {
+		model.LikedImageWeight, likedImageSum = 0, nil
+	}
+	if model.DislikedImageWeight < 1e-9 {
+		model.DislikedImageWeight, dislikedImageSum = 0, nil
+	}
 	model.LikedSum = EncodeVector(likedSum)
 	model.DislikedSum = EncodeVector(dislikedSum)
 	model.LikedCentroid = EncodeVector(Normalize(likedSum))
 	model.DislikedCentroid = EncodeVector(Normalize(dislikedSum))
+	model.LikedImageSum = EncodeVector(likedImageSum)
+	model.DislikedImageSum = EncodeVector(dislikedImageSum)
+	model.LikedImageCentroid = EncodeVector(Normalize(likedImageSum))
+	model.DislikedImageCentroid = EncodeVector(Normalize(dislikedImageSum))
 	model.ComputedAt = domain.Timestamp(now)
 	recomputePriors(model)
 	return true
