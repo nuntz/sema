@@ -93,6 +93,11 @@ function StoryCard(props: {
   );
   const sourceLabel = () =>
     `${Math.min(props.story.source_count, 9)}${props.story.source_count > 9 ? "+" : ""} SOURCES`;
+  const focusLeadUnlessHeadline = (target: EventTarget | null) => {
+    if (!(target instanceof Element) || !target.closest(".story-headlines")) {
+      props.onFocus(focusID());
+    }
+  };
   return (
     <article
       class="story-card"
@@ -103,7 +108,8 @@ function StoryCard(props: {
       }}
       data-focus-id={focusID()}
       data-story-id={props.story.story_id}
-      onMouseEnter={() => props.onFocus(focusID())}
+      onFocus={(event) => focusLeadUnlessHeadline(event.target)}
+      onMouseOver={(event) => focusLeadUnlessHeadline(event.target)}
     >
       <Show when={lead()} keyed>
         {(item) => (

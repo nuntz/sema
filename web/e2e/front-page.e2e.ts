@@ -102,6 +102,16 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
   expect(storyBox?.y).toBeLessThan(gridBox?.y ?? 0);
 
   await expect(story).toHaveClass(/focused/);
+  await story.locator('[data-focus-id="headline"]').hover();
+  await expect(story.locator('[data-focus-id="headline"]')).toHaveClass(
+    /focused/,
+  );
+  await expect(story).not.toHaveClass(/focused/);
+  await story.locator(".story-lead").hover();
+  await expect(story).toHaveClass(/focused/);
+  await expect(story.locator('[data-focus-id="headline"]')).not.toHaveClass(
+    /focused/,
+  );
   await page.keyboard.press("j");
   await expect(story.locator('[data-focus-id="headline"]')).toHaveClass(
     /focused/,
