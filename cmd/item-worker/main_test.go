@@ -98,6 +98,13 @@ func (stubEmbedder) Embed(context.Context, string) ([]float32, error) {
 	return []float32{1, 0}, nil
 }
 
+type countingTextEmbedder struct{ calls int }
+
+func (s *countingTextEmbedder) Embed(context.Context, string) ([]float32, error) {
+	s.calls++
+	return []float32{1, 0}, nil
+}
+
 type stubImageEmbedder struct {
 	vector []float32
 	err    error
@@ -302,6 +309,26 @@ func TestImageEmbeddingFailureDoesNotFailItemAndPreservesReplayVector(t *testing
 	}
 	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(existingImage) || repository.overwritten.ImageModelVersion != "image-v1" {
 		t.Fatalf("replay image vector was not preserved: %#v", repository.overwritten)
+	}
+}
+
+func TestCompatibleReplayPreservesTextVectorWithoutEmbedding(t *testing.T) {
+	now := time.Now().UTC()
+	textVector := []byte{0, 0, 128, 63, 0, 0, 0, 0}
+	existing := domain.Item{
+		PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", FeedID: "feed", Title: "Title",
+		PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), Vector: textVector, ModelVersion: "text-v1", TTL: now.Add(time.Hour).Unix(),
+	}
+	repository := &fakeItemStore{item: existing}
+	embedder := &countingTextEmbedder{}
+	h := &handler{store: repository, embedder: embedder, modelVersion: "text-v1", scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	if embedder.calls != 0 || repository.overwritten == nil || string(repository.overwritten.Vector) != string(textVector) {
+		t.Fatalf("replay embed calls = %d, item = %#v", embedder.calls, repository.overwritten)
 	}
 }
 

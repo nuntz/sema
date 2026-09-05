@@ -63,6 +63,9 @@ func (r *replay) run(ctx context.Context) error {
 			return err
 		}
 		for _, signal := range signals {
+			if !needsTextReembedding(signal.Vector, signal.ModelVersion, r.version) {
+				continue
+			}
 			vector, embedErr := r.embedder.Embed(ctx, capRunes(strings.TrimSpace(signal.Title), 2048))
 			if embedErr != nil {
 				return fmt.Errorf("re-embed signal %s: %w", signal.ItemID, embedErr)
@@ -77,6 +80,9 @@ func (r *replay) run(ctx context.Context) error {
 			return err
 		}
 		for _, behaviour := range behaviours {
+			if !needsTextReembedding(behaviour.Vector, behaviour.ModelVersion, r.version) {
+				continue
+			}
 			vector, embedErr := r.embedder.Embed(ctx, capRunes(strings.TrimSpace(behaviour.Title), 2048))
 			if embedErr != nil {
 				return fmt.Errorf("re-embed behaviour %s: %w", behaviour.ItemID, embedErr)
@@ -102,6 +108,10 @@ func (r *replay) run(ctx context.Context) error {
 	}
 	slog.Info("replay queued", "users", len(users), "signals_reembedded", totalSignals, "items_queued", totalItems, "model_version", r.version, "force_extract", r.forceExtract, "force_summary", r.forceSummary)
 	return nil
+}
+
+func needsTextReembedding(vector []byte, rowVersion, targetVersion string) bool {
+	return len(vector) == 0 || !score.CompatibleVersion(rowVersion, targetVersion)
 }
 
 func replayMessages(userID string, items []domain.Item, forceExtract, forceSummary bool) []domain.ItemMessage {

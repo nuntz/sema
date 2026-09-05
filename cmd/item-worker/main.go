@@ -404,11 +404,16 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	}
 	embedInput := capRunes(strings.TrimSpace(embedTitle+"\n"+summary+"\n"+article.FirstParagraph), 2048)
 	embedStarted := time.Now()
-	vector, err := h.embedder.Embed(ctx, embedInput)
-	if err != nil {
-		return nil, err
+	vector := score.DecodeVector(existing.Vector)
+	textEmbedded := false
+	if !message.Reprocess || message.ForceExtract || message.ForceSummary || len(vector) == 0 || !score.CompatibleVersion(existing.ModelVersion, h.modelVersion) {
+		vector, err = h.embedder.Embed(ctx, embedInput)
+		if err != nil {
+			return nil, err
+		}
+		vector = score.Normalize(vector)
+		textEmbedded = true
 	}
-	vector = score.Normalize(vector)
 	value, why := 0.0, (*domain.Why)(nil)
 	model := domain.Model{}
 	if h.scoringVersion == "1" {
@@ -497,7 +502,10 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		}
 	}
 	slog.Info("item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "written", written, "has_body", hasBody, "extract_quality", extractQuality, "summary_source", summarySource, "has_media", mediaKey != "", "duration_ms", time.Since(started).Milliseconds())
-	metrics := map[string]float64{"ItemWorkerDurationMs": float64(time.Since(started).Milliseconds()), "BedrockLatencyMs": float64(time.Since(embedStarted).Milliseconds())}
+	metrics := map[string]float64{"ItemWorkerDurationMs": float64(time.Since(started).Milliseconds())}
+	if textEmbedded {
+		metrics["BedrockLatencyMs"] = float64(time.Since(embedStarted).Milliseconds())
+	}
 	if imageEmbedSucceeded > 0 {
 		metrics["ImageEmbedSucceeded"] = imageEmbedSucceeded
 	}
