@@ -29,6 +29,7 @@ export function storyScrollReadCandidates(
   scrollHeight: number,
   userInitiated: boolean,
   alreadyPassed: ReadonlySet<string>,
+  alreadyRead: ReadonlySet<string>,
 ): string[] {
   if (!automaticReadEnabled(context) || !userInitiated) return [];
   const viewportBottom = scrollTop + viewportHeight;
@@ -45,7 +46,7 @@ export function storyScrollReadCandidates(
     const intersects = row.bottom >= scrollTop && row.top <= viewportBottom;
     if (!fullyPassed && !(atBottom && intersects)) continue;
     for (const id of row.memberIDs) {
-      if (selected.has(id)) continue;
+      if (selected.has(id) || alreadyRead.has(id)) continue;
       selected.add(id);
       ids.push(id);
     }

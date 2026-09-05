@@ -154,8 +154,47 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
     }
   }
 
+  await page.evaluate(() => {
+    document.addEventListener(
+      "click",
+      (event) => {
+        if (
+          !(event.target instanceof Element) ||
+          !event.target.closest(".story-lead")
+        )
+          return;
+        requestAnimationFrame(() => {
+          (
+            window as typeof window & {
+              __leadFirstFrame?: { readerVisible: boolean; storyRead: boolean };
+            }
+          ).__leadFirstFrame = {
+            readerVisible: document.querySelector(".reader-scroll") !== null,
+            storyRead:
+              document
+                .querySelector('[data-story-id="story-one"] .story-lead h2')
+                ?.classList.contains("read") ?? false,
+          };
+        });
+      },
+      { capture: true, once: true },
+    );
+  });
   await page.locator('[data-story-id="story-one"] .story-lead').click();
   await expect(page.locator(".reader-scroll")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __leadFirstFrame?: {
+              readerVisible: boolean;
+              storyRead: boolean;
+            };
+          }
+        ).__leadFirstFrame,
+    ),
+  ).toEqual({ readerVisible: true, storyRead: false });
   await expect.poll(() => readBatches).toContainEqual(["lead", "headline"]);
 });
 
@@ -182,6 +221,7 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
     };
   });
   stories[1].items = stories[1].items.slice(0, 2);
+  stories[0].items[0].read = true;
   const firstPage = [
     stories[0].items[0],
     ...Array.from({ length: 99 }, (_, index) => ({
@@ -283,55 +323,6 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   expect(itemRequests).toBe(1);
   expect(exclusionParameters).toEqual([""]);
 
-  await page.evaluate(() => {
-    document.addEventListener(
-      "click",
-      (event) => {
-        if (
-          !(event.target instanceof Element) ||
-          !event.target.closest(".story-lead")
-        )
-          return;
-        requestAnimationFrame(() => {
-          (
-            window as typeof window & {
-              __leadFirstFrame?: { readerVisible: boolean; storyRead: boolean };
-            }
-          ).__leadFirstFrame = {
-            readerVisible: document.querySelector(".reader-scroll") !== null,
-            storyRead:
-              document
-                .querySelector('[data-story-id="story-0"] .story-lead h2')
-                ?.classList.contains("read") ?? false,
-          };
-        });
-      },
-      { capture: true, once: true },
-    );
-  });
-  await page.locator('[data-story-id="story-0"] .story-lead').click();
-  await expect(page.locator(".reader-scroll")).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        (
-          window as typeof window & {
-            __leadFirstFrame?: {
-              readerVisible: boolean;
-              storyRead: boolean;
-            };
-          }
-        ).__leadFirstFrame,
-    ),
-  ).toEqual({ readerVisible: true, storyRead: false });
-  await expect(
-    page.locator('[data-story-id="story-0"] .story-lead h2'),
-  ).toHaveClass(/read/);
-  const openedStoryIDs = stories[0].items.map((entry) => entry.item_id);
-  await expect.poll(() => readBatches).toContainEqual(openedStoryIDs);
-  await page.keyboard.press("Escape");
-  await expect(page.locator(".reader-scroll")).toHaveCount(0);
-
   const scrollPastFirstStoryRow = async () => {
     const scroller = page.locator(".grid-scroll");
     const delta = await scroller.evaluate((element) => {
@@ -367,12 +358,17 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
     )
     .toBe(0);
   await scrollPastFirstStoryRow();
-  const firstRowIDs = [...stories[0].items, ...stories[1].items].map(
+  const firstRowIDs = [...stories[0].items.slice(1), ...stories[1].items].map(
     (entry) => entry.item_id,
   );
   await expect(
     page.locator('[data-story-id="story-1"] .story-lead h2'),
   ).toHaveClass(/read/);
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
-  await expect.poll(() => readBatches).toContainEqual(firstRowIDs);
+  await expect.poll(() => readBatches.at(-1)).toEqual(firstRowIDs);
+  expect(readBatches.at(-1)).not.toContain(stories[0].items[0].item_id);
+  await page.keyboard.press("u");
+  await expect(
+    page.locator('[data-story-id="story-0"] .story-lead h2'),
+  ).toHaveClass(/read/);
 });

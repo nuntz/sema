@@ -74,6 +74,7 @@ describe("front-page scroll reading", () => {
         scrollHeight,
         userInitiated,
         alreadyPassed,
+        new Set(),
       );
 
     expect(candidates("unread", 100)).toEqual([]);
@@ -91,6 +92,7 @@ describe("front-page scroll reading", () => {
         400,
         true,
         new Set(),
+        new Set(),
       ),
     ).toEqual([]);
     expect(candidates("unread", 100, true, 200)).toEqual([
@@ -100,5 +102,40 @@ describe("front-page scroll reading", () => {
       "lead-two",
       "two-a",
     ]);
+  });
+
+  it("skips story members that are already read", () => {
+    const rows = [
+      {
+        top: 0,
+        bottom: 100,
+        memberIDs: ["lead", "headline-a", "headline-b"],
+      },
+    ];
+
+    expect(
+      storyScrollReadCandidates(
+        "unread",
+        rows,
+        101,
+        100,
+        400,
+        true,
+        new Set(),
+        new Set(["lead"]),
+      ),
+    ).toEqual(["headline-a", "headline-b"]);
+    expect(
+      storyScrollReadCandidates(
+        "unread",
+        rows,
+        101,
+        100,
+        400,
+        true,
+        new Set(),
+        new Set(["lead", "headline-a", "headline-b"]),
+      ),
+    ).toEqual([]);
   });
 });

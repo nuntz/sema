@@ -837,7 +837,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     if (mode() === "archive") return;
     const requested = new Set(ids);
     const alreadyRead = new Set(
-      items()
+      [...items(), ...stories().flatMap((story) => story.items)]
         .filter((item) => item.read)
         .map((item) => item.item_id),
     );

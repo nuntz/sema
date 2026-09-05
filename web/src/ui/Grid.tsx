@@ -484,6 +484,11 @@ export function Grid(props: GridProps) {
       scroller.scrollHeight,
       userInitiated,
       passedIDs,
+      new Set(
+        storyList().flatMap((story) =>
+          story.items.filter((item) => item.read).map((item) => item.item_id),
+        ),
+      ),
     );
     for (const id of storyReadIDs) passedIDs.add(id);
     const alreadyRead = new Set(
