@@ -889,16 +889,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-media-action { width: 100%; display: block; background: transparent; color: inherit; }
 .story-media { width: 100%; height: 144px; overflow: hidden; background: var(--surface-fallback); }
 .story-media > img { width: 100%; height: 100%; display: block; object-fit: cover; }
-.story-badges { position: absolute; top: 8px; left: 10px; z-index: 3; display: flex; gap: 6px; pointer-events: none; }
-.story-badges span, .story-badges em { padding: 4px 7px; border-radius: 5px; background: var(--story-badge-bg); color: var(--fg-primary); font: 500 11.5px/1 "IBM Plex Mono", monospace; font-style: normal; letter-spacing: .04em; white-space: nowrap; }
+.story-badges { position: absolute; top: 7px; left: 7px; z-index: 3; display: flex; gap: 6px; opacity: 1; pointer-events: none; transition: opacity 120ms ease-out; }
+.story-badges span, .story-badges em { padding: 4px 7px; border-radius: 5px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 500 11.5px/1 "IBM Plex Mono", monospace; font-style: normal; letter-spacing: .04em; white-space: nowrap; }
 .story-badges em { color: var(--fg-prior); }
-.story-corner { position: absolute; top: 8px; right: 10px; z-index: 4; display: flex; align-items: center; gap: 6px; }
-.story-corner > span:not(.unread-dot) { padding: 4px 7px; border-radius: 5px; background: var(--story-badge-bg); color: var(--media-fg-secondary); font: 400 11.5px/1 "IBM Plex Mono", monospace; }
-.story-actions { display: flex; gap: 5px; }
-.story-heart, .story-more-action { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; background: var(--story-badge-bg); color: var(--media-fg-primary); }
-.story-heart:hover, .story-heart.selected { background: var(--cell-action-kept-bg); color: var(--cell-action-kept-fg); }
-.story-more-action:hover { background: var(--cell-action-hover-bg); color: var(--cell-action-hover-fg); }
-.story-heart:focus-visible, .story-more-action:focus-visible { outline: 1.5px solid var(--accent-loud); outline-offset: 1px; }
+.story-cell:hover .story-badges, .story-cell:has(.story-actions button:focus-visible) .story-badges { opacity: 0; }
+.story-corner { position: absolute; top: 8px; right: 8px; z-index: 4; display: flex; align-items: center; gap: 6px; }
+.story-corner > span:not(.unread-dot) { padding: 4px 7px; border-radius: 5px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 400 11.5px/1 "IBM Plex Mono", monospace; }
 .story-lead { width: 100%; padding: 11px 14px 10px; display: block; background: transparent; color: inherit; text-align: left; text-decoration: none; }
 .story-card.no-media .story-lead { padding-top: 43px; }
 .story-lead:focus-visible { outline: 0; }
@@ -913,8 +909,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-headlines { border-top: 1px solid var(--line); }
 .story-headline, .story-more { width: 100%; height: 33px; padding: 0 14px; display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--line); border-radius: 0; background: transparent; color: inherit; text-align: left; text-decoration: none; }
 .story-headline:first-child, .story-more:first-child { border-top: 0; }
-.story-headline.focused { border-radius: 7px; background: var(--surface-selected); outline: 2px solid var(--accent-loud); outline-offset: -2px; }
-.story-headline:focus-visible { outline: 2px solid var(--accent-loud); outline-offset: -2px; }
+.story-headline.focused { border-radius: 7px; background: var(--surface-selected); outline: 2px solid var(--accent); outline-offset: -2px; }
+.story-headline:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .story-headline-dot { width: 7px; display: grid; place-items: center; flex: none; }
 .story-headline-feed { width: 112px; flex: none; overflow: hidden; color: var(--fg-quaternary); font: 400 var(--t-12)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
 .story-headline-title { min-width: 0; flex: 1; overflow: hidden; color: var(--fg-secondary); font: 400 var(--t-13-5)/1 "Instrument Sans", sans-serif; white-space: nowrap; text-overflow: ellipsis; }

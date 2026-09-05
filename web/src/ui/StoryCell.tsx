@@ -211,38 +211,38 @@ export function StoryCell(props: StoryCellProps) {
                   <span>{sourceLabel()}</span>
                   <em>top 10%</em>
                 </div>
+                <div class="cell-actions story-actions">
+                  <button
+                    type="button"
+                    class="heart story-heart"
+                    classList={{ selected: item.hearted }}
+                    aria-label={
+                      item.hearted ? "Remove from archive" : "Keep in archive"
+                    }
+                    aria-pressed={item.hearted}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onHeart(item);
+                    }}
+                  >
+                    <Icon name="keep" size={14} filled={item.hearted} />
+                  </button>
+                  <button
+                    type="button"
+                    class="more story-more-action"
+                    aria-label="More actions"
+                    aria-haspopup="dialog"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onMore(props.story);
+                    }}
+                  >
+                    <Icon name="more" size={14} />
+                  </button>
+                </div>
                 <div class="story-corner">
                   <UnreadDot visible={leadReadVisuals().unreadDot} />
                   <span>{relativeTime(item.published_ts)}</span>
-                  <div class="story-actions">
-                    <button
-                      type="button"
-                      class="story-heart"
-                      classList={{ selected: item.hearted }}
-                      aria-label={
-                        item.hearted ? "Remove from archive" : "Keep in archive"
-                      }
-                      aria-pressed={item.hearted}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        props.onHeart(item);
-                      }}
-                    >
-                      <Icon name="keep" size={14} filled={item.hearted} />
-                    </button>
-                    <button
-                      type="button"
-                      class="story-more-action"
-                      aria-label="More actions"
-                      aria-haspopup="dialog"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        props.onMore(props.story);
-                      }}
-                    >
-                      <Icon name="more" size={14} />
-                    </button>
-                  </div>
                 </div>
                 <PrimaryAction
                   item={item}

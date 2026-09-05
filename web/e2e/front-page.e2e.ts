@@ -285,6 +285,133 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
   await expect(sheet).toBeVisible();
 });
 
+test("editorial story actions match singleton hover behavior and light colors", async ({
+  page,
+}) => {
+  const lead = {
+    ...item("story-lead", "one", "Story lead", 0.8, "L"),
+    story_id: "story-actions",
+  };
+  const story = {
+    story_id: "story-actions",
+    source_count: 2,
+    order_key: 0.9,
+    size: "L",
+    items: [
+      lead,
+      {
+        ...item("story-headline", "two", "Other coverage", 0.7, "S"),
+        story_id: "story-actions",
+      },
+    ],
+  };
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
+  await stubFrontPage(
+    page,
+    [story],
+    [
+      {
+        ...item("singleton", "three", "Singleton", 0.6, "M"),
+        media_url: "/sema-mark.svg",
+        media_w: 320,
+        media_h: 180,
+      },
+    ],
+    [],
+  );
+  await page.goto("/");
+
+  const storyCell = page.locator('[data-story-id="story-actions"]');
+  const storyActions = storyCell.locator(".story-actions");
+  const singletonActions = page
+    .locator('[data-item-id="singleton"]')
+    .locator(".cell-actions");
+  const singletonAge = page
+    .locator('[data-item-id="singleton"]')
+    .locator(".cell-age");
+  const storyBadges = storyCell.locator(".story-badges");
+
+  await expect(storyBadges).toHaveCSS("opacity", "1");
+  await expect(storyActions).toHaveCSS("opacity", "0");
+  await expect(storyActions).toHaveCSS("pointer-events", "none");
+
+  const cellOffset = (element: typeof storyActions) =>
+    element.evaluate((node) => {
+      const cell = node.closest(".grid-cell");
+      if (!cell) throw new Error("grid cell unavailable");
+      const elementRect = node.getBoundingClientRect();
+      const cellRect = cell.getBoundingClientRect();
+      return {
+        left: Math.round(elementRect.left - cellRect.left),
+        top: Math.round(elementRect.top - cellRect.top),
+      };
+    });
+  expect(await cellOffset(storyActions)).toEqual(
+    await cellOffset(singletonActions),
+  );
+
+  await storyCell.hover();
+  await expect(storyBadges).toHaveCSS("opacity", "0");
+  await expect(storyActions).toHaveCSS("opacity", "1");
+  await expect(storyActions).toHaveCSS("pointer-events", "auto");
+
+  const actionColors = async (actions: typeof storyActions) =>
+    actions.getByRole("button", { name: "More actions" }).evaluate((button) => {
+      const style = getComputedStyle(button);
+      return { background: style.backgroundColor, foreground: style.color };
+    });
+  expect(await actionColors(storyActions)).toEqual(
+    await actionColors(singletonActions),
+  );
+
+  const labelColors = (label: typeof singletonAge) =>
+    label.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, foreground: style.color };
+    });
+  const singletonLabelColors = await labelColors(singletonAge);
+  await expect
+    .poll(() => labelColors(storyCell.locator(".story-badges span")))
+    .toEqual(singletonLabelColors);
+  await expect
+    .poll(() => labelColors(storyCell.locator(".story-corner > span")))
+    .toEqual(singletonLabelColors);
+  expect(
+    (await labelColors(storyCell.locator(".story-badges em"))).background,
+  ).toBe(singletonLabelColors.background);
+
+  const headline = storyCell.locator(".story-headline").first();
+  await headline.hover();
+  await expect(headline).toHaveClass(/focused/);
+  const highlightColors = await headline.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const resolveThemeColor = (property: string) => {
+      const probe = document.createElement("span");
+      probe.style.color = `var(${property})`;
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    };
+    return {
+      background: style.backgroundColor,
+      outline: style.outlineColor,
+      selectedSurface: resolveThemeColor("--surface-selected"),
+      accent: resolveThemeColor("--accent"),
+    };
+  });
+  expect(highlightColors.background).toBe(highlightColors.selectedSurface);
+  expect(highlightColors.outline).toBe(highlightColors.accent);
+
+  await page.locator(".app-header").hover();
+  await expect(storyBadges).toHaveCSS("opacity", "1");
+  await expect(storyActions).toHaveCSS("opacity", "0");
+  await storyActions.getByRole("button", { name: "More actions" }).focus();
+  await expect(storyBadges).toHaveCSS("opacity", "0");
+  await expect(storyActions).toHaveCSS("opacity", "1");
+  await expect(storyActions).toHaveCSS("pointer-events", "auto");
+});
+
 test("stories earn their position in the interest grid", async ({ page }) => {
   const lead = {
     ...item("lead", "one", "Lead coverage", 0.7, "L"),
