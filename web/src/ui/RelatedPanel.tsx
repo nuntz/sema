@@ -196,7 +196,12 @@ export function RelatedPanel(props: {
                       <Show
                         when={item.hearted}
                         fallback={
-                          <span class="similarity">≈{item.similarity}</span>
+                          <span class="similarity">
+                            <Show when={isImageMatch(item)}>
+                              <Icon name="image-match" size={12} />
+                            </Show>
+                            ≈{item.similarity}
+                          </span>
                         }
                       >
                         <span class="related-kept">
@@ -285,8 +290,14 @@ export function RelatedPanel(props: {
                         <span>
                           {item.feed_title || "Feed"} ·{" "}
                           {item.hearted
-                            ? `kept ${relativeTime(item.hearted_ts || item.published_ts)} · ≈${item.similarity}`
+                            ? `kept ${relativeTime(item.hearted_ts || item.published_ts)} · `
                             : relativeTime(item.published_ts)}
+                          <Show when={item.hearted}>
+                            <Show when={isImageMatch(item)}>
+                              <Icon name="image-match" size={12} />
+                            </Show>
+                            ≈{item.similarity}
+                          </Show>
                         </span>
                       </div>
                       <Show when={isRedditItem(item)}>
@@ -315,4 +326,8 @@ export function RelatedPanel(props: {
       </aside>
     </div>
   );
+}
+
+function isImageMatch(item: Item): boolean {
+  return item.match_source === "image" || item.match_source === "both";
 }

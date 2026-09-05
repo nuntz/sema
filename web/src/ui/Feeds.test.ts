@@ -20,11 +20,15 @@ describe("ranking diagnostics", () => {
     expect(formatPrior(-0.041)).toBe("−0.04");
   });
 
-  it("uses only the two approved why phrasings", () => {
+  it("uses the approved text, feed, and image why phrasings", () => {
     const item = { why: { title: "A story" } } as Item;
     expect(whyText(item)).toBe("Because you liked: A story");
     item.why = { feed_title: "Example" };
     expect(whyText(item)).toBe("You often like Example");
+    item.why = { title: "A photo", image: true };
+    expect(whyText(item)).toBe("Looks like a photo you kept");
+    item.why = { feed_title: "Example", image: true };
+    expect(whyText(item)).toBe("Looks like a photo you kept from Example");
     item.why = undefined;
     expect(whyText(item)).toBe("");
   });

@@ -1,6 +1,10 @@
 import type { Item } from "./types";
 
 export function whyText(item: Item): string {
+  if (item.why?.image)
+    return item.why.feed_title
+      ? `Looks like a photo you kept from ${item.why.feed_title}`
+      : "Looks like a photo you kept";
   if (item.why?.title) return `Because you liked: ${item.why.title}`;
   if (item.why?.feed_title) return `You often like ${item.why.feed_title}`;
   return "";

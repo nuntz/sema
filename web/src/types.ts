@@ -20,6 +20,8 @@ export interface RankingModel {
   liked_count: number;
   disliked_count: number;
   implicit_count: number;
+  liked_image_count?: number;
+  disliked_image_count?: number;
   size_cutoffs?: { p60: number; p90: number };
   computed_at?: string;
   version?: string;
@@ -28,6 +30,7 @@ export interface RankingModel {
 export interface Why {
   title?: string;
   feed_title?: string;
+  image?: boolean;
 }
 
 export interface MediaVariant {
@@ -76,6 +79,7 @@ export interface Item {
   archived?: boolean;
   hearted_ts?: string;
   similarity?: number;
+  match_source?: "text" | "image" | "both";
 }
 
 export interface Story {

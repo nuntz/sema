@@ -249,7 +249,12 @@ function ResultCell(props: {
           when={props.archive}
           fallback={
             props.item.similarity !== undefined ? (
-              <span class="similarity">≈{props.item.similarity}</span>
+              <span class="similarity">
+                <Show when={isImageMatch(props.item)}>
+                  <Icon name="image-match" size={12} />
+                </Show>
+                ≈{props.item.similarity}
+              </span>
             ) : (
               <span class="cell-age">
                 {relativeTime(props.item.published_ts)}
@@ -364,11 +369,20 @@ function ResultCopy(props: { item: Item; archive: boolean }) {
             : relativeTime(props.item.published_ts)}
         </span>
         <Show when={props.archive && props.item.similarity !== undefined}>
-          <em>≈{props.item.similarity}</em>
+          <em>
+            <Show when={isImageMatch(props.item)}>
+              <Icon name="image-match" size={12} />
+            </Show>
+            ≈{props.item.similarity}
+          </em>
         </Show>
       </div>
     </div>
   );
+}
+
+function isImageMatch(item: Item): boolean {
+  return item.match_source === "image" || item.match_source === "both";
 }
 
 function SearchEmpty(props: { query: string; semantic: boolean }) {

@@ -862,7 +862,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .result-cell .cell-copy { padding-top: 26px; }
 .result-cell .cell-copy h2 { -webkit-line-clamp: 2; }
 .result-cell .cell-copy p { display: none; }
-.result-cell .similarity, .related-cell .similarity { padding: 4px 7px; border-radius: 4px; font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; }
+.result-cell .similarity, .related-cell .similarity { padding: 4px 7px; display: inline-flex; align-items: center; gap: 3px; border-radius: 4px; font: 500 var(--t-12)/1 "IBM Plex Mono", monospace; }
 .result-cell .similarity { background: var(--media-overlay-label); color: var(--media-fg-secondary); }
 .related-cell .similarity { background: var(--related-label-bg); color: var(--related-label-fg); }
 .result-cell .cell-corner:has(.similarity) { pointer-events: none; }
@@ -1013,7 +1013,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .size-s .cell-copy p { display: none; }
 .cell-meta { min-width: 0; display: flex; align-items: center; gap: 6px; margin-top: 9px; }
 .cell-meta > span:not(.source-badge) { overflow: hidden; color: var(--fg-tertiary); font: 400 var(--t-12)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
-.cell-meta em { height: 22px; padding: 0 7px; display: inline-flex; align-items: center; flex: none; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--fg-tertiary); font: 500 var(--t-chip)/1 "IBM Plex Mono", monospace; font-style: normal; white-space: nowrap; }
+.cell-meta em { height: 22px; padding: 0 7px; display: inline-flex; align-items: center; gap: 3px; flex: none; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--fg-tertiary); font: 500 var(--t-chip)/1 "IBM Plex Mono", monospace; font-style: normal; white-space: nowrap; }
 .cell-corner { position: absolute; top: 8px; right: 8px; z-index: 6; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 .cell-corner-meta { display: grid; justify-items: end; }
 .cell-age, .cell-rank { grid-area: 1 / 1; padding: 4px 7px; border-radius: 4px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 400 var(--t-12)/1 "IBM Plex Mono", monospace; white-space: nowrap; transition: opacity 120ms ease-out; }
@@ -1083,7 +1083,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .related-actions button .icon { color: currentColor; }
 .related-copy { position: absolute; inset: auto 8px 7px; z-index: 2; min-width: 0; }
 .related-copy > button { max-width: 100%; padding: 0; overflow: hidden; display: block; background: transparent; color: var(--fg-primary); font: 500 var(--t-13-5)/1.25 "Instrument Sans", sans-serif; white-space: nowrap; text-overflow: ellipsis; text-align: left; }
-.related-copy > span { margin-top: 4px; overflow: hidden; display: block; color: var(--fg-quaternary); font: 400 var(--t-chip)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
+.related-copy > span { margin-top: 4px; overflow: hidden; display: flex; align-items: center; gap: 3px; color: var(--fg-quaternary); font: 400 var(--t-chip)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
 .related-cell:has(> img) .related-copy > :is(button, a) { color: var(--media-fg-primary); }
 .related-cell:has(> img) .related-copy > span { color: var(--media-fg-secondary); }
 .related-empty { margin-top: 0; }

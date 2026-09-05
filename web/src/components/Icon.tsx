@@ -12,6 +12,7 @@ import Download from "lucide-solid/icons/download";
 import Ellipsis from "lucide-solid/icons/ellipsis";
 import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
+import ImageIcon from "lucide-solid/icons/image";
 import Layers from "lucide-solid/icons/layers";
 import Link from "lucide-solid/icons/link";
 import Menu from "lucide-solid/icons/menu";
@@ -78,6 +79,7 @@ const glyphs = {
   "feed-fallback": SemaRows,
   "import-opml": Upload,
   keep: Heart,
+  "image-match": ImageIcon,
   "chevron-down": ChevronDown,
   menu: Menu,
   discussion: MessageSquare,
