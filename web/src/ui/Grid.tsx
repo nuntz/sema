@@ -236,15 +236,12 @@ export function Grid(props: GridProps) {
   const showEndMarkAction = createMemo(
     () => showEndAction() && unreadIDs().length > 0,
   );
-  const endTop = createMemo(() => {
+  const gridEndTop = createMemo(() => {
     if (!props.archive && props.unreadOnly && props.items.length === 0)
       return 0;
-    return (
-      leadHeight() +
-      layout().height +
-      (!props.archive && props.unreadOnly ? 22 : 28)
-    );
+    return layout().height + (!props.archive && props.unreadOnly ? 22 : 28);
   });
+  const endTop = createMemo(() => leadHeight() + gridEndTop());
   const canvasHeight = createMemo(
     () => endTop() + (props.hasMore ? 0 : viewportHeight()),
   );
@@ -547,7 +544,9 @@ export function Grid(props: GridProps) {
 
   createEffect(() => {
     const viewport = viewportHeight();
-    if (shouldLoadToFillViewport(props.hasMore, endTop(), viewport))
+    // A tall story lead must not hide an empty or incomplete grid page. The
+    // justified layout can withhold a trailing run until the next page arrives.
+    if (shouldLoadToFillViewport(props.hasMore, gridEndTop(), viewport))
       props.onLoadMore();
   });
 

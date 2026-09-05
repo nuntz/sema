@@ -147,3 +147,92 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
   await expect(page.locator(".reader-scroll")).toBeVisible();
   await expect.poll(() => readBatches).toContainEqual(["lead", "headline"]);
 });
+
+test("loads through an incomplete grid page below a tall story region", async ({
+  page,
+}) => {
+  const stories = Array.from({ length: 20 }, (_, storyIndex) => {
+    const storyID = `story-${storyIndex}`;
+    return {
+      story_id: storyID,
+      source_count: 6,
+      items: Array.from({ length: 6 }, (_, itemIndex) => ({
+        ...item(
+          `${storyID}-${itemIndex}`,
+          `${storyIndex}-${itemIndex}`,
+          `Story ${storyIndex} coverage ${itemIndex}`,
+        ),
+        story_id: storyID,
+        size: "M",
+      })),
+    };
+  });
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    ...item(`large-${index}`, "single", `Large singleton ${index}`),
+    story_id: undefined,
+    size: "L",
+  }));
+  const tail = {
+    ...item("tail", "single", "Stable singleton tail"),
+    story_id: undefined,
+    size: "S",
+  };
+  let itemRequests = 0;
+
+  await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (!url.pathname.startsWith("/api/")) {
+      await route.continue();
+      return;
+    }
+    if (request.method() !== "GET") {
+      await route.fulfill({ status: 204 });
+      return;
+    }
+    if (url.pathname === "/api/me") {
+      await route.fulfill({
+        json: {
+          profile: {
+            email: "reader@example.com",
+            created_at: published,
+            order_pref: "interest",
+            heart_count: 0,
+          },
+          heart_count: 0,
+          signal_count: 0,
+          model: {
+            explicit_count: 0,
+            liked_count: 0,
+            disliked_count: 0,
+            implicit_count: 0,
+          },
+        },
+      });
+      return;
+    }
+    if (url.pathname === "/api/feeds") {
+      await route.fulfill({ json: { feeds: [] } });
+      return;
+    }
+    if (url.pathname === "/api/stories") {
+      await route.fulfill({ json: { stories } });
+      return;
+    }
+    if (url.pathname === "/api/items") {
+      itemRequests++;
+      await route.fulfill({
+        json: url.searchParams.has("cursor")
+          ? { items: [tail], next_cursor: null }
+          : { items: firstPage, next_cursor: "next" },
+      });
+      return;
+    }
+    await route.fulfill({ json: {} });
+  });
+
+  await page.goto("/");
+  await expect.poll(() => itemRequests).toBeGreaterThanOrEqual(2);
+  await expect(page.locator('[data-item-id="large-0"]')).toBeAttached();
+});
