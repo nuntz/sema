@@ -54,9 +54,10 @@ type Store struct {
 }
 
 const (
-	feedIndexPK             = "FEED"
-	userIndexPK             = "USER"
-	itemsForFeedsPageBudget = 5
+	feedIndexPK                   = "FEED"
+	userIndexPK                   = "USER"
+	itemsForFeedsPageBudget       = 5
+	unreadItemsForFeedsPageBudget = 100
 )
 
 type itemProjection struct {
@@ -559,11 +560,20 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		input.KeyConditionExpression = aws.String("PK = :pk")
 		delete(input.ExpressionAttributeValues, ":prefix")
 	}
+	var readItemIDs map[string]bool
+	pageBudget := itemsForFeedsPageBudget
+	if !includeRead {
+		readItemIDs, err = s.readItemIDs(ctx, userID)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		pageBudget = unreadItemsForFeedsPageBudget
+	}
 	items := []domain.Item{}
 	seenItemIDs := make(map[string]bool)
 	var newestRead *domain.Item
 	var last map[string]types.AttributeValue
-	for pages := 0; len(items) < limit && pages < itemsForFeedsPageBudget; pages++ {
+	for pages := 0; len(items) < limit && pages < pageBudget; pages++ {
 		input.Limit = aws.Int32(100)
 		response, err := s.db.Query(ctx, input)
 		if err != nil {
@@ -573,8 +583,14 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, "", nil, err
 		}
-		if err := s.ResolveRead(ctx, userID, page); err != nil {
-			return nil, "", nil, err
+		if includeRead {
+			if err := s.ResolveRead(ctx, userID, page); err != nil {
+				return nil, "", nil, err
+			}
+		} else {
+			for index := range page {
+				page[index].Read = readItemIDs[page[index].ItemID]
+			}
 		}
 		for i, item := range page {
 			if allowedFeedIDs != nil && !allowedFeedIDs[item.FeedID] {
@@ -615,6 +631,44 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	}
 	next, err := encodeCursor(last)
 	return items, next, newestRead, err
+}
+
+// readItemIDs loads the compact read-marker keyspace once so an unread request
+// can scan through an all-read live window without a BatchGet for every page.
+func (s *Store) readItemIDs(ctx context.Context, userID string) (map[string]bool, error) {
+	read := make(map[string]bool)
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.table),
+			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			FilterExpression:       aws.String("#ttl > :now"),
+			ProjectionExpression:   aws.String("SK"),
+			ExpressionAttributeNames: map[string]string{
+				"#ttl": "ttl",
+			},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
+				":prefix": &types.AttributeValueMemberS{Value: "R#"},
+				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+			},
+			ExclusiveStartKey: start,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range response.Items {
+			value, ok := row["SK"].(*types.AttributeValueMemberS)
+			if !ok || !strings.HasPrefix(value.Value, "R#") {
+				continue
+			}
+			read[strings.TrimPrefix(value.Value, "R#")] = true
+		}
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return read, nil
+		}
+	}
 }
 
 func (s *Store) PutStory(ctx context.Context, story domain.Story) error {

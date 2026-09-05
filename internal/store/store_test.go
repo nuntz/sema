@@ -248,7 +248,13 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 	}
 	now := time.Now().UTC()
 	db := &fakeDynamoDB{
-		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
+			if prefix == "R#" {
+				return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
+					{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}},
+				}}, nil
+			}
 			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
 				marshal("new", now),
 				marshal("anchor", now.Add(-time.Minute)),
@@ -256,9 +262,8 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 			}}, nil
 		},
 		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{
-				"table": {{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}}},
-			}}, nil
+			t.Fatal("unread page used per-page BatchGet")
+			return nil, nil
 		},
 	}
 	repository := New(db, nil, "table", "", "")
@@ -272,10 +277,22 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 }
 
 func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
-	queryCalls := 0
+	itemQueryCalls := 0
+	readQueryCalls := 0
 	db := &fakeDynamoDB{
 		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			queryCalls++
+			prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
+			if prefix == "R#" {
+				readQueryCalls++
+				rows := make([]map[string]types.AttributeValue, 0, unreadItemsForFeedsPageBudget-1)
+				for page := 1; page < unreadItemsForFeedsPageBudget; page++ {
+					rows = append(rows, map[string]types.AttributeValue{
+						"SK": &types.AttributeValueMemberS{Value: domain.ReadSK(fmt.Sprintf("read-%d", page))},
+					})
+				}
+				return &dynamodb.QueryOutput{Items: rows}, nil
+			}
+			itemQueryCalls++
 			page := 1
 			if len(input.ExclusiveStartKey) > 0 {
 				value := input.ExclusiveStartKey["SK"].(*types.AttributeValueMemberS).Value
@@ -286,7 +303,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 				page = previous + 1
 			}
 			id := fmt.Sprintf("read-%d", page)
-			if page >= itemsForFeedsPageBudget {
+			if page >= unreadItemsForFeedsPageBudget {
 				id = fmt.Sprintf("unread-%d", page)
 			}
 			row, err := attributevalue.MarshalMap(domain.Item{
@@ -297,35 +314,29 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 				t.Fatal(err)
 			}
 			output := &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}}
-			if page < itemsForFeedsPageBudget+1 {
+			if page < unreadItemsForFeedsPageBudget+1 {
 				output.LastEvaluatedKey = key(domain.UserPK("user"), fmt.Sprintf("I#page-%d", page))
 			}
 			return output, nil
 		},
-		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			rows := []map[string]types.AttributeValue{}
-			for _, itemKey := range input.RequestItems["table"].Keys {
-				sk := itemKey["SK"].(*types.AttributeValueMemberS).Value
-				if strings.HasPrefix(sk, "R#read-") {
-					rows = append(rows, map[string]types.AttributeValue{"SK": &types.AttributeValueMemberS{Value: sk}})
-				}
-			}
-			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			t.Fatal("unread page used per-page BatchGet")
+			return nil, nil
 		},
 	}
 	repository := New(db, nil, "table", "", "")
 
 	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil, nil)
-	if err != nil || queryCalls != itemsForFeedsPageBudget || len(first) != 1 || first[0].ItemID != "unread-5" || cursor == "" {
-		t.Fatalf("budget page = %#v, cursor = %q, queries = %d, err = %v", first, cursor, queryCalls, err)
+	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget || readQueryCalls != 1 || len(first) != 1 || first[0].ItemID != "unread-100" || cursor == "" {
+		t.Fatalf("budget page = %#v, cursor = %q, item queries = %d, read queries = %d, err = %v", first, cursor, itemQueryCalls, readQueryCalls, err)
 	}
 	if anchor == nil || anchor.ItemID != "read-1" || !anchor.Read {
 		t.Fatalf("budget page anchor = %#v", anchor)
 	}
 
 	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, nil, nil)
-	if err != nil || queryCalls != itemsForFeedsPageBudget+1 || len(second) != 1 || second[0].ItemID != "unread-6" || cursor != "" || anchor != nil {
-		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, queries = %d, err = %v", second, cursor, anchor, queryCalls, err)
+	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget+1 || readQueryCalls != 2 || len(second) != 1 || second[0].ItemID != "unread-101" || cursor != "" || anchor != nil {
+		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, item queries = %d, read queries = %d, err = %v", second, cursor, anchor, itemQueryCalls, readQueryCalls, err)
 	}
 }
 

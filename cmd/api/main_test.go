@@ -105,7 +105,13 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 		return item
 	}
 	db := &apiDynamo{
-		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
+			if prefix == "R#" {
+				return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
+					{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}},
+				}}, nil
+			}
 			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
 				marshal("new", now),
 				marshal("anchor", now.Add(-time.Minute)),
