@@ -116,14 +116,14 @@ func TestFailureMetricsCarryOnlyFeedIDDimension(t *testing.T) {
 		dimensions map[string]string
 	}
 	events := []event{}
-	emitItemMetrics(map[string]float64{"ItemsWritten": 1}, "feed", false, false, func(metrics map[string]float64, dimensions map[string]string) {
+	emitItemMetrics(map[string]float64{"ItemsWritten": 1, "BodyImageFailed": 2}, "feed", false, false, func(metrics map[string]float64, dimensions map[string]string) {
 		events = append(events, event{metrics: metrics, dimensions: dimensions})
 	})
-	if len(events) != 2 || events[0].dimensions != nil || events[0].metrics["ItemsWritten"] != 1 {
+	if len(events) != 2 || events[0].dimensions != nil || events[0].metrics["ItemsWritten"] != 1 || events[0].metrics["BodyImageFailed"] != 0 {
 		t.Fatalf("base metric event = %#v", events)
 	}
 	failure := events[1]
-	if failure.metrics["ExtractionFailed"] != 1 || failure.metrics["MediaFailed"] != 1 {
+	if failure.metrics["ExtractionFailed"] != 1 || failure.metrics["MediaFailed"] != 1 || failure.metrics["BodyImageFailed"] != 2 {
 		t.Fatalf("failure metrics = %#v", failure.metrics)
 	}
 	if len(failure.dimensions) != 1 || failure.dimensions["FeedID"] != "feed" {

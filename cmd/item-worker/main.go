@@ -438,6 +438,10 @@ func (h *handler) process(ctx context.Context, body string) error {
 
 func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {
 	failures := map[string]float64{}
+	if bodyImageFailed := metrics["BodyImageFailed"]; bodyImageFailed > 0 {
+		failures["BodyImageFailed"] = bodyImageFailed
+		delete(metrics, "BodyImageFailed")
+	}
 	if hasBody {
 		metrics["ExtractionSucceeded"] = 1
 	} else {
