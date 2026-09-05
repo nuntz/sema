@@ -34,6 +34,10 @@ func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		stack := ctx.Stack()
 		cfg := config.New(ctx, "sema")
+		region := config.New(ctx, "aws").Get("region")
+		if region == "" {
+			region = "us-east-1"
+		}
 		googleClientID := cfg.Require("googleClientId")
 		domainName := strings.TrimSpace(cfg.Get("domain"))
 		route53ZoneID := strings.TrimSpace(cfg.Get("route53ZoneId"))
@@ -430,36 +434,73 @@ func main() {
 			return err
 		}
 
-		for name, queue := range map[string]*sqs.Queue{"feeds": feedsDLQ, "items": itemsDLQ} {
-			if _, err := cloudwatch.NewMetricAlarm(ctx, name+"-dlq-alarm", &cloudwatch.MetricAlarmArgs{
+		dlqAlarms := map[string]*cloudwatch.MetricAlarm{}
+		for _, entry := range []struct {
+			name  string
+			queue *sqs.Queue
+		}{{"feeds", feedsDLQ}, {"items", itemsDLQ}} {
+			alarm, alarmErr := cloudwatch.NewMetricAlarm(ctx, entry.name+"-dlq-alarm", &cloudwatch.MetricAlarmArgs{
 				Namespace: pulumi.String("AWS/SQS"), MetricName: pulumi.String("ApproximateNumberOfMessagesVisible"), Statistic: pulumi.String("Maximum"), Period: pulumi.Int(60), EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(0),
-				Dimensions: pulumi.StringMap{"QueueName": queue.Name}, AlarmDescription: pulumi.String(name + " dead-letter queue contains messages"),
-			}); err != nil {
-				return err
+				Dimensions: pulumi.StringMap{"QueueName": entry.queue.Name}, AlarmDescription: pulumi.String(entry.name + " dead-letter queue contains messages"),
+			})
+			if alarmErr != nil {
+				return alarmErr
 			}
+			dlqAlarms[entry.name] = alarm
 		}
-		if _, err := cloudwatch.NewMetricAlarm(ctx, "scheduler-missed", &cloudwatch.MetricAlarmArgs{
+		schedulerMissedAlarm, err := cloudwatch.NewMetricAlarm(ctx, "scheduler-missed", &cloudwatch.MetricAlarmArgs{
 			Namespace: pulumi.String("AWS/Lambda"), MetricName: pulumi.String("Invocations"), Statistic: pulumi.String("Sum"), Period: pulumi.Int(7200), EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("LessThanThreshold"), Threshold: pulumi.Float64(1), TreatMissingData: pulumi.String("breaching"), Dimensions: pulumi.StringMap{"FunctionName": scheduler.Name},
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		if _, err := cloudwatch.NewMetricAlarm(ctx, "scheduler-silent", schedulerSilentAlarmArgs(alarmActions)); err != nil {
+		schedulerSilentAlarm, err := cloudwatch.NewMetricAlarm(ctx, "scheduler-silent", schedulerSilentAlarmArgs(alarmActions))
+		if err != nil {
 			return err
 		}
-		if _, err := cloudwatch.NewMetricAlarm(ctx, "item-worker-errors", &cloudwatch.MetricAlarmArgs{
+		itemWorkerErrorsAlarm, err := cloudwatch.NewMetricAlarm(ctx, "item-worker-errors", &cloudwatch.MetricAlarmArgs{
 			EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(0.05), TreatMissingData: pulumi.String("notBreaching"),
 			MetricQueries: cloudwatch.MetricAlarmMetricQueryArray{
 				&cloudwatch.MetricAlarmMetricQueryArgs{Id: pulumi.String("rate"), Expression: pulumi.String("IF(invocations>0,errors/invocations,0)"), Label: pulumi.String("item worker error rate"), ReturnData: pulumi.Bool(true)},
 				&cloudwatch.MetricAlarmMetricQueryArgs{Id: pulumi.String("errors"), ReturnData: pulumi.Bool(false), Metric: &cloudwatch.MetricAlarmMetricQueryMetricArgs{Namespace: pulumi.String("AWS/Lambda"), MetricName: pulumi.String("Errors"), Period: pulumi.Int(300), Stat: pulumi.String("Sum"), Dimensions: pulumi.StringMap{"FunctionName": itemWorker.Name}}},
 				&cloudwatch.MetricAlarmMetricQueryArgs{Id: pulumi.String("invocations"), ReturnData: pulumi.Bool(false), Metric: &cloudwatch.MetricAlarmMetricQueryMetricArgs{Namespace: pulumi.String("AWS/Lambda"), MetricName: pulumi.String("Invocations"), Period: pulumi.Int(300), Stat: pulumi.String("Sum"), Dimensions: pulumi.StringMap{"FunctionName": itemWorker.Name}}},
 			},
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		if _, err := cloudwatch.NewMetricAlarm(ctx, "generated-summaries-daily", &cloudwatch.MetricAlarmArgs{
+		summariesAlarm, err := cloudwatch.NewMetricAlarm(ctx, "generated-summaries-daily", &cloudwatch.MetricAlarmArgs{
 			Namespace: pulumi.String("Sema"), MetricName: pulumi.String("SummariesGenerated"), Statistic: pulumi.String("Sum"), Period: pulumi.Int(86400), EvaluationPeriods: pulumi.Int(1),
 			ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(2000), TreatMissingData: pulumi.String("notBreaching"), AlarmActions: alarmActions,
 			AlarmDescription: pulumi.String("summary generation exceeded the 2,000 item daily cost guard"),
+		})
+		if err != nil {
+			return err
+		}
+
+		dashboardName := fmt.Sprintf("sema-%s", stack)
+		dashboardBodyOutput := pulumi.All(
+			scheduler.Name, feedWorker.Name, itemWorker.Name, apiLambda.Name, rescoreLambda.Name, cleanupLambda.Name,
+			feedsQueue.Name, feedsDLQ.Name, itemsQueue.Name, itemsDLQ.Name, table.Name,
+			httpAPI.ID().ToStringOutput(), distribution.ID().ToStringOutput(),
+			dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn,
+		).ApplyT(func(values []any) (string, error) {
+			return dashboardBody(dashboardResources{
+				stack:  stack,
+				region: region,
+				functions: dashboardFunctions{
+					scheduler: values[0].(string), feedWorker: values[1].(string), itemWorker: values[2].(string),
+					api: values[3].(string), rescore: values[4].(string), vectorCleanup: values[5].(string),
+				},
+				feedsQueue: values[6].(string), feedsDLQ: values[7].(string),
+				itemsQueue: values[8].(string), itemsDLQ: values[9].(string),
+				table: values[10].(string),
+				apiID: values[11].(string), distributionID: values[12].(string),
+				alarmArns: []string{values[13].(string), values[14].(string), values[15].(string), values[16].(string), values[17].(string), values[18].(string)},
+			})
+		}).(pulumi.StringOutput)
+		if _, err := cloudwatch.NewDashboard(ctx, "dashboard", &cloudwatch.DashboardArgs{
+			DashboardName: pulumi.String(dashboardName), DashboardBody: dashboardBodyOutput,
 		}); err != nil {
 			return err
 		}
@@ -489,6 +530,7 @@ func main() {
 		ctx.Export("modelVersion", pulumi.String(modelVersion))
 		ctx.Export("imageModelVersion", pulumi.String(imageModelVersion))
 		ctx.Export("apiEndpoint", httpAPI.ApiEndpoint)
+		ctx.Export("dashboardUrl", pulumi.String(fmt.Sprintf("https://%s.console.aws.amazon.com/cloudwatch/home?region=%s#dashboards:name=%s", region, region, dashboardName)))
 		return nil
 	})
 }
@@ -707,4 +749,230 @@ func buildDeployAssets(googleClientID string) error {
 		return fmt.Errorf("build deployment assets: %w", err)
 	}
 	return nil
+}
+
+// dashboardFunctions names the six Lambdas the dashboard charts.
+type dashboardFunctions struct {
+	scheduler     string
+	feedWorker    string
+	itemWorker    string
+	api           string
+	rescore       string
+	vectorCleanup string
+}
+
+func (f dashboardFunctions) all() []string {
+	return []string{f.scheduler, f.feedWorker, f.itemWorker, f.api, f.rescore, f.vectorCleanup}
+}
+
+// dashboardResources carries the resolved resource identifiers the dashboard body embeds.
+type dashboardResources struct {
+	stack          string
+	region         string
+	functions      dashboardFunctions
+	feedsQueue     string
+	feedsDLQ       string
+	itemsQueue     string
+	itemsDLQ       string
+	table          string
+	apiID          string
+	distributionID string
+	alarmArns      []string
+}
+
+type dashboardWidget struct {
+	Type       string         `json:"type"`
+	X          int            `json:"x"`
+	Y          int            `json:"y"`
+	Width      int            `json:"width"`
+	Height     int            `json:"height"`
+	Properties map[string]any `json:"properties"`
+}
+
+// dashboardGrid stacks equal-width widgets into rows of the 24 column dashboard grid.
+type dashboardGrid struct {
+	widgets []dashboardWidget
+	y       int
+}
+
+func (g *dashboardGrid) row(height int, properties ...map[string]any) {
+	width := 24 / len(properties)
+	for index, property := range properties {
+		kind := "metric"
+		if _, ok := property["alarms"]; ok {
+			kind = "alarm"
+		}
+		g.widgets = append(g.widgets, dashboardWidget{Type: kind, X: index * width, Y: g.y, Width: width, Height: height, Properties: property})
+	}
+	g.y += height
+}
+
+func timeSeries(region, title, stat string, period int, metrics ...[]any) map[string]any {
+	return map[string]any{
+		"title": title, "view": "timeSeries", "stacked": false, "region": region, "stat": stat, "period": period, "metrics": metrics,
+	}
+}
+
+func dashboardMetric(namespace, name string, tail ...any) []any {
+	return append([]any{namespace, name}, tail...)
+}
+
+// dashboardExpression builds a metric-math entry. SEARCH expressions that expand to
+// several series are left unlabelled so CloudWatch keeps each series name.
+func dashboardExpression(id, expression, label string, options map[string]any) []any {
+	entry := map[string]any{"id": id, "expression": expression}
+	if label != "" {
+		entry["label"] = label
+	}
+	for key, value := range options {
+		entry[key] = value
+	}
+	return []any{entry}
+}
+
+func horizontal(value float64, label string) map[string]any {
+	annotation := map[string]any{"value": value}
+	if label != "" {
+		annotation["label"] = label
+	}
+	return map[string]any{"horizontal": []any{annotation}}
+}
+
+// dashboardBody renders the Sema dashboard. Metrics that are only emitted with a
+// dimension (ExtractionFailed, MediaFailed and RescoreDurationMs carry one, the API
+// metrics carry Route and Status) are folded back into a single series with SEARCH,
+// because CloudWatch does not aggregate a dimensioned metric into a bare one.
+func dashboardBody(resources dashboardResources) (string, error) {
+	region := resources.region
+	grid := &dashboardGrid{}
+
+	grid.row(4, map[string]any{"title": "Alarms", "alarms": resources.alarmArns, "sortBy": "stateUpdatedTimestamp"})
+
+	grid.row(6,
+		timeSeries(region, "Feeds", "Sum", 300,
+			dashboardMetric("Sema", "FeedsEnqueued"),
+			dashboardMetric("Sema", "FeedsFetched"),
+			dashboardMetric("Sema", "FeedsNotModified"),
+			dashboardMetric("Sema", "FeedsFailed"),
+			dashboardMetric("Sema", "FeedsRateLimited"),
+		),
+		timeSeries(region, "Items", "Sum", 300,
+			dashboardMetric("Sema", "ItemsEnqueued"),
+			dashboardMetric("Sema", "ItemsWritten"),
+			dashboardMetric("Sema", "ItemsDeduped"),
+		),
+	)
+
+	deadLetters := timeSeries(region, "Dead letters", "Maximum", 300,
+		dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.feedsDLQ),
+		dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.itemsDLQ),
+	)
+	deadLetters["annotations"] = horizontal(0, "empty")
+	grid.row(6,
+		timeSeries(region, "Queue depth", "Maximum", 300,
+			dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.feedsQueue),
+			dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.itemsQueue),
+		),
+		timeSeries(region, "Oldest message age", "Maximum", 300,
+			dashboardMetric("AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", resources.feedsQueue),
+			dashboardMetric("AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", resources.itemsQueue),
+		),
+		deadLetters,
+	)
+
+	lambdaErrors := make([][]any, 0, len(resources.functions.all()))
+	for _, name := range resources.functions.all() {
+		lambdaErrors = append(lambdaErrors, dashboardMetric("AWS/Lambda", "Errors", "FunctionName", name))
+	}
+	concurrency := timeSeries(region, "Concurrency", "Maximum", 300,
+		dashboardMetric("AWS/Lambda", "ConcurrentExecutions", "FunctionName", resources.functions.feedWorker),
+		dashboardMetric("AWS/Lambda", "ConcurrentExecutions", "FunctionName", resources.functions.itemWorker),
+	)
+	concurrency["annotations"] = horizontal(10, "event source maximum")
+	grid.row(6,
+		timeSeries(region, "Errors", "Sum", 300, lambdaErrors...),
+		// One search keeps every function's throttles on the chart within the metric budget.
+		timeSeries(region, "Throttles", "Sum", 300,
+			dashboardExpression("throttles", fmt.Sprintf(`SEARCH('{AWS/Lambda,FunctionName} MetricName="Throttles" "sema-%s-"', 'Sum', 300)`, resources.stack), "", nil),
+		),
+		concurrency,
+	)
+
+	grid.row(6,
+		timeSeries(region, "Lambda duration p95", "p95", 300,
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.api),
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.feedWorker),
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.itemWorker),
+		),
+		timeSeries(region, "Scheduled job duration", "p95", 3600,
+			dashboardMetric("Sema", "SchedulerDurationMs"),
+			dashboardExpression("rescore_duration", `MAX(SEARCH('{Sema,User} MetricName="RescoreDurationMs"', 'Maximum', 3600))`, "RescoreDurationMs", nil),
+		),
+	)
+
+	extraction := timeSeries(region, "Extraction", "Sum", 300,
+		dashboardMetric("Sema", "ExtractionSucceeded"),
+		dashboardExpression("extraction_failed", `SUM(SEARCH('{Sema,FeedID} MetricName="ExtractionFailed"', 'Sum', 300))`, "ExtractionFailed", nil),
+	)
+	extraction["stacked"] = true
+	media := timeSeries(region, "Media", "Sum", 300,
+		dashboardMetric("Sema", "MediaSucceeded"),
+		dashboardExpression("media_failed", `SUM(SEARCH('{Sema,FeedID} MetricName="MediaFailed"', 'Sum', 300))`, "MediaFailed", nil),
+	)
+	media["stacked"] = true
+	embedding := timeSeries(region, "Embedding", "p95", 300,
+		dashboardMetric("Sema", "BedrockLatencyMs"),
+		dashboardMetric("Sema", "ImageEmbedFailed", map[string]any{"stat": "Sum", "yAxis": "right"}),
+		dashboardMetric("Sema", "VectorPutFailed", map[string]any{"stat": "Sum", "yAxis": "right"}),
+	)
+	embedding["yAxis"] = map[string]any{
+		"left":  map[string]any{"label": "ms", "showUnits": false},
+		"right": map[string]any{"label": "failures", "showUnits": false, "min": 0},
+	}
+	grid.row(6, extraction, media, embedding)
+
+	summaries := timeSeries(region, "Summaries generated per day", "Sum", 86400,
+		dashboardMetric("Sema", "SummariesGenerated"),
+	)
+	summaries["annotations"] = horizontal(2000, "daily cost guard")
+	grid.row(6, summaries,
+		timeSeries(region, "Summary latency p95", "p95", 300, dashboardMetric("Sema", "SummaryLatencyMs")),
+	)
+
+	traffic := timeSeries(region, "API traffic", "Sum", 300,
+		dashboardExpression("requests", `SUM(SEARCH('{Sema,Route,Status} MetricName="APIRequests"', 'Sum', 300))`, "APIRequests", nil),
+		dashboardExpression("errors", `SUM(SEARCH('{Sema,Route,Status} MetricName="APIServerErrors"', 'Sum', 300))`, "APIServerErrors", nil),
+		dashboardExpression("error_rate", "IF(requests>0, errors/requests*100, 0)", "5xx rate", map[string]any{"yAxis": "right"}),
+	)
+	traffic["yAxis"] = map[string]any{"right": map[string]any{"label": "%", "showUnits": false, "min": 0, "max": 100}}
+	edge := timeSeries(region, "Edge 5xx", "Sum", 300,
+		dashboardMetric("AWS/ApiGateway", "5xx", "ApiId", resources.apiID),
+		dashboardMetric("AWS/CloudFront", "5xxErrorRate", "DistributionId", resources.distributionID, "Region", "Global", map[string]any{"stat": "Average", "yAxis": "right"}),
+	)
+	edge["yAxis"] = map[string]any{"right": map[string]any{"label": "%", "showUnits": false, "min": 0}}
+	grid.row(6, traffic,
+		timeSeries(region, "API latency p95", "p95", 300,
+			dashboardExpression("api_latency", `MAX(SEARCH('{Sema,Route,Status} MetricName="APIRequestDurationMs"', 'p95', 300))`, "slowest route p95", nil),
+		),
+		edge,
+	)
+
+	vectorIndexes := timeSeries(region, "Vector index size", "Maximum", 86400,
+		dashboardMetric("Sema", "VectorIndexSize"),
+		dashboardMetric("Sema", "ImageVectorIndexSize"),
+	)
+	// The weekly cleanup is the only writer, so show its latest datapoint rather than a range.
+	vectorIndexes["view"] = "singleValue"
+	vectorIndexes["setPeriodToTimeRange"] = false
+	vectorIndexes["sparkline"] = true
+	grid.row(6,
+		timeSeries(region, "DynamoDB errors", "Sum", 300,
+			dashboardMetric("AWS/DynamoDB", "ThrottledRequests", "TableName", resources.table),
+			dashboardMetric("AWS/DynamoDB", "SystemErrors", "TableName", resources.table),
+		),
+		vectorIndexes,
+	)
+
+	encoded, err := json.Marshal(map[string]any{"widgets": grid.widgets})
+	return string(encoded), err
 }

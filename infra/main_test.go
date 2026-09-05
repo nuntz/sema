@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	awslambda "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/lambda"
@@ -94,4 +96,48 @@ func assertPulumiInt(t *testing.T, name string, input pulumi.IntPtrInput, want i
 	if !ok || int(got) != want {
 		t.Fatalf("%s = %#v, want %d", name, input, want)
 	}
+}
+
+func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
+	body, err := dashboardBody(dashboardResources{
+		stack:  "dev",
+		region: "us-east-1",
+		functions: dashboardFunctions{
+			scheduler: "sema-dev-scheduler", feedWorker: "sema-dev-feed-worker", itemWorker: "sema-dev-item-worker",
+			api: "sema-dev-api", rescore: "sema-dev-rescore", vectorCleanup: "sema-dev-vector-cleanup",
+		},
+		feedsQueue: "feeds-queue", feedsDLQ: "feeds-dlq", itemsQueue: "items-queue", itemsDLQ: "items-dlq",
+		table: "sema-dev", apiID: "abc123", distributionID: "E123456789",
+		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6"},
+	})
+	if err != nil {
+		t.Fatalf("dashboardBody: %v", err)
+	}
+
+	var dashboard struct {
+		Widgets []struct {
+			Properties struct {
+				Title   string  `json:"title"`
+				Metrics [][]any `json:"metrics"`
+			} `json:"properties"`
+		} `json:"widgets"`
+	}
+	if err := json.Unmarshal([]byte(body), &dashboard); err != nil {
+		t.Fatalf("decode dashboard body: %v", err)
+	}
+	if len(dashboard.Widgets) == 0 {
+		t.Fatal("dashboard has no widgets")
+	}
+
+	metrics := 0
+	for index, widget := range dashboard.Widgets {
+		if strings.TrimSpace(widget.Properties.Title) == "" {
+			t.Errorf("widget %d has no title", index)
+		}
+		metrics += len(widget.Properties.Metrics)
+	}
+	if metrics >= 50 {
+		t.Errorf("dashboard charts %d metrics, want fewer than 50", metrics)
+	}
+	t.Logf("dashboard charts %d metrics across %d widgets", metrics, len(dashboard.Widgets))
 }
