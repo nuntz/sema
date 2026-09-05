@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
+	"github.com/nuntz/sema/internal/embed/titanimage"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/observability"
@@ -51,23 +53,80 @@ type queueAPI interface {
 }
 
 type server struct {
-	store           *store.Store
-	sessions        *auth.Sessions
-	verifyGoogle    func(context.Context, string) (auth.Claims, error)
-	queue           queueAPI
-	feedsURL        string
-	itemsURL        string
-	signer          *auth.CookieSigner
-	rescore         func(context.Context, string) error
-	discover        feedDiscoverer
-	media           *media.Processor
-	feedMu          sync.Mutex
-	feedCache       map[string]cachedFeedList
-	feedDetailCache map[string]cachedFeedList
-	embedder        embed.Embedder
-	vectors         vectorstore.Store
-	emit            func(map[string]float64, map[string]string)
-	storyConfig     storycluster.Config
+	store            *store.Store
+	sessions         *auth.Sessions
+	verifyGoogle     func(context.Context, string) (auth.Claims, error)
+	queue            queueAPI
+	feedsURL         string
+	itemsURL         string
+	signer           *auth.CookieSigner
+	rescore          func(context.Context, string) error
+	discover         feedDiscoverer
+	media            *media.Processor
+	feedMu           sync.Mutex
+	feedCache        map[string]cachedFeedList
+	feedDetailCache  map[string]cachedFeedList
+	embedder         embed.Embedder
+	vectors          vectorstore.Store
+	imageEmbedder    embed.ImageEmbedder
+	imageVectors     vectorstore.Store
+	imageSearchFloor int
+	emit             func(map[string]float64, map[string]string)
+	storyConfig      storycluster.Config
+}
+
+type fusedMatch struct {
+	Key         string
+	Similarity  int
+	MatchSource string
+	Score       float64
+	bestRank    int
+}
+
+func fuseMatches(textMatches, imageMatches []vectorstore.Match, imageFloor, limit int) []fusedMatch {
+	if limit <= 0 {
+		return []fusedMatch{}
+	}
+	byKey := make(map[string]*fusedMatch, len(textMatches)+len(imageMatches))
+	add := func(matches []vectorstore.Match, source string, floor int) {
+		seen := make(map[string]bool, len(matches))
+		for index, match := range matches {
+			if seen[match.Key] || match.Similarity < floor {
+				continue
+			}
+			seen[match.Key] = true
+			rank := index + 1
+			fused := byKey[match.Key]
+			if fused == nil {
+				fused = &fusedMatch{Key: match.Key, MatchSource: source, bestRank: rank}
+				byKey[match.Key] = fused
+			} else if fused.MatchSource != source {
+				fused.MatchSource = "both"
+			}
+			fused.Score += 1 / float64(60+rank)
+			fused.Similarity = max(fused.Similarity, match.Similarity)
+			fused.bestRank = min(fused.bestRank, rank)
+		}
+	}
+	add(textMatches, "text", 0)
+	add(imageMatches, "image", imageFloor)
+	result := make([]fusedMatch, 0, len(byKey))
+	for _, match := range byKey {
+		result = append(result, *match)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Score != result[j].Score {
+			return result[i].Score > result[j].Score
+		}
+		if result[i].bestRank != result[j].bestRank {
+			return result[i].bestRank < result[j].bestRank
+		}
+		return result[i].Key < result[j].Key
+	})
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result
 }
 
 type unsupportedFeed struct {
@@ -328,38 +387,87 @@ func (s *server) getSearch(ctx context.Context, userID string, query map[string]
 
 func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude map[string]bool) (searchGroup, bool) {
 	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
-	if s.embedder == nil || s.vectors == nil {
+	textConfigured := s.embedder != nil && s.vectors != nil
+	imageConfigured := s.imageEmbedder != nil && s.imageVectors != nil
+	if !textConfigured && !imageConfigured {
 		return related, false
 	}
-	vector, err := s.embedder.Embed(ctx, query)
-	if err != nil {
-		slog.WarnContext(ctx, "semantic search embedding failed", "error", err)
-		return related, false
+	type queryResult struct {
+		matches []vectorstore.Match
+		err     error
 	}
-	matches, err := s.vectors.Query(ctx, score.Normalize(vector), limit, time.Now().Unix())
-	if err != nil {
-		slog.WarnContext(ctx, "semantic search query failed", "error", err)
-		return related, false
-	}
-	filtered := make([]vectorstore.Match, 0, len(matches))
-	ids := make([]string, 0, len(matches))
-	for _, match := range matches {
-		if !exclude[match.Key] {
-			filtered = append(filtered, match)
-			ids = append(ids, match.Key)
+	queryStore := func(embed func(context.Context, string) ([]float32, error), vectors vectorstore.Store) queryResult {
+		vector, err := embed(ctx, query)
+		if err != nil {
+			return queryResult{err: err}
 		}
+		matches, err := vectors.Query(ctx, score.Normalize(vector), limit, time.Now().Unix())
+		return queryResult{matches: matches, err: err}
+	}
+	textResults, imageResults := queryResult{}, queryResult{}
+	textDone, imageDone := make(chan queryResult, 1), make(chan queryResult, 1)
+	if textConfigured {
+		go func() { textDone <- queryStore(s.embedder.Embed, s.vectors) }()
+	}
+	if imageConfigured {
+		go func() { imageDone <- queryStore(s.imageEmbedder.EmbedText, s.imageVectors) }()
+	}
+	if textConfigured {
+		textResults = <-textDone
+		if textResults.err != nil {
+			slog.WarnContext(ctx, "semantic search text query failed", "error", textResults.err)
+		}
+	}
+	if imageConfigured {
+		imageResults = <-imageDone
+		if imageResults.err != nil {
+			slog.WarnContext(ctx, "semantic search image query failed", "error", imageResults.err)
+		} else {
+			similarities := make([]int, len(imageResults.matches))
+			top := 0
+			for index, match := range imageResults.matches {
+				similarities[index] = match.Similarity
+				top = max(top, match.Similarity)
+			}
+			slog.DebugContext(ctx, "image semantic search similarities", "similarities", similarities)
+			emit := s.emit
+			if emit == nil {
+				emit = observability.Emit
+			}
+			emit(map[string]float64{"ImageSearchMatches": float64(len(imageResults.matches)), "ImageSearchTopSimilarity": float64(top)}, nil)
+		}
+	}
+	available := (textConfigured && textResults.err == nil) || (imageConfigured && imageResults.err == nil)
+	if !available {
+		return related, false
+	}
+	filterExcluded := func(matches []vectorstore.Match) []vectorstore.Match {
+		filtered := make([]vectorstore.Match, 0, len(matches))
+		for _, match := range matches {
+			if !exclude[match.Key] {
+				filtered = append(filtered, match)
+			}
+		}
+		return filtered
+	}
+	fused := fuseMatches(filterExcluded(textResults.matches), filterExcluded(imageResults.matches), s.imageSearchFloor, limit)
+	ids := make([]string, len(fused))
+	for index := range fused {
+		ids[index] = fused[index].Key
 	}
 	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
 	if err != nil {
 		return related, false
 	}
-	similarities := make(map[string]int, len(filtered))
-	for _, match := range filtered {
-		similarities[match.Key] = match.Similarity
+	byID := make(map[string]fusedMatch, len(fused))
+	for _, match := range fused {
+		byID[match.Key] = match
 	}
 	for index := range items {
-		similarity := similarities[items[index].ItemID]
+		match := byID[items[index].ItemID]
+		similarity := match.Similarity
 		items[index].Similarity = &similarity
+		items[index].MatchSource = match.MatchSource
 	}
 	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
 		return related, false
@@ -374,7 +482,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 			related.Window = append(related.Window, item)
 		}
 	}
-	return related, true
+	return related, available
 }
 
 func (s *server) getSimilar(ctx context.Context, userID, itemID string, query map[string]string) events.APIGatewayV2HTTPResponse {
@@ -399,22 +507,42 @@ func (s *server) getSimilar(ctx context.Context, userID, itemID string, query ma
 	if err != nil {
 		return s.failure("query similar items", err)
 	}
-	filtered := similarMatches(matches, itemID, limit)
-	ids := make([]string, 0, len(filtered))
-	for _, match := range filtered {
-		ids = append(ids, match.Key)
+	textMatches := similarMatches(matches, itemID, limit)
+	imageMatches := []vectorstore.Match{}
+	if s.imageVectors != nil {
+		item, imageErr := s.store.Item(ctx, userID, itemID)
+		if errors.Is(imageErr, store.ErrNotFound) {
+			item, imageErr = s.store.ArchiveItem(ctx, userID, itemID)
+		}
+		if imageErr == nil && len(item.ImageVector) > 0 {
+			imageMatches, imageErr = s.imageVectors.Query(ctx, score.DecodeVector(item.ImageVector), limit+1, time.Now().Unix())
+			if imageErr == nil {
+				imageMatches = matchesWithoutItem(imageMatches, itemID)
+			}
+		}
+		if imageErr != nil && !errors.Is(imageErr, store.ErrNotFound) {
+			slog.WarnContext(ctx, "image similarity query failed", "user", userID, "item_id", itemID, "error", imageErr)
+			imageMatches = nil
+		}
+	}
+	fused := fuseMatches(textMatches, imageMatches, s.imageSearchFloor, limit)
+	ids := make([]string, len(fused))
+	for index := range fused {
+		ids[index] = fused[index].Key
 	}
 	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
 	if err != nil {
 		return s.failure("resolve similar items", err)
 	}
-	similarities := make(map[string]int, len(filtered))
-	for _, match := range filtered {
-		similarities[match.Key] = match.Similarity
+	byID := make(map[string]fusedMatch, len(fused))
+	for _, match := range fused {
+		byID[match.Key] = match
 	}
 	for index := range items {
-		value := similarities[items[index].ItemID]
+		match := byID[items[index].ItemID]
+		value := match.Similarity
 		items[index].Similarity = &value
+		items[index].MatchSource = match.MatchSource
 	}
 	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
 		return s.failure("apply similar feed presentation", err)
@@ -423,6 +551,16 @@ func (s *server) getSimilar(ctx context.Context, userID, itemID string, query ma
 		return s.failure("prepare similar items", err)
 	}
 	return response(http.StatusOK, map[string]any{"items": items})
+}
+
+func matchesWithoutItem(matches []vectorstore.Match, itemID string) []vectorstore.Match {
+	filtered := make([]vectorstore.Match, 0, len(matches))
+	for _, match := range matches {
+		if match.Key != itemID {
+			filtered = append(filtered, match)
+		}
+	}
+	return filtered
 }
 
 func similarMatches(matches []vectorstore.Match, self string, limit int) []vectorstore.Match {
@@ -834,14 +972,37 @@ func (s *server) syncHeartVector(ctx context.Context, userID, itemID string, hea
 		if err != nil {
 			return err
 		}
-		return s.vectors.Put(ctx, vectorstore.FromItem(item, vectorstore.KindArchive))
+		if err := s.vectors.Put(ctx, vectorstore.FromItem(item, vectorstore.KindArchive)); err != nil {
+			return err
+		}
+		if s.imageVectors != nil {
+			if record, ok := vectorstore.ImageRecordFromItem(item, vectorstore.KindArchive); ok {
+				return s.imageVectors.Put(ctx, record)
+			}
+		}
+		return nil
 	}
 	item, err := s.store.Item(ctx, userID, itemID)
 	if err == nil {
-		return s.vectors.Put(ctx, vectorstore.FromItem(item, vectorstore.KindLive))
+		if err := s.vectors.Put(ctx, vectorstore.FromItem(item, vectorstore.KindLive)); err != nil {
+			return err
+		}
+		if s.imageVectors != nil {
+			if record, ok := vectorstore.ImageRecordFromItem(item, vectorstore.KindLive); ok {
+				return s.imageVectors.Put(ctx, record)
+			}
+			return s.imageVectors.Delete(ctx, itemID)
+		}
+		return nil
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		return s.vectors.Delete(ctx, itemID)
+		if err := s.vectors.Delete(ctx, itemID); err != nil {
+			return err
+		}
+		if s.imageVectors != nil {
+			return s.imageVectors.Delete(ctx, itemID)
+		}
+		return nil
 	}
 	return err
 }
@@ -1191,12 +1352,31 @@ func main() {
 	if modelVersion == "" {
 		modelVersion = "amazon.titan-embed-text-v2:0"
 	}
-	lambda.Start((&server{
+	imageModelVersion := strings.TrimSpace(os.Getenv("IMAGE_MODEL_VERSION"))
+	if imageModelVersion == "" {
+		imageModelVersion = titanimage.ModelID
+	}
+	imageSearchFloor := 35
+	if raw := strings.TrimSpace(os.Getenv("IMAGE_SEARCH_MIN_SIMILARITY")); raw != "" {
+		value, parseErr := strconv.Atoi(raw)
+		if parseErr != nil || value < 0 || value > 100 {
+			panic("IMAGE_SEARCH_MIN_SIMILARITY must be an integer from 0 to 100")
+		}
+		imageSearchFloor = value
+	}
+	runtime := bedrockruntime.NewFromConfig(config)
+	vectorClient := s3vectors.NewFromConfig(config)
+	s := &server{
 		store: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
 			return auth.VerifyGoogle(ctx, credential, googleClientID)
 		}, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, 10<<20)), feedCache: make(map[string]cachedFeedList),
-		embedder: bedrockembed.NewWithModel(bedrockruntime.NewFromConfig(config), modelVersion),
-		vectors:  vectorstore.NewS3(s3vectors.NewFromConfig(config), vectorBucket, vectorIndex), storyConfig: storycluster.FromEnv(),
-	}).handle)
+		embedder: bedrockembed.NewWithModel(runtime, modelVersion),
+		vectors:  vectorstore.NewS3(vectorClient, vectorBucket, vectorIndex), imageSearchFloor: imageSearchFloor, storyConfig: storycluster.FromEnv(),
+	}
+	if imageVectorIndex := strings.TrimSpace(os.Getenv("IMAGE_VECTOR_INDEX")); imageVectorIndex != "" {
+		s.imageEmbedder = titanimage.NewWithModel(runtime, imageModelVersion)
+		s.imageVectors = vectorstore.NewS3(vectorClient, vectorBucket, imageVectorIndex)
+	}
+	lambda.Start(s.handle)
 }

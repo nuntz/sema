@@ -46,6 +46,42 @@ func TestSimilarMatchesExcludeSelfWeakAndRespectLimit(t *testing.T) {
 	}
 }
 
+func TestFuseMatches(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  []vectorstore.Match
+		image []vectorstore.Match
+		floor int
+		limit int
+		want  []fusedMatch
+	}{
+		{name: "image only", image: []vectorstore.Match{{Key: "photo", Similarity: 82}}, floor: 35, limit: 10, want: []fusedMatch{{Key: "photo", Similarity: 82, MatchSource: "image"}}},
+		{name: "text only", text: []vectorstore.Match{{Key: "article", Similarity: 76}}, floor: 35, limit: 10, want: []fusedMatch{{Key: "article", Similarity: 76, MatchSource: "text"}}},
+		{
+			name:  "both boosted above singletons",
+			text:  []vectorstore.Match{{Key: "text", Similarity: 90}, {Key: "both", Similarity: 70}},
+			image: []vectorstore.Match{{Key: "image", Similarity: 88}, {Key: "both", Similarity: 85}},
+			floor: 35, limit: 10,
+			want: []fusedMatch{{Key: "both", Similarity: 85, MatchSource: "both"}, {Key: "image", Similarity: 88, MatchSource: "image"}, {Key: "text", Similarity: 90, MatchSource: "text"}},
+		},
+		{name: "image floor", image: []vectorstore.Match{{Key: "weak", Similarity: 34}, {Key: "strong", Similarity: 35}}, floor: 35, limit: 10, want: []fusedMatch{{Key: "strong", Similarity: 35, MatchSource: "image"}}},
+		{name: "limit", text: []vectorstore.Match{{Key: "one", Similarity: 90}, {Key: "two", Similarity: 80}}, floor: 35, limit: 1, want: []fusedMatch{{Key: "one", Similarity: 90, MatchSource: "text"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := fuseMatches(test.text, test.image, test.floor, test.limit)
+			if len(got) != len(test.want) {
+				t.Fatalf("fused = %#v, want %#v", got, test.want)
+			}
+			for index := range test.want {
+				if got[index].Key != test.want[index].Key || got[index].Similarity != test.want[index].Similarity || got[index].MatchSource != test.want[index].MatchSource {
+					t.Fatalf("fused[%d] = %#v, want %#v", index, got[index], test.want[index])
+				}
+			}
+		})
+	}
+}
+
 func TestResponseEncodesNilCollectionsAsArrays(t *testing.T) {
 	got := response(http.StatusOK, struct {
 		Items      []string       `json:"items"`
