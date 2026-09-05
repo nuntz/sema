@@ -217,7 +217,7 @@ make backfill-image-signals STACK=prod BACKFILL_ARGS=--apply
 make rescore STACK=prod
 ```
 
-The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout can visibly reshuffle item sizes as the new image centroids take effect.
+The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout will visibly reshuffle item sizes as the new image centroids take effect.
 
 ### YouTube connector rollout
 
