@@ -112,6 +112,7 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
   await expect(story.locator('[data-focus-id="headline"]')).not.toHaveClass(
     /focused/,
   );
+  await page.mouse.move(0, 0);
   await page.keyboard.press("j");
   await expect(story.locator('[data-focus-id="headline"]')).toHaveClass(
     /focused/,
@@ -241,18 +242,22 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   });
 
   await page.goto("/");
-  const deferredRowStyles = await page
-    .locator(".story-block-row")
+  const deferredCardStyles = await page
+    .locator(".story-card")
     .last()
-    .evaluate((row) => {
-      const styles = getComputedStyle(row);
+    .evaluate((card) => {
+      const styles = getComputedStyle(card);
       return {
         contentVisibility: styles.contentVisibility,
         intrinsicBlockSize: styles.containIntrinsicBlockSize,
       };
     });
-  expect(deferredRowStyles.contentVisibility).toBe("auto");
-  expect(deferredRowStyles.intrinsicBlockSize).toContain("280px");
+  expect(deferredCardStyles.contentVisibility).toBe("auto");
+  expect(deferredCardStyles.intrinsicBlockSize).toContain("280px");
+  await expect(page.locator(".story-block-row").last()).toHaveCSS(
+    "content-visibility",
+    "visible",
+  );
   await expect(page.locator('[data-item-id="large-0"]')).toBeAttached();
   await expect(
     page.locator('.grid-row [data-item-id="story-0-0"]'),
