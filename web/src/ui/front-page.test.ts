@@ -4,6 +4,7 @@ import {
   frontPageSequence,
   horizontalStoryFocus,
   moveFrontPageFocus,
+  storyScrollReadCandidates,
 } from "./front-page";
 
 const item = (item_id: string) => ({ item_id }) as Item;
@@ -45,5 +46,59 @@ describe("front-page focus", () => {
     );
     expect(horizontalStoryFocus(stories, 1200, "story:two", 1)).toBeUndefined();
     expect(horizontalStoryFocus(stories, 390, "story:one", 1)).toBeUndefined();
+  });
+});
+
+describe("front-page scroll reading", () => {
+  it("marks every member of passed blocks only for user-scrolled Unread", () => {
+    const rows = [
+      {
+        top: 0,
+        bottom: 100,
+        memberIDs: ["lead-one", "one-a", "one-hidden"],
+      },
+      { top: 110, bottom: 210, memberIDs: ["lead-two", "two-a"] },
+    ];
+    const candidates = (
+      context: "unread" | "all-items",
+      scrollTop: number,
+      userInitiated = true,
+      scrollHeight = 400,
+      alreadyPassed: ReadonlySet<string> = new Set(),
+    ) =>
+      storyScrollReadCandidates(
+        context,
+        rows,
+        scrollTop,
+        100,
+        scrollHeight,
+        userInitiated,
+        alreadyPassed,
+      );
+
+    expect(candidates("unread", 100)).toEqual([]);
+    const passed = candidates("unread", 101);
+    expect(passed).toEqual(["lead-one", "one-a", "one-hidden"]);
+    expect(candidates("unread", 101, true, 400, new Set(passed))).toEqual([]);
+    expect(candidates("unread", 101, false)).toEqual([]);
+    expect(candidates("all-items", 101)).toEqual([]);
+    expect(
+      storyScrollReadCandidates(
+        "archive",
+        rows,
+        101,
+        100,
+        400,
+        true,
+        new Set(),
+      ),
+    ).toEqual([]);
+    expect(candidates("unread", 100, true, 200)).toEqual([
+      "lead-one",
+      "one-a",
+      "one-hidden",
+      "lead-two",
+      "two-a",
+    ]);
   });
 });

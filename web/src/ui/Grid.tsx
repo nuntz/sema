@@ -40,6 +40,8 @@ import {
   frontPageSequence,
   horizontalStoryFocus,
   moveFrontPageFocus,
+  type StoryBlockReadRow,
+  storyScrollReadCandidates,
 } from "./front-page";
 import { gridCommand } from "./keyboard";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
@@ -220,6 +222,15 @@ export function Grid(props: GridProps) {
     ),
   );
   const storyList = createMemo(() => props.stories ?? []);
+  const storyMemberIDs = createMemo(
+    () =>
+      new Map(
+        storyList().map((story) => [
+          story.story_id,
+          story.items.map((item) => item.item_id),
+        ]),
+      ),
+  );
   const frontSequence = createMemo(() =>
     frontPageSequence(
       storyList(),
@@ -438,19 +449,57 @@ export function Grid(props: GridProps) {
     const top = scroller.scrollTop;
     setScrollTop(top);
     props.onScrollPosition?.(top);
+    const context = readContext();
+    const userInitiated = userScrolling && !programmaticScrolling;
+    const measureStoryRows =
+      context === "unread" && userInitiated && storyList().length > 0;
+    const scrollerTop = measureStoryRows
+      ? scroller.getBoundingClientRect().top
+      : 0;
+    const membersByStoryID = measureStoryRows ? storyMemberIDs() : new Map();
+    const storyRows: StoryBlockReadRow[] =
+      measureStoryRows && leadElement
+        ? Array.from(
+            leadElement.querySelectorAll<HTMLElement>(".story-block-row"),
+          ).map((row) => {
+            const bounds = row.getBoundingClientRect();
+            return {
+              top: bounds.top - scrollerTop + top,
+              bottom: bounds.bottom - scrollerTop + top,
+              memberIDs: Array.from(
+                row.querySelectorAll<HTMLElement>("[data-story-id]"),
+              ).flatMap((card) =>
+                card.dataset.storyId
+                  ? (membersByStoryID.get(card.dataset.storyId) ?? [])
+                  : [],
+              ),
+            };
+          })
+        : [];
+    const storyReadIDs = storyScrollReadCandidates(
+      context,
+      storyRows,
+      top,
+      scroller.clientHeight,
+      scroller.scrollHeight,
+      userInitiated,
+      passedIDs,
+    );
+    for (const id of storyReadIDs) passedIDs.add(id);
     const alreadyRead = new Set(
       props.items.filter((item) => item.read).map((item) => item.item_id),
     );
-    const ids = scrollReadCandidates(
-      readContext(),
+    const gridIDs = scrollReadCandidates(
+      context,
       rows(),
       Math.max(0, top - leadHeight()),
       scroller.clientHeight,
       Math.max(0, scroller.scrollHeight - leadHeight()),
-      userScrolling && !programmaticScrolling,
+      userInitiated,
       passedIDs,
       alreadyRead,
     );
+    const ids = [...storyReadIDs, ...gridIDs];
     for (const id of ids) passedIDs.add(id);
     if (ids.length > 0) props.onItemsPassed(ids);
     if (

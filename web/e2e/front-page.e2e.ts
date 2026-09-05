@@ -167,15 +167,18 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
     return {
       story_id: storyID,
       source_count: 6,
-      items: Array.from({ length: 6 }, (_, itemIndex) => ({
-        ...item(
-          `${storyID}-${itemIndex}`,
-          `${storyIndex}-${itemIndex}`,
-          `Story ${storyIndex} coverage ${itemIndex}`,
-        ),
-        story_id: storyID,
-        size: "M",
-      })),
+      items: Array.from(
+        { length: storyIndex === 0 ? 8 : 6 },
+        (_, itemIndex) => ({
+          ...item(
+            `${storyID}-${itemIndex}`,
+            `${storyIndex}-${itemIndex}`,
+            `Story ${storyIndex} coverage ${itemIndex}`,
+          ),
+          story_id: storyID,
+          size: "M",
+        }),
+      ),
     };
   });
   stories[1].items = stories[1].items.slice(0, 2);
@@ -189,6 +192,7 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   ];
   let itemRequests = 0;
   const exclusionParameters: string[] = [];
+  const readBatches: string[][] = [];
 
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
@@ -199,6 +203,10 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
       return;
     }
     if (request.method() !== "GET") {
+      if (url.pathname === "/api/items/read-batch") {
+        const body = request.postDataJSON() as { ids: string[] };
+        readBatches.push(body.ids);
+      }
       await route.fulfill({ status: 204 });
       return;
     }
@@ -319,4 +327,52 @@ test("reuses story exclusion and renders a stable large-item prefix", async ({
   await expect(
     page.locator('[data-story-id="story-0"] .story-lead h2'),
   ).toHaveClass(/read/);
+  const openedStoryIDs = stories[0].items.map((entry) => entry.item_id);
+  await expect.poll(() => readBatches).toContainEqual(openedStoryIDs);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".reader-scroll")).toHaveCount(0);
+
+  const scrollPastFirstStoryRow = async () => {
+    const scroller = page.locator(".grid-scroll");
+    const delta = await scroller.evaluate((element) => {
+      const row = element.querySelector<HTMLElement>(".story-block-row");
+      if (!row) throw new Error("story row unavailable");
+      const scrollerBounds = element.getBoundingClientRect();
+      const rowBounds = row.getBoundingClientRect();
+      return Math.ceil(rowBounds.bottom - scrollerBounds.top + 1);
+    });
+    await scroller.hover();
+    await page.mouse.wheel(0, delta);
+    await expect
+      .poll(() => scroller.evaluate((element) => element.scrollTop))
+      .toBeGreaterThanOrEqual(delta);
+  };
+
+  readBatches.length = 0;
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
+    )
+    .toBe(0);
+  await scrollPastFirstStoryRow();
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await page.waitForTimeout(250);
+  expect(readBatches).toEqual([]);
+
+  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
+    )
+    .toBe(0);
+  await scrollPastFirstStoryRow();
+  const firstRowIDs = [...stories[0].items, ...stories[1].items].map(
+    (entry) => entry.item_id,
+  );
+  await expect(
+    page.locator('[data-story-id="story-1"] .story-lead h2'),
+  ).toHaveClass(/read/);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect.poll(() => readBatches).toContainEqual(firstRowIDs);
 });

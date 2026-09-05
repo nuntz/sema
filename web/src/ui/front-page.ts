@@ -1,3 +1,8 @@
+import {
+  automaticReadEnabled,
+  type ReadStateContext,
+  shouldMarkAtBottom,
+} from "../layout/read-state";
 import type { Item, Story } from "../types";
 import { blockRows, headlineSlice } from "./story-layout";
 
@@ -8,6 +13,44 @@ export interface FrontPageFocus {
   item: Item;
   kind: FrontPageFocusKind;
   storyID?: string;
+}
+
+export interface StoryBlockReadRow {
+  top: number;
+  bottom: number;
+  memberIDs: string[];
+}
+
+export function storyScrollReadCandidates(
+  context: ReadStateContext,
+  rows: StoryBlockReadRow[],
+  scrollTop: number,
+  viewportHeight: number,
+  scrollHeight: number,
+  userInitiated: boolean,
+  alreadyPassed: ReadonlySet<string>,
+): string[] {
+  if (!automaticReadEnabled(context) || !userInitiated) return [];
+  const viewportBottom = scrollTop + viewportHeight;
+  const atBottom = shouldMarkAtBottom(
+    userInitiated,
+    scrollTop,
+    viewportHeight,
+    scrollHeight,
+  );
+  const ids: string[] = [];
+  const selected = new Set(alreadyPassed);
+  for (const row of rows) {
+    const fullyPassed = row.bottom < scrollTop;
+    const intersects = row.bottom >= scrollTop && row.top <= viewportBottom;
+    if (!fullyPassed && !(atBottom && intersects)) continue;
+    for (const id of row.memberIDs) {
+      if (selected.has(id)) continue;
+      selected.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
 }
 
 export function frontPageSequence(
