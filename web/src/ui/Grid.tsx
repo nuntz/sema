@@ -113,6 +113,7 @@ export function Grid(props: GridProps) {
   let longPressTimer: number | undefined;
   let longPress: LongPressGesture | undefined;
   let longPressItem: Item | undefined;
+  let longPressStory: Story | undefined;
   let suppressOpenID = "";
   let sheetPanel!: HTMLElement;
   let sheetStartY = 0;
@@ -132,6 +133,7 @@ export function Grid(props: GridProps) {
     Math.max(0, props.initialScrollTop ?? 0),
   );
   const [sheetItem, setSheetItem] = createSignal<Item>();
+  const [sheetStory, setSheetStory] = createSignal<Story>();
   const [sheetOffset, setSheetOffset] = createSignal(0);
   const [pullDistance, setPullDistance] = createSignal(0);
   const [refreshState, setRefreshState] = createSignal<
@@ -295,19 +297,22 @@ export function Grid(props: GridProps) {
     if (longPress) longPress.cancelled = true;
     longPress = undefined;
     longPressItem = undefined;
+    longPressStory = undefined;
   };
 
-  const openSheet = (item: Item) => {
+  const openSheet = (item: Item, story?: Story) => {
     cancelLongPress();
-    props.onFocus(item.item_id);
+    props.onFocus(story ? `story:${story.story_id}` : item.item_id);
     setSheetOffset(0);
     setSheetItem(item);
+    setSheetStory(story);
     navigator.vibrate?.(10);
   };
 
   const closeSheet = () => {
     setSheetOffset(0);
     setSheetItem();
+    setSheetStory();
   };
 
   const runSheetAction = (action: () => void) => {
@@ -388,12 +393,13 @@ export function Grid(props: GridProps) {
     }
   };
 
-  const startLongPress = (event: PointerEvent, item: Item) => {
+  const startLongPress = (event: PointerEvent, item: Item, story?: Story) => {
     if (event.pointerType !== "touch") return;
     if ((event.target as HTMLElement).closest(".cell-actions")) return;
     cancelLongPress();
     longPress = beginLongPress(event.clientX, event.clientY, performance.now());
     longPressItem = item;
+    longPressStory = story;
     longPressTimer = window.setTimeout(() => {
       if (
         longPress &&
@@ -401,7 +407,7 @@ export function Grid(props: GridProps) {
         longPressReady(longPress, performance.now())
       ) {
         suppressOpenID = longPressItem.item_id;
-        openSheet(longPressItem);
+        openSheet(longPressItem, longPressStory);
       }
     }, LONG_PRESS_MS);
   };
@@ -675,12 +681,22 @@ export function Grid(props: GridProps) {
     props.onOpen(item);
   };
 
+  const openStoryLead = (story: Story) => {
+    const lead = story.items[0];
+    if (!lead) return;
+    if (suppressOpenID === lead.item_id) {
+      suppressOpenID = "";
+      return;
+    }
+    props.onOpenStoryLead?.(story);
+  };
+
   const openFocused = (item: Item) => {
     const entry = focusedEntry();
     const story = focusedStory();
     const route = redditPrimaryRoute(item);
     if (entry?.kind === "story" && story && route.kind !== "external") {
-      props.onOpenStoryLead?.(story);
+      openStoryLead(story);
       return;
     }
     openPrimary(item);
@@ -702,7 +718,9 @@ export function Grid(props: GridProps) {
     const target = event.target as HTMLElement;
     if (target.matches("input, textarea, select")) return;
     if (
-      target.closest(".story-heart, .story-more") &&
+      target.closest(
+        ".story-heart, .story-more, .story-more-action, .cell-actions",
+      ) &&
       (event.key === "Enter" || event.key === " ")
     )
       return;
@@ -873,10 +891,20 @@ export function Grid(props: GridProps) {
                         readContext={readContext()}
                         onExpand={(id) => props.onExpandStory?.(id)}
                         onFocus={props.onFocus}
-                        onOpenLead={(story) => props.onOpenStoryLead?.(story)}
+                        onOpenLead={openStoryLead}
                         onOpen={props.onOpen}
                         onExternalOpen={props.onExternalOpen}
                         onHeart={props.onHeart}
+                        onMore={(story) => {
+                          const lead = story.items[0];
+                          if (lead) openSheet(lead, story);
+                        }}
+                        onLongPressStart={(event, story) => {
+                          const lead = story.items[0];
+                          if (lead) startLongPress(event, lead, story);
+                        }}
+                        onLongPressMove={moveLongPressGesture}
+                        onLongPressEnd={cancelLongPress}
                       />
                     );
                   }
@@ -1288,10 +1316,33 @@ export function Grid(props: GridProps) {
                 <header>
                   <strong>{item.title}</strong>
                   <span>
+                    <Show when={sheetStory()} keyed>
+                      {(story) => (
+                        <>
+                          {story.source_count}{" "}
+                          {story.source_count === 1 ? "source" : "sources"} ·{" "}
+                        </>
+                      )}
+                    </Show>
                     {item.feed_title || "Feed"} ·{" "}
                     {relativeTime(item.published_ts)}
                   </span>
                 </header>
+                <Show when={sheetStory() && !props.archive}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const story = sheetStory();
+                      if (story)
+                        runSheetAction(() => props.onToggleStoryRead?.(story));
+                    }}
+                  >
+                    <Icon name="check" size={20} />
+                    {sheetStory()?.items.some((member) => !member.read)
+                      ? "Mark read"
+                      : "Mark unread"}
+                  </button>
+                </Show>
                 <Show when={!isRedditItem(item)}>
                   <button
                     type="button"
@@ -1383,12 +1434,13 @@ export function Grid(props: GridProps) {
   );
 }
 
-function CellCopy(props: {
+export function CellCopy(props: {
   item: Item;
   archive: boolean;
   effectiveSize: "S" | "M" | "L";
   condensed: boolean;
   explanation: string;
+  dimmed?: boolean;
 }) {
   const reddit = () => isRedditItem(props.item);
   const domain = () =>
@@ -1397,7 +1449,7 @@ function CellCopy(props: {
       : "";
   return (
     <div class="cell-copy">
-      <h2>{props.item.title}</h2>
+      <h2 classList={{ read: props.dimmed }}>{props.item.title}</h2>
       <Show when={reddit() && domain()}>
         <div class="reddit-domain">{domain()}</div>
       </Show>

@@ -132,6 +132,21 @@ describe("17c desktop bands", () => {
       "right-lead",
     ]);
     expect(row.cells).toHaveLength(3);
+    expect(row.cells[0].headlineHeight).toBeUndefined();
+    expect(row.cells[2].headlineHeight).toBeUndefined();
+
+    const [expanded] = justify(
+      [
+        { kind: "story", story: makeStory("left") },
+        item("singleton", "M"),
+        { kind: "story", story: makeStory("right") },
+      ],
+      1248,
+      false,
+      { expandedStoryIDs: new Set(["left", "right"]) },
+    );
+    expect(expanded.cells[0].headlineHeight).toBeUndefined();
+    expect(expanded.cells[2].headlineHeight).toBeUndefined();
   });
 
   it("fits collapsed story headlines inside a tall band until expanded", () => {

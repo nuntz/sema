@@ -61,7 +61,9 @@ function toLayoutItems(
     if (entry.kind === "item") return [entry.item];
     const lead = entry.story.items[0];
     if (!lead) return [];
-    const expanded = options.expandedStoryIDs?.has(entry.story.story_id);
+    const expanded =
+      entry.story.size === "L" &&
+      options.expandedStoryIDs?.has(entry.story.story_id);
     return [
       {
         ...lead,

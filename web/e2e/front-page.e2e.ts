@@ -35,6 +35,7 @@ async function stubFrontPage(
   stories: unknown[],
   items: unknown[],
   readBatches: Array<{ ids: string[]; read: boolean }>,
+  signals: Array<{ itemID: string; value: number }> = [],
 ) {
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
@@ -51,6 +52,14 @@ async function stubFrontPage(
           read?: boolean;
         };
         readBatches.push({ ids: body.ids, read: body.read ?? true });
+      }
+      const signalMatch = url.pathname.match(/^\/api\/items\/([^/]+)\/signal$/);
+      if (signalMatch) {
+        const body = request.postDataJSON() as { value: number };
+        signals.push({
+          itemID: decodeURIComponent(signalMatch[1]),
+          value: body.value,
+        });
       }
       await route.fulfill({ status: 204 });
       return;
@@ -91,6 +100,79 @@ async function stubFrontPage(
     await route.fulfill({ json: {} });
   });
 }
+
+test("M story cells use singleton anatomy and lead-scoped sheet actions", async ({
+  page,
+}) => {
+  const lead = {
+    ...item("m-lead", "one", "Medium story lead", 0.7, "M"),
+    media_url: "/sema-mark.svg",
+    media_w: 320,
+    media_h: 180,
+    story_id: "medium-story",
+  };
+  const headline = {
+    ...item("m-headline", "two", "Other coverage", 0.6, "S"),
+    story_id: "medium-story",
+  };
+  const story = {
+    story_id: "medium-story",
+    source_count: 2,
+    order_key: 0.8,
+    size: "M",
+    items: [lead, headline],
+  };
+  const readBatches: Array<{ ids: string[]; read: boolean }> = [];
+  const signals: Array<{ itemID: string; value: number }> = [];
+  await stubFrontPage(
+    page,
+    [story],
+    [item("singleton", "three", "Singleton", 0.5, "M")],
+    readBatches,
+    signals,
+  );
+  await page.goto("/");
+
+  const storyCell = page.locator('[data-story-id="medium-story"]');
+  await expect(storyCell.locator(":scope > img")).toHaveCount(1);
+  await expect(storyCell.locator(".cell-copy h2")).toHaveText(
+    "Medium story lead",
+  );
+  await expect(storyCell.locator(".cell-meta")).toContainText("Feed one");
+  await expect(storyCell.getByLabel("2 sources")).toBeVisible();
+  await expect(storyCell.locator(".story-badges")).toHaveCount(0);
+  await expect(storyCell.locator(".cell-rank")).toHaveCount(0);
+  await expect(storyCell.locator(".story-headlines")).toHaveCount(0);
+  await page.screenshot({ path: "/tmp/sema-medium-story.png" });
+
+  await storyCell.hover();
+  await storyCell.getByRole("button", { name: "More actions" }).click();
+  const sheet = page.getByRole("dialog", {
+    name: "Actions for Medium story lead",
+  });
+  await expect(sheet).toContainText("2 sources");
+  await sheet.getByRole("button", { name: "Bury" }).click();
+  await expect
+    .poll(() => signals)
+    .toContainEqual({
+      itemID: "m-lead",
+      value: -1,
+    });
+
+  await storyCell.hover();
+  await storyCell.getByRole("button", { name: "More actions" }).click();
+  await sheet.getByRole("button", { name: "Mark read" }).click();
+  await expect
+    .poll(() => readBatches.at(-1)?.ids)
+    .toEqual(["m-lead", "m-headline"]);
+
+  await storyCell.dispatchEvent("pointerdown", {
+    pointerType: "touch",
+    clientX: 20,
+    clientY: 20,
+  });
+  await expect(sheet).toBeVisible();
+});
 
 test("stories earn their position in the interest grid", async ({ page }) => {
   const lead = {

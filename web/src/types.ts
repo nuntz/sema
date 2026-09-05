@@ -82,7 +82,7 @@ export interface Story {
   story_id: string;
   source_count: number;
   order_key: number;
-  size: "S" | "M" | "L";
+  size: "M" | "L";
   items: Item[];
 }
 

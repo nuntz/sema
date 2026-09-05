@@ -364,7 +364,7 @@ describe("read state", () => {
       story_id: "story",
       source_count: 3,
       order_key: 0.6,
-      size: "S",
+      size: "M",
       items: [
         { ...make(100), item_id: "lead", read: true },
         { ...make(101), item_id: "headline" },

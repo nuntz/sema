@@ -12,6 +12,7 @@ import Download from "lucide-solid/icons/download";
 import Ellipsis from "lucide-solid/icons/ellipsis";
 import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
+import Layers from "lucide-solid/icons/layers";
 import Link from "lucide-solid/icons/link";
 import Menu from "lucide-solid/icons/menu";
 import MessageSquare from "lucide-solid/icons/message-square";
@@ -92,6 +93,7 @@ const glyphs = {
   search: Search,
   settings: Settings,
   sort: ArrowUpDown,
+  stack: Layers,
   "status-broken": Unplug,
   "status-muted": Pause,
   "status-ok": Check,

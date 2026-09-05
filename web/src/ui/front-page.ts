@@ -65,7 +65,7 @@ export function frontPageSequence(
       kind: "story",
       storyID: story.story_id,
     });
-    if (story.size !== "L" && !expandedStoryIDs.has(story.story_id)) continue;
+    if (story.size !== "L") continue;
     const headlines = expandedStoryIDs.has(story.story_id)
       ? story.items.slice(1)
       : headlineSlice(story).items;
