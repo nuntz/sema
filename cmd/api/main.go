@@ -601,7 +601,11 @@ func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowe
 			}
 		}
 	}
-	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly)
+	model, modelErr := s.store.Model(ctx, userID)
+	if modelErr != nil && !errors.Is(modelErr, score.ErrModelNotFound) {
+		return nil, nil, modelErr
+	}
+	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model)
 	return rendered, hidden, nil
 }
 
