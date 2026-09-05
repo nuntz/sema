@@ -60,6 +60,26 @@ func TestQueueEventSourceMappingCapsConcurrency(t *testing.T) {
 	assertPulumiInt(t, "maximum concurrency", scaling.MaximumConcurrency, 10)
 }
 
+func TestBoundedIntPreservesExplicitZero(t *testing.T) {
+	tests := []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{raw: "", want: 35},
+		{raw: "0", want: 0},
+		{raw: "100", want: 100},
+		{raw: "101", wantErr: true},
+		{raw: "nope", wantErr: true},
+	}
+	for _, test := range tests {
+		got, err := boundedInt(test.raw, 35, 0, 100)
+		if (err != nil) != test.wantErr || (!test.wantErr && got != test.want) {
+			t.Errorf("boundedInt(%q) = %d, %v; want %d, error %v", test.raw, got, err, test.want, test.wantErr)
+		}
+	}
+}
+
 func assertPulumiString(t *testing.T, name string, input pulumi.StringPtrInput, want string) {
 	t.Helper()
 	got, ok := input.(pulumi.String)

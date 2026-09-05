@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	awsprovider "github.com/pulumi/pulumi-aws/sdk/v7/go/aws"
@@ -40,6 +41,10 @@ func main() {
 		if modelVersion == "" {
 			modelVersion = "amazon.titan-embed-text-v2:0"
 		}
+		imageModelVersion := strings.TrimSpace(cfg.Get("imageModelVersion"))
+		if imageModelVersion == "" {
+			imageModelVersion = "amazon.titan-embed-image-v1"
+		}
 		summarizeModel := cfg.Get("summarizeModel")
 		if summarizeModel == "" {
 			summarizeModel = "amazon.nova-micro-v1:0"
@@ -60,6 +65,14 @@ func main() {
 		vectorIndexName := strings.TrimSpace(cfg.Get("vectorIndex"))
 		if vectorIndexName == "" {
 			vectorIndexName = "items"
+		}
+		imageVectorIndexName := strings.TrimSpace(cfg.Get("imageVectorIndex"))
+		if imageVectorIndexName == "" {
+			imageVectorIndexName = "images"
+		}
+		imageSearchMinSimilarity, err := boundedInt(cfg.Get("imageSearchMinSimilarity"), 35, 0, 100)
+		if err != nil {
+			return fmt.Errorf("imageSearchMinSimilarity: %w", err)
 		}
 		vectorDimensions := cfg.GetInt("vectorDimensions")
 		if vectorDimensions == 0 {
@@ -143,6 +156,15 @@ func main() {
 		if err != nil {
 			return err
 		}
+		imageVectorIndex, err := s3.NewVectorsIndex(ctx, "image-vector-index", &s3.VectorsIndexArgs{
+			VectorBucketName: vectorBucket.VectorBucketName, IndexName: pulumi.String(imageVectorIndexName),
+			DataType: pulumi.String("float32"), Dimension: pulumi.Int(1024), DistanceMetric: pulumi.String("cosine"),
+			MetadataConfiguration: &s3.VectorsIndexMetadataConfigurationArgs{NonFilterableMetadataKeys: pulumi.StringArray{pulumi.String("title")}},
+			Tags:                  pulumi.StringMap{"app": pulumi.String("sema"), "stack": pulumi.String(stack)},
+		})
+		if err != nil {
+			return err
+		}
 		for name, bucket := range map[string]*s3.Bucket{"app": appBucket, "content": contentBucket} {
 			if _, err := s3.NewBucketPublicAccessBlock(ctx, name+"-public-access", &s3.BucketPublicAccessBlockArgs{
 				Bucket: bucket.ID(), BlockPublicAcls: pulumi.Bool(true), BlockPublicPolicy: pulumi.Bool(true), IgnorePublicAcls: pulumi.Bool(true), RestrictPublicBuckets: pulumi.Bool(true),
@@ -174,31 +196,33 @@ func main() {
 			"TABLE_NAME": table.Name, "CONTENT_BUCKET": contentBucket.Bucket,
 			"MODEL_VERSION": pulumi.String(modelVersion), "SCORING_VERSION": pulumi.String(scoringVersion), "SUMMARIZE_MODEL": pulumi.String(summarizeModel),
 			"VECTOR_BUCKET": vectorBucket.VectorBucketName, "VECTOR_INDEX": vectorIndex.IndexName,
+			"IMAGE_MODEL_VERSION": pulumi.String(imageModelVersion), "IMAGE_VECTOR_INDEX": imageVectorIndex.IndexName,
+			"IMAGE_SEARCH_MIN_SIMILARITY": pulumi.Sprintf("%d", imageSearchMinSimilarity),
 		}
 		storyEnvironment := pulumi.StringMap{
 			"STORY_SIMILARITY": pulumi.Sprintf("%d", storySimilarity), "STORY_WINDOW_HOURS": pulumi.Sprintf("%d", storyWindowHours),
 		}
-		schedulerRole, err := lambdaRole(ctx, "scheduler", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, "")
+		schedulerRole, err := lambdaRole(ctx, "scheduler", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, "")
 		if err != nil {
 			return err
 		}
-		feedRole, err := lambdaRole(ctx, "feed-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, "")
+		feedRole, err := lambdaRole(ctx, "feed-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, "")
 		if err != nil {
 			return err
 		}
-		itemRole, err := lambdaRole(ctx, "item-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, modelVersion, summarizeModel)
+		itemRole, err := lambdaRole(ctx, "item-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, modelVersion, summarizeModel, imageModelVersion)
 		if err != nil {
 			return err
 		}
-		apiRole, err := lambdaRole(ctx, "api", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, modelVersion)
+		apiRole, err := lambdaRole(ctx, "api", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, modelVersion, imageModelVersion)
 		if err != nil {
 			return err
 		}
-		rescoreRole, err := lambdaRole(ctx, "rescore", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, "")
+		rescoreRole, err := lambdaRole(ctx, "rescore", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, "")
 		if err != nil {
 			return err
 		}
-		cleanupRole, err := lambdaRole(ctx, "vector-cleanup", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, "")
+		cleanupRole, err := lambdaRole(ctx, "vector-cleanup", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, "")
 		if err != nil {
 			return err
 		}
@@ -452,6 +476,7 @@ func main() {
 		ctx.Export("contentBucket", contentBucket.Bucket)
 		ctx.Export("vectorBucket", vectorBucket.VectorBucketName)
 		ctx.Export("vectorIndex", vectorIndex.IndexName)
+		ctx.Export("imageVectorIndex", imageVectorIndex.IndexName)
 		ctx.Export("itemsQueueUrl", itemsQueue.Url)
 		ctx.Export("feedsQueueArn", feedsQueue.Arn)
 		ctx.Export("feedsDlqArn", feedsDLQ.Arn)
@@ -471,6 +496,17 @@ func requiredString(value pulumi.StringPtrOutput) pulumi.StringOutput {
 		}
 		return *pointer
 	}).(pulumi.StringOutput)
+}
+
+func boundedInt(raw string, fallback, low, high int) (int, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < low || value > high {
+		return 0, fmt.Errorf("must be an integer from %d to %d", low, high)
+	}
+	return value, nil
 }
 
 func schedulerSilentAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
@@ -512,12 +548,12 @@ func queues(ctx *pulumi.Context, name string, visibility int) (*sqs.Queue, *sqs.
 	return dlq, queue, err
 }
 
-func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn, itemsArn, vectorIndexArn pulumi.StringOutput, bedrockModels ...string) (*iam.Role, error) {
+func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn, itemsArn, vectorIndexArn, imageVectorIndexArn pulumi.StringOutput, bedrockModels ...string) (*iam.Role, error) {
 	role, err := iam.NewRole(ctx, name+"-role", &iam.RoleArgs{AssumeRolePolicy: pulumi.String(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}`)})
 	if err != nil {
 		return nil, err
 	}
-	policy := pulumi.All(tableArn, bucketArn, feedsArn, itemsArn, vectorIndexArn).ApplyT(func(values []any) (string, error) {
+	policy := pulumi.All(tableArn, bucketArn, feedsArn, itemsArn, vectorIndexArn, imageVectorIndexArn).ApplyT(func(values []any) (string, error) {
 		tableResources := []string{values[0].(string), values[0].(string) + "/index/*"}
 		queueConsume := []string{"sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:ChangeMessageVisibility"}
 		statements := []any{map[string]any{"Effect": "Allow", "Action": []string{"logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"}, "Resource": "arn:aws:logs:*:*:*"}}
@@ -539,7 +575,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:TransactWriteItems", "dynamodb:UpdateItem"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:GetObject"}, "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": queueConsume, "Resource": values[3].(string)},
-				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": values[4].(string)},
+				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": []string{values[4].(string), values[5].(string)}},
 			)
 		case "api":
 			statements = append(statements,
@@ -548,7 +584,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:PutObject", "s3:DeleteObject"}, "Resource": values[1].(string) + "/archive/*"},
 				map[string]any{"Effect": "Allow", "Action": "s3:PutObject", "Resource": values[1].(string) + "/favicons/*"},
 				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": []string{values[2].(string), values[3].(string)}},
-				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:DeleteVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": values[4].(string)},
+				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:DeleteVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": []string{values[4].(string), values[5].(string)}},
 			)
 		case "rescore":
 			statements = append(statements,
@@ -556,7 +592,7 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 			)
 		case "vector-cleanup":
 			statements = append(statements,
-				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:ListVectors", "s3vectors:GetVectors", "s3vectors:DeleteVectors"}, "Resource": values[4].(string)},
+				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:ListVectors", "s3vectors:GetVectors", "s3vectors:DeleteVectors"}, "Resource": []string{values[4].(string), values[5].(string)}},
 			)
 		}
 		modelResources := make([]string, 0, len(bedrockModels))
