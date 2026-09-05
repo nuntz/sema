@@ -484,6 +484,7 @@ func main() {
 		ctx.Export("itemsDlqArn", itemsDLQ.Arn)
 		ctx.Export("rescoreFunction", rescoreLambda.Name)
 		ctx.Export("modelVersion", pulumi.String(modelVersion))
+		ctx.Export("imageModelVersion", pulumi.String(imageModelVersion))
 		ctx.Export("apiEndpoint", httpAPI.ApiEndpoint)
 		return nil
 	})
