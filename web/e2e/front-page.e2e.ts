@@ -148,7 +148,7 @@ test("front-page stories precede the grid and share its keyboard/read paths", as
   await expect.poll(() => readBatches).toContainEqual(["lead", "headline"]);
 });
 
-test("loads through an incomplete grid page below a tall story region", async ({
+test("reuses story exclusion and renders a stable large-item prefix", async ({
   page,
 }) => {
   const stories = Array.from({ length: 20 }, (_, storyIndex) => {
@@ -167,17 +167,16 @@ test("loads through an incomplete grid page below a tall story region", async ({
       })),
     };
   });
-  const firstPage = Array.from({ length: 100 }, (_, index) => ({
-    ...item(`large-${index}`, "single", `Large singleton ${index}`),
-    story_id: undefined,
-    size: "L",
-  }));
-  const tail = {
-    ...item("tail", "single", "Stable singleton tail"),
-    story_id: undefined,
-    size: "S",
-  };
+  const firstPage = [
+    stories[0].items[0],
+    ...Array.from({ length: 99 }, (_, index) => ({
+      ...item(`large-${index}`, "single", `Large singleton ${index}`),
+      story_id: undefined,
+      size: "L",
+    })),
+  ];
   let itemRequests = 0;
+  const exclusionParameters: string[] = [];
 
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
@@ -222,10 +221,9 @@ test("loads through an incomplete grid page below a tall story region", async ({
     }
     if (url.pathname === "/api/items") {
       itemRequests++;
+      exclusionParameters.push(url.searchParams.get("exclude_stories") ?? "");
       await route.fulfill({
-        json: url.searchParams.has("cursor")
-          ? { items: [tail], next_cursor: null }
-          : { items: firstPage, next_cursor: "next" },
+        json: { items: firstPage, next_cursor: "next" },
       });
       return;
     }
@@ -233,6 +231,10 @@ test("loads through an incomplete grid page below a tall story region", async ({
   });
 
   await page.goto("/");
-  await expect.poll(() => itemRequests).toBeGreaterThanOrEqual(2);
   await expect(page.locator('[data-item-id="large-0"]')).toBeAttached();
+  await expect(
+    page.locator('.grid-row [data-item-id="story-0-0"]'),
+  ).toHaveCount(0);
+  expect(itemRequests).toBe(1);
+  expect(exclusionParameters).toEqual([""]);
 });

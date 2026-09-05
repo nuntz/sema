@@ -37,7 +37,11 @@ import {
 import { createMediaQuery } from "./media-query";
 import { resolveReaderItem } from "./reader-item";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
-import { updateStoriesRead, updateStoryItem } from "./story-state";
+import {
+  excludeRenderedStoryItems,
+  updateStoriesRead,
+  updateStoryItem,
+} from "./story-state";
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
   Feed,
@@ -295,10 +299,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       } else if (nextOrder === "interest") {
         const [storyPage, itemPage] = await Promise.all([
           api.stories(nextTag, includeRead),
-          api.items(nextOrder, "", includeRead, nextTag, true),
+          api.items(nextOrder, "", includeRead, nextTag),
         ]);
         nextStories = storyPage.stories ?? [];
-        page = itemPage;
+        page = {
+          ...itemPage,
+          items: excludeRenderedStoryItems(itemPage.items ?? [], nextStories),
+        };
       } else {
         page = await api.items(nextOrder, "", includeRead, nextTag);
       }
@@ -344,7 +351,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               nextCursor,
               includeReadForGrid(unreadOnly()),
               selectedTag(),
-              order() === "interest",
             );
       if (
         version !== requestVersion ||
@@ -352,10 +358,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         nextCursor !== cursor()
       )
         return;
+      const pageItems =
+        mode() === "live" && order() === "interest"
+          ? excludeRenderedStoryItems(page.items ?? [], stories())
+          : (page.items ?? []);
       let added: Item[] = [];
       setItems((current) => {
         const seen = new Set(current.map((item) => item.item_id));
-        added = (page.items ?? []).filter((item) => !seen.has(item.item_id));
+        added = pageItems.filter((item) => !seen.has(item.item_id));
         return added.length > 0 ? [...current, ...added] : current;
       });
       const visible =
@@ -394,13 +404,17 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         const includeRead = includeReadForGrid(unreadOnly());
         const [storyPage, page] = await Promise.all([
           api.stories(selectedTag(), includeRead),
-          api.items("interest", "", includeRead, selectedTag(), true),
+          api.items("interest", "", includeRead, selectedTag()),
         ]);
         if (version !== requestVersion) return 0;
         const incomingStories = storyPage.stories ?? [];
+        const pageItems = excludeRenderedStoryItems(
+          page.items ?? [],
+          incomingStories,
+        );
         const incomingItems = [
           ...incomingStories.flatMap((story) => story.items),
-          ...(page.items ?? []),
+          ...pageItems,
         ];
         const currentItems = [
           ...stories().flatMap((story) => story.items),
@@ -413,7 +427,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           unreadOnly(),
         );
         if (insert && clearVersion === gridClearVersion) {
-          const pageItems = page.items ?? [];
           setPendingNew([]);
           setStories(incomingStories);
           setItems(pageItems);
@@ -1039,7 +1052,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           nextCursor,
           includeReadForGrid(unreadOnly()),
           selectedTag(),
-          markOrder === "interest",
         );
         if (
           version !== requestVersion ||
@@ -1047,8 +1059,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           markOrder !== order()
         )
           return;
+        const pageItems =
+          markOrder === "interest"
+            ? excludeRenderedStoryItems(page.items ?? [], stories())
+            : (page.items ?? []);
         ids.push(
-          ...(page.items ?? [])
+          ...pageItems
             .filter((candidate) => !candidate.read)
             .map((candidate) => candidate.item_id),
         );
@@ -1090,7 +1106,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           nextCursor,
           includeReadForGrid(unreadOnly()),
           selectedTag(),
-          markOrder === "interest",
         );
         if (
           version !== requestVersion ||
@@ -1098,10 +1113,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           markOrder !== order()
         )
           return;
+        const pageItems =
+          markOrder === "interest"
+            ? excludeRenderedStoryItems(page.items ?? [], stories())
+            : (page.items ?? []);
         ids.push(
-          ...(page.items ?? [])
-            .filter((item) => !item.read)
-            .map((item) => item.item_id),
+          ...pageItems.filter((item) => !item.read).map((item) => item.item_id),
         );
         nextCursor = page.next_cursor ?? "";
       }

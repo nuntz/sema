@@ -203,7 +203,31 @@ function companionCountBeforeLarge(items: Item[], start: number): number {
   return count;
 }
 
-function stablePrefixLength(items: Item[], hasMore: boolean): number {
+function stableDesktopLargeRunLength(items: Item[]): number {
+  let index = 0;
+  let previousPair = false;
+  while (items.length - index >= 5) {
+    const remaining = items.length - index;
+    const pair =
+      !previousPair &&
+      spanEligible(items[index]) &&
+      spanEligible(items[index + 1]);
+    if (pair) {
+      previousPair = true;
+      index += 2;
+    } else {
+      previousPair = false;
+      index += Math.min(3, remaining);
+    }
+  }
+  return index;
+}
+
+function stablePrefixLength(
+  items: Item[],
+  hasMore: boolean,
+  containerWidth: number,
+): number {
   if (!hasMore) return items.length;
   for (let index = 0; index < items.length; index++) {
     if (items[index].size !== "L") continue;
@@ -221,6 +245,12 @@ function stablePrefixLength(items: Item[], hasMore: boolean): number {
     if (!resolved) {
       let runStart = index;
       while (runStart > 0 && items[runStart - 1].size === "L") runStart--;
+      if (containerWidth >= 700) {
+        return (
+          runStart +
+          stableDesktopLargeRunLength(items.slice(runStart, index + 1))
+        );
+      }
       return runStart;
     }
   }
@@ -482,7 +512,7 @@ export function justify(
   if (containerWidth <= 0 || items.length === 0) return [];
   const stableLength = options.completeSegment
     ? items.length
-    : stablePrefixLength(items, hasMore);
+    : stablePrefixLength(items, hasMore, containerWidth);
   const layoutItems = items.slice(0, stableLength);
   const finalFeed = !hasMore && stableLength === items.length;
   if (containerWidth < 700)

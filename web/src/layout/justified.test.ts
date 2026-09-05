@@ -351,6 +351,28 @@ describe("17c desktop bands", () => {
     ]);
     expect(fillRatio(after[0], 1248)).toBeCloseTo(1, 5);
   });
+
+  it("renders the stable desktop prefix of a paginated L run", () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      item(`large-${index}`, "L", 1),
+    );
+    const before = justify(firstPage, 1248, true);
+    const after = justify(
+      [
+        ...firstPage,
+        item("next-large", "L", 1),
+        item("next-m", "M", 1),
+        item("next-s", "S", 1),
+        item("next-s-2", "S", 1),
+      ],
+      1248,
+      true,
+    );
+
+    expect(before.length).toBeGreaterThan(0);
+    expect(ids(before).length).toBeLessThan(firstPage.length);
+    expect(after.slice(0, before.length)).toEqual(before);
+  });
 });
 
 describe("v2 L-run bands", () => {

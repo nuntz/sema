@@ -1,5 +1,16 @@
 import type { Item, Story } from "./types";
 
+export function excludeRenderedStoryItems(
+  items: Item[],
+  stories: Story[],
+): Item[] {
+  if (items.length === 0 || stories.length === 0) return items;
+  const hidden = new Set(
+    stories.flatMap((story) => story.items.map((item) => item.item_id)),
+  );
+  return items.filter((item) => !hidden.has(item.item_id));
+}
+
 export function updateStoriesRead(
   stories: Story[],
   ids: Iterable<string>,
