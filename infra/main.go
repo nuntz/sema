@@ -102,7 +102,7 @@ func main() {
 				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-next-fetch"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
-				}, ProjectionType: pulumi.String("ALL")},
+				}, ProjectionType: pulumi.String("KEYS_ONLY")},
 			},
 			Ttl:  &dynamodb.TableTtlArgs{AttributeName: pulumi.String("ttl"), Enabled: pulumi.Bool(true)},
 			Tags: pulumi.StringMap{"app": pulumi.String("sema"), "stack": pulumi.String(stack)},

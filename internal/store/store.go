@@ -256,6 +256,10 @@ func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 
 func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, error) {
 	result := []domain.Feed{}
+	type feedKey struct {
+		PK string `dynamodbav:"PK"`
+		SK string `dynamodbav:"SK"`
+	}
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
@@ -268,19 +272,12 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, err
 		if err != nil {
 			return nil, err
 		}
-		var page []domain.Feed
+		var page []feedKey
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, err
 		}
-		for i := range page {
-			page[i].Connector = domain.FeedConnector(page[i])
-			if page[i].Muted {
-				continue
-			}
-			if page[i].FetchIntervalH == 0 {
-				page[i].FetchIntervalH = 1
-			}
-			result = append(result, page[i])
+		for _, feed := range page {
+			result = append(result, domain.Feed{PK: feed.PK, SK: feed.SK, FeedID: strings.TrimPrefix(feed.SK, "F#")})
 		}
 		start = response.LastEvaluatedKey
 		if len(start) == 0 {

@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/nuntz/sema/internal/domain"
@@ -30,16 +28,9 @@ func (d *schedulerDynamo) UpdateItem(_ context.Context, input *dynamodb.UpdateIt
 func TestRunJoinsClaimErrors(t *testing.T) {
 	first := errors.New("first claim failed")
 	second := errors.New("second claim failed")
-	feeds, err := attributevalue.MarshalList([]domain.Feed{
-		{PK: domain.UserPK("user"), SK: domain.FeedSK("first"), FeedID: "first", NextFetchAt: domain.Timestamp(time.Now())},
-		{PK: domain.UserPK("user"), SK: domain.FeedSK("second"), FeedID: "second", NextFetchAt: domain.Timestamp(time.Now())},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	items := make([]map[string]types.AttributeValue, 0, len(feeds))
-	for _, feed := range feeds {
-		items = append(items, feed.(*types.AttributeValueMemberM).Value)
+	items := []map[string]types.AttributeValue{
+		{"PK": &types.AttributeValueMemberS{Value: domain.UserPK("user")}, "SK": &types.AttributeValueMemberS{Value: domain.FeedSK("first")}},
+		{"PK": &types.AttributeValueMemberS{Value: domain.UserPK("user")}, "SK": &types.AttributeValueMemberS{Value: domain.FeedSK("second")}},
 	}
 	db := &schedulerDynamo{
 		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
@@ -52,7 +43,7 @@ func TestRunJoinsClaimErrors(t *testing.T) {
 			return nil, second
 		},
 	}
-	err = (&handler{store: store.New(db, nil, "table", "", "")}).run(context.Background())
+	err := (&handler{store: store.New(db, nil, "table", "", "")}).run(context.Background())
 	if !errors.Is(err, first) || !errors.Is(err, second) {
 		t.Fatalf("run error = %v", err)
 	}

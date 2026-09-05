@@ -171,18 +171,8 @@ func TestSessionStoreLifecycleUsesHashedPrimaryKey(t *testing.T) {
 
 func TestDueFeedsQueriesSparseIndex(t *testing.T) {
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
-	feeds := []domain.Feed{
-		{PK: "U#one", SK: "F#first", FeedID: "first", NextFetchAt: domain.Timestamp(now.Add(-time.Hour))},
-		{PK: "U#two", SK: "F#second", FeedID: "second", NextFetchAt: domain.Timestamp(now)},
-	}
-	first, err := attributevalue.MarshalMap(feeds[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := attributevalue.MarshalMap(feeds[1])
-	if err != nil {
-		t.Fatal(err)
-	}
+	first := key("U#one", "F#first")
+	second := key("U#two", "F#second")
 	pageKey := key("U#one", "F#first")
 	queries := 0
 	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
@@ -206,7 +196,8 @@ func TestDueFeedsQueriesSparseIndex(t *testing.T) {
 	}}
 
 	got, err := New(db, nil, "table", "", "").DueFeeds(context.Background(), now)
-	if err != nil || len(got) != 2 || got[0].FeedID != "first" || got[1].FeedID != "second" || queries != 2 {
+	want := []domain.Feed{{PK: "U#one", SK: "F#first", FeedID: "first"}, {PK: "U#two", SK: "F#second", FeedID: "second"}}
+	if err != nil || !reflect.DeepEqual(got, want) || queries != 2 {
 		t.Fatalf("DueFeeds = %#v, queries %d, %v", got, queries, err)
 	}
 }
