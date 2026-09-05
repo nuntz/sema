@@ -25,8 +25,8 @@ describe("ranking diagnostics", () => {
     expect(whyText(item)).toBe("Because you liked: A story");
     item.why = { feed_title: "Example" };
     expect(whyText(item)).toBe("You often like Example");
-    item.why = { title: "A photo", image: true };
-    expect(whyText(item)).toBe("Looks like a photo you kept");
+    item.why = { title: "A photo", feed_title: "Example", image: true };
+    expect(whyText(item)).toBe("Looks like a photo you kept: A photo");
     item.why = { feed_title: "Example", image: true };
     expect(whyText(item)).toBe("Looks like a photo you kept from Example");
     item.why = undefined;
