@@ -94,7 +94,7 @@ func TestRenderDemotionUnreadOrderingAndHiddenIDs(t *testing.T) {
 		"tagged-down": {{ItemID: "t1", FeedID: "a"}, {ItemID: "t2", FeedID: "x"}},
 		"read":        {{ItemID: "r1", FeedID: "a", Read: true}, {ItemID: "r2", FeedID: "b", Read: true}},
 	}
-	rendered, hidden := Render(rows, members, map[string]bool{"a": true, "b": true, "c": true}, true, domain.Model{})
+	rendered, hidden := Render(rows, members, map[string]bool{"a": true, "b": true, "c": true}, true)
 	if len(rendered) != 1 || rendered[0].StoryID != "broad" || rendered[0].SourceCount != 3 {
 		t.Fatalf("rendered = %#v", rendered)
 	}
@@ -107,22 +107,21 @@ func TestRenderDemotionUnreadOrderingAndHiddenIDs(t *testing.T) {
 }
 
 func TestOrderKeyStoryOrderingAndSize(t *testing.T) {
-	if got := OrderKey(domain.Item{Score: 2}, 8); math.Abs(got-3.2) > 1e-9 {
+	if got := OrderKey(domain.Item{Score: 2}, 8); math.Abs(got-2.4) > 1e-9 {
 		t.Fatalf("OrderKey = %v", got)
 	}
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	rows := []domain.Story{{StoryID: "narrow"}, {StoryID: "broad"}, {StoryID: "newer"}}
 	members := map[string][]domain.Item{
-		"narrow": {{ItemID: "n1", FeedID: "a", Score: 1.2, PublishedTS: domain.Timestamp(now)}, {ItemID: "n2", FeedID: "b"}},
-		"broad":  {{ItemID: "b1", FeedID: "a", Score: 1, PublishedTS: domain.Timestamp(now)}, {ItemID: "b2", FeedID: "b"}, {ItemID: "b3", FeedID: "c"}, {ItemID: "b4", FeedID: "d"}},
-		"newer":  {{ItemID: "x1", FeedID: "a", Score: 1, PublishedTS: domain.Timestamp(now.Add(time.Hour))}, {ItemID: "x2", FeedID: "b"}, {ItemID: "x3", FeedID: "c"}, {ItemID: "x4", FeedID: "d"}},
+		"narrow": {{ItemID: "n1", FeedID: "a", Score: 1.2, Size: "S", PublishedTS: domain.Timestamp(now)}, {ItemID: "n2", FeedID: "b"}},
+		"broad":  {{ItemID: "b1", FeedID: "a", Score: 1, Size: "M", PublishedTS: domain.Timestamp(now)}, {ItemID: "b2", FeedID: "b"}, {ItemID: "b3", FeedID: "c"}, {ItemID: "b4", FeedID: "d"}},
+		"newer":  {{ItemID: "x1", FeedID: "a", Score: 1, Size: "L", PublishedTS: domain.Timestamp(now.Add(time.Hour))}, {ItemID: "x2", FeedID: "b"}, {ItemID: "x3", FeedID: "c"}, {ItemID: "x4", FeedID: "d"}},
 	}
-	model := domain.Model{ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.3, P90: 1.5}}
-	rendered, _ := Render(rows, members, nil, false, model)
-	if got := []string{rendered[0].StoryID, rendered[1].StoryID, rendered[2].StoryID}; got[0] != "newer" || got[1] != "broad" || got[2] != "narrow" {
+	rendered, _ := Render(rows, members, nil, false)
+	if got := []string{rendered[0].StoryID, rendered[1].StoryID, rendered[2].StoryID}; got[0] != "narrow" || got[1] != "newer" || got[2] != "broad" {
 		t.Fatalf("order = %#v", got)
 	}
-	if math.Abs(rendered[0].OrderKey-1.45) > 1e-9 || rendered[0].Size != "M" {
-		t.Fatalf("newer ordering = %#v", rendered[0])
+	if math.Abs(rendered[0].OrderKey-1.26) > 1e-9 || rendered[0].Size != "S" {
+		t.Fatalf("narrow ordering = %#v", rendered[0])
 	}
 }

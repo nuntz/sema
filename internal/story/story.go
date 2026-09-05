@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/nuntz/sema/internal/domain"
-	"github.com/nuntz/sema/internal/score"
 )
 
 const (
@@ -109,10 +108,10 @@ func SourceCount(members []domain.Item) int {
 
 func OrderKey(lead domain.Item, sourceCount int) float64 {
 	breadth := min(max(sourceCount-1, 0), 4)
-	return lead.Score * (1 + 0.15*float64(breadth))
+	return lead.Score * (1 + 0.05*float64(breadth))
 }
 
-func Render(stories []domain.Story, members map[string][]domain.Item, allowed map[string]bool, unreadOnly bool, model domain.Model) ([]Rendered, map[string]bool) {
+func Render(stories []domain.Story, members map[string][]domain.Item, allowed map[string]bool, unreadOnly bool) ([]Rendered, map[string]bool) {
 	rendered := make([]Rendered, 0, len(stories))
 	hidden := make(map[string]bool)
 	for _, row := range stories {
@@ -148,7 +147,7 @@ func Render(stories []domain.Story, members map[string][]domain.Item, allowed ma
 		orderKey := OrderKey(lead, sourceCount)
 		rendered = append(rendered, Rendered{
 			StoryID: row.StoryID, SourceCount: sourceCount, OrderKey: orderKey,
-			Size: score.Size(orderKey, model), Items: visible,
+			Size: lead.Size, Items: visible,
 		})
 	}
 	sort.SliceStable(rendered, func(i, j int) bool {

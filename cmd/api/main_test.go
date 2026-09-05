@@ -197,7 +197,6 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		rowsBySK[identity.SK] = marshal(identity)
 	}
 	storyRow := domain.Story{PK: pk, SK: domain.StorySK("story"), StoryID: "story", MemberIDs: []string{"lead", "member"}, CreatedAt: domain.Timestamp(now), UpdatedAt: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
-	model := domain.Model{PK: pk, SK: "MODEL", ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.1, P90: 1.2}}
 	db := &apiDynamo{
 		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal(storyRow)}}, nil
@@ -211,12 +210,6 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 				}
 			}
 			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": response}}, nil
-		},
-		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			if input.Key["SK"].(*types.AttributeValueMemberS).Value == "MODEL" {
-				return &dynamodb.GetItemOutput{Item: marshal(model)}, nil
-			}
-			return &dynamodb.GetItemOutput{}, nil
 		},
 	}
 	server := &server{
@@ -238,7 +231,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Stories) != 1 || math.Abs(body.Stories[0].OrderKey-1.15) > 1e-9 || body.Stories[0].Size != "M" {
+	if len(body.Stories) != 1 || math.Abs(body.Stories[0].OrderKey-1.05) > 1e-9 || body.Stories[0].Size != "L" {
 		t.Fatalf("stories = %#v", body.Stories)
 	}
 }
