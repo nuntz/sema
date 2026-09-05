@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/nuntz/sema/internal/domain"
@@ -11,7 +12,6 @@ import (
 )
 
 var ErrReplayActive = errors.New("embedding replay is still in progress")
-var ErrMissingItemEmbedding = errors.New("live item has no embedding")
 
 type Repository interface {
 	Model(context.Context, string) (domain.Model, error)
@@ -31,10 +31,11 @@ type Engine struct {
 }
 
 type Result struct {
-	Model         domain.Model
-	ItemsRescored int
-	CentroidDrift float64
-	Duration      time.Duration
+	Model                domain.Model
+	ItemsRescored        int
+	ItemsSkippedNoVector int
+	CentroidDrift        float64
+	Duration             time.Duration
 }
 
 func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Result, error) {
@@ -77,11 +78,17 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err := e.Repository.LoadItemVectors(ctx, userID, items); err != nil {
 		return Result{}, err
 	}
+	itemsWithVectors := items[:0]
+	itemsSkippedNoVector := 0
 	for _, item := range items {
 		if len(item.Vector) == 0 {
-			return Result{}, fmt.Errorf("%w: %s", ErrMissingItemEmbedding, item.ItemID)
+			itemsSkippedNoVector++
+			slog.Warn("rescore skipped item without vector", "user", userID, "item_id", item.ItemID)
+			continue
 		}
+		itemsWithVectors = append(itemsWithVectors, item)
 	}
+	items = itemsWithVectors
 	scores := make([]float64, len(items))
 	for index := range items {
 		published, parseErr := time.Parse(time.RFC3339Nano, items[index].PublishedTS)
@@ -106,7 +113,13 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		return Result{}, err
 	}
 	drift := score.Dot(score.DecodeVector(old.LikedCentroid), score.DecodeVector(model.LikedCentroid))
-	return Result{Model: model, ItemsRescored: len(items), CentroidDrift: drift, Duration: e.now().Sub(started)}, nil
+	return Result{
+		Model:                model,
+		ItemsRescored:        len(items),
+		ItemsSkippedNoVector: itemsSkippedNoVector,
+		CentroidDrift:        drift,
+		Duration:             e.now().Sub(started),
+	}, nil
 }
 
 func (e *Engine) now() time.Time {

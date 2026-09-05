@@ -19,9 +19,10 @@ type request struct {
 }
 
 type response struct {
-	Users         int `json:"users"`
-	ItemsRescored int `json:"items_rescored"`
-	Skipped       int `json:"skipped"`
+	Users                int `json:"users"`
+	ItemsRescored        int `json:"items_rescored"`
+	ItemsSkippedNoVector int `json:"items_skipped_no_vector"`
+	Skipped              int `json:"skipped"`
 }
 
 type handler struct {
@@ -51,10 +52,12 @@ func (h *handler) run(ctx context.Context, input request) (response, error) {
 		}
 		output.Users++
 		output.ItemsRescored += result.ItemsRescored
+		output.ItemsSkippedNoVector += result.ItemsSkippedNoVector
 		observability.Emit(map[string]float64{
-			"RescoreDurationMs": float64(result.Duration.Milliseconds()),
-			"ItemsRescored":     float64(result.ItemsRescored),
-			"CentroidDrift":     result.CentroidDrift,
+			"RescoreDurationMs":           float64(result.Duration.Milliseconds()),
+			"ItemsRescored":               float64(result.ItemsRescored),
+			"RescoreItemsSkippedNoVector": float64(result.ItemsSkippedNoVector),
+			"CentroidDrift":               result.CentroidDrift,
 		}, map[string]string{"User": userID})
 	}
 	return output, nil

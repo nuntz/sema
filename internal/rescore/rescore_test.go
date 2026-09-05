@@ -98,22 +98,32 @@ func TestNightlyGuardrailHonoursRecentReplay(t *testing.T) {
 	}
 }
 
-func TestRescoreRejectsMissingItemEmbeddingBeforeRankingWrite(t *testing.T) {
+func TestRescoreSkipsMissingItemEmbedding(t *testing.T) {
 	now := time.Date(2026, 8, 29, 9, 0, 0, 0, time.UTC)
+	vector := score.EncodeVector([]float32{1, 0})
 	repository := &fakeRepository{
 		model: domain.Model{PK: "U#user", SK: "MODEL", Version: "v"},
-		items: []domain.Item{{
-			PK: "U#user", SK: domain.ItemSK(now, "missing"), ItemID: "missing", FeedID: "feed",
-			PublishedTS: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix(),
-		}},
+		items: []domain.Item{
+			{
+				PK: "U#user", SK: domain.ItemSK(now, "missing"), ItemID: "missing", FeedID: "feed",
+				PublishedTS: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix(),
+			},
+			{
+				PK: "U#user", SK: domain.ItemSK(now, "normal"), ItemID: "normal", FeedID: "feed",
+				PublishedTS: domain.Timestamp(now), Vector: vector, TTL: now.Add(time.Hour).Unix(),
+			},
+		},
 	}
 	engine := Engine{Repository: repository, Version: "v", Now: func() time.Time { return now }}
-	_, err := engine.RunUser(context.Background(), "user", false)
-	if !errors.Is(err, ErrMissingItemEmbedding) {
-		t.Fatalf("rescore error = %v, want missing embedding", err)
+	result, err := engine.RunUser(context.Background(), "user", false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(repository.replacements) != 0 {
-		t.Fatalf("missing embedding wrote rankings: %#v", repository.replacements)
+	if result.ItemsRescored != 1 || result.ItemsSkippedNoVector != 1 {
+		t.Fatalf("result = %#v, want one rescored and one skipped", result)
+	}
+	if len(repository.replacements) != 1 || repository.replacements[0].ItemID != "normal" {
+		t.Fatalf("ranked items = %#v, want only normal item", repository.replacements)
 	}
 }
 
