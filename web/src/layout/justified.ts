@@ -272,40 +272,6 @@ function stableDesktopLargeRunLength(items: Item[]): number {
   return index;
 }
 
-function stablePrefixLength(
-  items: Item[],
-  hasMore: boolean,
-  containerWidth: number,
-): number {
-  if (!hasMore) return items.length;
-  for (let index = 0; index < items.length; index++) {
-    if (items[index].size !== "L") continue;
-    let resolved = false;
-    for (
-      let lookahead = index + 1;
-      lookahead < items.length && lookahead <= index + 3;
-      lookahead++
-    ) {
-      if (items[lookahead].size === "L" || lookahead === index + 3) {
-        resolved = true;
-        break;
-      }
-    }
-    if (!resolved) {
-      let runStart = index;
-      while (runStart > 0 && items[runStart - 1].size === "L") runStart--;
-      if (containerWidth >= 700) {
-        return (
-          runStart +
-          stableDesktopLargeRunLength(items.slice(runStart, index + 1))
-        );
-      }
-      return runStart;
-    }
-  }
-  return items.length;
-}
-
 function desktopSpanBand(
   hero: Item,
   companions: Item[],
@@ -457,11 +423,18 @@ function appendDesktopLargeRun(
 }
 
 function regularGroups(items: Item[], followedByLarge: boolean) {
-  const allSmall = items.every((item) => item.size === "S");
-  const groupSize = allSmall ? 6 : 5;
   const groups: Item[][] = [];
-  for (let index = 0; index < items.length; index += groupSize)
+  let index = 0;
+  while (index < items.length) {
+    const remaining = items.length - index;
+    const nextSix = items.slice(index, index + 6);
+    const groupSize =
+      nextSix.length === 6 && nextSix.every((item) => item.size === "S")
+        ? 6
+        : Math.min(5, remaining);
     groups.push(items.slice(index, index + groupSize));
+    index += groupSize;
+  }
 
   let stragglers: Item[] = [];
   const tail = groups.at(-1);
@@ -470,6 +443,27 @@ function regularGroups(items: Item[], followedByLarge: boolean) {
     groups.pop();
   }
   return { groups, stragglers };
+}
+
+function stableRegularGroupCount(items: Item[]): number {
+  let index = 0;
+  while (index < items.length) {
+    const remaining = items.length - index;
+    const nextSix = items.slice(index, index + 6);
+    if (nextSix.length === 6) {
+      index += nextSix.every((item) => item.size === "S") ? 6 : 5;
+      continue;
+    }
+    if (
+      remaining >= 5 &&
+      nextSix.slice(0, 5).some((item) => item.size === "M")
+    ) {
+      index += 5;
+      continue;
+    }
+    break;
+  }
+  return index;
 }
 
 function appendDesktopRegularRows(
@@ -561,33 +555,53 @@ export function justify(
 ): LayoutRow[] {
   if (containerWidth <= 0 || entries.length === 0) return [];
   const items = toLayoutItems(entries, options);
-  const stableLength = options.completeSegment
-    ? items.length
-    : stablePrefixLength(items, hasMore, containerWidth);
-  const layoutItems = items.slice(0, stableLength);
-  const finalFeed = !hasMore && stableLength === items.length;
+  const paginationOpen = hasMore && !options.completeSegment;
+  const finalFeed = !hasMore;
   if (containerWidth < 700)
     return layoutStoryHeadlines(
-      mobileRows(layoutItems, containerWidth, finalFeed),
+      mobileRows(items, containerWidth, finalFeed, paginationOpen),
     );
 
   const rows: LayoutRow[] = [];
   let spanIndex = 0;
-  for (let index = 0; index < layoutItems.length; ) {
-    const item = layoutItems[index];
+  for (let index = 0; index < items.length; ) {
+    const item = items[index];
     if (item.size === "L") {
       let runEnd = index + 1;
-      while (runEnd < layoutItems.length && layoutItems[runEnd].size === "L")
-        runEnd++;
+      while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
       const runLength = runEnd - index;
-      const boundaryCompanions = companionCountBeforeLarge(layoutItems, runEnd);
+      const boundaryCompanions = companionCountBeforeLarge(items, runEnd);
+      const companionEnd = runEnd + boundaryCompanions;
+      const openLargeRun = paginationOpen && runEnd === items.length;
+      const openCompanionRun =
+        paginationOpen &&
+        runEnd < items.length &&
+        companionEnd === items.length;
+      if (
+        openLargeRun ||
+        (runLength >= 3 && openCompanionRun && boundaryCompanions < 3)
+      ) {
+        // Reserve the boundary L because a later page can either extend its
+        // run or turn it into the hero of a mosaic. Only complete leading
+        // large bands are safe to paint.
+        const stableLength = stableDesktopLargeRunLength(
+          items.slice(index, Math.max(index, runEnd - 1)),
+        );
+        if (stableLength > 0)
+          appendDesktopLargeRun(
+            rows,
+            items.slice(index, index + stableLength),
+            containerWidth,
+          );
+        break;
+      }
       const mosaicTransition =
         runLength >= 3 && boundaryCompanions >= mosaicMinimumCompanions;
       if (runLength >= 2) {
         const largeRunEnd = mosaicTransition ? runEnd - 1 : runEnd;
         appendDesktopLargeRun(
           rows,
-          layoutItems.slice(index, largeRunEnd),
+          items.slice(index, largeRunEnd),
           containerWidth,
         );
         index = largeRunEnd;
@@ -595,14 +609,20 @@ export function justify(
       }
 
       const companions = followingCompanions(
-        layoutItems,
+        items,
         index + 1,
         spanCompanionCount,
       );
       const opensMosaic = boundaryCompanions >= mosaicMinimumCompanions;
       const finalBand =
-        finalFeed && index + 1 + boundaryCompanions === layoutItems.length;
+        finalFeed && index + 1 + boundaryCompanions === items.length;
       const adjacentSpan = rows.at(-1)?.kind === "span";
+      const openBand = paginationOpen && companionEnd === items.length;
+      const requiredCompanions =
+        spanEligible(item) && !adjacentSpan
+          ? spanCompanionCount
+          : tallCompanionCount;
+      if (openBand && boundaryCompanions < requiredCompanions) break;
       const opensSpan =
         spanEligible(item) &&
         !adjacentSpan &&
@@ -618,7 +638,7 @@ export function justify(
             containerWidth,
             spanIndex % 2 === 1,
             topAfter(rows, desktopGap),
-            short || (finalFeed && nextIndex === layoutItems.length),
+            short || (finalFeed && nextIndex === items.length),
           ),
         );
         spanIndex++;
@@ -627,7 +647,7 @@ export function justify(
       }
 
       const tallCompanions = followingCompanions(
-        layoutItems,
+        items,
         index + 1,
         tallCompanionCount,
       );
@@ -639,7 +659,7 @@ export function justify(
           containerWidth,
           topAfter(rows, desktopGap),
           tallCompanions.length === 0 ||
-            (finalFeed && nextIndex === layoutItems.length),
+            (finalFeed && nextIndex === items.length),
         ),
       );
       index = nextIndex;
@@ -647,10 +667,15 @@ export function justify(
     }
 
     let end = index;
-    while (end < layoutItems.length && layoutItems[end].size !== "L") end++;
-    const followedByLarge = end < layoutItems.length;
+    while (end < items.length && items[end].size !== "L") end++;
+    const followedByLarge = end < items.length;
+    const regularRun = items.slice(index, end);
+    const stableCount =
+      paginationOpen && !followedByLarge
+        ? stableRegularGroupCount(regularRun)
+        : regularRun.length;
     const { groups, stragglers } = regularGroups(
-      layoutItems.slice(index, end),
+      regularRun.slice(0, stableCount),
       followedByLarge,
     );
     appendDesktopRegularRows(
@@ -660,9 +685,18 @@ export function justify(
       finalFeed && !followedByLarge,
     );
     if (stragglers.length > 0 && followedByLarge) {
+      const followingCapacity = tallCompanionCount - stragglers.length;
+      const following = followingCompanions(items, end + 1, followingCapacity);
+      const nextIndex = end + 1 + following.length;
+      if (
+        paginationOpen &&
+        nextIndex === items.length &&
+        following.length < followingCapacity
+      )
+        break;
       index = appendAbsorbedTallBand(
         rows,
-        layoutItems,
+        items,
         end,
         stragglers,
         containerWidth,
@@ -670,6 +704,7 @@ export function justify(
       );
       continue;
     }
+    if (stableCount < regularRun.length) break;
     index = end;
   }
   return layoutStoryHeadlines(rows);
@@ -732,6 +767,7 @@ function mobileRows(
   items: Item[],
   containerWidth: number,
   finalFeed: boolean,
+  paginationOpen: boolean,
 ): LayoutRow[] {
   const rows: LayoutRow[] = [];
   const baseUnit = 120;
@@ -740,6 +776,7 @@ function mobileRows(
     if (item.size === "L") {
       let runEnd = index + 1;
       while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
+      if (paginationOpen && runEnd === items.length) break;
       appendMobileLargeRun(rows, items.slice(index, runEnd), containerWidth);
       index = runEnd;
       continue;
@@ -782,6 +819,13 @@ function mobileRows(
     const next = items[index + 1];
     const height = 152;
     if (next && next.size !== "L") {
+      if (
+        paginationOpen &&
+        index + 2 === items.length &&
+        item.size === "S" &&
+        next.size === "S"
+      )
+        break;
       const pair = [item, next];
       const final = finalFeed && index + 2 === items.length;
       const line = final ? naturalLineCells : justifiedLineCells;
@@ -796,6 +840,7 @@ function mobileRows(
       continue;
     }
 
+    if (paginationOpen && !next) break;
     const singleHeight = item.size === "S" ? 112 : 152;
     const final = finalFeed && index + 1 === items.length;
     const line = final ? naturalLineCells : justifiedLineCells;

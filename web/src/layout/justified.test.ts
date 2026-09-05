@@ -427,35 +427,6 @@ describe("17c desktop bands", () => {
     expect(row.cells[1].width / row.cells[2].width).toBeCloseTo(1.05 / 0.8);
   });
 
-  it("re-packs a hasMore pagination-tail straggler when the next page arrives", () => {
-    const firstPage = [item("tail", "M", 1)];
-    const before = justify(firstPage, 1248);
-    expect(before).toHaveLength(1);
-    expect(before[0].kind).toBe("standard");
-    expect(fillRatio(before[0], 1248)).toBeLessThan(0.2);
-
-    // Grid's layoutKey changes after the appended items land, so this is the
-    // second justify() input seen by the memoized layout.
-    const after = justify(
-      [
-        ...firstPage,
-        item("portrait", "L", 1),
-        item("next-m", "M", 1),
-        item("next-s", "S", 1),
-        item("terminal", "L", 1.8),
-      ],
-      1248,
-    );
-    expect(after[0].kind).toBe("tall");
-    expect(after[0].cells.map((cell) => cell.item.item_id)).toEqual([
-      "tail",
-      "portrait",
-      "next-m",
-      "next-s",
-    ]);
-    expect(fillRatio(after[0], 1248)).toBeCloseTo(1, 5);
-  });
-
   it("renders the stable desktop prefix of a paginated L run", () => {
     const firstPage = Array.from({ length: 100 }, (_, index) =>
       item(`large-${index}`, "L", 1),
@@ -476,6 +447,155 @@ describe("17c desktop bands", () => {
     expect(before.length).toBeGreaterThan(0);
     expect(ids(before).length).toBeLessThan(firstPage.length);
     expect(after.slice(0, before.length)).toEqual(before);
+  });
+});
+
+describe("pagination layout invariants", () => {
+  const story = (id: string, size: "M" | "L", ratio: number): Story => ({
+    story_id: `story-${id}`,
+    source_count: 2,
+    order_key: size === "L" ? 0.9 : 0.6,
+    size,
+    items: [
+      item(`story-lead-${id}`, size, ratio),
+      item(`story-headline-${id}`, "S"),
+    ],
+  });
+
+  const entry = (
+    id: string,
+    size: Item["size"],
+    ratio: number,
+    asStory = false,
+  ) =>
+    asStory && size !== "S"
+      ? ({ kind: "story" as const, story: story(id, size, ratio) } as const)
+      : item(id, size, ratio, ratio > 0);
+
+  const random = (seed: number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x1_0000_0000;
+    };
+  };
+
+  it("keeps every painted row exact when arbitrary continuations arrive", () => {
+    const widths = [1440, 1024, 768, 390];
+    let paintedRows = 0;
+    for (let seed = 1; seed <= 240; seed++) {
+      const next = random(seed);
+      const prefixLength = 8 + Math.floor(next() * 45);
+      const continuationLength = 1 + Math.floor(next() * 24);
+      const sizes: Item["size"][] = ["S", "M", "L"];
+      const entries = Array.from(
+        { length: prefixLength + continuationLength },
+        (_, index) => {
+          const size = sizes[Math.floor(next() * sizes.length)];
+          const ratios = [0, 0.8, 1, 1.2, 1.5, 1.8, 2.1];
+          return entry(
+            `${seed}-${index}`,
+            size,
+            ratios[Math.floor(next() * ratios.length)],
+            next() < 0.28,
+          );
+        },
+      );
+      const prefix = entries.slice(0, prefixLength);
+      for (const width of widths) {
+        const before = justify(prefix, width, true);
+        const after = justify(entries, width, seed % 3 !== 0);
+        expect(
+          after.slice(0, before.length),
+          `seed ${seed}, width ${width}`,
+        ).toEqual(before);
+        paintedRows += before.length;
+      }
+    }
+    expect(paintedRows).toBeGreaterThan(0);
+  });
+
+  it("does not re-chunk an all-S prefix when the next page starts with M", () => {
+    const firstPage = Array.from({ length: 10 }, (_, index) =>
+      item(`small-${index}`, "S"),
+    );
+    const before = justify(firstPage, 1440, true);
+    const after = justify([...firstPage, item("medium", "M")], 1440, true);
+
+    expect(ids(before)).toEqual(
+      firstPage.slice(0, 6).map((value) => value.item_id),
+    );
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after[1].cells.map((cell) => cell.item.item_id)).toEqual(
+      [...firstPage.slice(6), item("medium", "M")].map(
+        (value) => value.item_id,
+      ),
+    );
+  });
+
+  it("withholds a two-cell tail until a following L band is complete", () => {
+    const stable = [
+      item("stable-0", "M"),
+      item("stable-1", "S"),
+      item("stable-2", "S"),
+      item("stable-3", "M"),
+      item("stable-4", "S"),
+    ];
+    const tail = [item("tail-0", "M"), item("tail-1", "S")];
+    const before = justify([...stable, ...tail], 1440, true);
+    const after = justify(
+      [
+        ...stable,
+        ...tail,
+        item("large", "L", 1),
+        item("companion", "M"),
+        item("boundary", "L", 1.8),
+      ],
+      1440,
+      true,
+    );
+
+    expect(ids(before)).toEqual(stable.map((value) => value.item_id));
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after[1].cells.map((cell) => cell.item.item_id)).toEqual([
+      "tail-0",
+      "tail-1",
+      "large",
+      "companion",
+    ]);
+  });
+
+  it("lays a later M story only with previously withheld cells", () => {
+    const stable = [
+      item("stable-0", "M"),
+      item("stable-1", "S"),
+      item("stable-2", "S"),
+      item("stable-3", "M"),
+      item("stable-4", "S"),
+    ];
+    const tail = [item("tail-0", "M"), item("tail-1", "S")];
+    const before = justify([...stable, ...tail], 1440, true);
+    const mediumStory = story("later", "M", 1.5);
+    const after = justify(
+      [
+        ...stable,
+        ...tail,
+        { kind: "story", story: mediumStory },
+        item("after-0", "S"),
+        item("after-1", "M"),
+      ],
+      1440,
+      true,
+    );
+
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after[1].cells.map((cell) => cell.item.item_id)).toEqual([
+      "tail-0",
+      "tail-1",
+      "story-lead-later",
+      "after-0",
+      "after-1",
+    ]);
   });
 });
 
