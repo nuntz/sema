@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	awslambda "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/lambda"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
@@ -47,6 +48,16 @@ func TestWebCacheControl(t *testing.T) {
 			t.Errorf("webCacheControl(%q) = %q, want %q", path, got, want)
 		}
 	}
+}
+
+func TestQueueEventSourceMappingCapsConcurrency(t *testing.T) {
+	args := queueEventSourceMappingArgs(pulumi.String("queue"), pulumi.String("function"), 5)
+	assertPulumiInt(t, "batch size", args.BatchSize, 5)
+	scaling, ok := args.ScalingConfig.(*awslambda.EventSourceMappingScalingConfigArgs)
+	if !ok {
+		t.Fatalf("scaling config = %#v", args.ScalingConfig)
+	}
+	assertPulumiInt(t, "maximum concurrency", scaling.MaximumConcurrency, 10)
 }
 
 func assertPulumiString(t *testing.T, name string, input pulumi.StringPtrInput, want string) {

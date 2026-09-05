@@ -232,14 +232,10 @@ func main() {
 			return err
 		}
 
-		if _, err := awslambda.NewEventSourceMapping(ctx, "feed-events", &awslambda.EventSourceMappingArgs{
-			EventSourceArn: feedsQueue.Arn, FunctionName: feedWorker.Arn, BatchSize: pulumi.Int(10), FunctionResponseTypes: pulumi.StringArray{pulumi.String("ReportBatchItemFailures")},
-		}); err != nil {
+		if _, err := awslambda.NewEventSourceMapping(ctx, "feed-events", queueEventSourceMappingArgs(feedsQueue.Arn, feedWorker.Arn, 10)); err != nil {
 			return err
 		}
-		if _, err := awslambda.NewEventSourceMapping(ctx, "item-events", &awslambda.EventSourceMappingArgs{
-			EventSourceArn: itemsQueue.Arn, FunctionName: itemWorker.Arn, BatchSize: pulumi.Int(5), FunctionResponseTypes: pulumi.StringArray{pulumi.String("ReportBatchItemFailures")},
-		}); err != nil {
+		if _, err := awslambda.NewEventSourceMapping(ctx, "item-events", queueEventSourceMappingArgs(itemsQueue.Arn, itemWorker.Arn, 5)); err != nil {
 			return err
 		}
 
@@ -485,6 +481,16 @@ func schedulerSilentAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.Metric
 		TreatMissingData:   pulumi.String("breaching"),
 		AlarmActions:       alarmActions,
 		AlarmDescription:   pulumi.String("scheduler enqueued no feeds for four consecutive hourly periods"),
+	}
+}
+
+func queueEventSourceMappingArgs(eventSourceArn, functionName pulumi.StringInput, batchSize int) *awslambda.EventSourceMappingArgs {
+	return &awslambda.EventSourceMappingArgs{
+		EventSourceArn:        eventSourceArn,
+		FunctionName:          functionName,
+		BatchSize:             pulumi.Int(batchSize),
+		FunctionResponseTypes: pulumi.StringArray{pulumi.String("ReportBatchItemFailures")},
+		ScalingConfig:         &awslambda.EventSourceMappingScalingConfigArgs{MaximumConcurrency: pulumi.Int(10)},
 	}
 }
 
