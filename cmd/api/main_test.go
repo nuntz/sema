@@ -195,6 +195,100 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 	}
 }
 
+func TestGetItemsFiltersByFeed(t *testing.T) {
+	now := time.Now().UTC()
+	marshal := func(id, feedID string) map[string]types.AttributeValue {
+		item, err := attributevalue.MarshalMap(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(now, id), ItemID: id,
+			FeedID: feedID, URL: "https://example.com/" + id, Title: id,
+			PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+			SummarySource: "", Size: "S", TTL: now.Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	rows := []map[string]types.AttributeValue{
+		marshal("alpha-item", "alpha"),
+		marshal("beta-item", "beta"),
+		marshal("muted-item", "muted"),
+	}
+
+	for _, test := range []struct {
+		name    string
+		feedID  string
+		wantIDs []string
+	}{
+		{name: "one feed", feedID: "alpha", wantIDs: []string{"alpha-item"}},
+		{name: "muted feed", feedID: "muted", wantIDs: []string{}},
+		{name: "unknown feed", feedID: "unknown", wantIDs: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := &apiDynamo{
+				query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
+					if prefix == "R#" {
+						return &dynamodb.QueryOutput{}, nil
+					}
+					return &dynamodb.QueryOutput{Items: rows}, nil
+				},
+				batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+					return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {}}}, nil
+				},
+			}
+			server := &server{
+				store: store.New(db, nil, "table", "", ""),
+				feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+					{FeedID: "alpha"}, {FeedID: "beta"}, {FeedID: "muted", Muted: true},
+				}}},
+			}
+			got := server.getItems(context.Background(), "user", map[string]string{
+				"order": "chrono", "feed": test.feedID,
+			})
+			if got.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+			}
+			var body struct {
+				Items []domain.Item `json:"items"`
+			}
+			if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+				t.Fatal(err)
+			}
+			gotIDs := make([]string, len(body.Items))
+			for index, item := range body.Items {
+				gotIDs[index] = item.ItemID
+			}
+			if strings.Join(gotIDs, ",") != strings.Join(test.wantIDs, ",") {
+				t.Fatalf("item IDs = %#v, want %#v", gotIDs, test.wantIDs)
+			}
+		})
+	}
+}
+
+func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
+	server := &server{}
+	query := map[string]string{"tag": "tech", "feed": "alpha"}
+	for _, test := range []struct {
+		name string
+		get  func() events.APIGatewayV2HTTPResponse
+	}{
+		{name: "items", get: func() events.APIGatewayV2HTTPResponse {
+			return server.getItems(context.Background(), "user", query)
+		}},
+		{name: "stories", get: func() events.APIGatewayV2HTTPResponse {
+			return server.getStories(context.Background(), "user", query)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := test.get()
+			if got.StatusCode != http.StatusBadRequest || !strings.Contains(got.Body, "tag and feed cannot be combined") {
+				t.Fatalf("response = %d, %s", got.StatusCode, got.Body)
+			}
+		})
+	}
+}
+
 func TestGetStoriesReturnsArray(t *testing.T) {
 	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value != "T#" {
@@ -820,6 +914,61 @@ func TestGetMeUsesProfileSignalCount(t *testing.T) {
 	}
 	if body.SignalCount != 12 || body.Profile.SignalCount != 12 || body.HeartCount != 3 {
 		t.Fatalf("profile response = %#v", body)
+	}
+}
+
+func TestPatchMeKeepsGridPreferencesMutuallyExclusive(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		body     string
+		wantTag  string
+		wantFeed string
+	}{
+		{name: "feed clears tag", body: `{"feed_pref":" alpha "}`, wantTag: "", wantFeed: "alpha"},
+		{name: "tag clears feed", body: `{"tag_pref":" Tech "}`, wantTag: "tech", wantFeed: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var updated *dynamodb.UpdateItemInput
+			db := &apiDynamo{update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				updated = input
+				return &dynamodb.UpdateItemOutput{}, nil
+			}}
+			got := (&server{store: store.New(db, nil, "table", "", "")}).patchMe(context.Background(), "user", test.body)
+			if got.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+			}
+			if updated == nil {
+				t.Fatal("profile was not updated")
+			}
+			value := func(key string) string {
+				attribute, ok := updated.ExpressionAttributeValues[key].(*types.AttributeValueMemberS)
+				if !ok {
+					t.Fatalf("%s = %#v", key, updated.ExpressionAttributeValues[key])
+				}
+				return attribute.Value
+			}
+			if value(":tag") != test.wantTag || value(":feed") != test.wantFeed {
+				t.Fatalf("preferences = tag %q, feed %q; want tag %q, feed %q", value(":tag"), value(":feed"), test.wantTag, test.wantFeed)
+			}
+		})
+	}
+}
+
+func TestPatchMeValidatesFeedPreference(t *testing.T) {
+	server := &server{}
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "too long", body: `{"feed_pref":"` + strings.Repeat("x", 129) + `"}`},
+		{name: "combined preferences", body: `{"tag_pref":"tech","feed_pref":"alpha"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := server.patchMe(context.Background(), "user", test.body)
+			if got.StatusCode != http.StatusBadRequest {
+				t.Fatalf("response = %d, %s", got.StatusCode, got.Body)
+			}
+		})
 	}
 }
 

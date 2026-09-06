@@ -133,8 +133,8 @@ func (s *Store) User(ctx context.Context, userID string) (domain.User, error) {
 	return user, attributevalue.UnmarshalMap(response.Item, &user)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Order, position, tag *string) error {
-	sets := make([]string, 0, 3)
+func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error {
+	sets := make([]string, 0, 4)
 	values := make(map[string]types.AttributeValue)
 	if order != nil {
 		sets = append(sets, "order_pref = :order")
@@ -147,6 +147,10 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 	if tag != nil {
 		sets = append(sets, "tag_pref = :tag")
 		values[":tag"] = &types.AttributeValueMemberS{Value: *tag}
+	}
+	if feed != nil {
+		sets = append(sets, "feed_pref = :feed")
+		values[":feed"] = &types.AttributeValueMemberS{Value: *feed}
 	}
 	if len(sets) == 0 {
 		return nil

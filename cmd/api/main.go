@@ -611,6 +611,7 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 		OrderPref        *domain.Order `json:"order_pref"`
 		InterestPosition *string       `json:"interest_position"`
 		TagPref          *string       `json:"tag_pref"`
+		FeedPref         *string       `json:"feed_pref"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
@@ -624,7 +625,22 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 			return badRequest(errors.New("tag_pref must be at most 32 characters"))
 		}
 	}
-	if err := s.store.UpdateUser(ctx, userID, input.OrderPref, input.InterestPosition, input.TagPref); err != nil {
+	if input.FeedPref != nil {
+		*input.FeedPref = strings.TrimSpace(*input.FeedPref)
+		if len([]rune(*input.FeedPref)) > 128 {
+			return badRequest(errors.New("feed_pref must be at most 128 characters"))
+		}
+	}
+	if input.TagPref != nil && input.FeedPref != nil && *input.TagPref != "" && *input.FeedPref != "" {
+		return badRequest(errors.New("tag_pref and feed_pref cannot both be set"))
+	}
+	empty := ""
+	if input.FeedPref != nil && *input.FeedPref != "" {
+		input.TagPref = &empty
+	} else if input.TagPref != nil && *input.TagPref != "" {
+		input.FeedPref = &empty
+	}
+	if err := s.store.UpdateUser(ctx, userID, input.OrderPref, input.InterestPosition, input.TagPref, input.FeedPref); err != nil {
 		return s.failure("update profile", err)
 	}
 	return response(http.StatusOK, map[string]bool{"ok": true})
@@ -643,7 +659,7 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		return badRequest(err)
 	}
 	limit, _ := strconv.Atoi(query["limit"])
-	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"])
+	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
 	if err != nil {
 		if errors.Is(err, errInvalidFeedTag) {
 			return badRequest(err)
@@ -689,7 +705,7 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 	if err != nil {
 		return badRequest(err)
 	}
-	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"])
+	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
 	if err != nil {
 		if errors.Is(err, errInvalidFeedTag) {
 			return badRequest(err)

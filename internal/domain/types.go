@@ -25,6 +25,7 @@ type User struct {
 	CreatedAt        string `dynamodbav:"created_at" json:"created_at"`
 	OrderPref        Order  `dynamodbav:"order_pref" json:"order_pref"`
 	TagPref          string `dynamodbav:"tag_pref,omitempty" json:"tag_pref,omitempty"`
+	FeedPref         string `dynamodbav:"feed_pref,omitempty" json:"feed_pref,omitempty"`
 	InterestPosition string `dynamodbav:"interest_position,omitempty" json:"interest_position,omitempty"`
 	HeartCount       int    `dynamodbav:"heart_count" json:"heart_count"`
 	SignalCount      int    `dynamodbav:"signal_count" json:"signal_count"`

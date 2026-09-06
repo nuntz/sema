@@ -417,8 +417,12 @@ func (s *server) exportFeeds(ctx context.Context, userID string) events.APIGatew
 	}
 }
 
-func (s *server) allowedFeedIDs(ctx context.Context, userID, rawTag string) (map[string]bool, error) {
+func (s *server) allowedFeedIDs(ctx context.Context, userID, rawTag, rawFeed string) (map[string]bool, error) {
 	tag := strings.ToLower(strings.TrimSpace(rawTag))
+	feedID := strings.TrimSpace(rawFeed)
+	if tag != "" && feedID != "" {
+		return nil, fmt.Errorf("%w: tag and feed cannot be combined", errInvalidFeedTag)
+	}
 	if utf8.RuneCountInString(tag) > 32 {
 		return nil, fmt.Errorf("%w: tag must be at most 32 characters", errInvalidFeedTag)
 	}
@@ -429,6 +433,12 @@ func (s *server) allowedFeedIDs(ctx context.Context, userID, rawTag string) (map
 	allowed := make(map[string]bool, len(feeds))
 	for _, feed := range feeds {
 		if feed.Muted {
+			continue
+		}
+		if feedID != "" {
+			if feed.FeedID == feedID {
+				allowed[feed.FeedID] = true
+			}
 			continue
 		}
 		if tag == "__untagged" {
