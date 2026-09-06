@@ -956,6 +956,9 @@ func dashboardBody(resources dashboardResources) (string, error) {
 	summaries["annotations"] = horizontal(2000, "daily cost guard")
 	grid.row(6, summaries,
 		timeSeries(region, "Summary latency p95", "p95", 300, dashboardMetric("Sema", "SummaryLatencyMs")),
+		timeSeries(region, "Story assignment", "Sum", 300,
+			dashboardExpression("story", `SEARCH('{Sema} ("StoryCreated" OR "StoryJoined" OR "StoryAssignmentFailed")', 'Sum', 300)`, "", nil),
+		),
 	)
 
 	traffic := timeSeries(region, "API traffic", "Sum", 300,
@@ -988,6 +991,7 @@ func dashboardBody(resources dashboardResources) (string, error) {
 		timeSeries(region, "DynamoDB errors", "Sum", 300,
 			dashboardMetric("AWS/DynamoDB", "ThrottledRequests", "TableName", resources.table),
 			dashboardMetric("AWS/DynamoDB", "SystemErrors", "TableName", resources.table),
+			dashboardMetric("AWS/DynamoDB", "TransactionConflict", "TableName", resources.table),
 		),
 		vectorIndexes,
 	)

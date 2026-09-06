@@ -152,14 +152,38 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 	}
 
 	metrics := 0
+	metricsByTitle := map[string][][]any{}
 	for index, widget := range dashboard.Widgets {
-		if strings.TrimSpace(widget.Properties.Title) == "" {
+		title := strings.TrimSpace(widget.Properties.Title)
+		if title == "" {
 			t.Errorf("widget %d has no title", index)
 		}
 		metrics += len(widget.Properties.Metrics)
+		metricsByTitle[title] = widget.Properties.Metrics
 	}
 	if metrics >= 50 {
 		t.Errorf("dashboard charts %d metrics, want fewer than 50", metrics)
+	}
+	if metrics != 49 {
+		t.Errorf("dashboard charts %d metrics, want 49", metrics)
+	}
+	storyMetrics := metricsByTitle["Story assignment"]
+	if len(storyMetrics) != 1 {
+		t.Fatalf("Story assignment metrics = %#v, want one SEARCH expression", storyMetrics)
+	}
+	storyExpression, ok := storyMetrics[0][0].(map[string]any)
+	if !ok || storyExpression["expression"] != `SEARCH('{Sema} ("StoryCreated" OR "StoryJoined" OR "StoryAssignmentFailed")', 'Sum', 300)` {
+		t.Fatalf("Story assignment metric = %#v", storyMetrics[0])
+	}
+	foundTransactionConflict := false
+	for _, metric := range metricsByTitle["DynamoDB errors"] {
+		if len(metric) >= 4 && metric[0] == "AWS/DynamoDB" && metric[1] == "TransactionConflict" && metric[2] == "TableName" && metric[3] == "sema-dev" {
+			foundTransactionConflict = true
+			break
+		}
+	}
+	if !foundTransactionConflict {
+		t.Fatalf("DynamoDB errors metrics = %#v, want TransactionConflict", metricsByTitle["DynamoDB errors"])
 	}
 	t.Logf("dashboard charts %d metrics across %d widgets", metrics, len(dashboard.Widgets))
 }
