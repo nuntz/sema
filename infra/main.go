@@ -442,6 +442,7 @@ func main() {
 			alarm, alarmErr := cloudwatch.NewMetricAlarm(ctx, entry.name+"-dlq-alarm", &cloudwatch.MetricAlarmArgs{
 				Namespace: pulumi.String("AWS/SQS"), MetricName: pulumi.String("ApproximateNumberOfMessagesVisible"), Statistic: pulumi.String("Maximum"), Period: pulumi.Int(60), EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(0),
 				Dimensions: pulumi.StringMap{"QueueName": entry.queue.Name}, AlarmDescription: pulumi.String(entry.name + " dead-letter queue contains messages"),
+				AlarmActions: alarmActions, OkActions: alarmActions,
 			})
 			if alarmErr != nil {
 				return alarmErr
@@ -450,6 +451,8 @@ func main() {
 		}
 		schedulerMissedAlarm, err := cloudwatch.NewMetricAlarm(ctx, "scheduler-missed", &cloudwatch.MetricAlarmArgs{
 			Namespace: pulumi.String("AWS/Lambda"), MetricName: pulumi.String("Invocations"), Statistic: pulumi.String("Sum"), Period: pulumi.Int(7200), EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("LessThanThreshold"), Threshold: pulumi.Float64(1), TreatMissingData: pulumi.String("breaching"), Dimensions: pulumi.StringMap{"FunctionName": scheduler.Name},
+			AlarmActions:     alarmActions,
+			AlarmDescription: pulumi.String("scheduler was not invoked in the last two hours"),
 		})
 		if err != nil {
 			return err
@@ -460,6 +463,8 @@ func main() {
 		}
 		itemWorkerErrorsAlarm, err := cloudwatch.NewMetricAlarm(ctx, "item-worker-errors", &cloudwatch.MetricAlarmArgs{
 			EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(0.05), TreatMissingData: pulumi.String("notBreaching"),
+			AlarmActions:     alarmActions,
+			AlarmDescription: pulumi.String("item worker error rate exceeded 5% over five minutes"),
 			MetricQueries: cloudwatch.MetricAlarmMetricQueryArray{
 				&cloudwatch.MetricAlarmMetricQueryArgs{Id: pulumi.String("rate"), Expression: pulumi.String("IF(invocations>0,errors/invocations,0)"), Label: pulumi.String("item worker error rate"), ReturnData: pulumi.Bool(true)},
 				&cloudwatch.MetricAlarmMetricQueryArgs{Id: pulumi.String("errors"), ReturnData: pulumi.Bool(false), Metric: &cloudwatch.MetricAlarmMetricQueryMetricArgs{Namespace: pulumi.String("AWS/Lambda"), MetricName: pulumi.String("Errors"), Period: pulumi.Int(300), Stat: pulumi.String("Sum"), Dimensions: pulumi.StringMap{"FunctionName": itemWorker.Name}}},
