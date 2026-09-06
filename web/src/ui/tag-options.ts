@@ -1,4 +1,4 @@
-import type { Feed, GridScope } from "../types";
+import type { Feed, FeedItemCounts, GridScope } from "../types";
 
 export interface TagOption {
   tag: string;
@@ -17,30 +17,49 @@ export type ScopeFilterOption =
   | ({ kind: "tag"; value: string; label: string } & TagOption)
   | ({ kind: "feed"; value: string; label: string } & FeedScopeOption);
 
-export function feedTagOptions(feeds: Feed[]): TagOption[] {
-  const counts = new Map<string, number>();
+function visibleFeedCount(
+  feed: Feed,
+  counts: FeedItemCounts | undefined,
+  unreadOnly: boolean,
+): number {
+  if (!counts) return feed.item_count ?? 0;
+  const count = counts[feed.feed_id];
+  return unreadOnly ? (count?.unread ?? 0) : (count?.all ?? 0);
+}
+
+export function feedTagOptions(
+  feeds: Feed[],
+  counts?: FeedItemCounts,
+  unreadOnly = false,
+): TagOption[] {
+  const tagCounts = new Map<string, number>();
   let untagged = 0;
   for (const feed of feeds) {
     if (feed.muted) continue;
-    if (!feed.tags?.length) untagged += feed.item_count ?? 0;
+    const itemCount = visibleFeedCount(feed, counts, unreadOnly);
+    if (!feed.tags?.length) untagged += itemCount;
     for (const tag of feed.tags ?? [])
-      counts.set(tag, (counts.get(tag) ?? 0) + (feed.item_count ?? 0));
+      tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + itemCount);
   }
   return [
-    ...[...counts]
+    ...[...tagCounts]
       .sort(([first], [second]) => first.localeCompare(second))
       .map(([tag, count]) => ({ tag, count })),
     { tag: "untagged", count: untagged },
   ];
 }
 
-export function feedScopeOptions(feeds: Feed[]): FeedScopeOption[] {
+export function feedScopeOptions(
+  feeds: Feed[],
+  counts?: FeedItemCounts,
+  unreadOnly = false,
+): FeedScopeOption[] {
   return feeds
     .filter((feed) => !feed.muted)
     .map((feed) => ({
       feedID: feed.feed_id,
       title: displayFeedTitle(feed),
-      count: feed.item_count ?? 0,
+      count: visibleFeedCount(feed, counts, unreadOnly),
       connector: feed.connector,
       faviconURL: feed.favicon_url,
     }))
@@ -54,9 +73,11 @@ export function displayFeedTitle(feed: Feed): string {
 export function scopeFilterOptions(
   feeds: Feed[],
   rawQuery = "",
+  counts?: FeedItemCounts,
+  unreadOnly = false,
 ): ScopeFilterOption[] {
   const needle = rawQuery.trim().toLowerCase().replace(/^#/, "");
-  const tags: ScopeFilterOption[] = feedTagOptions(feeds)
+  const tags: ScopeFilterOption[] = feedTagOptions(feeds, counts, unreadOnly)
     .filter((option) => !needle || option.tag.includes(needle))
     .map((option) => ({
       ...option,
@@ -64,7 +85,11 @@ export function scopeFilterOptions(
       value: option.tag,
       label: option.tag,
     }));
-  const feedOptions: ScopeFilterOption[] = feedScopeOptions(feeds)
+  const feedOptions: ScopeFilterOption[] = feedScopeOptions(
+    feeds,
+    counts,
+    unreadOnly,
+  )
     .filter((option) => !needle || option.title.toLowerCase().includes(needle))
     .map((option) => ({
       ...option,

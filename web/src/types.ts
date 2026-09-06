@@ -5,6 +5,13 @@ export type GridScope =
   | { kind: "feed"; value: string }
   | null;
 
+export interface FeedItemCount {
+  all: number;
+  unread: number;
+}
+
+export type FeedItemCounts = Record<string, FeedItemCount>;
+
 export interface Profile {
   email: string;
   created_at: string;

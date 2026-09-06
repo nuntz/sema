@@ -69,6 +69,13 @@ type Feed struct {
 	AverageQuality         *float64 `dynamodbav:"-" json:"average_extract_quality,omitempty"`
 }
 
+// FeedItemCount describes the retained live window rather than the lifetime
+// ingest counters stored on Feed.
+type FeedItemCount struct {
+	All    int `json:"all"`
+	Unread int `json:"unread"`
+}
+
 const (
 	ConnectorRSS     = "rss"
 	ConnectorReddit  = "reddit"

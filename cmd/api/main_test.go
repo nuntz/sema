@@ -554,6 +554,7 @@ func TestAPIRouteTemplateBoundsDynamicPaths(t *testing.T) {
 		{http.MethodGet, "/stories", "GET /stories"},
 		{http.MethodGet, "/items/second/similar", "GET /items/{item_id}/similar"},
 		{http.MethodPost, "/items/secret/events", "POST /items/{item_id}/events"},
+		{http.MethodGet, "/feeds/counts", "GET /feeds/counts"},
 		{http.MethodPatch, "/feeds/private-feed", "PATCH /feeds/{feed_id}"},
 		{http.MethodPost, "/feeds/private-feed/retry", "POST /feeds/{feed_id}/retry"},
 		{"CUSTOM-secret", "/unknown/private", "$unmatched"},

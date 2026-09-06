@@ -9,7 +9,7 @@ import {
 } from "solid-js";
 import { Icon } from "../components/Icon";
 import { Tooltip } from "../components/Tooltip";
-import type { Feed, GridScope } from "../types";
+import type { Feed, FeedItemCounts, GridScope } from "../types";
 import { SourceBadge } from "./SourceBadge";
 import {
   feedScopeChip,
@@ -23,6 +23,8 @@ import {
 
 export function TagFilter(props: {
   feeds: Feed[];
+  itemCounts: FeedItemCounts;
+  unreadOnly: boolean;
   value: GridScope;
   active: boolean;
   openRequest?: number;
@@ -36,7 +38,14 @@ export function TagFilter(props: {
   let input!: HTMLInputElement;
   let previousOpenRequest = props.openRequest;
 
-  const matches = createMemo(() => scopeFilterOptions(props.feeds, query()));
+  const matches = createMemo(() =>
+    scopeFilterOptions(
+      props.feeds,
+      query(),
+      props.itemCounts,
+      props.unreadOnly,
+    ),
+  );
   const tagMatches = createMemo(() =>
     matches().filter(
       (option): option is Extract<ScopeFilterOption, { kind: "tag" }> =>
@@ -262,7 +271,13 @@ export function TagFilter(props: {
                         onClick={() => apply(optionScope(option))}
                       >
                         <span>{option.tag}</span>
-                        <small title={`${option.count} items ingested`}>
+                        <small
+                          title={
+                            props.unreadOnly
+                              ? `${option.count} unread items`
+                              : `${option.count} items in the current window`
+                          }
+                        >
                           {option.count}
                         </small>
                       </button>
@@ -294,7 +309,13 @@ export function TagFilter(props: {
                           size={16}
                         />
                         <span>{option.title}</span>
-                        <small title={`${option.count} items ingested`}>
+                        <small
+                          title={
+                            props.unreadOnly
+                              ? `${option.count} unread items`
+                              : `${option.count} items in the current window`
+                          }
+                        >
                           {option.count}
                         </small>
                       </button>

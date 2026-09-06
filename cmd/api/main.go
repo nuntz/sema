@@ -214,6 +214,8 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 		result = s.itemRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
 		result = s.getFeeds(ctx, claims.Subject)
+	case method == http.MethodGet && path == "/feeds/counts":
+		result = s.getFeedItemCounts(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/feeds/export.opml":
 		result = s.exportFeeds(ctx, claims.Subject)
 	case method == http.MethodPost && path == "/feeds/discover":
@@ -251,7 +253,7 @@ func apiRouteTemplate(method, path string) string {
 	method = boundedMethod(method)
 	for _, static := range []string{
 		"/", "/session", "/me", "/items", "/stories", "/search", "/items/read-batch", "/ranking/recompute",
-		"/archive", "/feeds", "/feeds/export.opml", "/feeds/discover", "/feeds/import",
+		"/archive", "/feeds", "/feeds/counts", "/feeds/export.opml", "/feeds/discover", "/feeds/import",
 	} {
 		if path == static {
 			return method + " " + static
@@ -1053,6 +1055,14 @@ func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV
 		return s.failure("decorate feeds", err)
 	}
 	return response(http.StatusOK, map[string]any{"feeds": feeds})
+}
+
+func (s *server) getFeedItemCounts(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
+	counts, err := s.store.FeedItemCounts(ctx, userID)
+	if err != nil {
+		return s.failure("count live feed items", err)
+	}
+	return response(http.StatusOK, map[string]any{"feeds": counts})
 }
 
 func (s *server) importFeeds(ctx context.Context, userID string, request events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {

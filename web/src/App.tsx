@@ -47,6 +47,7 @@ import {
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
   Feed,
+  FeedItemCounts,
   GridScope,
   Item,
   ItemsResponse,
@@ -94,6 +95,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [order, setOrder] = createSignal<Order>("interest");
   const [scope, setScope] = createSignal<GridScope>(null);
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
+  const [feedItemCounts, setFeedItemCounts] = createSignal<FeedItemCounts>({});
   const [items, setItems] = createSignal<Item[]>([]);
   const [stories, setStories] = createSignal<Story[]>([]);
   const [expandedStoryIDs, setExpandedStoryIDs] = createSignal<Set<string>>(
@@ -138,6 +140,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
+  let feedItemCountVersion = 0;
   let gridClearVersion = 0;
   let searchVersion = 0;
   let relatedVersion = 0;
@@ -283,8 +286,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           ? { kind: "tag", value: me.profile.tag_pref }
           : null;
       setScope(profileScope);
-      const [availableFeeds] = await Promise.all([
+      const [availableFeeds, availableCounts] = await Promise.all([
         api.feeds(),
+        api.feedItemCounts(),
         reload(
           me.profile.order_pref || "interest",
           unreadOnly(),
@@ -293,6 +297,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         ),
       ]);
       setFeedFilters(availableFeeds);
+      setFeedItemCounts(availableCounts);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -1370,10 +1375,24 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     return scope()?.kind === "feed" ? applyFeed("") : applyTag("");
   };
 
+  const refreshFeedItemCounts = async () => {
+    const version = ++feedItemCountVersion;
+    try {
+      const latest = await api.feedItemCounts();
+      if (version === feedItemCountVersion) setFeedItemCounts(latest);
+    } catch (caught) {
+      handleError(caught);
+    }
+  };
+
   const refreshFeedFilters = async () => {
     try {
-      const latest = await api.feeds();
+      const [latest, latestCounts] = await Promise.all([
+        api.feeds(),
+        api.feedItemCounts(),
+      ]);
       setFeedFilters(latest);
+      setFeedItemCounts(latestCounts);
       const activeScope = scope();
       if (
         activeScope?.kind === "tag" &&
@@ -1597,13 +1616,19 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           <div class="chrome-group chrome-group--icons header-tools">
             <TagFilter
               feeds={feedFilters()}
+              itemCounts={feedItemCounts()}
+              unreadOnly={unreadOnly()}
               value={scope()}
               active={
                 !readerID() && !keysOpen() && !confirmRemove() && !headerMenu()
               }
               openRequest={tagOpenRequest()}
               tooltipDisabled={headerTooltipDisabled()}
-              onOpenChange={setTagFilterOpen}
+              onOpenChange={(open) => {
+                setTagFilterOpen(open);
+                if (open && mode() === "live")
+                  void flushRead().then(refreshFeedItemCounts);
+              }}
               onChange={(nextScope) => void applyScope(nextScope)}
             />
             <div class="search-slot" classList={{ open: searchOpen() }}>

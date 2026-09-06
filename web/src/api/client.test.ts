@@ -102,6 +102,27 @@ describe("story client", () => {
 });
 
 describe("feed management client", () => {
+  it("loads retained and unread counts for grid scopes", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ feeds: { daily: { all: 12, unread: 3 } } }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+    );
+    vi.stubGlobal("fetch", request);
+
+    await expect(new APIClient().feedItemCounts()).resolves.toEqual({
+      daily: { all: 12, unread: 3 },
+    });
+    expect(request).toHaveBeenCalledWith("/api/feeds/counts", {
+      headers: expect.any(Headers),
+    });
+  });
+
   it("wires feed detail edits to the encoded PATCH route", async () => {
     const request = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) =>

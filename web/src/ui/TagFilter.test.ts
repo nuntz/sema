@@ -10,17 +10,29 @@ import {
 } from "./tag-options";
 
 describe("grid tag filter", () => {
-  it("counts lifetime ingested items and excludes muted feeds", () => {
+  it("counts retained or unread items for each tag and excludes muted feeds", () => {
     const feeds = [
-      { tags: ["dev", "longform"], item_count: 8 },
-      { tags: ["dev"], item_count: 3 },
-      { tags: [], item_count: 5 },
-      { tags: ["dev"], item_count: 100, muted: true },
+      { feed_id: "one", tags: ["dev", "longform"], item_count: 600 },
+      { feed_id: "two", tags: ["dev"], item_count: 300 },
+      { feed_id: "plain", tags: [], item_count: 500 },
+      { feed_id: "muted", tags: ["dev"], item_count: 100, muted: true },
     ] as Feed[];
-    expect(feedTagOptions(feeds)).toEqual([
+    const counts = {
+      one: { all: 8, unread: 2 },
+      two: { all: 3, unread: 1 },
+      plain: { all: 5, unread: 4 },
+      muted: { all: 100, unread: 100 },
+    };
+
+    expect(feedTagOptions(feeds, counts, false)).toEqual([
       { tag: "dev", count: 11 },
       { tag: "longform", count: 8 },
       { tag: "untagged", count: 5 },
+    ]);
+    expect(feedTagOptions(feeds, counts, true)).toEqual([
+      { tag: "dev", count: 3 },
+      { tag: "longform", count: 2 },
+      { tag: "untagged", count: 4 },
     ]);
   });
 

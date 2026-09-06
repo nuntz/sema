@@ -536,6 +536,63 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 	return items, next, err
 }
 
+// FeedItemCounts returns per-feed totals for the retained live-item window.
+// It deliberately does not use Feed.ItemCount, which is a lifetime ingest
+// counter and therefore includes expired and read items.
+func (s *Store) FeedItemCounts(ctx context.Context, userID string) (map[string]domain.FeedItemCount, error) {
+	readItemIDs, err := s.readItemIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]domain.FeedItemCount)
+	seenItemIDs := make(map[string]bool)
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName:              aws.String(s.table),
+			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+			FilterExpression:       aws.String("#ttl > :now"),
+			ProjectionExpression:   aws.String("item_id, feed_id"),
+			ExpressionAttributeNames: map[string]string{
+				"#ttl": "ttl",
+			},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
+				":prefix": &types.AttributeValueMemberS{Value: "I#"},
+				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
+			},
+			ExclusiveStartKey: start,
+			ConsistentRead:    aws.Bool(true),
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []struct {
+			ItemID string `dynamodbav:"item_id"`
+			FeedID string `dynamodbav:"feed_id"`
+		}
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		for _, item := range page {
+			if item.FeedID == "" || seenItemIDs[item.ItemID] {
+				continue
+			}
+			seenItemIDs[item.ItemID] = true
+			count := counts[item.FeedID]
+			count.All++
+			if !readItemIDs[item.ItemID] {
+				count.Unread++
+			}
+			counts[item.FeedID] = count
+		}
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return counts, nil
+		}
+	}
+}
+
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages until the end or page budget.

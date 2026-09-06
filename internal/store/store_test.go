@@ -108,6 +108,49 @@ func TestListItemProjectionReflectsAllStoredFieldsExceptLargeSearchFields(t *tes
 	}
 }
 
+func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
+	now := time.Now().UTC()
+	marshal := func(id, feedID string) map[string]types.AttributeValue {
+		item, err := attributevalue.MarshalMap(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(now, id), ItemID: id,
+			FeedID: feedID, TTL: now.Add(time.Hour).Unix(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
+		if prefix == "R#" {
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
+				{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("read")}},
+			}}, nil
+		}
+		if aws.ToString(input.FilterExpression) != "#ttl > :now" || aws.ToString(input.ProjectionExpression) != "item_id, feed_id" {
+			t.Fatalf("item count query = %#v", input)
+		}
+		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
+			marshal("read", "alpha"),
+			marshal("unread", "alpha"),
+			marshal("unread", "alpha"),
+			marshal("other", "beta"),
+		}}, nil
+	}}
+
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]domain.FeedItemCount{
+		"alpha": {All: 2, Unread: 1},
+		"beta":  {All: 1, Unread: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("feed item counts = %#v, want %#v", got, want)
+	}
+}
+
 func TestSessionStoreLifecycleUsesHashedPrimaryKey(t *testing.T) {
 	var stored map[string]types.AttributeValue
 	var renewal *dynamodb.UpdateItemInput

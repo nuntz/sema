@@ -1,6 +1,7 @@
 import type {
   Feed,
   FeedCandidate,
+  FeedItemCounts,
   GridScope,
   HeartResponse,
   ItemsResponse,
@@ -210,6 +211,12 @@ export class APIClient {
 
   feeds(): Promise<Feed[]> {
     return this.request<{ feeds: Feed[] }>("/feeds").then(
+      (payload) => payload.feeds,
+    );
+  }
+
+  feedItemCounts(): Promise<FeedItemCounts> {
+    return this.request<{ feeds: FeedItemCounts }>("/feeds/counts").then(
       (payload) => payload.feeds,
     );
   }
