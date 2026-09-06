@@ -73,6 +73,50 @@ func TestSummaryProviderFailureAndInvalidOutput(t *testing.T) {
 	}
 }
 
+func TestSummaryStripsEchoedTitle(t *testing.T) {
+	title := "Markets Rise — Again"
+	want := "Investors welcomed the latest gains. Trading volume also increased."
+	tests := []struct {
+		name   string
+		title  string
+		output string
+		want   string
+	}{
+		{
+			name:   "title label and article title",
+			title:  title,
+			output: "Title: " + title + " " + want,
+			want:   want,
+		},
+		{
+			name:   "bare article title",
+			title:  title,
+			output: title + ". " + want,
+			want:   want,
+		},
+		{
+			name:   "article title with different punctuation",
+			title:  title,
+			output: "Markets Rise : Again. " + want,
+			want:   want,
+		},
+		{
+			name:   "legitimate opening title word",
+			title:  title,
+			output: "Markets opened higher after the report. Trading volume also increased.",
+			want:   "Markets opened higher after the report. Trading volume also increased.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := New(&stubProvider{output: test.output}).Summarize(context.Background(), test.title, "Body")
+			if err != nil || got != test.want {
+				t.Fatalf("Summarize() = %q, %v, want %q", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestSummaryAcceptsOneToThreeSentencesAndTruncatesLongerOutput(t *testing.T) {
 	tests := []struct {
 		name, output, want string

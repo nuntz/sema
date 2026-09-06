@@ -37,6 +37,7 @@ func (s *Service) Summarize(ctx context.Context, title, body string) (string, er
 		return "", err
 	}
 	generated = strings.Trim(strings.Join(strings.Fields(generated), " "), " \t\r\n\"")
+	generated = stripEchoedTitle(generated, title)
 	if generated == "" {
 		return "", fmt.Errorf("summary provider returned empty output")
 	}
@@ -60,6 +61,36 @@ func Prompt(title, body string) string {
 var truncationEnding = regexp.MustCompile(`(?i)(?:…|\.\.\.|\[\s*(?:…|\.\.\.)?\s*\]|(?:read\s+more|continue\s+reading)[\s\p{P}\p{S}]*)\s*$`)
 var markupResidue = regexp.MustCompile(`(?s)<[^>]*>|&(?:#[0-9]+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);`)
 var summaryURL = regexp.MustCompile(`(?i)https?://[^\s<>]+`)
+var titleLabel = regexp.MustCompile(`(?i)^title\s*:\s*`)
+
+func stripEchoedTitle(summary, title string) string {
+	summary = titleLabel.ReplaceAllString(summary, "")
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return strings.TrimSpace(summary)
+	}
+
+	titleRunes := []rune(title)
+	summaryRunes := []rune(summary)
+	if len(summaryRunes) < len(titleRunes) {
+		return strings.TrimSpace(summary)
+	}
+	prefix := string(summaryRunes[:len(titleRunes)])
+	if normalizeComparable(prefix) != normalizeComparable(title) {
+		return strings.TrimSpace(summary)
+	}
+	if len(summaryRunes) > len(titleRunes) && unicode.IsLetter(summaryRunes[len(titleRunes)]) {
+		return strings.TrimSpace(summary)
+	}
+	if len(summaryRunes) > len(titleRunes) && unicode.IsNumber(summaryRunes[len(titleRunes)]) {
+		return strings.TrimSpace(summary)
+	}
+
+	return strings.TrimLeftFunc(
+		string(summaryRunes[len(titleRunes):]),
+		func(r rune) bool { return unicode.IsSpace(r) || unicode.IsPunct(r) },
+	)
+}
 
 // IsJunk classifies the feed-provided summary before a body fallback is used.
 func IsJunk(summaryRaw, title string, alwaysGenerate bool) bool {
