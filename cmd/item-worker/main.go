@@ -60,6 +60,7 @@ type handler struct {
 	vectors           vectorBatchStore
 	imageVectors      vectorBatchStore
 	storyConfig       storycluster.Config
+	emit              func(map[string]float64, map[string]string)
 }
 
 type processedVectors struct {
@@ -124,7 +125,7 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 			slog.WarnContext(ctx, "vector batch write failed", "records", len(vectorRecords), "error", err)
 			metric = "VectorPutFailed"
 		}
-		observability.Emit(map[string]float64{metric: float64(len(vectorRecords))}, nil)
+		h.emitMetrics(map[string]float64{metric: float64(len(vectorRecords))}, nil)
 	}
 	if h.imageVectors != nil && len(imageRecords) > 0 {
 		metric := "ImageVectorPutSucceeded"
@@ -132,7 +133,7 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 			slog.WarnContext(ctx, "image vector batch write failed", "records", len(imageRecords), "error", err)
 			metric = "ImageVectorPutFailed"
 		}
-		observability.Emit(map[string]float64{metric: float64(len(imageRecords))}, nil)
+		h.emitMetrics(map[string]float64{metric: float64(len(imageRecords))}, nil)
 	}
 	return response, nil
 }
@@ -495,6 +496,7 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	} else if h.vectors != nil {
 		if assignmentMetrics, storyErr := h.assignStory(ctx, message.User, vector, &item); storyErr != nil {
 			item.StoryID = ""
+			storyMetrics["StoryAssignmentFailed"] = 1
 			slog.WarnContext(ctx, "story assignment failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", storyErr)
 		} else {
 			storyMetrics = assignmentMetrics
@@ -568,8 +570,16 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	} else {
 		metrics["ItemsDeduped"] = 1
 	}
-	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", observability.Emit)
+	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", h.emitMetrics)
 	return vectorRecords, nil
+}
+
+func (h *handler) emitMetrics(metrics map[string]float64, dimensions map[string]string) {
+	if h.emit != nil {
+		h.emit(metrics, dimensions)
+		return
+	}
+	observability.Emit(metrics, dimensions)
 }
 
 func (h *handler) assignStory(ctx context.Context, userID string, vector []float32, item *domain.Item) (map[string]float64, error) {

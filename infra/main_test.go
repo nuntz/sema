@@ -29,6 +29,28 @@ func TestSchedulerSilentAlarmMetric(t *testing.T) {
 	}
 }
 
+func TestStoryAssignmentFailedAlarmMetric(t *testing.T) {
+	actions := pulumi.Array{pulumi.String("arn:aws:sns:us-east-1:123456789012:alerts")}
+	args := storyAssignmentFailedAlarmArgs(actions)
+
+	assertPulumiString(t, "namespace", args.Namespace, "Sema")
+	assertPulumiString(t, "metric name", args.MetricName, "StoryAssignmentFailed")
+	assertPulumiString(t, "statistic", args.Statistic, "Sum")
+	assertPulumiString(t, "comparison operator", args.ComparisonOperator, "GreaterThanThreshold")
+	assertPulumiString(t, "missing data", args.TreatMissingData, "notBreaching")
+	assertPulumiInt(t, "period", args.Period, 900)
+	assertPulumiInt(t, "evaluation periods", args.EvaluationPeriods, 1)
+	if threshold, ok := args.Threshold.(pulumi.Float64); !ok || float64(threshold) != 20 {
+		t.Fatalf("threshold = %#v, want 20", args.Threshold)
+	}
+	if args.Dimensions != nil {
+		t.Fatalf("dimensions = %#v, want none", args.Dimensions)
+	}
+	if got, ok := args.AlarmActions.(pulumi.Array); !ok || len(got) != 1 || got[0] != actions[0] {
+		t.Fatalf("alarm actions = %#v, want %#v", args.AlarmActions, actions)
+	}
+}
+
 func TestWebCacheControl(t *testing.T) {
 	tests := map[string]string{
 		"index.html":           "no-cache",
@@ -108,7 +130,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		},
 		feedsQueue: "feeds-queue", feedsDLQ: "feeds-dlq", itemsQueue: "items-queue", itemsDLQ: "items-dlq",
 		table: "sema-dev", apiID: "abc123", distributionID: "E123456789",
-		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6"},
+		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7"},
 	})
 	if err != nil {
 		t.Fatalf("dashboardBody: %v", err)

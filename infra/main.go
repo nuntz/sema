@@ -477,13 +477,17 @@ func main() {
 		if err != nil {
 			return err
 		}
+		storyAssignmentFailedAlarm, err := cloudwatch.NewMetricAlarm(ctx, "story-assignment-failed", storyAssignmentFailedAlarmArgs(alarmActions))
+		if err != nil {
+			return err
+		}
 
 		dashboardName := fmt.Sprintf("sema-%s", stack)
 		dashboardBodyOutput := pulumi.All(
 			scheduler.Name, feedWorker.Name, itemWorker.Name, apiLambda.Name, rescoreLambda.Name, cleanupLambda.Name,
 			feedsQueue.Name, feedsDLQ.Name, itemsQueue.Name, itemsDLQ.Name, table.Name,
 			httpAPI.ID().ToStringOutput(), distribution.ID().ToStringOutput(),
-			dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn,
+			dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn,
 		).ApplyT(func(values []any) (string, error) {
 			return dashboardBody(dashboardResources{
 				stack:  stack,
@@ -496,7 +500,7 @@ func main() {
 				itemsQueue: values[8].(string), itemsDLQ: values[9].(string),
 				table: values[10].(string),
 				apiID: values[11].(string), distributionID: values[12].(string),
-				alarmArns: []string{values[13].(string), values[14].(string), values[15].(string), values[16].(string), values[17].(string), values[18].(string)},
+				alarmArns: []string{values[13].(string), values[14].(string), values[15].(string), values[16].(string), values[17].(string), values[18].(string), values[19].(string)},
 			})
 		}).(pulumi.StringOutput)
 		if _, err := cloudwatch.NewDashboard(ctx, "dashboard", &cloudwatch.DashboardArgs{
@@ -568,6 +572,21 @@ func schedulerSilentAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.Metric
 		TreatMissingData:   pulumi.String("breaching"),
 		AlarmActions:       alarmActions,
 		AlarmDescription:   pulumi.String("scheduler enqueued no feeds for four consecutive hourly periods"),
+	}
+}
+
+func storyAssignmentFailedAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
+	return &cloudwatch.MetricAlarmArgs{
+		Namespace:          pulumi.String("Sema"),
+		MetricName:         pulumi.String("StoryAssignmentFailed"),
+		Statistic:          pulumi.String("Sum"),
+		Period:             pulumi.Int(900),
+		EvaluationPeriods:  pulumi.Int(1),
+		ComparisonOperator: pulumi.String("GreaterThanThreshold"),
+		Threshold:          pulumi.Float64(20),
+		TreatMissingData:   pulumi.String("notBreaching"),
+		AlarmActions:       alarmActions,
+		AlarmDescription:   pulumi.String("story assignment failures exceeded 20 items in 15 minutes"),
 	}
 }
 

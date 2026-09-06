@@ -22,6 +22,7 @@ import (
 
 type fakeItemStore struct {
 	feedErr      error
+	resolveErr   error
 	failures     []itemFailure
 	resolved     []domain.Item
 	putStory     *domain.Story
@@ -73,7 +74,7 @@ func (s *fakeItemStore) PutItemFailure(_ context.Context, user, item string, ttl
 }
 func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) { return nil, nil }
 func (s *fakeItemStore) ResolveItemIDs(context.Context, string, []string) ([]domain.Item, error) {
-	return append([]domain.Item(nil), s.resolved...), nil
+	return append([]domain.Item(nil), s.resolved...), s.resolveErr
 }
 func (s *fakeItemStore) PutStory(_ context.Context, row domain.Story) error {
 	s.putStory = &row
@@ -254,6 +255,33 @@ func TestRunBatchesVectorsAcrossWrittenItems(t *testing.T) {
 	}
 	if !items["one"] || !items["two"] {
 		t.Fatalf("vector records = %#v", vectors.records)
+	}
+}
+
+func TestStoryAssignmentFailureEmitsMetricAndConsumesMessage(t *testing.T) {
+	repository := &fakeItemStore{resolveErr: errors.New("resolve item IDs")}
+	emitted := []map[string]float64{}
+	h := &handler{
+		store: repository, media: media.New(nil), embedder: stubEmbedder{}, scoringVersion: "1", vectors: &stubVectorBatchStore{},
+		emit: func(metrics map[string]float64, _ map[string]string) {
+			emitted = append(emitted, metrics)
+		},
+	}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","summary_raw":"Useful summary","published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("run = %#v, %v", response, err)
+	}
+	found := false
+	for _, metrics := range emitted {
+		if metrics["StoryAssignmentFailed"] == 1 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("emitted metrics = %#v, want StoryAssignmentFailed = 1", emitted)
 	}
 }
 
