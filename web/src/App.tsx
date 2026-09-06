@@ -63,6 +63,7 @@ import {
   frontPageEntriesForState,
   frontPageSequence,
   frontPageUnreadIDsAfter,
+  hasWithheldStories,
   mergeFrontPage,
 } from "./ui/front-page";
 import { Grid } from "./ui/Grid";
@@ -410,6 +411,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           ? added.map((item) => item.item_id)
           : visibleItemIDs(added, unreadOnly());
       const responseCursor = page.next_cursor ?? "";
+      const loadedItems = added.length > 0 ? [...items(), ...added] : items();
       batch(() => {
         if (added.length > 0) setItems((current) => [...current, ...added]);
         if (visible.length > 0)
@@ -418,7 +420,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         setCursor(responseCursor);
         setLayoutVersion((value) => value + 1);
       });
-      continueLoading = visible.length === 0 && responseCursor !== "";
+      continueLoading =
+        responseCursor !== "" &&
+        (visible.length === 0 ||
+          hasWithheldStories(stories(), loadedItems, true));
     } catch (caught) {
       handleError(caught);
     } finally {

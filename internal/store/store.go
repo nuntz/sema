@@ -532,7 +532,7 @@ type cursor struct {
 }
 
 func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
-	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, nil, nil)
+	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, false, nil, nil)
 	return items, next, err
 }
 
@@ -596,7 +596,7 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string) (map[string]d
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages until the end or page budget.
-func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool, allowedFeedIDs, excludeItemIDs map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
@@ -634,6 +634,8 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		if err != nil {
 			return nil, "", nil, err
 		}
+		pageBudget = unreadItemsForFeedsPageBudget
+	} else if fillFilteredPage {
 		pageBudget = unreadItemsForFeedsPageBudget
 	}
 	items := []domain.Item{}

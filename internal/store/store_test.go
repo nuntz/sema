@@ -272,8 +272,44 @@ func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
 		return output, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, map[string]bool{"dev": true}, nil)
+	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, false, map[string]bool{"dev": true}, nil)
 	if err != nil || cursor != "" || calls != 2 || len(items) != 2 || items[0].FeedID != "dev" || items[1].FeedID != "dev" {
+		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
+	}
+}
+
+func TestItemsForFeedsFillsFilteredIncludeReadPageBeyondDefaultBudget(t *testing.T) {
+	now := time.Now().UTC()
+	calls := 0
+	db := &fakeDynamoDB{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		calls++
+		page := make([]map[string]types.AttributeValue, 0, 100)
+		for candidate := range 100 {
+			id := fmt.Sprintf("skip-%d-%d", calls, candidate)
+			feedID := "other"
+			if calls == itemsForFeedsPageBudget+1 && candidate < 2 {
+				id = fmt.Sprintf("keep-%d", candidate)
+				feedID = "dev"
+			}
+			item, err := attributevalue.MarshalMap(domain.Item{
+				PK: domain.UserPK("user"), SK: domain.ItemSK(now.Add(-time.Duration((calls-1)*100+candidate)*time.Second), id), ItemID: id,
+				FeedID: feedID, Score: float64(1_000 - ((calls-1)*100 + candidate)), TTL: now.Add(time.Hour).Unix(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			page = append(page, item)
+		}
+		return &dynamodb.QueryOutput{
+			Items:            page,
+			LastEvaluatedKey: itemPageKey(page[len(page)-1], domain.OrderInterest),
+		}, nil
+	}}
+
+	items, cursor, _, err := New(db, nil, "table", "", "").ItemsForFeeds(
+		context.Background(), "user", domain.OrderInterest, "", 2, true, true, map[string]bool{"dev": true}, nil,
+	)
+	if err != nil || len(items) != 2 || items[0].ItemID != "keep-0" || items[1].ItemID != "keep-1" || cursor == "" || calls != itemsForFeedsPageBudget+1 {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
 	}
 }
@@ -310,7 +346,7 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 		},
 	}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil, nil)
+	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil)
 	if err != nil || cursor != "" || len(items) != 2 || items[0].ItemID != "new" || items[1].ItemID != "old" {
 		t.Fatalf("items = %#v, cursor = %q, err = %v", items, cursor, err)
 	}
@@ -369,7 +405,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 	}
 	repository := New(db, nil, "table", "", "")
 
-	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, nil, nil)
+	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil)
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget || readQueryCalls != 1 || len(first) != 1 || first[0].ItemID != "unread-100" || cursor == "" {
 		t.Fatalf("budget page = %#v, cursor = %q, item queries = %d, read queries = %d, err = %v", first, cursor, itemQueryCalls, readQueryCalls, err)
 	}
@@ -377,7 +413,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 		t.Fatalf("budget page anchor = %#v", anchor)
 	}
 
-	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, nil, nil)
+	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, false, nil, nil)
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget+1 || readQueryCalls != 2 || len(second) != 1 || second[0].ItemID != "unread-101" || cursor != "" || anchor != nil {
 		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, item queries = %d, read queries = %d, err = %v", second, cursor, anchor, itemQueryCalls, readQueryCalls, err)
 	}

@@ -679,7 +679,8 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("render stories for item filtering", err)
 		}
 	}
-	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, allowed, hidden)
+	filtered := query["tag"] != "" || query["feed"] != ""
+	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)

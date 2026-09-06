@@ -129,7 +129,7 @@ func TestItemsForFeedsExcludesStoryMembers(t *testing.T) {
 	db := &fakeDynamoDB{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 		return &dynamodb.QueryOutput{Items: rows}, nil
 	}}
-	items, _, _, err := New(db, nil, "table", "", "").ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, true, nil, map[string]bool{"hidden": true})
+	items, _, _, err := New(db, nil, "table", "", "").ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, true, false, nil, map[string]bool{"hidden": true})
 	if err != nil || len(items) != 1 || items[0].ItemID != "visible" {
 		t.Fatalf("items = %#v, err = %v", items, err)
 	}

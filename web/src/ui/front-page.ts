@@ -42,6 +42,20 @@ export function mergeFrontPage(
   return entries;
 }
 
+export function hasWithheldStories(
+  stories: Story[],
+  items: Item[],
+  hasMore: boolean,
+): boolean {
+  if (!hasMore || stories.length === 0) return false;
+  const emitted = new Set(
+    mergeFrontPage(stories, items, true)
+      .filter((entry) => entry.kind === "story")
+      .map((entry) => entry.story.story_id),
+  );
+  return stories.some((story) => !emitted.has(story.story_id));
+}
+
 export function frontPageEntriesForState(
   stories: Story[],
   items: Item[],

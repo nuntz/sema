@@ -4,6 +4,7 @@ import {
   frontPageEntriesForState,
   frontPageSequence,
   frontPageUnreadIDsAfter,
+  hasWithheldStories,
   mergeFrontPage,
   moveFrontPageFocus,
 } from "./front-page";
@@ -76,6 +77,18 @@ describe("front-page merging", () => {
         entry.kind === "story" ? entry.story.story_id : entry.item.item_id,
       ),
     ).toEqual(["loaded", "held", "later"]);
+
+    expect(hasWithheldStories(stories, [item("loaded", 0.5)], true)).toBe(true);
+    expect(
+      hasWithheldStories(
+        stories,
+        [item("loaded", 0.5), item("later", 0.3)],
+        true,
+      ),
+    ).toBe(false);
+    expect(hasWithheldStories(stories, [item("loaded", 0.5)], false)).toBe(
+      false,
+    );
   });
 
   it("appends remaining stories once the final page is loaded", () => {
