@@ -30,7 +30,9 @@ import { hasLeadingImage } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
 import {
   beginSwipe,
+  closeCommand,
   lockSwipeAxis,
+  panelOffset,
   type SwipeGesture,
   swipeCommand,
   swipeOffset,
@@ -48,7 +50,9 @@ interface ReaderProps {
   linkActionActive: boolean;
   canPrevious: boolean;
   canNext: boolean;
+  closing: boolean;
   onClose(): void;
+  onReveal(progress: number, dragging: boolean): void;
   onHome(): void;
   onPrevious(): void;
   onNext(): void;
@@ -69,6 +73,7 @@ export function Reader(props: ReaderProps) {
   const [scrolled, setScrolled] = createSignal(false);
   const [overflowOpen, setOverflowOpen] = createSignal(false);
   const [dragOffset, setDragOffset] = createSignal(0);
+  const [panelX, setPanelX] = createSignal(0);
   const [swiping, setSwiping] = createSignal(false);
   // Judgment updates replace the item object without changing article content.
   const bodySource = createMemo(
@@ -92,6 +97,9 @@ export function Reader(props: ReaderProps) {
   let lastReported = 0;
   let thresholdReported = false;
   let dwellTimer: number | undefined;
+  let carryTimer: number | undefined;
+  let carryFrame = 0;
+  let carryingNext = false;
   let swipe: SwipeGesture | undefined;
   let touchX = 0;
 
@@ -133,7 +141,7 @@ export function Reader(props: ReaderProps) {
     setProgress(0);
     setScrolled(false);
     setOverflowOpen(false);
-    setDragOffset(0);
+    if (!carryingNext) setDragOffset(0);
     if (article) article.scrollTop = 0;
     startDwell();
   });
@@ -175,6 +183,8 @@ export function Reader(props: ReaderProps) {
       touch.clientY,
       performance.now(),
       window.innerWidth,
+      window.matchMedia("(display-mode: standalone)").matches ||
+        (navigator as Navigator & { standalone?: boolean }).standalone === true,
     );
   };
 
@@ -186,25 +196,60 @@ export function Reader(props: ReaderProps) {
     if (axis !== "horizontal") return;
     event.preventDefault();
     setSwiping(true);
+    const offset = panelOffset(swipe, touch.clientX, window.innerWidth);
+    setPanelX(offset);
     setDragOffset(
-      swipeOffset(swipe, touch.clientX, props.canPrevious, props.canNext),
+      offset > 0 ? 0 : swipeOffset(swipe, touch.clientX, props.canNext),
     );
+    props.onReveal(offset / window.innerWidth, true);
+  };
+
+  const carryToNext = () => {
+    carryingNext = true;
+    setDragOffset(-window.innerWidth);
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
+      .matches
+      ? 0
+      : 200;
+    carryTimer = window.setTimeout(() => {
+      setSwiping(true);
+      setDragOffset(window.innerWidth);
+      props.onNext();
+      carryFrame = requestAnimationFrame(() => {
+        carryFrame = requestAnimationFrame(() => {
+          carryingNext = false;
+          setSwiping(false);
+          setDragOffset(0);
+        });
+      });
+    }, duration);
   };
 
   const finishSwipe = () => {
     if (!swipe) return;
-    const command = swipeCommand(swipe, touchX, performance.now());
+    const endedAt = performance.now();
+    const close = closeCommand(swipe, touchX, endedAt, window.innerWidth);
+    const command = swipeCommand(swipe, touchX, endedAt);
     swipe = undefined;
     setSwiping(false);
-    setDragOffset(0);
-    if (command === "next" && props.canNext) props.onNext();
-    if (command === "previous" && props.canPrevious) props.onPrevious();
+    if (close) {
+      setPanelX(window.innerWidth);
+      props.onReveal(1, false);
+      props.onClose();
+      return;
+    }
+    setPanelX(0);
+    props.onReveal(0, false);
+    if (command === "next" && props.canNext) carryToNext();
+    else setDragOffset(0);
   };
 
   const cancelSwipe = () => {
     swipe = undefined;
     setSwiping(false);
     setDragOffset(0);
+    setPanelX(0);
+    props.onReveal(0, false);
   };
 
   const onKey = (event: KeyboardEvent) => {
@@ -301,12 +346,16 @@ export function Reader(props: ReaderProps) {
       article.removeEventListener("touchend", finishSwipe);
       article.removeEventListener("touchcancel", cancelSwipe);
       window.clearInterval(dwellTimer);
+      window.clearTimeout(carryTimer);
+      cancelAnimationFrame(carryFrame);
     });
   });
 
   return (
     <section
       class="reader"
+      classList={{ closing: props.closing, swiping: swiping() }}
+      style={{ "--reader-panel-x": `${panelX()}px` }}
       role="dialog"
       aria-modal="true"
       aria-label={props.item.title}

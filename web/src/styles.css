@@ -851,6 +851,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .new-items-pill:hover::before { background: var(--surface-chrome-hover); }
 .new-items-pill:focus-visible { outline-color: var(--accent-loud); }
 .grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; scrollbar-color: var(--scrollbar-thumb) transparent; contain: strict; }
+.grid-scroll.reader-underlay { transform: translate3d(calc((var(--reader-reveal, 0) - 1) * 20vw), 0, 0); filter: brightness(calc(.9 + var(--reader-reveal, 0) * .1)); transition: transform 220ms cubic-bezier(.2, .75, .2, 1), filter 220ms ease-out; }
+.grid-scroll.reader-underlay-dragging { transition: none; }
 .searching > .grid-scroll, .searching > .cold-start, .searching > .archive-empty, .searching > .filtered-empty { visibility: hidden; }
 .search-results { position: absolute; inset: var(--hdr-h) 0 0; z-index: 16; overflow: auto; padding: 0 16px 42px; background: var(--bg); scrollbar-color: var(--scrollbar-thumb) transparent; }
 .search-section { margin-top: 26px; }
@@ -1130,7 +1132,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .cold-start button .icon, .cold-start button:hover .icon { color: currentColor; }
 .cold-start small { margin-top: 20px; color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 
-.reader { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); }
+.reader { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); box-shadow: -10px 0 30px rgba(0, 0, 0, .16); transform: translate3d(var(--reader-panel-x, 0px), 0, 0); animation: reader-in 220ms cubic-bezier(.2, .75, .2, 1); transition: transform 220ms cubic-bezier(.2, .75, .2, 1); will-change: transform; }
+.reader.swiping { transition: none; }
+.reader.closing { transform: translate3d(100%, 0, 0); }
+@keyframes reader-in { from { transform: translate3d(100%, 0, 0); } }
 .reader-back { width: var(--control-h); height: var(--control-h); margin-left: var(--brand-to-next); padding: 0; display: flex; align-items: center; justify-content: center; flex: none; border: 1px solid var(--chrome-border-control); border-radius: var(--control-radius); background: transparent; color: var(--chrome-fg-tertiary); }
 .reader-back:hover { background: var(--surface-chrome-hover); color: var(--chrome-fg-primary); }
 .reader-back .icon, .reader-back:hover .icon { width: 16px; height: 16px; color: currentColor; stroke-width: 2; }
@@ -1150,7 +1155,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-overflow-menu .chrome-btn:hover { background: var(--surface-raised-hover); color: var(--fg-primary); }
 .reader-overflow-menu .chrome-btn + .chrome-btn { margin-left: 0; }
 .reader-overflow-menu a.chrome-btn:last-child { justify-content: space-between; }
-.reader-scroll { flex: 1; overflow: auto; touch-action: pan-y; transition: transform 160ms ease-out; }
+.reader-scroll { flex: 1; overflow: auto; touch-action: pan-y; transition: transform 200ms cubic-bezier(.2, .75, .2, 1); }
 .reader-scroll.swiping { transition: none; }
 .article { width: min(640px, calc(100% - 44px)); margin: 0 auto; padding: 56px 0 64px; }
 .article-kicker { margin-bottom: 14px; color: var(--fg-quaternary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: 0.07em; }

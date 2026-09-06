@@ -65,6 +65,9 @@ interface GridProps {
   initialScrollTop?: number;
   focusedID: string;
   active: boolean;
+  readerOpen: boolean;
+  readerReveal: number;
+  readerDragging: boolean;
   hasMore: boolean;
   archive: boolean;
   unreadOnly: boolean;
@@ -822,7 +825,16 @@ export function Grid(props: GridProps) {
   };
 
   return (
-    <div class="grid-scroll" ref={scroller} tabindex="-1">
+    <div
+      class="grid-scroll"
+      classList={{
+        "reader-underlay": props.readerOpen,
+        "reader-underlay-dragging": props.readerDragging,
+      }}
+      style={{ "--reader-reveal": props.readerReveal }}
+      ref={scroller}
+      tabindex="-1"
+    >
       <Show when={refreshState() !== "idle"}>
         <div
           class="pull-refresh"

@@ -82,6 +82,7 @@ type Toast = {
   message: string;
 };
 type HeaderMenu = "combined" | "overflow";
+const READER_EXIT_MS = 220;
 
 export function App(props: { signOut(): void; theme: ThemeController }) {
   const api = new APIClient();
@@ -110,6 +111,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
   const [readerItem, setReaderItem] = createSignal<Item>();
+  const [readerClosing, setReaderClosing] = createSignal(false);
+  const [readerReveal, setReaderReveal] = createSignal(0);
+  const [readerDragging, setReaderDragging] = createSignal(false);
   const [mode, setMode] = createSignal<"live" | "archive">("live");
   const [confirmRemove, setConfirmRemove] = createSignal<Item>();
   const [keysOpen, setKeysOpen] = createSignal(false);
@@ -135,6 +139,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   let searchVersion = 0;
   let relatedVersion = 0;
   let readTimer: number | undefined;
+  let readerCloseTimer: number | undefined;
   let pollTimer: number | undefined;
   let pollInFlight = false;
   let markBelowInFlight = false;
@@ -703,6 +708,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("keydown", onKeyDown);
       window.clearTimeout(readTimer);
+      window.clearTimeout(readerCloseTimer);
       window.clearInterval(pollTimer);
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
@@ -813,11 +819,38 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setRelatedLoading(false);
   };
 
-  const closeReader = () => {
-    if (!readerID()) return;
-    closeOverlay("reader");
+  const finishReaderClose = () => {
+    window.clearTimeout(readerCloseTimer);
+    readerCloseTimer = undefined;
     setReaderID("");
     setReaderItem();
+    setReaderClosing(false);
+    setReaderReveal(0);
+    setReaderDragging(false);
+  };
+
+  const beginReaderClose = (popHistory: boolean) => {
+    if (!readerID() || readerClosing()) return;
+    if (popHistory) closeOverlay("reader");
+    setReaderClosing(true);
+    setReaderReveal(1);
+    setReaderDragging(false);
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
+      .matches
+      ? 0
+      : READER_EXIT_MS;
+    readerCloseTimer = window.setTimeout(finishReaderClose, duration);
+  };
+
+  const closeReader = () => beginReaderClose(true);
+
+  const openReaderHistory = () => {
+    if (readerID()) return;
+    window.clearTimeout(readerCloseTimer);
+    setReaderClosing(false);
+    setReaderReveal(0);
+    setReaderDragging(false);
+    pushOverlay("reader", () => beginReaderClose(false));
   };
 
   const closeConfirmRemove = () => {
@@ -981,11 +1014,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const markOpened = (item: Item, archive = item.archived === true) => {
-    if (!readerID())
-      pushOverlay("reader", () => {
-        setReaderID("");
-        setReaderItem();
-      });
+    openReaderHistory();
     setReaderItem(item);
     recordOpened(item, archive);
     setReaderArchive(archive);
@@ -999,11 +1028,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const unread = story.items
       .filter((item) => !item.read)
       .map((item) => item.item_id);
-    if (!readerID())
-      pushOverlay("reader", () => {
-        setReaderID("");
-        setReaderItem();
-      });
+    openReaderHistory();
     for (const id of ids) pendingRead.delete(id);
     setReaderItem({ ...lead, read: true });
     setReaderArchive(false);
@@ -1831,6 +1856,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                 !searchActive() &&
                 !relatedSource()
               }
+              readerOpen={Boolean(readerID())}
+              readerReveal={readerReveal()}
+              readerDragging={readerDragging()}
               hasMore={cursor() !== ""}
               archive={mode() === "archive"}
               unreadOnly={unreadOnly()}
@@ -1909,7 +1937,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                 selectedIndex() >= 0 &&
                 selectedIndex() < frontPageItems().length - 1
               }
+              closing={readerClosing()}
               onClose={closeReader}
+              onReveal={(progress, dragging) => {
+                setReaderReveal(progress);
+                setReaderDragging(dragging);
+              }}
               onHome={() => void backToTop()}
               onPrevious={() => moveReader(-1)}
               onNext={() => moveReader(1)}

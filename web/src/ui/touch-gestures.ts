@@ -46,13 +46,14 @@ export function beginSwipe(
   y: number,
   startedAt: number,
   viewportWidth: number,
+  standalone = false,
 ): SwipeGesture {
   return {
     startX: x,
     startY: y,
     startedAt,
     axis: "pending",
-    eligible: x >= 24 && x <= viewportWidth - 24,
+    eligible: (standalone || x >= 24) && x <= viewportWidth - 24,
   };
 }
 
@@ -73,23 +74,44 @@ export function swipeCommand(
   gesture: SwipeGesture,
   x: number,
   endedAt: number,
-): "next" | "previous" | undefined {
+): "next" | undefined {
   if (!gesture.eligible || gesture.axis !== "horizontal") return;
   const dx = x - gesture.startX;
   const elapsed = Math.max(1, endedAt - gesture.startedAt);
-  if (Math.abs(dx) < 60 || Math.abs(dx) / elapsed < 0.2) return;
-  return dx < 0 ? "next" : "previous";
+  if (dx > -60 || -dx / elapsed < 0.2) return;
+  return "next";
 }
 
 export function swipeOffset(
   gesture: SwipeGesture,
   x: number,
-  canPrevious: boolean,
   canNext: boolean,
 ): number {
   if (gesture.axis !== "horizontal") return 0;
   const dx = x - gesture.startX;
-  const atEnd = (dx > 0 && !canPrevious) || (dx < 0 && !canNext);
-  const resistance = atEnd ? 0.16 : 0.42;
-  return Math.max(-96, Math.min(96, dx * resistance));
+  if (dx >= 0) return 0;
+  return canNext ? dx : Math.max(-96, dx * 0.16);
+}
+
+export function panelOffset(
+  gesture: SwipeGesture,
+  x: number,
+  viewportWidth: number,
+): number {
+  if (!gesture.eligible || gesture.axis !== "horizontal") return 0;
+  return Math.max(0, Math.min(viewportWidth, x - gesture.startX));
+}
+
+export function closeCommand(
+  gesture: SwipeGesture,
+  x: number,
+  endedAt: number,
+  viewportWidth: number,
+): "close" | undefined {
+  if (!gesture.eligible || gesture.axis !== "horizontal") return;
+  const distance = x - gesture.startX;
+  if (distance <= 0) return;
+  const elapsed = Math.max(1, endedAt - gesture.startedAt);
+  if (distance >= viewportWidth * 0.35 || distance / elapsed > 0.5)
+    return "close";
 }

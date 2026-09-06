@@ -141,7 +141,9 @@ function ReaderFixture() {
       linkActionActive={false}
       canPrevious={true}
       canNext={true}
+      closing={false}
       onClose={() => undefined}
+      onReveal={() => undefined}
       onHome={() => undefined}
       onPrevious={() => undefined}
       onNext={() => undefined}
