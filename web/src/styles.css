@@ -144,8 +144,6 @@
   --chrome-accent-wash: rgba(214, 242, 75, 0.14);
   --chrome-badge-fallback: rgba(255, 255, 255, 0.06);
   --chrome-brand-mark: #d6f24b;
-  --header-progress: #d6f24b;
-  --header-progress-h: 3px;
   --settings-header-bg: var(--surface-page);
   --settings-header-rule: var(--hairline);
   --settings-header-fg: var(--fg-quaternary);
@@ -443,8 +441,6 @@
   --chrome-field-muted: #9aa0a8;
   --chrome-badge-fallback: #24262a;
   --chrome-brand-mark: #d6f24b;
-  --header-progress: #d6f24b;
-  --header-progress-h: 3px;
   --settings-header-bg: var(--surface-chrome);
   --settings-header-rule: var(--chrome-rule);
   --settings-header-fg: var(--chrome-fg-tertiary);
@@ -637,8 +633,6 @@
     --chrome-field-muted: #9aa0a8;
     --chrome-badge-fallback: #24262a;
     --chrome-brand-mark: #d6f24b;
-    --header-progress: #d6f24b;
-    --header-progress-h: 3px;
     --settings-header-bg: var(--surface-chrome);
     --settings-header-rule: var(--chrome-rule);
     --settings-header-fg: var(--chrome-fg-tertiary);
@@ -817,8 +811,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .chrome-divider { width: 1px; height: var(--divider-h); margin: 0 var(--divider-flank); flex: none; background: var(--border-hairline); }
 .app-header .chrome-divider { background: var(--chrome-rule); }
 .chrome-group .chrome-divider { display: none; }
-.read-progress { position: absolute; right: 0; bottom: 0; left: 0; z-index: 1; height: var(--header-progress-h); pointer-events: none; }
-.read-progress > i { height: 100%; display: block; background: var(--header-progress); transition: width 80ms linear; }
+.read-progress { position: absolute; bottom: 0; left: 50%; z-index: 1; width: min(var(--measure-w), calc(100% - 44px)); height: var(--header-band); background: var(--surface-chrome-raised); pointer-events: none; transform: translateX(-50%); }
+.read-progress > i { height: 100%; display: block; background: var(--chrome-fg-quaternary); transition: width 80ms linear; }
 .search-slot { width: var(--control-h); height: var(--control-h); display: flex; justify-content: flex-end; flex: none; transition: width 160ms ease-out; }
 .search-slot.open { width: var(--search-slot); }
 .search-field { width: var(--search-slot); height: var(--control-h); padding: 0 7px 0 10px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line-medium); border-radius: 7px; background: var(--surface-sunken); transition: border-color 120ms ease-out, box-shadow 120ms ease-out; }
@@ -1421,7 +1415,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .app-header--reader .reader-crumb__meta { display: none; }
   .app-header--reader .reader-title { color: var(--fg-primary); font: 500 15px/1 "Instrument Sans", sans-serif; letter-spacing: -.01em; }
   .app-header--reader :is(.chrome-group--judge, .chrome-group--secondary, .chrome-btn--original, .reader-leave-divider, .chrome-overflow, .chrome-group--page) { display: none; }
-  .app-header--reader .read-progress { bottom: 0; height: 2px; opacity: 0; }
+  .app-header--reader .read-progress { right: 0; bottom: 0; left: 0; width: auto; height: 2px; background: transparent; opacity: 0; transform: none; }
   .app-header--reader[data-scrolled] .read-progress { opacity: 1; }
   .app-header--reader .read-progress > i { background: var(--accent); }
   .reader-scroll { position: absolute; inset: 0; width: 100%; height: 100%; }
