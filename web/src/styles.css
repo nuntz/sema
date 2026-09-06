@@ -1178,7 +1178,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-crumb__source { color: var(--chrome-fg-tertiary); }
 .reader-feed-filter { max-width: 100%; padding: 0; overflow: hidden; background: transparent; font: inherit; white-space: nowrap; text-overflow: ellipsis; vertical-align: bottom; }
 .reader-feed-filter:hover { color: var(--chrome-fg-primary); text-decoration: underline; text-underline-offset: 2px; }
-.reader-title { color: var(--chrome-fg-secondary); font: var(--chrome-font); opacity: 0; }
+.reader-title { color: var(--chrome-fg-primary); font: 500 15px/1.25 "Instrument Sans", sans-serif; letter-spacing: 0; opacity: 0; }
 .app-header[data-scrolled] .reader-crumb { opacity: 0; }
 .app-header[data-scrolled] .reader-title { opacity: 1; }
 .reader-overflow-menu { position: absolute; top: calc(100% + 6px); right: var(--header-pad-x); z-index: 40; width: 156px; padding: 5px; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-control); border-radius: var(--control-radius); background: var(--surface-raised); box-shadow: var(--shadow-menu); }
