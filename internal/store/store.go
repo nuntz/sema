@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -51,6 +52,7 @@ type Store struct {
 	table      string
 	bucket     string
 	contentURL string
+	sleep      func(context.Context, time.Duration) error
 }
 
 const (
@@ -98,7 +100,18 @@ func newItemProjection(excluded ...string) itemProjection {
 }
 
 func New(db dynamoAPI, objects s3API, table, bucket, contentURL string) *Store {
-	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/")}
+	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/"), sleep: sleepWithContext}
+}
+
+func sleepWithContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Store) EnsureUser(ctx context.Context, userID, email string) error {
@@ -369,7 +382,7 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 		return false, err
 	}
 	now := &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)}
-	_, err = s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
+	transaction := &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
 		{Put: &types.Put{
 			TableName: aws.String(s.table), Item: identity, ConditionExpression: aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
 			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
@@ -383,12 +396,23 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
 		}},
 		{Update: feedCounterUpdate(s.table, item)},
-	}})
-	if err == nil {
-		return true, nil
-	}
-	if transactionConditionFailed(err) {
-		return false, nil
+	}}
+	const maxAttempts = 5
+	for attempt := range maxAttempts {
+		_, err = s.db.TransactWriteItems(ctx, transaction)
+		if err == nil {
+			return true, nil
+		}
+		if transactionConditionFailed(err) {
+			return false, nil
+		}
+		if !transactionConflicted(err) || attempt == maxAttempts-1 {
+			return false, err
+		}
+		backoff := min(50*time.Millisecond<<attempt, time.Second)
+		if sleepErr := s.sleep(ctx, time.Duration(rand.Int64N(int64(backoff)))); sleepErr != nil {
+			return false, sleepErr
+		}
 	}
 	return false, err
 }
@@ -1877,6 +1901,19 @@ func transactionConditionFailed(err error) bool {
 	}
 	for index, reason := range canceled.CancellationReasons {
 		if index < 3 && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
+			return true
+		}
+	}
+	return false
+}
+
+func transactionConflicted(err error) bool {
+	var canceled *types.TransactionCanceledException
+	if !errors.As(err, &canceled) {
+		return false
+	}
+	for _, reason := range canceled.CancellationReasons {
+		if aws.ToString(reason.Code) == "TransactionConflict" {
 			return true
 		}
 	}

@@ -557,6 +557,102 @@ func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 	}
 }
 
+func TestPutItemRetriesTransactionConflicts(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		calls++
+		if calls <= 2 {
+			return nil, transactionCanceled("None", "None", "None", "TransactionConflict")
+		}
+		return &dynamodb.TransactWriteItemsOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	repository.sleep = func(context.Context, time.Duration) error { return nil }
+
+	written, err := repository.PutItem(context.Background(), putItemRetryFixture())
+	if err != nil || !written {
+		t.Fatalf("PutItem() = %v, %v; want true, nil", written, err)
+	}
+	if calls != 3 {
+		t.Fatalf("TransactWriteItems calls = %d, want 3", calls)
+	}
+}
+
+func TestPutItemReturnsPersistentTransactionConflict(t *testing.T) {
+	conflict := transactionCanceled("None", "None", "None", "TransactionConflict")
+	calls := 0
+	db := &fakeDynamoDB{transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		calls++
+		return nil, conflict
+	}}
+	repository := New(db, nil, "table", "", "")
+	repository.sleep = func(context.Context, time.Duration) error { return nil }
+
+	written, err := repository.PutItem(context.Background(), putItemRetryFixture())
+	if written || err != conflict {
+		t.Fatalf("PutItem() = %v, %v; want false, conflict", written, err)
+	}
+	if calls != 5 {
+		t.Fatalf("TransactWriteItems calls = %d, want 5", calls)
+	}
+}
+
+func TestPutItemDoesNotRetryConditionalCheckFailure(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		calls++
+		return nil, transactionCanceled("None", "ConditionalCheckFailed")
+	}}
+	repository := New(db, nil, "table", "", "")
+	repository.sleep = func(context.Context, time.Duration) error {
+		t.Fatal("slept after conditional check failure")
+		return nil
+	}
+
+	written, err := repository.PutItem(context.Background(), putItemRetryFixture())
+	if err != nil || written {
+		t.Fatalf("PutItem() = %v, %v; want false, nil", written, err)
+	}
+	if calls != 1 {
+		t.Fatalf("TransactWriteItems calls = %d, want 1", calls)
+	}
+}
+
+func TestPutItemPrioritizesConditionalCheckFailureOverTransactionConflict(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		calls++
+		return nil, transactionCanceled("ConditionalCheckFailed", "None", "None", "TransactionConflict")
+	}}
+	repository := New(db, nil, "table", "", "")
+	repository.sleep = func(context.Context, time.Duration) error {
+		t.Fatal("slept after conditional check failure")
+		return nil
+	}
+
+	written, err := repository.PutItem(context.Background(), putItemRetryFixture())
+	if err != nil || written {
+		t.Fatalf("PutItem() = %v, %v; want false, nil", written, err)
+	}
+	if calls != 1 {
+		t.Fatalf("TransactWriteItems calls = %d, want 1", calls)
+	}
+}
+
+func putItemRetryFixture() domain.Item {
+	return domain.Item{
+		PK: domain.UserPK("user"), SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", TTL: time.Now().Add(time.Hour).Unix(),
+	}
+}
+
+func transactionCanceled(codes ...string) *types.TransactionCanceledException {
+	reasons := make([]types.CancellationReason, len(codes))
+	for index, code := range codes {
+		reasons[index].Code = aws.String(code)
+	}
+	return &types.TransactionCanceledException{CancellationReasons: reasons}
+}
+
 func TestPutItemFailureWritesExpiringIdentityMarker(t *testing.T) {
 	ttl := time.Now().Add(domain.Retention).Unix()
 	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
