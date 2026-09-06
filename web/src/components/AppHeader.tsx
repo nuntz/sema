@@ -4,6 +4,7 @@ import { AppMark } from "./AppMark";
 export function AppHeader(props: {
   view: "grid" | "reader";
   onHome(): void;
+  ref?: (element: HTMLElement) => void;
   tooltipDisabled?: boolean;
   scrolled?: boolean;
   progress?: number;
@@ -14,6 +15,7 @@ export function AppHeader(props: {
 
   return (
     <header
+      ref={props.ref}
       class="app-header"
       classList={{ "app-header--reader": props.view === "reader" }}
       data-view={props.view}

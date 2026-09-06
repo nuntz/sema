@@ -7,11 +7,13 @@ import {
   onMount,
   Show,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { isOlderThanThirtyDays } from "../archive";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
 import { decodeImageWithin } from "../image-decode";
 import { createMediaQuery } from "../media-query";
+import { stripSummaryEcho } from "../reader-item";
 import {
   externalHost,
   isRedditGallery,
@@ -25,9 +27,15 @@ import {
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { readerCommand } from "./keyboard";
+import { closeOverlay, pushOverlay } from "./overlay-history";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { hasLeadingImage } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
+import {
+  expandToolbar,
+  initialToolbarCollapseState,
+  updateToolbarCollapse,
+} from "./toolbar-collapse";
 import {
   beginSwipe,
   closeCommand,
@@ -37,6 +45,7 @@ import {
   swipeCommand,
   swipeOffset,
 } from "./touch-gestures";
+import { useSheetDrag } from "./use-sheet-drag";
 import {
   type DescriptionToken,
   parseVideoDescription,
@@ -68,11 +77,22 @@ interface ReaderProps {
 
 export function Reader(props: ReaderProps) {
   let article!: HTMLDivElement;
+  let heading!: HTMLHeadingElement;
+  let readerHeader!: HTMLElement;
+  let toolbar!: HTMLElement;
+  let moreButton!: HTMLButtonElement;
+  let sheetPanel!: HTMLElement;
+  let sheetFirstAction!: HTMLButtonElement;
   const [body, setBody] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [progress, setProgress] = createSignal(0);
   const [scrolled, setScrolled] = createSignal(false);
+  const [headlineVisible, setHeadlineVisible] = createSignal(true);
   const [overflowOpen, setOverflowOpen] = createSignal(false);
+  const [sheetOpen, setSheetOpen] = createSignal(false);
+  const [toolbarState, setToolbarState] = createSignal(
+    initialToolbarCollapseState(),
+  );
   const [dragOffset, setDragOffset] = createSignal(0);
   const [panelX, setPanelX] = createSignal(0);
   const [swiping, setSwiping] = createSignal(false);
@@ -100,12 +120,22 @@ export function Reader(props: ReaderProps) {
   let dwellTimer: number | undefined;
   let carryTimer: number | undefined;
   let carryFrame = 0;
+  let sheetFocusFrame = 0;
+  let toolbarTapTimer: number | undefined;
+  let suppressToolbarAction = false;
   let carryingNext = false;
   let swipe: SwipeGesture | undefined;
   let touchX = 0;
 
+  const displaySummary = createMemo(() =>
+    stripSummaryEcho(props.item.summary ?? "", props.item.title),
+  );
+  const headerScrolled = createMemo(() =>
+    narrowHeader() ? !headlineVisible() : scrolled(),
+  );
+
   const originalReason = (): "extraction" | "titles-only" =>
-    !props.item.summary && props.item.extract_quality === 0
+    !displaySummary() && props.item.extract_quality === 0
       ? "titles-only"
       : "extraction";
 
@@ -141,7 +171,13 @@ export function Reader(props: ReaderProps) {
     thresholdReported = false;
     setProgress(0);
     setScrolled(false);
+    setHeadlineVisible(true);
     setOverflowOpen(false);
+    setToolbarState(initialToolbarCollapseState());
+    if (sheetOpen()) {
+      closeOverlay("action-sheet");
+      setSheetOpen(false);
+    }
     if (!carryingNext) setDragOffset(0);
     if (article) article.scrollTop = 0;
     startDwell();
@@ -167,12 +203,112 @@ export function Reader(props: ReaderProps) {
     onCleanup(() => controller.abort());
   });
 
+  const focusMoreButton = () => {
+    cancelAnimationFrame(sheetFocusFrame);
+    sheetFocusFrame = requestAnimationFrame(() =>
+      moreButton?.focus({ preventScroll: true }),
+    );
+  };
+
+  const hideSheet = () => {
+    setSheetOpen(false);
+    focusMoreButton();
+  };
+
+  const openSheet = () => {
+    if (sheetOpen()) return;
+    pushOverlay("action-sheet", hideSheet);
+    setSheetOpen(true);
+    cancelAnimationFrame(sheetFocusFrame);
+    sheetFocusFrame = requestAnimationFrame(() =>
+      sheetFirstAction?.focus({ preventScroll: true }),
+    );
+  };
+
+  const closeSheet = () => {
+    if (!sheetOpen()) return;
+    closeOverlay("action-sheet");
+    hideSheet();
+  };
+
+  const runSheetAction = (action: () => void) => {
+    closeSheet();
+    action();
+  };
+
+  const sheetDrag = useSheetDrag({
+    panel: () => sheetPanel,
+    onDismiss: closeSheet,
+  });
+
+  const revealToolbar = () => setToolbarState((state) => expandToolbar(state));
+
+  const onToolbarPointerDown = (event: PointerEvent) => {
+    if (!toolbarState().collapsed) return;
+    suppressToolbarAction = true;
+    event.preventDefault();
+    revealToolbar();
+  };
+
+  const onToolbarPointerUp = (event: PointerEvent) => {
+    if (!suppressToolbarAction) return;
+    event.preventDefault();
+    window.clearTimeout(toolbarTapTimer);
+    toolbarTapTimer = window.setTimeout(() => {
+      suppressToolbarAction = false;
+    }, 0);
+  };
+
+  const onToolbarPointerCancel = () => {
+    suppressToolbarAction = false;
+    window.clearTimeout(toolbarTapTimer);
+  };
+
+  const onToolbarClick = (event: MouseEvent) => {
+    if (!suppressToolbarAction) return;
+    suppressToolbarAction = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  createEffect(() => {
+    if (!narrowHeader()) {
+      setHeadlineVisible(true);
+      setToolbarState((state) => expandToolbar(state));
+      if (sheetOpen()) closeSheet();
+      return;
+    }
+    if (typeof IntersectionObserver === "undefined") return;
+
+    const navHeight = Math.ceil(readerHeader.getBoundingClientRect().height);
+    const observer = new IntersectionObserver(
+      ([entry]) => setHeadlineVisible(entry?.isIntersecting ?? true),
+      {
+        root: article,
+        rootMargin: `-${navHeight}px 0px 0px 0px`,
+        threshold: 0,
+      },
+    );
+    observer.observe(heading);
+    onCleanup(() => observer.disconnect());
+  });
+
   const updateProgress = () => {
     const range = article.scrollHeight - article.clientHeight;
     setProgress(range <= 0 ? 1 : article.scrollTop / range);
-    setScrolled((current) =>
-      current ? article.scrollTop > 160 : article.scrollTop >= 180,
-    );
+    if (narrowHeader()) {
+      setToolbarState((state) =>
+        updateToolbarCollapse(
+          state,
+          article.scrollTop,
+          range <= 0 || article.scrollTop >= range - 1,
+        ),
+      );
+    } else {
+      setScrolled((current) =>
+        current ? article.scrollTop > 160 : article.scrollTop >= 180,
+      );
+    }
   };
 
   const onTouchStart = (event: TouchEvent) => {
@@ -254,7 +390,13 @@ export function Reader(props: ReaderProps) {
   };
 
   const onKey = (event: KeyboardEvent) => {
-    if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!props.active) return;
+    if (sheetOpen() && event.key === "Escape") {
+      closeSheet();
+      event.preventDefault();
+      return;
+    }
+    if (sheetOpen() || event.metaKey || event.ctrlKey || event.altKey) return;
     const command = readerCommand(event.key);
     const target = event.target;
     if (
@@ -335,6 +477,7 @@ export function Reader(props: ReaderProps) {
     article.addEventListener("touchmove", onTouchMove, { passive: false });
     article.addEventListener("touchend", finishSwipe, { passive: true });
     article.addEventListener("touchcancel", cancelSwipe, { passive: true });
+    toolbar.addEventListener("click", onToolbarClick, true);
     onCleanup(() => {
       pauseAndReport();
       window.removeEventListener("keydown", onKey);
@@ -346,9 +489,13 @@ export function Reader(props: ReaderProps) {
       article.removeEventListener("touchmove", onTouchMove);
       article.removeEventListener("touchend", finishSwipe);
       article.removeEventListener("touchcancel", cancelSwipe);
+      toolbar.removeEventListener("click", onToolbarClick, true);
       window.clearInterval(dwellTimer);
       window.clearTimeout(carryTimer);
+      window.clearTimeout(toolbarTapTimer);
       cancelAnimationFrame(carryFrame);
+      cancelAnimationFrame(sheetFocusFrame);
+      if (sheetOpen()) closeOverlay("action-sheet");
     });
   });
 
@@ -362,9 +509,12 @@ export function Reader(props: ReaderProps) {
       aria-label={props.item.title}
     >
       <AppHeader
+        ref={(element) => {
+          readerHeader = element;
+        }}
         view="reader"
         onHome={props.onHome}
-        scrolled={scrolled()}
+        scrolled={headerScrolled()}
         progress={progress()}
       >
         <button
@@ -373,7 +523,7 @@ export function Reader(props: ReaderProps) {
           onClick={props.onClose}
           aria-label="Back to grid"
         >
-          <Icon name="back-to-grid" />
+          <Icon name={narrowHeader() ? "previous-item" : "back-to-grid"} />
         </button>
         <div class="reader-slot">
           <SourceBadge
@@ -384,9 +534,9 @@ export function Reader(props: ReaderProps) {
             class="reader-favicon reader-badge"
           />
           <span class="reader-slot__text">
-            <span class="reader-crumb" aria-hidden={scrolled()}>
+            <span class="reader-crumb" aria-hidden={headerScrolled()}>
               <Show
-                when={!props.archive}
+                when={!narrowHeader() && !props.archive}
                 fallback={
                   <span class="reader-crumb__source">
                     {props.item.feed_title || "Feed"}
@@ -397,7 +547,7 @@ export function Reader(props: ReaderProps) {
                   type="button"
                   class="reader-crumb__source reader-feed-filter"
                   aria-label={`Filter by feed: ${props.item.feed_title || "Feed"}`}
-                  tabIndex={scrolled() ? -1 : 0}
+                  tabIndex={headerScrolled() ? -1 : 0}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -406,12 +556,17 @@ export function Reader(props: ReaderProps) {
                 >
                   {props.item.feed_title || "Feed"}
                 </button>
-              </Show>{" "}
-              ·{" "}
-              {relativeTime(props.item.display_date || props.item.published_ts)}{" "}
-              ago
+              </Show>
+              <span class="reader-crumb__meta">
+                {" "}
+                ·{" "}
+                {relativeTime(
+                  props.item.display_date || props.item.published_ts,
+                )}{" "}
+                ago
+              </span>
             </span>
-            <span class="reader-title" aria-hidden={!scrolled()}>
+            <span class="reader-title" aria-hidden={!headerScrolled()}>
               {props.item.title}
             </span>
           </span>
@@ -588,14 +743,13 @@ export function Reader(props: ReaderProps) {
               {Math.max(
                 1,
                 Math.round(
-                  (body() || props.item.summary || "").split(/\s+/).length /
-                    220,
+                  (body() || displaySummary() || "").split(/\s+/).length / 220,
                 ),
               )}{" "}
               MIN READ
             </div>
           </Show>
-          <h1>{props.item.title}</h1>
+          <h1 ref={heading}>{props.item.title}</h1>
           <Show when={!isRedditItem(props.item)}>
             <Show
               when={props.item.media_type === "video"}
@@ -645,17 +799,19 @@ export function Reader(props: ReaderProps) {
               />
             )}
           </Show>
-          <Show when={props.item.summary}>
-            <div class="article-summary">
-              <Show when={props.item.summary_source === "generated"}>
-                <div class="summary-provenance">
-                  {isRedditItem(props.item)
-                    ? redditSummaryProvenance(props.item)
-                    : "summary · generated"}
-                </div>
-              </Show>
-              <p>{props.item.summary}</p>
-            </div>
+          <Show when={displaySummary()} keyed>
+            {(summary) => (
+              <div class="article-summary">
+                <Show when={props.item.summary_source === "generated"}>
+                  <div class="summary-provenance">
+                    {isRedditItem(props.item)
+                      ? redditSummaryProvenance(props.item)
+                      : "summary · generated"}
+                  </div>
+                </Show>
+                <p>{summary}</p>
+              </div>
+            )}
           </Show>
           <Show
             when={
@@ -761,58 +917,148 @@ export function Reader(props: ReaderProps) {
           </footer>
         </article>
       </div>
-      <nav class="reader-bottom-actions" aria-label="Article actions">
-        <button
-          type="button"
-          class="chrome-btn chrome-btn--icon"
-          classList={{ "chrome-btn--on": props.item.signal === 1 }}
-          aria-label={props.item.signal === 1 ? "Remove boost" : "Boost"}
-          aria-pressed={props.item.signal === 1}
-          onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
-        >
-          <Icon name="boost" />
-        </button>
-        <button
-          type="button"
-          class="chrome-btn chrome-btn--icon"
-          classList={{ "chrome-btn--on": props.item.signal === -1 }}
-          aria-label={props.item.signal === -1 ? "Remove bury" : "Bury"}
-          aria-pressed={props.item.signal === -1}
-          onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
-        >
-          <Icon name="bury" />
-        </button>
-        <button
-          type="button"
-          class="chrome-btn chrome-btn--icon"
-          classList={{ "chrome-btn--on": props.hearted }}
-          aria-label={props.hearted ? "Remove from archive" : "Keep in archive"}
-          aria-pressed={props.hearted}
-          onClick={props.onHeart}
-        >
-          <Icon name="keep" filled={props.hearted} />
-        </button>
-        <span class="reader-bottom-actions__spacer" />
-        <button
-          type="button"
-          class="chrome-btn chrome-btn--icon"
-          onClick={props.onPrevious}
-          disabled={!props.canPrevious}
-          aria-label="Previous item"
-        >
-          <Icon name="previous-item" />
-        </button>
-        <button
-          type="button"
-          class="chrome-btn chrome-btn--emphasis"
-          onClick={props.onNext}
-          disabled={!props.canNext}
-          aria-label="Next unread item"
-        >
-          <span>next</span>
-          <Icon name="next-item" />
-        </button>
+      <nav
+        ref={toolbar}
+        class="reader-bottom-actions"
+        classList={{ collapsed: toolbarState().collapsed }}
+        aria-label="Article actions"
+        onPointerDown={onToolbarPointerDown}
+        onPointerUp={onToolbarPointerUp}
+        onPointerCancel={onToolbarPointerCancel}
+        onFocusIn={revealToolbar}
+      >
+        <div class="reader-bottom-actions__row">
+          <button
+            type="button"
+            class="reader-toolbar-action"
+            aria-label={props.item.signal === 1 ? "Remove boost" : "Boost"}
+            aria-pressed={props.item.signal === 1}
+            onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
+          >
+            <Icon name="boost" />
+          </button>
+          <button
+            type="button"
+            class="reader-toolbar-action"
+            aria-label={props.item.signal === -1 ? "Remove bury" : "Bury"}
+            aria-pressed={props.item.signal === -1}
+            onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
+          >
+            <Icon name="bury" />
+          </button>
+          <button
+            type="button"
+            class="reader-toolbar-action"
+            aria-label={
+              props.hearted ? "Remove from archive" : "Keep in archive"
+            }
+            aria-pressed={props.hearted}
+            onClick={props.onHeart}
+          >
+            <Icon name="keep" filled={props.hearted} />
+          </button>
+          <button
+            ref={moreButton}
+            type="button"
+            class="reader-toolbar-action"
+            aria-label="More actions"
+            aria-haspopup="dialog"
+            aria-expanded={sheetOpen()}
+            onClick={openSheet}
+          >
+            <Icon name="more" />
+          </button>
+          <span class="reader-bottom-actions__gap" aria-hidden="true" />
+          <button
+            type="button"
+            class="reader-toolbar-action"
+            onClick={props.onPrevious}
+            disabled={!props.canPrevious}
+            aria-label="Previous item"
+          >
+            <Icon name="previous-item" />
+          </button>
+          <button
+            type="button"
+            class="reader-toolbar-action"
+            onClick={props.onNext}
+            disabled={!props.canNext}
+            aria-label="Next unread item"
+          >
+            <Icon name="next-item" />
+          </button>
+        </div>
       </nav>
+      <Portal>
+        <Show when={sheetOpen()}>
+          <div
+            class="action-sheet-layer reader-action-sheet-layer"
+            role="presentation"
+            onPointerDown={(event) => {
+              if (event.target === event.currentTarget) closeSheet();
+            }}
+          >
+            <div
+              class="sheet-scrim-visual"
+              aria-hidden="true"
+              style={{ opacity: sheetDrag.scrimOpacity() }}
+            />
+            <section
+              ref={sheetPanel}
+              class="action-sheet reader-action-sheet"
+              classList={{ "sheet-dragging": sheetDrag.dragging() }}
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Actions for ${props.item.title}`}
+              style={{ transform: `translateY(${sheetDrag.offset()}px)` }}
+              onPointerDown={sheetDrag.onPointerDown}
+              onPointerMove={sheetDrag.onPointerMove}
+              onPointerUp={sheetDrag.onPointerUp}
+              onPointerCancel={sheetDrag.onPointerCancel}
+            >
+              <i class="sheet-handle" aria-hidden="true" />
+              <header>
+                <strong>{props.item.title}</strong>
+                <span>{props.item.feed_title || "Feed"}</span>
+              </header>
+              <button
+                ref={sheetFirstAction}
+                type="button"
+                onClick={() => runSheetAction(props.onCopy)}
+              >
+                <Icon
+                  name={props.linkActionActive ? "check" : "copy-link"}
+                  size={20}
+                />
+                Copy link
+              </button>
+              <button
+                type="button"
+                onClick={() => runSheetAction(props.onRelated)}
+              >
+                <Icon name="search" size={20} />
+                Similar
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  runSheetAction(() => {
+                    props.onOriginal();
+                    window.open(
+                      props.item.url,
+                      "_blank",
+                      "noopener,noreferrer",
+                    );
+                  })
+                }
+              >
+                <Icon name="open-original" size={20} />
+                {isRedditItem(props.item) ? "Discussion" : "Original"}
+              </button>
+            </section>
+          </div>
+        </Show>
+      </Portal>
     </section>
   );
 }

@@ -363,17 +363,20 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
       const mark = document.querySelector(".app-header__brand svg");
       if (!header || !mark)
         throw new Error("Shared header geometry is missing");
-      const controls = [...header.querySelectorAll("button, a")].filter(
-        (element) => element.getClientRects().length > 0,
-      );
+      const controls = [
+        ...header.querySelectorAll(
+          ".segmented__item, .chrome-btn, .chrome-icon, .reader-back",
+        ),
+      ].filter((element) => element.getClientRects().length > 0);
       return {
         header: header.getBoundingClientRect(),
         mark: mark.getBoundingClientRect(),
         controls: controls.map((element) => element.getBoundingClientRect()),
       };
     });
-    expect(geometry.header.height).toBe(56);
-    if (width > 430) {
+    const phoneReader = view === "reader" && width < 620;
+    expect(geometry.header.height).toBe(phoneReader ? 44 : 56);
+    if (width > 430 && !phoneReader) {
       expect(geometry.mark.x).toBe(20);
       expect(geometry.mark.y).toBe(18);
     } else {
@@ -382,7 +385,9 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
     }
     expect(
       geometry.controls.every((control) =>
-        width <= 430 ? control.height >= 44 : control.height >= 30,
+        width <= 430 || phoneReader
+          ? control.height >= 44
+          : control.height >= 30,
       ),
     ).toBe(true);
   }
@@ -395,7 +400,8 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
 
   await page.setViewportSize({ width: 619, height: 780 });
   await openFixture(page, "reader");
-  await expect(page.locator(".chrome-overflow")).toBeVisible();
+  await expect(page.locator(".chrome-overflow")).toBeHidden();
+  await expect(page.locator(".reader-slot__text")).toBeVisible();
 
   await page.setViewportSize({ width: 900, height: 780 });
   await openFixture(page, "reader");
@@ -422,7 +428,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   await expect(page.locator(".header-segments")).toBeHidden();
 });
 
-test("phone reader exposes five 44px actions and clears the final line", async ({
+test("phone reader exposes six native actions and clears the final line", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 780 });
@@ -430,23 +436,57 @@ test("phone reader exposes five 44px actions and clears the final line", async (
   await page.locator("#reader-last-line").waitFor();
 
   const actions = page.locator(".reader-bottom-actions button");
-  await expect(actions).toHaveCount(5);
+  await expect(actions).toHaveCount(6);
+  expect(
+    await actions.evaluateAll((buttons) =>
+      buttons.map((button) => button.getAttribute("aria-label")),
+    ),
+  ).toEqual([
+    "Boost",
+    "Bury",
+    "Keep in archive",
+    "More actions",
+    "Previous item",
+    "Next unread item",
+  ]);
   const heights = await actions.evaluateAll((buttons) =>
     buttons.map((button) => button.getBoundingClientRect().height),
   );
   expect(heights.every((height) => height >= 44)).toBe(true);
-  await expect(page.locator(".reader-bottom-actions")).toContainText("next");
+  await expect(page.locator(".reader-bottom-actions")).toHaveText("");
+
+  const bar = page.locator(".reader-bottom-actions");
+  const more = actions.nth(3);
+  await page.locator(".reader-scroll").evaluate((element) => {
+    element.scrollTop = Math.min(
+      180,
+      element.scrollHeight - element.clientHeight - 1,
+    );
+  });
+  await expect(bar).toHaveClass(/collapsed/);
+  await more.click();
+  await expect(bar).not.toHaveClass(/collapsed/);
+  await expect(page.locator(".reader-action-sheet")).toBeHidden();
+
+  await more.click();
+  const sheet = page.locator(".reader-action-sheet");
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator("button").first()).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+  await expect(more).toBeFocused();
 
   await page.locator(".reader-scroll").evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
   const clearance = await page.evaluate(() => {
     const lastLine = document.querySelector("#reader-last-line");
-    const bar = document.querySelector(".reader-bottom-actions");
-    if (!lastLine || !bar)
+    const actionBar = document.querySelector(".reader-bottom-actions");
+    if (!lastLine || !actionBar)
       throw new Error("Phone reader fixture is incomplete");
     return (
-      bar.getBoundingClientRect().top - lastLine.getBoundingClientRect().bottom
+      actionBar.getBoundingClientRect().top -
+      lastLine.getBoundingClientRect().bottom
     );
   });
   expect(clearance).toBeGreaterThanOrEqual(0);
