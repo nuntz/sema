@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveReaderItem } from "./reader-item";
+import { resolveReaderItem, stripSummaryEcho } from "./reader-item";
 import type { Item } from "./types";
 
 const item = (itemID: string): Item => ({
@@ -37,5 +37,28 @@ describe("reader item resolution", () => {
     expect(resolveReaderItem("current", [[], [], []], item("stale"))).toBe(
       undefined,
     );
+  });
+});
+
+describe("stored reader summaries", () => {
+  const title = "Markets Rise — Again";
+  const summary =
+    "Investors welcomed the latest gains. Trading volume also increased.";
+
+  it.each([
+    ["echoed title label", `Title: ${title} ${summary}`, summary],
+    ["echoed bare title", `${title}. ${summary}`, summary],
+    [
+      "different title punctuation",
+      `Markets Rise : Again. ${summary}`,
+      summary,
+    ],
+    [
+      "legitimate title word",
+      "Markets opened higher after the report. Trading volume also increased.",
+      "Markets opened higher after the report. Trading volume also increased.",
+    ],
+  ])("strips %s correctly", (_name, stored, want) => {
+    expect(stripSummaryEcho(stored, title)).toBe(want);
   });
 });
