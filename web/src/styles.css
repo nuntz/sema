@@ -1181,6 +1181,19 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-title { color: var(--chrome-fg-primary); font: 500 15px/1.25 "Instrument Sans", sans-serif; letter-spacing: 0; opacity: 0; }
 .app-header[data-scrolled] .reader-crumb { opacity: 0; }
 .app-header[data-scrolled] .reader-title { opacity: 1; }
+@media (min-width: 620px) {
+  .app-header--reader .chrome-btn--prev .chrome-btn__label { display: none; }
+  .app-header--reader[data-scrolled] .chrome-btn--quiet, .app-header--reader[data-scrolled] .chrome-btn--hold { width: var(--control-icon-w); padding: 0; justify-content: center; }
+  .app-header--reader[data-scrolled] .chrome-btn--quiet { background: var(--surface-chrome); color: var(--chrome-fg-quaternary); }
+  .app-header--reader[data-scrolled] .chrome-btn--quiet:hover { background: var(--surface-chrome-hover); color: var(--chrome-fg-primary); }
+  .app-header--reader[data-scrolled] :is(.chrome-btn--quiet, .chrome-btn--hold) .chrome-btn__label { display: none; }
+  .app-header--reader[data-scrolled] .chrome-btn--hold { background: var(--surface-chrome-raised); color: var(--chrome-fg-secondary); }
+  .app-header--reader[data-scrolled] .chrome-btn:is(.chrome-btn--on, [aria-pressed="true"]), .app-header--reader[data-scrolled] .chrome-btn:is(.chrome-btn--on, [aria-pressed="true"]):hover { color: var(--chrome-fg-on); }
+}
+@media (min-width: 1200px) {
+  .app-header--reader[data-scrolled] .chrome-btn--prev { width: auto; padding: 0 12px 0 11px; }
+  .app-header--reader[data-scrolled] .chrome-btn--prev .chrome-btn__label { display: inline; }
+}
 .reader-overflow-menu { position: absolute; top: calc(100% + 6px); right: var(--header-pad-x); z-index: 40; width: 156px; padding: 5px; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border-control); border-radius: var(--control-radius); background: var(--surface-raised); box-shadow: var(--shadow-menu); }
 .reader-overflow-menu .chrome-btn { width: 100%; min-height: 44px; justify-content: flex-start; background: transparent; color: var(--fg-tertiary); }
 .reader-overflow-menu .chrome-btn:hover { background: var(--surface-raised-hover); color: var(--fg-primary); }

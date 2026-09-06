@@ -574,7 +574,7 @@ export function Reader(props: ReaderProps) {
         <div class="chrome-group chrome-group--judge">
           <button
             type="button"
-            class="chrome-btn chrome-btn--collapse-2"
+            class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
             classList={{ "chrome-btn--on": props.item.signal === 1 }}
             aria-pressed={props.item.signal === 1}
             onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
@@ -586,7 +586,7 @@ export function Reader(props: ReaderProps) {
           </button>
           <button
             type="button"
-            class="chrome-btn chrome-btn--collapse-2"
+            class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
             classList={{ "chrome-btn--on": props.item.signal === -1 }}
             aria-pressed={props.item.signal === -1}
             onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
@@ -598,7 +598,7 @@ export function Reader(props: ReaderProps) {
           </button>
           <button
             type="button"
-            class="chrome-btn"
+            class="chrome-btn chrome-btn--hold"
             classList={{ "chrome-btn--on": props.hearted }}
             aria-pressed={props.hearted}
             onClick={props.onHeart}
@@ -612,7 +612,7 @@ export function Reader(props: ReaderProps) {
         <div class="chrome-group chrome-group--secondary">
           <button
             type="button"
-            class="chrome-btn chrome-btn--collapse-1"
+            class="chrome-btn chrome-btn--quiet chrome-btn--collapse-1"
             classList={{ "chrome-btn--on": props.linkActionActive }}
             onClick={props.onCopy}
           >
@@ -625,7 +625,7 @@ export function Reader(props: ReaderProps) {
           </button>
           <button
             type="button"
-            class="chrome-btn chrome-btn--collapse-1"
+            class="chrome-btn chrome-btn--quiet chrome-btn--collapse-1"
             onClick={props.onRelated}
           >
             <Icon name="search" />
@@ -637,7 +637,7 @@ export function Reader(props: ReaderProps) {
           href={props.item.url}
           target="_blank"
           rel="noopener noreferrer"
-          class="chrome-btn chrome-btn--original chrome-btn--collapse-1"
+          class="chrome-btn chrome-btn--quiet chrome-btn--original chrome-btn--collapse-1"
           onClick={props.onOriginal}
         >
           <span class="chrome-btn__label">
@@ -659,12 +659,13 @@ export function Reader(props: ReaderProps) {
         <div class="chrome-group chrome-group--page">
           <button
             type="button"
-            class="chrome-btn chrome-btn--icon"
+            class="chrome-btn chrome-btn--icon chrome-btn--prev"
             onClick={props.onPrevious}
             disabled={!props.canPrevious}
             aria-label="Previous item"
           >
             <Icon name="previous-item" />
+            <span class="chrome-btn__label">prev</span>
           </button>
           <button
             type="button"
