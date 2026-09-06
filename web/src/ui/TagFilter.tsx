@@ -9,17 +9,26 @@ import {
 } from "solid-js";
 import { Icon } from "../components/Icon";
 import { Tooltip } from "../components/Tooltip";
-import type { Feed } from "../types";
-import { feedTagOptions } from "./tag-options";
+import type { Feed, GridScope } from "../types";
+import { SourceBadge } from "./SourceBadge";
+import {
+  feedScopeChip,
+  optionScope,
+  type ScopeFilterOption,
+  scopeFilterOptions,
+  scopeForClosedEscape,
+  scopeForEnter,
+  scopeOptionID,
+} from "./tag-options";
 
 export function TagFilter(props: {
   feeds: Feed[];
-  value: string;
+  value: GridScope;
   active: boolean;
   openRequest?: number;
   tooltipDisabled?: boolean;
   onOpenChange?(open: boolean): void;
-  onChange(tag: string): void;
+  onChange(scope: GridScope): void;
 }) {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
@@ -27,11 +36,20 @@ export function TagFilter(props: {
   let input!: HTMLInputElement;
   let previousOpenRequest = props.openRequest;
 
-  const options = createMemo(() => feedTagOptions(props.feeds));
-  const matches = createMemo(() => {
-    const needle = query().trim().toLowerCase().replace(/^#/, "");
-    return options().filter((option) => !needle || option.tag.includes(needle));
-  });
+  const matches = createMemo(() => scopeFilterOptions(props.feeds, query()));
+  const tagMatches = createMemo(() =>
+    matches().filter(
+      (option): option is Extract<ScopeFilterOption, { kind: "tag" }> =>
+        option.kind === "tag",
+    ),
+  );
+  const feedMatches = createMemo(() =>
+    matches().filter(
+      (option): option is Extract<ScopeFilterOption, { kind: "feed" }> =>
+        option.kind === "feed",
+    ),
+  );
+  const activeFeed = createMemo(() => feedScopeChip(props.value, props.feeds));
 
   const begin = () => {
     setQuery("");
@@ -39,12 +57,12 @@ export function TagFilter(props: {
     setOpen(true);
     queueMicrotask(() => input?.focus());
   };
-  const apply = (tag: string) => {
-    props.onChange(tag);
+  const apply = (scope: GridScope) => {
+    props.onChange(scope);
     setOpen(false);
     setQuery("");
   };
-  const clear = () => apply("");
+  const clear = () => apply(null);
 
   createEffect(() => props.onOpenChange?.(open()));
   createEffect(() => {
@@ -72,9 +90,12 @@ export function TagFilter(props: {
       if (event.key === "#") {
         event.preventDefault();
         begin();
-      } else if (event.key === "Escape" && props.value && !open()) {
-        event.preventDefault();
-        clear();
+      } else if (event.key === "Escape" && !open()) {
+        const next = scopeForClosedEscape(props.value);
+        if (next !== undefined) {
+          event.preventDefault();
+          apply(next);
+        }
       }
     };
     window.addEventListener("keydown", keydown);
@@ -95,13 +116,13 @@ export function TagFilter(props: {
       );
     } else if (event.key === "Enter") {
       event.preventDefault();
-      const option = available[highlight()] ?? available[0];
-      if (option) apply(option.tag);
+      const next = scopeForEnter(available, highlight());
+      if (next) apply(next);
     } else if (event.key === "Tab") {
       const option = available[highlight()] ?? available[0];
       if (option) {
         event.preventDefault();
-        setQuery(option.tag);
+        setQuery(option.label);
       }
     } else if (event.key === "Escape") {
       event.preventDefault();
@@ -123,14 +144,14 @@ export function TagFilter(props: {
             when={props.value}
             fallback={
               <Tooltip
-                name="Filter by tag"
+                name="Filter by tag or feed"
                 shortcut="#"
                 disabled={props.tooltipDisabled}
               >
                 <button
                   type="button"
                   class="chrome-icon header-icon-button tag-trigger"
-                  aria-label="Filter by tag"
+                  aria-label="Filter by tag or feed"
                   onClick={begin}
                 >
                   <Icon name="tag" size={18} />
@@ -138,25 +159,55 @@ export function TagFilter(props: {
               </Tooltip>
             }
           >
-            {(value) => {
-              const label = () => `Clear tag filter: #${value()}`;
-              return (
-                <Tooltip name={label()} disabled={props.tooltipDisabled}>
+            {(scope) => (
+              <Show
+                when={scope().kind === "feed"}
+                fallback={
+                  <Tooltip
+                    name={`Clear tag filter: #${scope().value}`}
+                    disabled={props.tooltipDisabled}
+                  >
+                    <button
+                      type="button"
+                      class="active-tag-chip"
+                      aria-label={`Clear tag filter: #${scope().value}`}
+                      onClick={clear}
+                    >
+                      <span class="tag-chip-hash">#</span>
+                      <span class="tag-chip-name">{scope().value}</span>
+                      <span class="tag-chip-close" aria-hidden="true">
+                        <Icon name="close" size={13} />
+                      </span>
+                    </button>
+                  </Tooltip>
+                }
+              >
+                <Tooltip
+                  name={activeFeed()?.ariaLabel ?? "Clear feed filter"}
+                  disabled={props.tooltipDisabled}
+                >
                   <button
                     type="button"
-                    class="active-tag-chip"
-                    aria-label={label()}
+                    class="active-tag-chip active-feed-chip"
+                    aria-label={activeFeed()?.ariaLabel ?? "Clear feed filter"}
                     onClick={clear}
                   >
-                    <span class="tag-chip-hash">#</span>
-                    <span class="tag-chip-name">{value()}</span>
+                    <SourceBadge
+                      connector={activeFeed()?.option?.connector}
+                      imageURL={activeFeed()?.option?.faviconURL}
+                      title={activeFeed()?.title ?? scope().value}
+                      size={16}
+                    />
+                    <span class="tag-chip-name">
+                      {activeFeed()?.title ?? scope().value}
+                    </span>
                     <span class="tag-chip-close" aria-hidden="true">
                       <Icon name="close" size={13} />
                     </span>
                   </button>
                 </Tooltip>
-              );
-            }}
+              </Show>
+            )}
           </Show>
         }
       >
@@ -164,13 +215,13 @@ export function TagFilter(props: {
           <span>#</span>
           <input
             ref={input}
-            aria-label="Filter by tag"
+            aria-label="Filter by tag or feed"
             role="combobox"
             aria-expanded="true"
-            aria-controls="grid-tag-options"
+            aria-controls="grid-scope-options"
             aria-activedescendant={
               matches()[highlight()]
-                ? `grid-tag-${matches()[highlight()].tag}`
+                ? scopeOptionID(matches()[highlight()])
                 : undefined
             }
             value={query()}
@@ -188,25 +239,70 @@ export function TagFilter(props: {
                 setOpen(false);
             }}
           />
-          <div id="grid-tag-options" class="grid-tag-menu" role="listbox">
-            <For each={matches()} fallback={<span class="no-tag">no tag</span>}>
-              {(option, index) => (
-                <button
-                  id={`grid-tag-${option.tag}`}
-                  type="button"
-                  role="option"
-                  classList={{ highlighted: index() === highlight() }}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setHighlight(index())}
-                  onClick={() => apply(option.tag)}
-                >
-                  <span>{option.tag}</span>
-                  <small title={`${option.count} items ingested`}>
-                    {option.count}
-                  </small>
-                </button>
-              )}
-            </For>
+          <div id="grid-scope-options" class="grid-tag-menu" role="listbox">
+            <Show
+              when={matches().length > 0}
+              fallback={<span class="no-tag">no matching scope</span>}
+            >
+              <Show when={tagMatches().length > 0}>
+                <span class="grid-scope-heading">Tags</span>
+                <For each={tagMatches()}>
+                  {(option) => {
+                    const index = () => matches().indexOf(option);
+                    return (
+                      <button
+                        id={scopeOptionID(option)}
+                        type="button"
+                        role="option"
+                        aria-selected={index() === highlight()}
+                        class="tag-scope-option"
+                        classList={{ highlighted: index() === highlight() }}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setHighlight(index())}
+                        onClick={() => apply(optionScope(option))}
+                      >
+                        <span>{option.tag}</span>
+                        <small title={`${option.count} items ingested`}>
+                          {option.count}
+                        </small>
+                      </button>
+                    );
+                  }}
+                </For>
+              </Show>
+              <Show when={feedMatches().length > 0}>
+                <span class="grid-scope-heading feed-scope-heading">Feeds</span>
+                <For each={feedMatches()}>
+                  {(option) => {
+                    const index = () => matches().indexOf(option);
+                    return (
+                      <button
+                        id={scopeOptionID(option)}
+                        type="button"
+                        role="option"
+                        aria-selected={index() === highlight()}
+                        class="feed-scope-option"
+                        classList={{ highlighted: index() === highlight() }}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => setHighlight(index())}
+                        onClick={() => apply(optionScope(option))}
+                      >
+                        <SourceBadge
+                          connector={option.connector}
+                          imageURL={option.faviconURL}
+                          title={option.title}
+                          size={16}
+                        />
+                        <span>{option.title}</span>
+                        <small title={`${option.count} items ingested`}>
+                          {option.count}
+                        </small>
+                      </button>
+                    );
+                  }}
+                </For>
+              </Show>
+            </Show>
           </div>
         </div>
       </Show>

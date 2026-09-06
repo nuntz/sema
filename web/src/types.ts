@@ -1,10 +1,16 @@
 export type Order = "chrono" | "interest";
 
+export type GridScope =
+  | { kind: "tag"; value: string }
+  | { kind: "feed"; value: string }
+  | null;
+
 export interface Profile {
   email: string;
   created_at: string;
   order_pref: Order;
   tag_pref?: string;
+  feed_pref?: string;
   heart_count: number;
 }
 

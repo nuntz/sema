@@ -89,6 +89,7 @@ interface GridProps {
   onCopy(item: Item): void;
   onOriginal(item: Item): void;
   onRelated(item: Item): void;
+  onApplyFeed(item: Item): void;
   onMarkBelow(item: Item): void;
   onMarkStoryBelow?(storyID: string): void;
   onExpandStory?(storyID: string): void;
@@ -908,6 +909,7 @@ export function Grid(props: GridProps) {
                         onOpen={props.onOpen}
                         onExternalOpen={props.onExternalOpen}
                         onHeart={props.onHeart}
+                        onApplyFeed={props.onApplyFeed}
                         onMore={(story) => {
                           const lead = story.items[0];
                           if (lead) openSheet(lead, story);
@@ -1063,44 +1065,50 @@ export function Grid(props: GridProps) {
                           item().external_url
                         }
                         fallback={
-                          <button
-                            type="button"
-                            class="cell-main"
-                            onClick={() => {
-                              if (suppressOpenID === item().item_id) {
-                                suppressOpenID = "";
-                                return;
-                              }
-                              openPrimary(item());
-                            }}
-                            aria-label={`Open ${item().title}${readVisuals().unreadDot ? ", unread" : ""}`}
-                          >
+                          <span class="cell-main-parts">
+                            <button
+                              type="button"
+                              class="cell-main"
+                              onClick={() => {
+                                if (suppressOpenID === item().item_id) {
+                                  suppressOpenID = "";
+                                  return;
+                                }
+                                openPrimary(item());
+                              }}
+                              aria-label={`Open ${item().title}${readVisuals().unreadDot ? ", unread" : ""}`}
+                            />
                             <CellCopy
                               item={item()}
                               archive={props.archive}
                               effectiveSize={cell.effectiveSize}
                               condensed={condensedLarge()}
                               explanation={explanation()}
+                              onApplyFeed={() => props.onApplyFeed(item())}
                             />
-                          </button>
+                          </span>
                         }
                       >
-                        <a
-                          class="cell-main"
-                          href={item().external_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={() => props.onExternalOpen(item())}
-                          aria-label={`Open ${item().title} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}`}
-                        >
+                        <span class="cell-main-parts">
+                          <a
+                            class="cell-main"
+                            href={item().external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => props.onExternalOpen(item())}
+                            aria-label={`Open ${item().title} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}`}
+                          >
+                            <span class="sr-only">Open {item().title}</span>
+                          </a>
                           <CellCopy
                             item={item()}
                             archive={props.archive}
                             effectiveSize={cell.effectiveSize}
                             condensed={condensedLarge()}
                             explanation={explanation()}
+                            onApplyFeed={() => props.onApplyFeed(item())}
                           />
-                        </a>
+                        </span>
                       </Show>
                       <Show when={isRedditItem(item())}>
                         <a
@@ -1461,6 +1469,7 @@ export function CellCopy(props: {
   condensed: boolean;
   explanation: string;
   dimmed?: boolean;
+  onApplyFeed?(): void;
 }) {
   const reddit = () => isRedditItem(props.item);
   const domain = () =>
@@ -1499,12 +1508,34 @@ export function CellCopy(props: {
           title={props.item.feed_title}
           size={16}
         />
-        <span>
-          {props.item.feed_title || "Feed"}
-          <Show when={reddit()}>
-            {` · ${relativeTime(props.item.published_ts)}`}
-          </Show>
-        </span>
+        <Show
+          when={!props.archive && props.onApplyFeed}
+          fallback={
+            <span>
+              {props.item.feed_title || "Feed"}
+              <Show when={reddit()}>
+                {` · ${relativeTime(props.item.published_ts)}`}
+              </Show>
+            </span>
+          }
+        >
+          <button
+            type="button"
+            class="cell-feed-filter"
+            aria-label={`Filter by feed: ${props.item.feed_title || "Feed"}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              props.onApplyFeed?.();
+            }}
+          >
+            {props.item.feed_title || "Feed"}
+            <Show when={reddit()}>
+              {` · ${relativeTime(props.item.published_ts)}`}
+            </Show>
+          </button>
+        </Show>
       </div>
       <Show when={!props.archive && props.effectiveSize === "L"}>
         <div class="why-hint why-l" title={whyText(props.item)}>

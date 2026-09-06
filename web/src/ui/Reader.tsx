@@ -61,6 +61,7 @@ interface ReaderProps {
   onCopy(): void;
   onOriginal(): void;
   onRelated(): void;
+  onApplyFeed(): void;
   onRetry(): void;
   onDwell(itemID: string, dwellMS: number): void;
 }
@@ -384,9 +385,28 @@ export function Reader(props: ReaderProps) {
           />
           <span class="reader-slot__text">
             <span class="reader-crumb" aria-hidden={scrolled()}>
-              <span class="reader-crumb__source">
-                {props.item.feed_title || "Feed"}
-              </span>{" "}
+              <Show
+                when={!props.archive}
+                fallback={
+                  <span class="reader-crumb__source">
+                    {props.item.feed_title || "Feed"}
+                  </span>
+                }
+              >
+                <button
+                  type="button"
+                  class="reader-crumb__source reader-feed-filter"
+                  aria-label={`Filter by feed: ${props.item.feed_title || "Feed"}`}
+                  tabIndex={scrolled() ? -1 : 0}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    props.onApplyFeed();
+                  }}
+                >
+                  {props.item.feed_title || "Feed"}
+                </button>
+              </Show>{" "}
               ·{" "}
               {relativeTime(props.item.display_date || props.item.published_ts)}{" "}
               ago

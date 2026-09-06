@@ -22,6 +22,7 @@ interface StoryCellProps {
   onOpen(item: Item): void;
   onExternalOpen(item: Item): void;
   onHeart(item: Item): void;
+  onApplyFeed(item: Item): void;
   onMore(story: Story): void;
   onLongPressStart(event: PointerEvent, story: Story): void;
   onLongPressMove(event: PointerEvent): void;
@@ -151,16 +152,16 @@ export function StoryCell(props: StoryCellProps) {
                     onFocus={() => props.onFocus(focusID())}
                     onOpen={() => props.onOpenLead(props.story)}
                     onExternalOpen={props.onExternalOpen}
-                  >
-                    <CellCopy
-                      item={item}
-                      archive={false}
-                      effectiveSize="M"
-                      condensed={false}
-                      explanation={whyText(item)}
-                      dimmed={leadReadVisuals().dimmed}
-                    />
-                  </PrimaryAction>
+                  />
+                  <CellCopy
+                    item={item}
+                    archive={false}
+                    effectiveSize="M"
+                    condensed={false}
+                    explanation={whyText(item)}
+                    dimmed={leadReadVisuals().dimmed}
+                    onApplyFeed={() => props.onApplyFeed(item)}
+                  />
                   <div class="cell-actions">
                     <button
                       type="button"
@@ -351,7 +352,7 @@ function PrimaryAction(props: {
   item: Item;
   class: string;
   classList?: Record<string, boolean>;
-  children: JSX.Element;
+  children?: JSX.Element;
   onOpen(): void;
   onExternalOpen(item: Item): void;
   onFocus?(): void;
@@ -373,6 +374,7 @@ function PrimaryAction(props: {
           onFocus={props.onFocus}
           onMouseEnter={props.onMouseEnter}
           onClick={props.onOpen}
+          aria-label={`Open ${props.item.title}`}
         >
           {props.children}
         </button>

@@ -27,6 +27,7 @@ import {
 import { upsertFeed } from "./feed-list";
 import { relativeTime } from "./Grid";
 import { type BadgeSize, SourceBadge } from "./SourceBadge";
+import { displayFeedTitle as displayTitle } from "./tag-options";
 
 type FeedSort = "title" | "updated" | "errors" | "prior" | "quality";
 
@@ -1314,10 +1315,6 @@ function PriorBadge(props: { feed: Feed }) {
       </span>
     </span>
   );
-}
-
-function displayTitle(feed: Feed): string {
-  return feed.custom_title || feed.title || domainName(feed.url) || feed.url;
 }
 
 function feedDescriptor(feed: Feed): string {

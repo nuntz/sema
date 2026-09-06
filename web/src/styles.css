@@ -993,6 +993,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .cell-scrim { position: absolute; inset: 0; pointer-events: none; background: transparent; transition: background 120ms ease-out; }
 .grid-cell:hover .cell-scrim, .grid-cell.focused .cell-scrim { background: var(--media-overlay-hover); }
 .cell-main { position: absolute; inset: 0; width: 100%; padding: 0; background: transparent; text-align: left; }
+.cell-main-parts { display: contents; }
 .cell-main:focus-visible { outline: 0; }
 .cell-copy { position: absolute; inset: auto 0 0; padding: 36px 12px 12px; background: var(--cell-scrim-title); }
 .cell-copy h2 {
@@ -1016,7 +1017,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .size-l .cell-copy p { line-height: 1.5; -webkit-line-clamp: 2; }
 .size-s .cell-copy p { display: none; }
 .cell-meta { min-width: 0; display: flex; align-items: center; gap: 6px; margin-top: 9px; }
-.cell-meta > span:not(.source-badge) { overflow: hidden; color: var(--fg-tertiary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
+.cell-meta > span:not(.source-badge), .cell-feed-filter { overflow: hidden; color: var(--fg-tertiary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
+.cell-copy { pointer-events: none; }
+.cell-feed-filter { min-width: 0; padding: 0; pointer-events: auto; background: transparent; text-align: left; }
+.cell-feed-filter:hover { color: var(--fg-primary); text-decoration: underline; text-underline-offset: 2px; }
+.grid-cell:not(.text-cell) .cell-feed-filter { color: var(--media-fg-secondary); }
+.grid-cell:not(.text-cell) .cell-feed-filter:hover { color: var(--media-fg-primary); }
 .cell-meta em { height: 22px; padding: 0 7px; display: inline-flex; align-items: center; gap: 3px; flex: none; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--fg-tertiary); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; font-style: normal; white-space: nowrap; }
 .cell-corner { position: absolute; top: 8px; right: 8px; z-index: 6; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 .cell-corner-meta { display: grid; justify-items: end; }
@@ -1153,6 +1159,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-slot__text > .reader-crumb, .reader-slot__text > .reader-title { min-width: 0; grid-area: 1 / 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; transition: opacity var(--transition); }
 .reader-crumb { color: var(--chrome-fg-quaternary); font: var(--chrome-font-regular); }
 .reader-crumb__source { color: var(--chrome-fg-tertiary); }
+.reader-feed-filter { max-width: 100%; padding: 0; overflow: hidden; background: transparent; font: inherit; white-space: nowrap; text-overflow: ellipsis; vertical-align: bottom; }
+.reader-feed-filter:hover { color: var(--chrome-fg-primary); text-decoration: underline; text-underline-offset: 2px; }
 .reader-title { color: var(--chrome-fg-secondary); font: var(--chrome-font); opacity: 0; }
 .app-header[data-scrolled] .reader-crumb { opacity: 0; }
 .app-header[data-scrolled] .reader-title { opacity: 1; }
@@ -1673,20 +1681,24 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 .grid-tag-filter { position: relative; flex: none; }
 .active-tag-chip { height: var(--control-h); max-width: calc(14ch + 51px); padding: 0 5px 0 10px; display: inline-flex; align-items: center; gap: 7px; border-radius: var(--control-radius); background: var(--accent-loud); color: var(--accent-ink); }
+.active-feed-chip { max-width: 246px; }
 .active-tag-chip:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--accent-loud); }
 .tag-chip-hash { color: var(--fg-tertiary); font: var(--chrome-font); }
 .tag-chip-name { max-width: 14ch; overflow: hidden; color: var(--fg-primary); font: var(--chrome-font); white-space: nowrap; text-overflow: ellipsis; }
 .tag-chip-close { width: 22px; height: 22px; display: grid; place-items: center; flex: none; border-radius: 5px; }
 .tag-chip-close .icon { color: currentColor; }
 .active-tag-chip :is(.tag-chip-hash, .tag-chip-name), .active-tag-chip:hover .icon { color: currentColor; }
-.tag-combobox { position: relative; width: 212px; height: var(--control-h); padding: 0 10px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--chrome-accent-line); border-radius: var(--control-radius); background: var(--chrome-field-bg); color: var(--chrome-field-muted); font: var(--chrome-font); box-shadow: 0 0 0 1px var(--chrome-accent-wash); }
+.tag-combobox { position: relative; width: 284px; height: var(--control-h); padding: 0 10px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--chrome-accent-line); border-radius: var(--control-radius); background: var(--chrome-field-bg); color: var(--chrome-field-muted); font: var(--chrome-font); box-shadow: 0 0 0 1px var(--chrome-accent-wash); }
 .tag-combobox input { min-width: 0; height: 100%; flex: 1; border: 0; outline: 0; background: transparent; color: var(--chrome-field-fg); font: var(--chrome-font-regular); caret-color: var(--accent-loud); }
-.grid-tag-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 212px; max-height: 244px; padding: 5px; overflow: auto; border: 1px solid var(--border-control); border-radius: var(--control-radius); background: var(--surface-raised); box-shadow: var(--shadow-popover); }
+.grid-tag-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: 284px; max-height: 320px; padding: 5px; overflow: auto; border: 1px solid var(--border-control); border-radius: var(--control-radius); background: var(--surface-raised); box-shadow: var(--shadow-popover); }
 .grid-tag-menu button { width: 100%; height: 32px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between; border-radius: 4px; background: transparent; color: var(--fg-tertiary); font: var(--chrome-font-regular); }
 .grid-tag-menu button.highlighted { background: var(--menu-item-hover); color: var(--fg-primary); }
-.grid-tag-menu button:last-child { margin-top: 3px; border-top: 1px solid var(--line); border-radius: 0 0 4px 4px; }
 .grid-tag-menu small { color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .grid-tag-menu .no-tag { height: 32px; padding: 0 8px; display: flex; align-items: center; color: var(--fg-quaternary); font: var(--chrome-font-regular); }
+.grid-scope-heading { height: 24px; padding: 0 8px; display: flex; align-items: center; color: var(--fg-quaternary); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; letter-spacing: .07em; text-transform: uppercase; }
+.feed-scope-heading { margin-top: 4px; border-top: 1px solid var(--line); }
+.grid-tag-menu .feed-scope-option { justify-content: flex-start; gap: 8px; }
+.feed-scope-option > span:not(.source-badge) { min-width: 0; flex: 1; overflow: hidden; text-align: left; white-space: nowrap; text-overflow: ellipsis; }
 
 /* Drop 6 source renderer: shape follows connector kind, not item media. */
 .source-badge { width: var(--badge-size); height: var(--badge-size); display: inline-grid; place-items: center; flex: none; overflow: hidden; color: var(--fg-tertiary); font: 500 9px/1 "IBM Plex Mono", monospace; }

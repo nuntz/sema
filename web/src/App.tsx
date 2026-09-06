@@ -19,6 +19,7 @@ import { AppHeader } from "./components/AppHeader";
 import { Icon } from "./components/Icon";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Tooltip } from "./components/Tooltip";
+import { effectiveGridOrder, sameGridScope } from "./grid-scope";
 import {
   finishAndClearGrid,
   type GridClearSnapshot,
@@ -46,6 +47,7 @@ import {
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
   Feed,
+  GridScope,
   Item,
   ItemsResponse,
   Order,
@@ -70,6 +72,7 @@ import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
 import { TagFilter } from "./ui/TagFilter";
+import { displayFeedTitle } from "./ui/tag-options";
 import { listenForWindowReturn } from "./window-activity";
 
 type Undo = {
@@ -89,7 +92,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [, setProfile] = createSignal<Profile>();
   const [heartCount, setHeartCount] = createSignal(0);
   const [order, setOrder] = createSignal<Order>("interest");
-  const [selectedTag, setSelectedTag] = createSignal("");
+  const [scope, setScope] = createSignal<GridScope>(null);
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [items, setItems] = createSignal<Item[]>([]);
   const [stories, setStories] = createSignal<Story[]>([]);
@@ -168,9 +171,19 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const headerTooltipDisabled = createMemo(
     () => searchOpen() || tagFilterOpen() || Boolean(headerMenu()),
   );
+  const gridOrder = createMemo(() => effectiveGridOrder(order(), scope()));
+  const feedScoped = createMemo(() => scope()?.kind === "feed");
   const orderLabel = createMemo(() =>
-    order() === "interest" ? "Front page" : "Latest",
+    gridOrder() === "interest" ? "Front page" : "Latest",
   );
+  const activeFeedTitle = createMemo(() => {
+    const current = scope();
+    if (current?.kind !== "feed") return "";
+    const feed = feedFilters().find(
+      (candidate) => candidate.feed_id === current.value,
+    );
+    return feed ? displayFeedTitle(feed) : current.value;
+  });
 
   const handleError = (caught: unknown) => {
     if (caught instanceof UnauthorizedError) {
@@ -264,15 +277,19 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       setProfile(me.profile);
       setHeartCount(me.heart_count ?? me.profile.heart_count ?? 0);
       setOrder(me.profile.order_pref || "interest");
-      const profileTag = me.profile.tag_pref || "";
-      setSelectedTag(profileTag);
+      const profileScope: GridScope = me.profile.feed_pref
+        ? { kind: "feed", value: me.profile.feed_pref }
+        : me.profile.tag_pref
+          ? { kind: "tag", value: me.profile.tag_pref }
+          : null;
+      setScope(profileScope);
       const [availableFeeds] = await Promise.all([
         api.feeds(),
         reload(
           me.profile.order_pref || "interest",
           unreadOnly(),
           "live",
-          profileTag,
+          profileScope,
         ),
       ]);
       setFeedFilters(availableFeeds);
@@ -287,7 +304,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     nextOrder = order(),
     nextUnreadOnly = unreadOnly(),
     nextMode = mode(),
-    nextTag = selectedTag(),
+    nextScope = scope(),
   ) => {
     const version = ++requestVersion;
     gridClearVersion++;
@@ -303,14 +320,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setCursor("");
     try {
       const includeRead = includeReadForGrid(nextUnreadOnly);
+      const requestOrder = effectiveGridOrder(nextOrder, nextScope);
       let page: ItemsResponse;
       let nextStories: Story[] = [];
       if (nextMode === "archive") {
         page = await api.archive();
-      } else if (nextOrder === "interest") {
+      } else if (requestOrder === "interest") {
         const [storyPage, itemPage] = await Promise.all([
-          api.stories(nextTag, includeRead),
-          api.items(nextOrder, "", includeRead, nextTag),
+          api.stories(nextScope, includeRead),
+          api.items(requestOrder, "", includeRead, nextScope),
         ]);
         nextStories = storyPage.stories ?? [];
         page = {
@@ -318,7 +336,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           items: excludeRenderedStoryItems(itemPage.items ?? [], nextStories),
         };
       } else {
-        page = await api.items(nextOrder, "", includeRead, nextTag);
+        page = await api.items(requestOrder, "", includeRead, nextScope);
       }
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
@@ -365,10 +383,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         mode() === "archive"
           ? await api.archive(nextCursor)
           : await api.items(
-              order(),
+              gridOrder(),
               nextCursor,
               includeReadForGrid(unreadOnly()),
-              selectedTag(),
+              scope(),
             );
       if (
         version !== requestVersion ||
@@ -377,7 +395,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       )
         return;
       const pageItems =
-        mode() === "live" && order() === "interest"
+        mode() === "live" && gridOrder() === "interest"
           ? excludeRenderedStoryItems(page.items ?? [], stories())
           : (page.items ?? []);
       const seen = new Set(items().map((item) => item.item_id));
@@ -417,11 +435,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const clearVersion = gridClearVersion;
     pollInFlight = true;
     try {
-      if (order() === "interest") {
+      if (gridOrder() === "interest") {
         const includeRead = includeReadForGrid(unreadOnly());
         const [storyPage, page] = await Promise.all([
-          api.stories(selectedTag(), includeRead),
-          api.items("interest", "", includeRead, selectedTag()),
+          api.stories(scope(), includeRead),
+          api.items("interest", "", includeRead, scope()),
         ]);
         if (version !== requestVersion) return 0;
         const incomingStories = storyPage.stories ?? [];
@@ -486,7 +504,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         "chrono",
         "",
         includeReadForGrid(unreadOnly()),
-        selectedTag(),
+        scope(),
       );
       if (version !== requestVersion) return 0;
       const unseen = pollCandidates(
@@ -726,7 +744,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     });
   });
   const frontPageEntries = createMemo(() =>
-    frontPageEntriesForState(stories(), gridItems(), mode(), order(), cursor()),
+    frontPageEntriesForState(
+      stories(),
+      gridItems(),
+      mode(),
+      gridOrder(),
+      cursor(),
+    ),
   );
   const frontPageItems = createMemo(() =>
     frontPageSequence(frontPageEntries(), expandedStoryIDs()).map(
@@ -1170,7 +1194,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     markBelowInFlight = true;
     const version = requestVersion;
     const clearVersion = gridClearVersion;
-    const markOrder = order();
+    const markOrder = gridOrder();
     const ids =
       markOrder === "interest"
         ? frontPageUnreadIDsAfter(
@@ -1185,12 +1209,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           markOrder,
           nextCursor,
           includeReadForGrid(unreadOnly()),
-          selectedTag(),
+          scope(),
         );
         if (
           version !== requestVersion ||
           clearVersion !== gridClearVersion ||
-          markOrder !== order()
+          markOrder !== gridOrder()
         )
           return;
         const pageItems =
@@ -1218,7 +1242,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     markBelowInFlight = true;
     const version = requestVersion;
     const clearVersion = gridClearVersion;
-    const markOrder = order();
+    const markOrder = gridOrder();
     const ids = frontPageUnreadIDsAfter(
       mergeFrontPage(stories(), items(), false),
       `story:${storyID}`,
@@ -1230,12 +1254,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           markOrder,
           nextCursor,
           includeReadForGrid(unreadOnly()),
-          selectedTag(),
+          scope(),
         );
         if (
           version !== requestVersion ||
           clearVersion !== gridClearVersion ||
-          markOrder !== order()
+          markOrder !== gridOrder()
         )
           return;
         const pageItems =
@@ -1283,10 +1307,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const insertPendingNew = () =>
-    order() === "interest" ? pollNew(true) : insertNewItems(pendingNew());
+    gridOrder() === "interest" ? pollNew(true) : insertNewItems(pendingNew());
 
   const selectOrder = async (next: Order) => {
-    if (mode() === "archive" || next === order()) return;
+    if (mode() === "archive" || feedScoped() || next === order()) return;
     await flushRead();
     setOrder(next);
     closeReader();
@@ -1301,32 +1325,77 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     selectOrder(order() === "chrono" ? "interest" : "chrono");
 
   const applyTag = async (tag: string) => {
-    if (mode() === "archive" || tag === selectedTag()) return;
+    const nextScope: GridScope = tag ? { kind: "tag", value: tag } : null;
+    if (mode() === "archive" || sameGridScope(scope(), nextScope)) return;
     await flushRead();
-    setSelectedTag(tag);
+    setScope(nextScope);
     closeReader();
     setProfile((current) =>
-      current ? { ...current, tag_pref: tag } : current,
+      current
+        ? {
+            ...current,
+            tag_pref: tag,
+            ...(tag ? { feed_pref: "" } : {}),
+          }
+        : current,
     );
     api.patchMe({ tag_pref: tag }).catch(handleError);
-    await reload(order(), unreadOnly(), "live", tag);
+    await reload(order(), unreadOnly(), "live", nextScope);
+  };
+
+  const applyFeed = async (feedID: string) => {
+    const nextScope: GridScope = feedID
+      ? { kind: "feed", value: feedID }
+      : null;
+    if (mode() === "archive" || sameGridScope(scope(), nextScope)) return;
+    await flushRead();
+    setScope(nextScope);
+    closeReader();
+    setProfile((current) =>
+      current
+        ? {
+            ...current,
+            feed_pref: feedID,
+            ...(feedID ? { tag_pref: "" } : {}),
+          }
+        : current,
+    );
+    api.patchMe({ feed_pref: feedID }).catch(handleError);
+    await reload(order(), unreadOnly(), "live", nextScope);
+  };
+
+  const applyScope = (nextScope: GridScope) => {
+    if (nextScope?.kind === "tag") return applyTag(nextScope.value);
+    if (nextScope?.kind === "feed") return applyFeed(nextScope.value);
+    return scope()?.kind === "feed" ? applyFeed("") : applyTag("");
   };
 
   const refreshFeedFilters = async () => {
     try {
       const latest = await api.feeds();
       setFeedFilters(latest);
-      const activeTag = selectedTag();
+      const activeScope = scope();
       if (
-        activeTag &&
-        activeTag !== "untagged" &&
-        !latest.some((feed) => feed.tags?.includes(activeTag))
+        activeScope?.kind === "tag" &&
+        activeScope.value !== "untagged" &&
+        !latest.some((feed) => feed.tags?.includes(activeScope.value))
       ) {
-        setSelectedTag("");
+        setScope(null);
         setProfile((current) =>
           current ? { ...current, tag_pref: "" } : current,
         );
         api.patchMe({ tag_pref: "" }).catch(handleError);
+      } else if (
+        activeScope?.kind === "feed" &&
+        !latest.some(
+          (feed) => feed.feed_id === activeScope.value && !feed.muted,
+        )
+      ) {
+        setScope(null);
+        setProfile((current) =>
+          current ? { ...current, feed_pref: "" } : current,
+        );
+        api.patchMe({ feed_pref: "" }).catch(handleError);
       }
     } catch (caught) {
       handleError(caught);
@@ -1358,7 +1427,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setScrollTopVersion((value) => value + 1);
     if (wasFeeds) await refreshFeedFilters();
     if (wasFeeds || wasArchive)
-      await reload(order(), unreadOnly(), "live", selectedTag());
+      await reload(order(), unreadOnly(), "live", scope());
   };
 
   const openFeedsAndSettings = () => {
@@ -1380,7 +1449,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     if (!feedsGridDirty) return;
     feedsGridDirty = false;
     await feedFilterRefresh;
-    await reload(order(), unreadOnly(), mode(), selectedTag());
+    await reload(order(), unreadOnly(), mode(), scope());
   };
 
   const closeFeedsAndSettings = async () => {
@@ -1449,13 +1518,20 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                   class="segmented segmented-control"
                   role="radiogroup"
                   aria-label="Item order"
+                  aria-disabled={feedScoped()}
+                  title={
+                    feedScoped()
+                      ? "Newest first while filtering by feed"
+                      : undefined
+                  }
                 >
                   <button
                     type="button"
                     class="segmented__item"
-                    classList={{ active: order() === "interest" }}
+                    classList={{ active: gridOrder() === "interest" }}
                     role="radio"
-                    aria-checked={order() === "interest"}
+                    aria-checked={gridOrder() === "interest"}
+                    disabled={feedScoped()}
                     onClick={() => void selectOrder("interest")}
                   >
                     <span>Front page</span>
@@ -1463,9 +1539,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                   <button
                     type="button"
                     class="segmented__item"
-                    classList={{ active: order() === "chrono" }}
+                    classList={{ active: gridOrder() === "chrono" }}
                     role="radio"
-                    aria-checked={order() === "chrono"}
+                    aria-checked={gridOrder() === "chrono"}
+                    disabled={feedScoped()}
                     onClick={() => void selectOrder("chrono")}
                   >
                     <span>Latest</span>
@@ -1520,14 +1597,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           <div class="chrome-group chrome-group--icons header-tools">
             <TagFilter
               feeds={feedFilters()}
-              value={selectedTag()}
+              value={scope()}
               active={
                 !readerID() && !keysOpen() && !confirmRemove() && !headerMenu()
               }
               openRequest={tagOpenRequest()}
               tooltipDisabled={headerTooltipDisabled()}
               onOpenChange={setTagFilterOpen}
-              onChange={(tag) => void applyTag(tag)}
+              onChange={(nextScope) => void applyScope(nextScope)}
             />
             <div class="search-slot" classList={{ open: searchOpen() }}>
               <Show
@@ -1665,12 +1742,22 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             >
               <div class="header-sheet-row">
                 <span>Order</span>
-                <div role="radiogroup" aria-label="Item order">
+                <div
+                  role="radiogroup"
+                  aria-label="Item order"
+                  aria-disabled={feedScoped()}
+                  title={
+                    feedScoped()
+                      ? "Newest first while filtering by feed"
+                      : undefined
+                  }
+                >
                   <button
                     type="button"
                     role="radio"
-                    aria-checked={order() === "interest"}
-                    classList={{ active: order() === "interest" }}
+                    aria-checked={gridOrder() === "interest"}
+                    classList={{ active: gridOrder() === "interest" }}
+                    disabled={feedScoped()}
                     onClick={() => void selectOrder("interest")}
                   >
                     Front page
@@ -1678,8 +1765,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                   <button
                     type="button"
                     role="radio"
-                    aria-checked={order() === "chrono"}
-                    classList={{ active: order() === "chrono" }}
+                    aria-checked={gridOrder() === "chrono"}
+                    classList={{ active: gridOrder() === "chrono" }}
+                    disabled={feedScoped()}
                     onClick={() => void selectOrder("chrono")}
                   >
                     Latest
@@ -1734,9 +1822,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                 }}
               >
                 <Icon name="tag" size={18} />
-                <span>Filter by tag</span>
-                <Show when={selectedTag()}>
-                  {(tag) => <span class="mobile-active-tag">#{tag()}</span>}
+                <span>Filter by tag or feed</span>
+                <Show when={scope()}>
+                  {(activeScope) => (
+                    <span class="mobile-active-tag">
+                      {activeScope().kind === "tag"
+                        ? `#${activeScope().value}`
+                        : activeFeedTitle()}
+                    </span>
+                  )}
                 </Show>
               </button>
               <button
@@ -1828,10 +1922,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             fallback={
               mode() === "archive" ? (
                 <ArchiveEmpty />
-              ) : selectedTag() ? (
+              ) : scope() ? (
                 <FilteredEmpty
-                  tag={selectedTag()}
-                  onClear={() => void applyTag("")}
+                  scope={scope()}
+                  feedTitle={activeFeedTitle()}
+                  onClear={() => void applyScope(null)}
                 />
               ) : (
                 <ColdStart onImport={openFeedsAndSettings} />
@@ -1862,7 +1957,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               hasMore={cursor() !== ""}
               archive={mode() === "archive"}
               unreadOnly={unreadOnly()}
-              order={order()}
+              order={gridOrder()}
               readStateItems={items()}
               readAnchor={readAnchor()}
               linkActionID={linkActionID()}
@@ -1879,6 +1974,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               onCopy={copyLink}
               onOriginal={openOriginal}
               onRelated={openRelated}
+              onApplyFeed={(item) => void applyFeed(item.feed_id)}
               onMarkBelow={markBelow}
               onMarkStoryBelow={markStoryBelow}
               onExpandStory={(storyID) =>
@@ -1954,6 +2050,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                 queueEvent(item().item_id, { clicked_through: true })
               }
               onRelated={() => openRelated(item())}
+              onApplyFeed={() => void applyFeed(item().feed_id)}
               onRetry={() => {
                 api
                   .retryItem(item().item_id)
@@ -2147,11 +2244,17 @@ function ArchiveEmpty() {
   );
 }
 
-function FilteredEmpty(props: { tag: string; onClear(): void }) {
+function FilteredEmpty(props: {
+  scope: GridScope;
+  feedTitle: string;
+  onClear(): void;
+}) {
+  const label = () =>
+    props.scope?.kind === "tag" ? `#${props.scope.value}` : props.feedTitle;
   return (
     <section class="archive-empty">
-      <h1>No items in #{props.tag}</h1>
-      <p>This tag has no visible items in the current seven-day window.</p>
+      <h1>No items in {label()}</h1>
+      <p>This filter has no visible items in the current seven-day window.</p>
       <button type="button" class="original-cta" onClick={props.onClear}>
         Show all feeds
       </button>

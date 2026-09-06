@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { effectiveGridOrder } from "../grid-scope";
 import { appCommand, gridCommand, readerCommand } from "./keyboard";
 
 describe("keyboard map", () => {
@@ -73,5 +74,13 @@ describe("keyboard map", () => {
   it("maps unread globally so it remains available without a mounted grid", () => {
     expect(appCommand("a")).toBe("toggle-unread");
     expect(gridCommand("a")).toBeUndefined();
+  });
+
+  it("forces chronological order for a feed scope and restores the preference when cleared", () => {
+    const preference = "interest" as const;
+    expect(
+      effectiveGridOrder(preference, { kind: "feed", value: "daily" }),
+    ).toBe("chrono");
+    expect(effectiveGridOrder(preference, null)).toBe("interest");
   });
 });

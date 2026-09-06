@@ -96,7 +96,11 @@ function GridHeaderFixture() {
       </div>
       <span class="header-spacer" />
       <div class="chrome-group chrome-group--icons">
-        <button type="button" class="chrome-icon" aria-label="Filter by tag">
+        <button
+          type="button"
+          class="chrome-icon"
+          aria-label="Filter by tag or feed"
+        >
           <Icon name="tag" />
         </button>
         <button type="button" class="chrome-icon" aria-label="Search">
@@ -159,6 +163,7 @@ function ReaderFixture() {
       onCopy={() => undefined}
       onOriginal={() => undefined}
       onRelated={() => undefined}
+      onApplyFeed={() => undefined}
       onRetry={() => undefined}
       onDwell={() => undefined}
     />

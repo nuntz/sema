@@ -63,7 +63,7 @@ describe("read state client", () => {
 });
 
 describe("story client", () => {
-  it("maps tags and excludes rendered stories from item pages", async () => {
+  it("maps tag and feed scopes and excludes rendered stories from item pages", async () => {
     const request = vi.fn(async (input: RequestInfo | URL) =>
       input.toString().includes("/stories")
         ? new Response(JSON.stringify({ stories: [] }), {
@@ -78,12 +78,25 @@ describe("story client", () => {
     vi.stubGlobal("fetch", request);
 
     const client = new APIClient();
-    await client.stories("untagged", true);
-    await client.items("interest", "cursor", true, "untagged", true);
+    await client.stories({ kind: "tag", value: "untagged" }, true);
+    await client.items(
+      "interest",
+      "cursor",
+      true,
+      { kind: "tag", value: "untagged" },
+      true,
+    );
+    await client.stories({ kind: "feed", value: "feed/id" });
+    await client.items("chrono", "", false, {
+      kind: "feed",
+      value: "feed/id",
+    });
 
     expect(request.mock.calls.map(([path]) => path)).toEqual([
       "/api/stories?include_read=true&tag=__untagged",
       "/api/items?order=interest&limit=100&cursor=cursor&include_read=true&tag=__untagged&exclude_stories=true",
+      "/api/stories?feed=feed%2Fid",
+      "/api/items?order=chrono&limit=100&feed=feed%2Fid",
     ]);
   });
 });

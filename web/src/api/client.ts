@@ -1,6 +1,7 @@
 import type {
   Feed,
   FeedCandidate,
+  GridScope,
   HeartResponse,
   ItemsResponse,
   MeResponse,
@@ -72,7 +73,7 @@ export class APIClient {
   }
 
   patchMe(
-    patch: Partial<Pick<Profile, "order_pref" | "tag_pref">>,
+    patch: Partial<Pick<Profile, "order_pref" | "tag_pref" | "feed_pref">>,
     keepalive = false,
   ): Promise<void> {
     return this.request("/me", {
@@ -86,21 +87,34 @@ export class APIClient {
     order: Order,
     cursor = "",
     includeRead = false,
-    tag = "",
+    scope: GridScope = null,
     excludeStories = false,
   ): Promise<ItemsResponse> {
     const params = new URLSearchParams({ order, limit: "100" });
     if (cursor) params.set("cursor", cursor);
     if (includeRead) params.set("include_read", "true");
-    if (tag) params.set("tag", tag === "untagged" ? "__untagged" : tag);
+    if (scope?.kind === "tag")
+      params.set(
+        "tag",
+        scope.value === "untagged" ? "__untagged" : scope.value,
+      );
+    if (scope?.kind === "feed") params.set("feed", scope.value);
     if (excludeStories) params.set("exclude_stories", "true");
     return this.request(`/items?${params}`);
   }
 
-  stories(tag = "", includeRead = false): Promise<StoriesResponse> {
+  stories(
+    scope: GridScope = null,
+    includeRead = false,
+  ): Promise<StoriesResponse> {
     const params = new URLSearchParams();
     if (includeRead) params.set("include_read", "true");
-    if (tag) params.set("tag", tag === "untagged" ? "__untagged" : tag);
+    if (scope?.kind === "tag")
+      params.set(
+        "tag",
+        scope.value === "untagged" ? "__untagged" : scope.value,
+      );
+    if (scope?.kind === "feed") params.set("feed", scope.value);
     const query = params.size > 0 ? `?${params}` : "";
     return this.request(`/stories${query}`);
   }
