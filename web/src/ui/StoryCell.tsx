@@ -15,6 +15,7 @@ interface StoryCellProps {
   row: LayoutRow;
   focusedID: string;
   readContext: ReadStateContext;
+  pressed: boolean;
   onExpand(storyID: string): void;
   onFocus(id: string): void;
   onOpenLead(story: Story): void;
@@ -73,6 +74,7 @@ export function StoryCell(props: StoryCellProps) {
         "story-card": editorial(),
         focused: props.focusedID === focusID(),
         read: cellReadVisuals().dimmed,
+        pressed: props.pressed,
         compact: editorial() && compactEditorial(),
         "all-items-cell": props.readContext === "all-items",
         "no-media": !lead()?.media_url,

@@ -53,6 +53,7 @@ import {
   longPressReady,
   moveLongPress,
 } from "./touch-gestures";
+import { useSheetDrag } from "./use-sheet-drag";
 
 interface GridProps {
   items: Item[];
@@ -115,12 +116,12 @@ export function Grid(props: GridProps) {
   let scrollIdle: number | undefined;
   let goTimer: number | undefined;
   let longPressTimer: number | undefined;
+  let pressTimer: number | undefined;
   let longPress: LongPressGesture | undefined;
   let longPressItem: Item | undefined;
   let longPressStory: Story | undefined;
   let suppressOpenID = "";
   let sheetPanel!: HTMLElement;
-  let sheetStartY = 0;
   let pullStartY = 0;
   let pullTracking = false;
   let pullWasReady = false;
@@ -138,7 +139,7 @@ export function Grid(props: GridProps) {
   );
   const [sheetItem, setSheetItem] = createSignal<Item>();
   const [sheetStory, setSheetStory] = createSignal<Story>();
-  const [sheetOffset, setSheetOffset] = createSignal(0);
+  const [pressedID, setPressedID] = createSignal("");
   const [pullDistance, setPullDistance] = createSignal(0);
   const [refreshState, setRefreshState] = createSignal<
     "idle" | "pulling" | "ready" | "fetching" | "landed" | "up-to-date"
@@ -292,20 +293,21 @@ export function Grid(props: GridProps) {
 
   const cancelLongPress = () => {
     window.clearTimeout(longPressTimer);
+    window.clearTimeout(pressTimer);
     longPressTimer = undefined;
+    pressTimer = undefined;
     if (longPress) longPress.cancelled = true;
     longPress = undefined;
     longPressItem = undefined;
     longPressStory = undefined;
+    setPressedID("");
   };
 
   const openSheet = (item: Item, story?: Story) => {
     cancelLongPress();
     props.onFocus(story ? `story:${story.story_id}` : item.item_id);
-    setSheetOffset(0);
     if (!sheetItem())
       pushOverlay("action-sheet", () => {
-        setSheetOffset(0);
         setSheetItem();
         setSheetStory();
       });
@@ -317,7 +319,6 @@ export function Grid(props: GridProps) {
   const closeSheet = () => {
     if (!sheetItem()) return;
     closeOverlay("action-sheet");
-    setSheetOffset(0);
     setSheetItem();
     setSheetStory();
   };
@@ -327,20 +328,10 @@ export function Grid(props: GridProps) {
     action();
   };
 
-  const startSheetDrag = (event: PointerEvent) => {
-    if (event.pointerType === "touch") sheetStartY = event.clientY;
-  };
-
-  const moveSheetDrag = (event: PointerEvent) => {
-    if (!sheetStartY || event.pointerType !== "touch") return;
-    setSheetOffset(Math.max(0, event.clientY - sheetStartY));
-  };
-
-  const finishSheetDrag = () => {
-    if (sheetOffset() > (sheetPanel?.clientHeight ?? 320) * 0.3) closeSheet();
-    else setSheetOffset(0);
-    sheetStartY = 0;
-  };
+  const sheetDrag = useSheetDrag({
+    panel: () => sheetPanel,
+    onDismiss: closeSheet,
+  });
 
   const clearRefreshNotice = () => {
     window.clearTimeout(refreshNoticeTimer);
@@ -407,6 +398,10 @@ export function Grid(props: GridProps) {
     longPress = beginLongPress(event.clientX, event.clientY, performance.now());
     longPressItem = item;
     longPressStory = story;
+    const id = story ? `story:${story.story_id}` : item.item_id;
+    pressTimer = window.setTimeout(() => {
+      if (longPress && !longPress.cancelled) setPressedID(id);
+    }, 80);
     longPressTimer = window.setTimeout(() => {
       if (
         longPress &&
@@ -545,6 +540,7 @@ export function Grid(props: GridProps) {
       window.clearTimeout(scrollIdle);
       window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
+      window.clearTimeout(pressTimer);
       window.clearTimeout(refreshNoticeTimer);
     });
   });
@@ -905,6 +901,7 @@ export function Grid(props: GridProps) {
                         row={row}
                         focusedID={props.focusedID}
                         readContext={readContext()}
+                        pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.onExpandStory?.(id)}
                         onFocus={props.onFocus}
                         onOpenLead={openStoryLead}
@@ -961,6 +958,7 @@ export function Grid(props: GridProps) {
                         "sub-cell": row.kind === "span" && cell.span !== 2,
                         "compact-cell": row.kind === "compact",
                         [`size-${cell.effectiveSize.toLowerCase()}`]: true,
+                        pressed: pressedID() === item().item_id,
                       }}
                       style={{
                         left: `${cell.left}px`,
@@ -1316,17 +1314,23 @@ export function Grid(props: GridProps) {
                 if (event.target === event.currentTarget) closeSheet();
               }}
             >
+              <div
+                class="sheet-scrim-visual"
+                aria-hidden="true"
+                style={{ opacity: sheetDrag.scrimOpacity() }}
+              />
               <section
                 ref={sheetPanel}
                 class="action-sheet"
+                classList={{ "sheet-dragging": sheetDrag.dragging() }}
                 role="dialog"
                 aria-modal="true"
                 aria-label={`Actions for ${item.title}`}
-                style={{ transform: `translateY(${sheetOffset()}px)` }}
-                onPointerDown={startSheetDrag}
-                onPointerMove={moveSheetDrag}
-                onPointerUp={finishSheetDrag}
-                onPointerCancel={finishSheetDrag}
+                style={{ transform: `translateY(${sheetDrag.offset()}px)` }}
+                onPointerDown={sheetDrag.onPointerDown}
+                onPointerMove={sheetDrag.onPointerMove}
+                onPointerUp={sheetDrag.onPointerUp}
+                onPointerCancel={sheetDrag.onPointerCancel}
               >
                 <i class="sheet-handle" aria-hidden="true" />
                 <header>

@@ -11,6 +11,7 @@ import { isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { ResponsiveImage } from "./ResponsiveImage";
+import { useSheetDrag } from "./use-sheet-drag";
 
 export function RelatedPanel(props: {
   source: Item;
@@ -28,7 +29,15 @@ export function RelatedPanel(props: {
   onCopy(item: Item): void;
 }) {
   let body!: HTMLDivElement;
+  let panel!: HTMLElement;
   const [focusedID, setFocusedID] = createSignal("");
+  const sheetDrag = useSheetDrag({
+    panel: () => panel,
+    enabled: () => window.matchMedia("(max-width: 700px)").matches,
+    scrollTop: (target) =>
+      target instanceof Node && body?.contains(target) ? body.scrollTop : 0,
+    onDismiss: props.onClose,
+  });
 
   createEffect(() => {
     props.source.item_id;
@@ -98,13 +107,25 @@ export function RelatedPanel(props: {
         event.target === event.currentTarget && props.onClose()
       }
     >
+      <div
+        class="sheet-scrim-visual"
+        aria-hidden="true"
+        style={{ opacity: sheetDrag.scrimOpacity() }}
+      />
       <aside
+        ref={panel}
         class="related-panel"
+        classList={{ "sheet-dragging": sheetDrag.dragging() }}
+        style={{ transform: `translateY(${sheetDrag.offset()}px)` }}
         role="dialog"
         aria-modal="true"
         aria-label={`Similar to ${props.source.title}`}
+        onPointerDown={sheetDrag.onPointerDown}
+        onPointerMove={sheetDrag.onPointerMove}
+        onPointerUp={sheetDrag.onPointerUp}
+        onPointerCancel={sheetDrag.onPointerCancel}
       >
-        <i class="related-grabber" />
+        <i class="related-grabber" aria-hidden="true" />
         <header>
           <div>
             <small>SIMILAR</small>
