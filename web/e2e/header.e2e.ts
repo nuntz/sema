@@ -83,6 +83,70 @@ test("both desktop views use the same 56px mono control geometry", async ({
   }
 });
 
+test("responsive type scales preserve the UI floor and reader targets", async ({
+  page,
+}) => {
+  for (const [width, expected] of [
+    [
+      1544,
+      {
+        tokens: ["0.8125rem", "0.9375rem", "1.0625rem", "0.8125rem"],
+        chrome: "13px",
+        wordmark: "17px",
+        article: "21px",
+        title: "44px",
+      },
+    ],
+    [
+      390,
+      {
+        tokens: ["0.875rem", "1rem", "1.125rem", "0.875rem"],
+        chrome: "14px",
+        wordmark: "18px",
+        article: "19px",
+        title: "30px",
+      },
+    ],
+  ] as const) {
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, "grid", "loaded");
+    const gridType = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const fontSize = (selector: string) => {
+        const element = document.querySelector(selector);
+        if (!element) throw new Error(`Missing ${selector}`);
+        return getComputedStyle(element).fontSize;
+      };
+      return {
+        tokens: ["--type-xs", "--type-sm", "--type-md", "--type-chip"].map(
+          (token) => root.getPropertyValue(token).trim(),
+        ),
+        chrome: fontSize(".segmented__item"),
+        wordmark: fontSize(".app-mark > span"),
+      };
+    });
+    expect(gridType).toEqual({
+      tokens: expected.tokens,
+      chrome: expected.chrome,
+      wordmark: expected.wordmark,
+    });
+
+    await openFixture(page, "reader", "loaded");
+    await page.locator("#reader-last-line").waitFor();
+    const readerType = await page.evaluate(() => ({
+      article: getComputedStyle(
+        document.querySelector(".article-body") as Element,
+      ).fontSize,
+      title: getComputedStyle(document.querySelector(".article h1") as Element)
+        .fontSize,
+    }));
+    expect(readerType).toEqual({
+      article: expected.article,
+      title: expected.title,
+    });
+  }
+});
+
 for (const font of ["loaded", "blocked"] as const) {
   for (const width of [1280, 1366, 1544, 1920]) {
     test(`reader slot aligns at ${width}px with the webfont ${font}`, async ({
