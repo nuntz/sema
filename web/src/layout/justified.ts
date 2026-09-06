@@ -10,9 +10,12 @@ export interface LayoutCell {
   offsetY?: number;
   span?: 2;
   tall?: true;
+  mobileTile?: true;
+  mobileStoryCard?: true;
   headlineHeight?: number;
   headlineItemCount?: number;
   headlineRemaining?: number;
+  headlineExpanded?: true;
 }
 
 export interface LayoutRow {
@@ -20,7 +23,7 @@ export interface LayoutRow {
   height: number;
   top: number;
   gap: number;
-  kind: "span" | "tall" | "hero" | "pair" | "standard" | "compact";
+  kind: "span" | "tall" | "hero" | "pair" | "tile" | "standard" | "compact";
 }
 
 export interface JustifyOptions {
@@ -46,7 +49,10 @@ const mosaicMinimumCompanions = 3;
 const sizeFactor = { S: 0.8, M: 1.05, L: 1.6 } as const;
 const tallLargeFactor = 1.75;
 export const storyHeadlineHeight = 33;
+export const mobileStoryHeadlineHeight = 52;
+export const mobileStoryMoreHeight = 44;
 const storyLeadMinimumHeight = 120;
+const mobileLargeTileHeight = 196;
 
 function storyFor(item: Item): Story | undefined {
   return (item as LayoutItem).layoutStory;
@@ -558,6 +564,7 @@ export function justify(
   if (containerWidth < 700)
     return layoutStoryHeadlines(
       mobileRows(items, containerWidth, finalFeed, paginationOpen),
+      true,
     );
 
   const rows: LayoutRow[] = [];
@@ -712,9 +719,9 @@ function appendMobileLargeBand(
   rows: LayoutRow[],
   items: Item[],
   containerWidth: number,
-  kind: "tall" | "hero" | "pair",
+  kind: "tall" | "tile",
 ): void {
-  const height = kind === "hero" ? 208 : 246;
+  const height = kind === "tile" ? mobileLargeTileHeight : 246;
   const cells =
     items.length === 1
       ? cellsWithWidths(items, [containerWidth], 0, 0, height, mobileGap)
@@ -725,7 +732,19 @@ function appendMobileLargeBand(
           height,
           mobileGap,
         );
-  if (kind === "tall" && cells[0]) cells[0].tall = true;
+  if (kind === "tall" && cells[0]) {
+    cells[0].tall = true;
+    cells[0].mobileStoryCard = true;
+  }
+  if (kind === "tile") {
+    for (const cell of cells) {
+      cell.mobileTile = true;
+      if (!cell.story) continue;
+      cell.headlineHeight = 0;
+      cell.headlineItemCount = 0;
+      cell.headlineRemaining = 0;
+    }
+  }
   rows.push({
     cells,
     height,
@@ -741,19 +760,16 @@ function appendMobileLargeRun(
   containerWidth: number,
 ): void {
   let index = 0;
-  const firstPairPortrait =
-    items.length >= 2 && spanEligible(items[0]) && spanEligible(items[1]);
-  if (items.length % 2 === 1 || !firstPairPortrait) {
+  if (items.length % 2 === 1) {
     appendMobileLargeBand(rows, items.slice(0, 1), containerWidth, "tall");
     index = 1;
   }
   while (index + 1 < items.length) {
-    const pair = items.slice(index, index + 2);
     appendMobileLargeBand(
       rows,
-      pair,
+      items.slice(index, index + 2),
       containerWidth,
-      pair.every(spanEligible) ? "pair" : "hero",
+      "tile",
     );
     index += 2;
   }
@@ -868,19 +884,44 @@ function horizontalOverlap(left: LayoutCell, right: LayoutCell): boolean {
   );
 }
 
-function layoutStoryHeadlines(rows: LayoutRow[]): LayoutRow[] {
+function layoutStoryHeadlines(rows: LayoutRow[], mobile = false): LayoutRow[] {
   let top = 0;
   return rows.map((row) => {
     const cells = row.cells.map((cell) => ({ ...cell }));
     for (const cell of cells) {
       const story = cell.story;
       if (!story) continue;
+      if (cell.mobileTile) continue;
       const mode = (cell.item as LayoutItem).layoutHeadlineMode;
       if (!mode) continue;
       const headlineCount = Math.max(0, story.items.length - 1);
       if (headlineCount === 0) continue;
       const baseHeight = cell.height ?? row.height;
       if (mode === "collapsed") {
+        if (mobile) {
+          const availableHeight = Math.max(
+            0,
+            baseHeight - storyLeadMinimumHeight,
+          );
+          const allHeadlinesFit =
+            headlineCount * mobileStoryHeadlineHeight <= availableHeight;
+          const headlineItemCount = allHeadlinesFit
+            ? headlineCount
+            : Math.max(
+                0,
+                Math.floor(
+                  (availableHeight - mobileStoryMoreHeight) /
+                    mobileStoryHeadlineHeight,
+                ),
+              );
+          const headlineRemaining = headlineCount - headlineItemCount;
+          cell.headlineHeight =
+            headlineItemCount * mobileStoryHeadlineHeight +
+            (headlineRemaining > 0 ? mobileStoryMoreHeight : 0);
+          cell.headlineItemCount = headlineItemCount;
+          cell.headlineRemaining = headlineRemaining;
+          continue;
+        }
         const capacity = Math.max(
           0,
           Math.floor(
@@ -898,13 +939,16 @@ function layoutStoryHeadlines(rows: LayoutRow[]): LayoutRow[] {
         continue;
       }
 
-      const expandedHeight =
-        storyLeadMinimumHeight + headlineCount * storyHeadlineHeight;
+      const headlineHeight = mobile
+        ? headlineCount * mobileStoryHeadlineHeight + mobileStoryMoreHeight
+        : headlineCount * storyHeadlineHeight;
+      const expandedHeight = storyLeadMinimumHeight + headlineHeight;
       const growth = Math.max(0, expandedHeight - baseHeight);
       cell.height = baseHeight + growth;
-      cell.headlineHeight = headlineCount * storyHeadlineHeight;
+      cell.headlineHeight = headlineHeight;
       cell.headlineItemCount = headlineCount;
       cell.headlineRemaining = 0;
+      if (mobile) cell.headlineExpanded = true;
       if (growth === 0) continue;
       const baseBottom = (cell.offsetY ?? 0) + baseHeight;
       for (const companion of cells) {
@@ -946,9 +990,12 @@ function sameLayoutCell(left: LayoutCell, right: LayoutCell): boolean {
     left.offsetY === right.offsetY &&
     left.span === right.span &&
     left.tall === right.tall &&
+    left.mobileTile === right.mobileTile &&
+    left.mobileStoryCard === right.mobileStoryCard &&
     left.headlineHeight === right.headlineHeight &&
     left.headlineItemCount === right.headlineItemCount &&
-    left.headlineRemaining === right.headlineRemaining
+    left.headlineRemaining === right.headlineRemaining &&
+    left.headlineExpanded === right.headlineExpanded
   );
 }
 

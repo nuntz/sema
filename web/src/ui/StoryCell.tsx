@@ -39,7 +39,8 @@ export function StoryCell(props: StoryCellProps) {
   const showHeadlines = () => (props.cell.headlineHeight ?? 0) > 0;
   const cellHeight = () => props.cell.height ?? props.row.height;
   const leadHeight = () => cellHeight() - (props.cell.headlineHeight ?? 0);
-  const editorial = () => props.story.size === "L";
+  const editorial = () =>
+    props.story.size === "L" && props.cell.mobileTile !== true;
   const compactEditorial = () => leadHeight() < 230;
   const fullyRead = () => props.story.items.every((item) => item.read);
   const cellReadVisuals = createMemo(() =>
@@ -76,7 +77,13 @@ export function StoryCell(props: StoryCellProps) {
         focused: props.focusedID === focusID(),
         read: cellReadVisuals().dimmed,
         pressed: props.pressed,
-        compact: editorial() && compactEditorial(),
+        compact:
+          editorial() &&
+          props.cell.mobileStoryCard !== true &&
+          compactEditorial(),
+        "mobile-story-card": props.cell.mobileStoryCard === true,
+        "mobile-tile-cell": props.cell.mobileTile === true,
+        expanded: props.cell.headlineExpanded === true,
         "all-items-cell": props.readContext === "all-items",
         "no-media": !lead()?.media_url,
         "text-cell": !editorial() && !lead()?.media_url,
@@ -211,7 +218,15 @@ export function StoryCell(props: StoryCellProps) {
                   </PrimaryAction>
                 </Show>
                 <div class="story-badges">
-                  <span>{sourceLabel()}</span>
+                  <span class="story-source-label">{sourceLabel()}</span>
+                  <strong
+                    class="story-source-count"
+                    role="img"
+                    aria-label={`${props.story.source_count} sources`}
+                  >
+                    <Icon name="stack" size={13} />
+                    <b>{props.story.source_count}</b>
+                  </strong>
                   <em>top 10%</em>
                 </div>
                 <div class="cell-actions story-actions">
@@ -322,12 +337,15 @@ export function StoryCell(props: StoryCellProps) {
                     connector={item.connector}
                     imageURL={item.favicon_url}
                     title={item.feed_title}
-                    size={12}
+                    size={props.cell.mobileStoryCard ? 16 : 12}
                   />
-                  <span class="story-headline-feed">
-                    {item.feed_title || "Feed"}
+                  <span class="story-headline-copy">
+                    <span class="story-headline-feed">
+                      {item.feed_title || "Feed"}
+                      {"\u00a0\u00a0"}
+                    </span>
+                    <span class="story-headline-title">{item.title}</span>
                   </span>
-                  <span class="story-headline-title">{item.title}</span>
                   <time>{relativeTime(item.published_ts)}</time>
                 </PrimaryAction>
               );
@@ -340,6 +358,16 @@ export function StoryCell(props: StoryCellProps) {
               onClick={() => props.onExpand(props.story.story_id)}
             >
               +{remaining()} more
+            </button>
+          </Show>
+          <Show when={props.cell.headlineExpanded === true}>
+            <button
+              type="button"
+              class="story-more story-less"
+              onClick={() => props.onExpand(props.story.story_id)}
+            >
+              Show less
+              <Icon name="chevron-up" size={12} />
             </button>
           </Show>
         </div>

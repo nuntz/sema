@@ -929,7 +929,9 @@ export function Grid(props: GridProps) {
                   const condensedLarge = createMemo(
                     () =>
                       width() < 700 &&
-                      (row.kind === "hero" || row.kind === "pair"),
+                      (row.kind === "hero" ||
+                        row.kind === "pair" ||
+                        row.kind === "tile"),
                   );
                   const explanation = createMemo(() =>
                     condensedLarge() ? shortWhyText(item()) : whyText(item()),
@@ -957,6 +959,7 @@ export function Grid(props: GridProps) {
                         "tall-hero": cell.tall === true,
                         "hero-cell": row.kind === "hero",
                         "pair-cell": row.kind === "pair",
+                        "mobile-tile-cell": cell.mobileTile === true,
                         "sub-cell": row.kind === "span" && cell.span !== 2,
                         "compact-cell": row.kind === "compact",
                         [`size-${cell.effectiveSize.toLowerCase()}`]: true,
@@ -1007,7 +1010,9 @@ export function Grid(props: GridProps) {
                           <Icon
                             name="play"
                             size={
-                              row.kind === "hero" || row.kind === "pair"
+                              row.kind === "hero" ||
+                              row.kind === "pair" ||
+                              row.kind === "tile"
                                 ? 24
                                 : cell.span === 2
                                   ? 20

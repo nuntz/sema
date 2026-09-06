@@ -1980,7 +1980,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               onExpandStory={(storyID) =>
                 setExpandedStoryIDs((current) => {
                   const next = new Set(current);
-                  next.add(storyID);
+                  if (next.has(storyID)) next.delete(storyID);
+                  else next.add(storyID);
                   return next;
                 })
               }

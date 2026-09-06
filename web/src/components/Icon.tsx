@@ -7,6 +7,7 @@ import Check from "lucide-solid/icons/check";
 import ChevronDown from "lucide-solid/icons/chevron-down";
 import ChevronLeft from "lucide-solid/icons/chevron-left";
 import ChevronRight from "lucide-solid/icons/chevron-right";
+import ChevronUp from "lucide-solid/icons/chevron-up";
 import Clock from "lucide-solid/icons/clock";
 import Download from "lucide-solid/icons/download";
 import Ellipsis from "lucide-solid/icons/ellipsis";
@@ -81,6 +82,7 @@ const glyphs = {
   keep: Heart,
   "image-match": ImageIcon,
   "chevron-down": ChevronDown,
+  "chevron-up": ChevronUp,
   menu: Menu,
   discussion: MessageSquare,
   more: Ellipsis,

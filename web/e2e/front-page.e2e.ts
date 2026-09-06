@@ -117,6 +117,180 @@ async function stubFrontPage(
   });
 }
 
+test.describe("mobile front-page tile grammar", () => {
+  test.use({
+    viewport: { width: 393, height: 852 },
+    hasTouch: true,
+    isMobile: true,
+  });
+
+  test("renders one two-up grammar and expands the full-width lead card", async ({
+    page,
+  }) => {
+    const leadStory = {
+      story_id: "mobile-lead-story",
+      source_count: 4,
+      order_key: 0.99,
+      size: "L",
+      items: [
+        {
+          ...item(
+            "mobile-lead",
+            "lead",
+            "FBI Probes Service Selling 153M+ Drivers Licenses",
+            0.99,
+            "L",
+          ),
+          story_id: "mobile-lead-story",
+        },
+        ...[
+          ["mobile-related-one", "9to5Mac", "First related headline"],
+          ["mobile-related-two", "Techmeme", "Second related headline"],
+          ["mobile-related-three", "The Verge", "Third related headline"],
+        ].map(([itemID, feedID, title], index) => ({
+          ...item(itemID, feedID, title, 0.9 - index * 0.01, "S"),
+          story_id: "mobile-lead-story",
+        })),
+      ],
+    };
+    const imageTileStory = {
+      story_id: "mobile-image-tile-story",
+      source_count: 5,
+      order_key: 0.98,
+      size: "L",
+      items: [
+        {
+          ...item(
+            "mobile-image-tile",
+            "overworld",
+            "Until Dawn 2 Reveals Release Date in New Trailer",
+            0.98,
+            "L",
+          ),
+          story_id: "mobile-image-tile-story",
+        },
+        {
+          ...item(
+            "mobile-image-related",
+            "ign",
+            "Other game coverage",
+            0.8,
+            "S",
+          ),
+          story_id: "mobile-image-tile-story",
+        },
+      ],
+    };
+    const textTileStory = {
+      story_id: "mobile-text-tile-story",
+      source_count: 8,
+      order_key: 0.97,
+      size: "L",
+      items: [
+        {
+          ...item(
+            "mobile-text-tile",
+            "maps",
+            "Apple Maps changes name of Lake Ontario to Lake America",
+            0.97,
+            "L",
+          ),
+          story_id: "mobile-text-tile-story",
+          media_url: undefined,
+          media_w: undefined,
+          media_h: undefined,
+        },
+        {
+          ...item(
+            "mobile-text-related",
+            "mac",
+            "Other maps coverage",
+            0.79,
+            "S",
+          ),
+          story_id: "mobile-text-tile-story",
+        },
+      ],
+    };
+    await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
+    await stubFrontPage(
+      page,
+      [leadStory, imageTileStory, textTileStory],
+      [item("mobile-tail-one", "tail-one", "Tail one", 0.5, "M")],
+      [],
+    );
+
+    await page.goto("/");
+
+    const leadCard = page.locator('[data-story-id="mobile-lead-story"]');
+    await expect(leadCard).toHaveClass(/story-card/);
+    await expect(
+      leadCard.getByRole("img", { name: "4 sources" }),
+    ).toBeVisible();
+    await expect(leadCard.getByText("top 10%")).toBeHidden();
+    const collapsedHeadlines = leadCard.locator(".story-headline");
+    await expect(collapsedHeadlines).toHaveCount(1);
+    expect(
+      await collapsedHeadlines
+        .first()
+        .evaluate((element) => element.clientHeight),
+    ).toBeGreaterThanOrEqual(44);
+
+    for (const storyID of [
+      "mobile-image-tile-story",
+      "mobile-text-tile-story",
+    ]) {
+      const tile = page.locator(`[data-story-id="${storyID}"]`);
+      await expect(tile).toHaveClass(/mobile-tile-cell/);
+      await expect(tile).toHaveCSS("height", "196px");
+      await expect(tile.locator(".story-stack-badge")).toBeVisible();
+      await expect(tile.locator(".cell-age")).toBeVisible();
+      await expect(tile.locator(".story-headlines")).toHaveCount(0);
+    }
+
+    const tileRow = page.locator(".grid-row").filter({
+      has: page.locator('[data-story-id="mobile-image-tile-story"]'),
+    });
+    await tileRow.screenshot({ path: "/tmp/sema-mobile-grid-two-up.png" });
+    await leadCard.screenshot({
+      path: "/tmp/sema-mobile-lead-collapsed.png",
+    });
+
+    await leadCard.dispatchEvent("mouseover");
+    await expect(leadCard).toHaveClass(/focused/);
+    expect(
+      await leadCard.evaluate(
+        (element) => getComputedStyle(element).outlineStyle,
+      ),
+    ).toBe("none");
+
+    await leadCard.getByRole("button", { name: "+2 more" }).click();
+    await expect(leadCard.locator(".story-headline")).toHaveCount(3);
+    await expect(
+      leadCard.getByRole("button", { name: "Show less" }),
+    ).toBeVisible();
+    await expect(leadCard.locator(".story-headline-title")).toHaveText([
+      "First related headline",
+      "Second related headline",
+      "Third related headline",
+    ]);
+    await leadCard.screenshot({
+      path: "/tmp/sema-mobile-lead-expanded.png",
+    });
+
+    await leadCard.getByRole("button", { name: "Show less" }).click();
+    await expect(leadCard.locator(".story-headline")).toHaveCount(1);
+    await expect(
+      leadCard.getByRole("button", { name: "+2 more" }),
+    ).toBeVisible();
+
+    await page
+      .locator('[data-story-id="mobile-image-tile-story"] .cell-main')
+      .click();
+    await expect(page.locator(".reader-scroll")).toBeVisible();
+  });
+});
+
 test("holds below-floor stories until page 2 without moving painted cells", async ({
   page,
 }) => {
@@ -479,6 +653,8 @@ test("stories earn their position in the interest grid", async ({ page }) => {
     ).toBeLessThanOrEqual(width);
     await page.screenshot({ path: `/tmp/sema-front-merged-${width}.png` });
   }
+  await page.setViewportSize({ width: 768, height: 900 });
+  await expect(storyCell.locator(".story-lead")).toBeVisible();
 
   await page.evaluate(() => {
     document.addEventListener(
