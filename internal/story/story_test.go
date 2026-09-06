@@ -94,7 +94,7 @@ func TestRenderDemotionUnreadOrderingAndHiddenIDs(t *testing.T) {
 		"tagged-down": {{ItemID: "t1", FeedID: "a"}, {ItemID: "t2", FeedID: "x"}},
 		"read":        {{ItemID: "r1", FeedID: "a", Read: true}, {ItemID: "r2", FeedID: "b", Read: true}},
 	}
-	rendered, hidden := Render(rows, members, map[string]bool{"a": true, "b": true, "c": true}, true, domain.Model{})
+	rendered, hidden := Render(rows, members, map[string]bool{"a": true, "b": true, "c": true}, true, domain.Model{}, "")
 	if len(rendered) != 1 || rendered[0].StoryID != "broad" || rendered[0].SourceCount != 3 {
 		t.Fatalf("rendered = %#v", rendered)
 	}
@@ -117,12 +117,22 @@ func TestOrderKeyStoryOrderingAndSize(t *testing.T) {
 		"broad":  {{ItemID: "b1", FeedID: "a", Score: 1, Size: "M", PublishedTS: domain.Timestamp(now)}, {ItemID: "b2", FeedID: "b"}, {ItemID: "b3", FeedID: "c"}, {ItemID: "b4", FeedID: "d"}},
 		"newer":  {{ItemID: "x1", FeedID: "a", Score: 1, Size: "L", PublishedTS: domain.Timestamp(now.Add(time.Hour))}, {ItemID: "x2", FeedID: "b"}, {ItemID: "x3", FeedID: "c"}, {ItemID: "x4", FeedID: "d"}},
 	}
-	model := domain.Model{ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.4, P90: 1.5}}
-	rendered, _ := Render(rows, members, nil, false, model)
+	model := domain.Model{
+		ExplicitCount: 10,
+		SizeCutoffs:   &domain.SizeCutoffs{P60: 1.4, P90: 1.5},
+		TagSizeCutoffs: map[string]*domain.SizeCutoffs{
+			"tech": {P60: 1.2, P90: 1.3},
+		},
+	}
+	rendered, _ := Render(rows, members, nil, false, model, "")
 	if got := []string{rendered[0].StoryID, rendered[1].StoryID, rendered[2].StoryID}; got[0] != "narrow" || got[1] != "newer" || got[2] != "broad" {
 		t.Fatalf("order = %#v", got)
 	}
 	if math.Abs(rendered[0].OrderKey-1.32) > 1e-9 || rendered[0].Size != "M" {
 		t.Fatalf("narrow ordering = %#v", rendered[0])
+	}
+	tagged, _ := Render(rows, members, nil, false, model, "tech")
+	if tagged[0].StoryID != "narrow" || tagged[0].Size != "L" {
+		t.Fatalf("tag-sized story = %#v", tagged[0])
 	}
 }

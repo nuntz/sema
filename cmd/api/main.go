@@ -668,13 +668,21 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 		return s.failure("load feeds for item filtering", err)
 	}
+	tag := normalizedSizeTag(query["tag"])
 	excludeStories, err := parseBool(query["exclude_stories"], "exclude_stories")
 	if err != nil {
 		return badRequest(err)
 	}
+	var model domain.Model
+	if excludeStories || tag != "" {
+		model, err = s.loadRankingModel(ctx, userID)
+		if err != nil {
+			return s.failure("load ranking model", err)
+		}
+	}
 	var hidden map[string]bool
 	if excludeStories {
-		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead)
+		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag)
 		if err != nil {
 			return s.failure("render stories for item filtering", err)
 		}
@@ -692,6 +700,11 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
 		return s.failure("prepare items", err)
+	}
+	if tag != "" {
+		for index := range items {
+			items[index].Size = score.SizeFor(items[index].Score, model, tag)
+		}
 	}
 	payload := map[string]any{"items": items, "next_cursor": next}
 	if !includeRead && readAnchor != nil {
@@ -715,14 +728,19 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 		}
 		return s.failure("load feeds for story filtering", err)
 	}
-	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead)
+	tag := normalizedSizeTag(query["tag"])
+	model, err := s.loadRankingModel(ctx, userID)
+	if err != nil {
+		return s.failure("load ranking model", err)
+	}
+	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag)
 	if err != nil {
 		return s.failure("list stories", err)
 	}
 	return response(http.StatusOK, map[string]any{"stories": stories})
 }
 
-func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool) ([]storycluster.Rendered, map[string]bool, error) {
+func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string) ([]storycluster.Rendered, map[string]bool, error) {
 	rows, err := s.store.Stories(ctx, userID)
 	if err != nil {
 		return nil, nil, err
@@ -761,12 +779,16 @@ func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowe
 			}
 		}
 	}
-	model, modelErr := s.store.Model(ctx, userID)
-	if modelErr != nil && !errors.Is(modelErr, score.ErrModelNotFound) {
-		return nil, nil, modelErr
-	}
-	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model)
+	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model, tag)
 	return rendered, hidden, nil
+}
+
+func (s *server) loadRankingModel(ctx context.Context, userID string) (domain.Model, error) {
+	model, err := s.store.Model(ctx, userID)
+	if errors.Is(err, score.ErrModelNotFound) {
+		return domain.Model{}, nil
+	}
+	return model, err
 }
 
 func (s *server) getArchive(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
@@ -823,6 +845,14 @@ func (s *server) prepareItems(ctx context.Context, userID string, items []domain
 
 func parseIncludeRead(value string) (bool, error) {
 	return parseBool(value, "include_read")
+}
+
+func normalizedSizeTag(value string) string {
+	tag := strings.ToLower(strings.TrimSpace(value))
+	if tag == "__untagged" {
+		return ""
+	}
+	return tag
 }
 
 func parseBool(value, name string) (bool, error) {

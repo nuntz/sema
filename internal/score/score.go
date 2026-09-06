@@ -371,6 +371,16 @@ func Size(value float64, model domain.Model) string {
 	return "S"
 }
 
+func SizeFor(value float64, model domain.Model, tag string) string {
+	if tag != "" && model.ExplicitCount >= 10 {
+		if cutoffs := model.TagSizeCutoffs[tag]; cutoffs != nil {
+			model.SizeCutoffs = cutoffs
+			return Size(value, model)
+		}
+	}
+	return Size(value, model)
+}
+
 // QuantileCutoffs uses linearly interpolated sample quantiles. Interpolation
 // keeps a unique ten-item distribution at one item (10%) in the large bucket.
 func QuantileCutoffs(values []float64) *domain.SizeCutoffs {

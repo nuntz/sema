@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/nuntz/sema/internal/domain"
@@ -69,8 +70,18 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		return Result{}, err
 	}
 	feedTitles := make(map[string]string, len(feeds))
+	feedTags := make(map[string][]string, len(feeds))
 	for _, feed := range feeds {
 		feedTitles[feed.FeedID] = feed.Title
+		seenTags := make(map[string]bool, len(feed.Tags))
+		for _, rawTag := range feed.Tags {
+			tag := strings.ToLower(strings.TrimSpace(rawTag))
+			if tag == "" || seenTags[tag] {
+				continue
+			}
+			seenTags[tag] = true
+			feedTags[feed.FeedID] = append(feedTags[feed.FeedID], tag)
+		}
 	}
 	candidates := make([]score.Candidate, 0, len(signals))
 	for _, signal := range signals {
@@ -120,6 +131,22 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		items[index].Why = score.Why(calculated, vector, imageVector, items[index].FeedTitle, candidates)
 	}
 	model.SizeCutoffs = score.QuantileCutoffs(scores)
+	tagScores := make(map[string][]float64)
+	for index, item := range items {
+		for _, tag := range feedTags[item.FeedID] {
+			tagScores[tag] = append(tagScores[tag], scores[index])
+		}
+	}
+	model.TagSizeCutoffs = nil
+	for tag, values := range tagScores {
+		if len(values) < 10 {
+			continue
+		}
+		if model.TagSizeCutoffs == nil {
+			model.TagSizeCutoffs = make(map[string]*domain.SizeCutoffs)
+		}
+		model.TagSizeCutoffs[tag] = score.QuantileCutoffs(values)
+	}
 	for index := range items {
 		items[index].Size = score.Size(items[index].Score, model)
 	}

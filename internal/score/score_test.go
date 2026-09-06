@@ -227,6 +227,28 @@ func TestSizeFallsBackToFixedThresholds(t *testing.T) {
 	}
 }
 
+func TestSizeForUsesTagCutoffsAndFallsBackToGlobalSizing(t *testing.T) {
+	model := domain.Model{
+		ExplicitCount: 10,
+		SizeCutoffs:   &domain.SizeCutoffs{P60: 0.4, P90: 0.8},
+		TagSizeCutoffs: map[string]*domain.SizeCutoffs{
+			"tech": {P60: 0.1, P90: 0.2},
+		},
+	}
+	if got := SizeFor(0.3, model, "tech"); got != "L" {
+		t.Fatalf("tag size = %s, want L", got)
+	}
+	for _, tag := range []string{"", "missing"} {
+		if got, want := SizeFor(0.3, model, tag), Size(0.3, model); got != want {
+			t.Errorf("SizeFor with tag %q = %s, want global %s", tag, got, want)
+		}
+	}
+	model.ExplicitCount = 9
+	if got, want := SizeFor(0.3, model, "tech"), Size(0.3, model); got != want {
+		t.Errorf("low-signal tag size = %s, want global %s", got, want)
+	}
+}
+
 func TestVectorRoundTrip(t *testing.T) {
 	want := []float32{-1.25, 0, 3.5}
 	got := DecodeVector(EncodeVector(want))

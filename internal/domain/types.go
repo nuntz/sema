@@ -218,26 +218,27 @@ type SizeCutoffs struct {
 // partition-wide recompute; the normalized centroids and public counts are the
 // observable model described by the product contract.
 type Model struct {
-	PK                    string             `dynamodbav:"PK" json:"-"`
-	SK                    string             `dynamodbav:"SK" json:"-"`
-	LikedCentroid         []byte             `dynamodbav:"liked_centroid,omitempty" json:"-"`
-	DislikedCentroid      []byte             `dynamodbav:"disliked_centroid,omitempty" json:"-"`
-	FeedPrior             map[string]float64 `dynamodbav:"feed_prior,omitempty" json:"-"`
-	FeedSignalCount       map[string]int     `dynamodbav:"feed_signal_count,omitempty" json:"-"`
-	ExplicitCount         int                `dynamodbav:"explicit_count" json:"explicit_count"`
-	LikedCount            int                `dynamodbav:"liked_count" json:"liked_count"`
-	DislikedCount         int                `dynamodbav:"disliked_count" json:"disliked_count"`
-	ImplicitCount         int                `dynamodbav:"implicit_count" json:"implicit_count"`
-	SizeCutoffs           *SizeCutoffs       `dynamodbav:"size_cutoffs,omitempty" json:"size_cutoffs,omitempty"`
-	ComputedAt            string             `dynamodbav:"computed_at" json:"computed_at"`
-	Version               string             `dynamodbav:"version" json:"version"`
-	ReplayTS              string             `dynamodbav:"replay_ts,omitempty" json:"-"`
-	ReplayVersion         string             `dynamodbav:"replay_version,omitempty" json:"-"`
-	LikedImageCentroid    []byte             `dynamodbav:"liked_image_centroid,omitempty" json:"-"`
-	DislikedImageCentroid []byte             `dynamodbav:"disliked_image_centroid,omitempty" json:"-"`
-	LikedImageCount       int                `dynamodbav:"liked_image_count,omitempty" json:"liked_image_count,omitempty"`
-	DislikedImageCount    int                `dynamodbav:"disliked_image_count,omitempty" json:"disliked_image_count,omitempty"`
-	ImageVersion          string             `dynamodbav:"image_version,omitempty" json:"-"`
+	PK                    string                  `dynamodbav:"PK" json:"-"`
+	SK                    string                  `dynamodbav:"SK" json:"-"`
+	LikedCentroid         []byte                  `dynamodbav:"liked_centroid,omitempty" json:"-"`
+	DislikedCentroid      []byte                  `dynamodbav:"disliked_centroid,omitempty" json:"-"`
+	FeedPrior             map[string]float64      `dynamodbav:"feed_prior,omitempty" json:"-"`
+	FeedSignalCount       map[string]int          `dynamodbav:"feed_signal_count,omitempty" json:"-"`
+	ExplicitCount         int                     `dynamodbav:"explicit_count" json:"explicit_count"`
+	LikedCount            int                     `dynamodbav:"liked_count" json:"liked_count"`
+	DislikedCount         int                     `dynamodbav:"disliked_count" json:"disliked_count"`
+	ImplicitCount         int                     `dynamodbav:"implicit_count" json:"implicit_count"`
+	SizeCutoffs           *SizeCutoffs            `dynamodbav:"size_cutoffs,omitempty" json:"size_cutoffs,omitempty"`
+	TagSizeCutoffs        map[string]*SizeCutoffs `dynamodbav:"tag_size_cutoffs,omitempty" json:"tag_size_cutoffs,omitempty"`
+	ComputedAt            string                  `dynamodbav:"computed_at" json:"computed_at"`
+	Version               string                  `dynamodbav:"version" json:"version"`
+	ReplayTS              string                  `dynamodbav:"replay_ts,omitempty" json:"-"`
+	ReplayVersion         string                  `dynamodbav:"replay_version,omitempty" json:"-"`
+	LikedImageCentroid    []byte                  `dynamodbav:"liked_image_centroid,omitempty" json:"-"`
+	DislikedImageCentroid []byte                  `dynamodbav:"disliked_image_centroid,omitempty" json:"-"`
+	LikedImageCount       int                     `dynamodbav:"liked_image_count,omitempty" json:"liked_image_count,omitempty"`
+	DislikedImageCount    int                     `dynamodbav:"disliked_image_count,omitempty" json:"disliked_image_count,omitempty"`
+	ImageVersion          string                  `dynamodbav:"image_version,omitempty" json:"-"`
 
 	LikedSum            []byte         `dynamodbav:"liked_sum,omitempty" json:"-"`
 	DislikedSum         []byte         `dynamodbav:"disliked_sum,omitempty" json:"-"`

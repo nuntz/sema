@@ -266,6 +266,99 @@ func TestGetItemsFiltersByFeed(t *testing.T) {
 	}
 }
 
+func TestGetItemsAppliesTagCutoffsOnlyToTagScope(t *testing.T) {
+	now := time.Now().UTC()
+	marshal := func(value any) map[string]types.AttributeValue {
+		row, err := attributevalue.MarshalMap(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+	rows := []map[string]types.AttributeValue{
+		marshal(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(now, "tagged"), ItemID: "tagged", FeedID: "tagged-feed",
+			URL: "https://example.com/tagged", Title: "Tagged", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+			Score: 0.45, Size: "S", TTL: now.Add(time.Hour).Unix(),
+		}),
+		marshal(domain.Item{
+			PK: domain.UserPK("user"), SK: domain.ItemSK(now.Add(-time.Minute), "plain"), ItemID: "plain", FeedID: "plain-feed",
+			URL: "https://example.com/plain", Title: "Plain", PublishedTS: domain.Timestamp(now.Add(-time.Minute)), FetchedTS: domain.Timestamp(now),
+			Score: 0.45, Size: "S", TTL: now.Add(time.Hour).Unix(),
+		}),
+	}
+	model := marshal(domain.Model{
+		PK: domain.UserPK("user"), SK: "MODEL", ExplicitCount: 10,
+		SizeCutoffs: &domain.SizeCutoffs{P60: 0.1, P90: 0.2},
+		TagSizeCutoffs: map[string]*domain.SizeCutoffs{
+			"tech": {P60: 0.4, P90: 0.5},
+		},
+	})
+	modelLoads := 0
+	db := &apiDynamo{
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			if prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value; prefix == "R#" {
+				return &dynamodb.QueryOutput{}, nil
+			}
+			return &dynamodb.QueryOutput{Items: rows}, nil
+		},
+		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {}}}, nil
+		},
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			if input.Key["SK"].(*types.AttributeValueMemberS).Value != "MODEL" {
+				t.Fatalf("model key = %#v", input.Key)
+			}
+			modelLoads++
+			return &dynamodb.GetItemOutput{Item: model}, nil
+		},
+	}
+	server := &server{
+		store: store.New(db, nil, "table", "", ""),
+		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+			{FeedID: "tagged-feed", Tags: []string{"tech"}},
+			{FeedID: "plain-feed"},
+		}}},
+	}
+	get := func(query map[string]string) []domain.Item {
+		t.Helper()
+		got := server.getItems(context.Background(), "user", query)
+		if got.StatusCode != http.StatusOK {
+			t.Fatalf("query %#v returned %d: %s", query, got.StatusCode, got.Body)
+		}
+		var body struct {
+			Items []domain.Item `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Items
+	}
+
+	tagged := get(map[string]string{"tag": " TeCh "})
+	if len(tagged) != 1 || tagged[0].ItemID != "tagged" || tagged[0].Size != "M" {
+		t.Fatalf("tagged items = %#v", tagged)
+	}
+	for name, query := range map[string]map[string]string{
+		"all":      {},
+		"untagged": {"tag": "__untagged"},
+		"feed":     {"feed": "tagged-feed"},
+	} {
+		items := get(query)
+		if len(items) == 0 {
+			t.Fatalf("%s items = %#v", name, items)
+		}
+		for _, item := range items {
+			if item.Size != "S" {
+				t.Errorf("%s item %s size = %s, want stored S", name, item.ItemID, item.Size)
+			}
+		}
+	}
+	if modelLoads != 1 {
+		t.Fatalf("model loads = %d, want one tagged-request load", modelLoads)
+	}
+}
+
 func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 	server := &server{}
 	query := map[string]string{"tag": "tech", "feed": "alpha"}

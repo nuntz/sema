@@ -3,6 +3,7 @@ package rescore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -217,6 +218,55 @@ func TestRescoreDerivesCutoffsFromFreshScoresBeforeBucketing(t *testing.T) {
 	}
 	if counts["S"] != 6 || counts["M"] != 3 || counts["L"] != 1 {
 		t.Fatalf("bucket counts = %#v, want S=6 M=3 L=1", counts)
+	}
+}
+
+func TestRescoreBuildsCutoffsForTagsWithAtLeastTenScoredItems(t *testing.T) {
+	now := time.Date(2026, 8, 23, 9, 0, 0, 0, time.UTC)
+	vector := score.EncodeVector([]float32{1, 0})
+	items := make([]domain.Item, 12)
+	for index := range items {
+		feedID := "enough"
+		if index >= 10 {
+			feedID = "few"
+		}
+		published := now.Add(-time.Duration(index) * time.Hour)
+		items[index] = domain.Item{
+			PK: "U#user", SK: domain.ItemSK(published, fmt.Sprintf("item-%d", index)), ItemID: fmt.Sprintf("item-%d", index),
+			FeedID: feedID, PublishedTS: domain.Timestamp(published), Vector: vector,
+		}
+	}
+	repository := &fakeRepository{
+		model: domain.Model{PK: "U#user", SK: "MODEL", Version: "v"},
+		feeds: []domain.Feed{
+			{FeedID: "enough", Tags: []string{"shared", "enough"}},
+			{FeedID: "few", Tags: []string{"shared", "few"}},
+		},
+		items: items,
+	}
+	if _, err := (&Engine{Repository: repository, Version: "v", Now: func() time.Time { return now }}).RunUser(context.Background(), "user", true); err != nil {
+		t.Fatal(err)
+	}
+
+	allScores := make([]float64, 0, len(repository.replacements))
+	enoughScores := make([]float64, 0, 10)
+	for _, item := range repository.replacements {
+		allScores = append(allScores, item.Score)
+		if item.FeedID == "enough" {
+			enoughScores = append(enoughScores, item.Score)
+		}
+	}
+	assertCutoffs := func(name string, got, want *domain.SizeCutoffs) {
+		t.Helper()
+		if got == nil || want == nil || math.Abs(got.P60-want.P60) > 1e-12 || math.Abs(got.P90-want.P90) > 1e-12 {
+			t.Errorf("%s cutoffs = %#v, want %#v", name, got, want)
+		}
+	}
+	assertCutoffs("global", repository.model.SizeCutoffs, score.QuantileCutoffs(allScores))
+	assertCutoffs("shared", repository.model.TagSizeCutoffs["shared"], score.QuantileCutoffs(allScores))
+	assertCutoffs("enough", repository.model.TagSizeCutoffs["enough"], score.QuantileCutoffs(enoughScores))
+	if _, ok := repository.model.TagSizeCutoffs["few"]; ok {
+		t.Fatalf("undersized tag cutoffs = %#v", repository.model.TagSizeCutoffs["few"])
 	}
 }
 

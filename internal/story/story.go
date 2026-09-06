@@ -112,7 +112,7 @@ func OrderKey(lead domain.Item, sourceCount int) float64 {
 	return lead.Score * (1 + 0.10*float64(breadth))
 }
 
-func Render(stories []domain.Story, members map[string][]domain.Item, allowed map[string]bool, unreadOnly bool, model domain.Model) ([]Rendered, map[string]bool) {
+func Render(stories []domain.Story, members map[string][]domain.Item, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string) ([]Rendered, map[string]bool) {
 	rendered := make([]Rendered, 0, len(stories))
 	hidden := make(map[string]bool)
 	for _, row := range stories {
@@ -146,7 +146,7 @@ func Render(stories []domain.Story, members map[string][]domain.Item, allowed ma
 			hidden[item.ItemID] = true
 		}
 		orderKey := OrderKey(lead, sourceCount)
-		size := score.Size(orderKey, model)
+		size := score.SizeFor(orderKey, model, tag)
 		if size == "S" {
 			size = "M"
 		}
