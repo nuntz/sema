@@ -46,6 +46,7 @@ import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
 import { StoryCell } from "./StoryCell";
+import { sheetHeadlineSlice } from "./story-layout";
 import {
   beginLongPress,
   LONG_PRESS_MS,
@@ -332,6 +333,10 @@ export function Grid(props: GridProps) {
   const sheetDrag = useSheetDrag({
     panel: () => sheetPanel,
     onDismiss: closeSheet,
+    scrollTop: (target) => {
+      if (!(target instanceof Element)) return;
+      return target.closest<HTMLElement>(".sheet-headlines")?.scrollTop;
+    },
   });
 
   const clearRefreshNotice = () => {
@@ -1361,6 +1366,61 @@ export function Grid(props: GridProps) {
                     {relativeTime(item.published_ts)}
                   </span>
                 </header>
+                <Show when={sheetStory()} keyed>
+                  {(story) => {
+                    const headlines = sheetHeadlineSlice(story);
+                    return (
+                      <Show when={story.items.length > 1}>
+                        <div class="sheet-headlines">
+                          <For each={headlines.items}>
+                            {(headline) => (
+                              <button
+                                type="button"
+                                class="sheet-headline"
+                                classList={{ read: headline.read }}
+                                onClick={() =>
+                                  runSheetAction(() => props.onOpen(headline))
+                                }
+                              >
+                                <SourceBadge
+                                  connector={headline.connector}
+                                  imageURL={headline.favicon_url}
+                                  title={headline.feed_title}
+                                  size={16}
+                                />
+                                <span class="story-headline-copy">
+                                  <span class="story-headline-feed">
+                                    {headline.feed_title || "Feed"}
+                                    {"\u00a0\u00a0"}
+                                  </span>
+                                  <span class="story-headline-title">
+                                    {headline.title}
+                                  </span>
+                                </span>
+                                <time>
+                                  {relativeTime(headline.published_ts)}
+                                </time>
+                              </button>
+                            )}
+                          </For>
+                          <Show when={headlines.remaining > 0}>
+                            <button
+                              type="button"
+                              class="sheet-headline sheet-headline-more"
+                              onClick={() =>
+                                runSheetAction(() =>
+                                  props.onOpenStoryLead?.(story),
+                                )
+                              }
+                            >
+                              +{headlines.remaining} more
+                            </button>
+                          </Show>
+                        </div>
+                      </Show>
+                    );
+                  }}
+                </Show>
                 <Show when={sheetStory() && !props.archive}>
                   <button
                     type="button"

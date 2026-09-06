@@ -52,7 +52,7 @@ export function StoryCell(props: StoryCellProps) {
     const target = event.target as HTMLElement;
     if (
       target.closest(
-        ".story-headlines, .story-actions, .cell-actions, .story-more",
+        ".story-headlines, .story-actions, .cell-actions, .story-more, .story-stack-badge",
       )
     )
       return;
@@ -145,14 +145,37 @@ export function StoryCell(props: StoryCellProps) {
                       <Icon name="keep" size={14} filled={true} />
                     </span>
                   </Show>
-                  <span
-                    class="story-stack-badge"
-                    role="img"
-                    aria-label={`${props.story.source_count} sources`}
+                  <Show
+                    when={
+                      props.cell.mobileTile === true &&
+                      props.story.items.length > 1
+                    }
+                    fallback={
+                      <span
+                        class="story-stack-badge"
+                        role="img"
+                        aria-label={`${props.story.source_count} sources`}
+                      >
+                        <Icon name="stack" size={13} />
+                        <b>{props.story.source_count}</b>
+                      </span>
+                    }
                   >
-                    <Icon name="stack" size={13} />
-                    <b>{props.story.source_count}</b>
-                  </span>
+                    <button
+                      type="button"
+                      class="story-stack-badge"
+                      aria-label={`${props.story.source_count} sources, show headlines`}
+                      aria-haspopup="dialog"
+                      onPointerDown={(event) => event.stopPropagation()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        props.onMore(props.story);
+                      }}
+                    >
+                      <Icon name="stack" size={13} />
+                      <b>{props.story.source_count}</b>
+                    </button>
+                  </Show>
                   <PrimaryAction
                     item={item}
                     class="cell-main"

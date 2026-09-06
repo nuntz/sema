@@ -179,6 +179,26 @@ test.describe("mobile front-page tile grammar", () => {
           ),
           story_id: "mobile-image-tile-story",
         },
+        {
+          ...item(
+            "mobile-image-related-two",
+            "gamespot",
+            "Release date analysis",
+            0.79,
+            "S",
+          ),
+          story_id: "mobile-image-tile-story",
+        },
+        {
+          ...item(
+            "mobile-image-related-three",
+            "polygon",
+            "What the new trailer reveals",
+            0.78,
+            "S",
+          ),
+          story_id: "mobile-image-tile-story",
+        },
       ],
     };
     const textTileStory = {
@@ -212,10 +232,62 @@ test.describe("mobile front-page tile grammar", () => {
         },
       ],
     };
+    const singleSourceStory = {
+      story_id: "mobile-single-source-story",
+      source_count: 1,
+      order_key: 0.96,
+      size: "L",
+      items: [
+        {
+          ...item(
+            "mobile-single-source",
+            "solo",
+            "A single-source story",
+            0.96,
+            "L",
+          ),
+          story_id: "mobile-single-source-story",
+        },
+      ],
+    };
+    const extraTileStory = {
+      story_id: "mobile-extra-tile-story",
+      source_count: 2,
+      order_key: 0.95,
+      size: "L",
+      items: [
+        {
+          ...item(
+            "mobile-extra-tile",
+            "extra",
+            "Another tile story",
+            0.95,
+            "L",
+          ),
+          story_id: "mobile-extra-tile-story",
+        },
+        {
+          ...item(
+            "mobile-extra-related",
+            "extra-related",
+            "Another related headline",
+            0.77,
+            "S",
+          ),
+          story_id: "mobile-extra-tile-story",
+        },
+      ],
+    };
     await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
     await stubFrontPage(
       page,
-      [leadStory, imageTileStory, textTileStory],
+      [
+        leadStory,
+        imageTileStory,
+        textTileStory,
+        singleSourceStory,
+        extraTileStory,
+      ],
       [item("mobile-tail-one", "tail-one", "Tail one", 0.5, "M")],
       [],
     );
@@ -247,6 +319,25 @@ test.describe("mobile front-page tile grammar", () => {
       await expect(tile.locator(".cell-age")).toBeVisible();
       await expect(tile.locator(".story-headlines")).toHaveCount(0);
     }
+    const sourcesButton = page.getByRole("button", {
+      name: "5 sources, show headlines",
+    });
+    const sourcesButtonBox = await sourcesButton.boundingBox();
+    expect(sourcesButtonBox?.width).toBeGreaterThanOrEqual(44);
+    expect(sourcesButtonBox?.height).toBeGreaterThanOrEqual(44);
+    const singleSourceTile = page.locator(
+      '[data-story-id="mobile-single-source-story"]',
+    );
+    await expect(
+      singleSourceTile.getByRole("button", {
+        name: "1 sources, show headlines",
+      }),
+    ).toHaveCount(0);
+    expect(
+      await singleSourceTile
+        .locator(".story-stack-badge")
+        .evaluate((element) => element.tagName),
+    ).toBe("SPAN");
 
     const tileRow = page.locator(".grid-row").filter({
       has: page.locator('[data-story-id="mobile-image-tile-story"]'),
@@ -284,10 +375,36 @@ test.describe("mobile front-page tile grammar", () => {
       leadCard.getByRole("button", { name: "+2 more" }),
     ).toBeVisible();
 
-    await page
-      .locator('[data-story-id="mobile-image-tile-story"] .cell-main')
-      .click();
+    await sourcesButton.click();
+    await expect(page.locator(".reader-scroll")).toHaveCount(0);
+    const sheet = page.getByRole("dialog", {
+      name: "Actions for Until Dawn 2 Reveals Release Date in New Trailer",
+    });
+    await expect(sheet).toBeVisible();
+    await expect(sheet).toContainText("5 sources · Feed overworld · 1d");
+    const sheetHeadlines = sheet.locator(".sheet-headline");
+    await expect(sheetHeadlines).toHaveCount(3);
+    await expect(sheetHeadlines.locator(".story-headline-feed")).toHaveText([
+      "Feed ign",
+      "Feed gamespot",
+      "Feed polygon",
+    ]);
+    await expect(sheetHeadlines.locator(".story-headline-title")).toHaveText([
+      "Other game coverage",
+      "Release date analysis",
+      "What the new trailer reveals",
+    ]);
+    await expect(sheetHeadlines.locator("time")).toHaveText(["1d", "1d", "1d"]);
+    await sheet.screenshot({
+      path: "/tmp/sema-mobile-story-headlines-sheet.png",
+    });
+
+    await sheetHeadlines.nth(1).click();
+    await expect(sheet).toHaveCount(0);
     await expect(page.locator(".reader-scroll")).toBeVisible();
+    await expect(page.locator(".article h1")).toHaveText(
+      "Release date analysis",
+    );
   });
 });
 
@@ -424,18 +541,31 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
     "Medium story lead",
   );
   await expect(storyCell.locator(".cell-meta")).toContainText("Feed one");
-  await expect(storyCell.getByLabel("2 sources")).toBeVisible();
+  const storyBadge = storyCell.getByLabel("2 sources");
+  await expect(storyBadge).toBeVisible();
   await expect(storyCell.locator(".story-badges")).toHaveCount(0);
   await expect(storyCell.locator(".cell-rank")).toHaveCount(0);
   await expect(storyCell.locator(".story-headlines")).toHaveCount(0);
   await page.screenshot({ path: "/tmp/sema-medium-story.png" });
 
   await storyCell.hover();
+  await expect(storyBadge).toHaveCSS("opacity", "0");
+  await storyBadge.click({ force: true });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await storyCell.getByRole("button", { name: "More actions" }).click();
   const sheet = page.getByRole("dialog", {
     name: "Actions for Medium story lead",
   });
   await expect(sheet).toContainText("2 sources");
+  const sheetHeadline = sheet.locator(".sheet-headline");
+  await expect(sheetHeadline).toHaveCount(1);
+  await expect(sheetHeadline.locator(".story-headline-feed")).toHaveText(
+    "Feed two",
+  );
+  await expect(sheetHeadline.locator(".story-headline-title")).toHaveText(
+    "Other coverage",
+  );
+  await expect(sheetHeadline.locator("time")).toHaveText("1d");
   await sheet.getByRole("button", { name: "Bury" }).click();
   await expect
     .poll(() => signals)
