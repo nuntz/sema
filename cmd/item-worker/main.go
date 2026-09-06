@@ -613,7 +613,7 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 		}
 		candidates = append(candidates, storycluster.Candidate{Item: candidate, Similarity: similarity})
 	}
-	metrics["story_candidates"] = float64(len(candidates))
+	metrics["StoryCandidates"] = float64(len(candidates))
 	if len(candidates) == 0 {
 		return metrics, nil
 	}
@@ -622,7 +622,7 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 			return metrics, err
 		}
 		item.StoryID = storyID
-		metrics["story_joined"] = 1
+		metrics["StoryJoined"] = 1
 		return metrics, nil
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -645,7 +645,7 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 		return metrics, err
 	}
 	item.StoryID = storyID
-	metrics["story_created"] = 1
+	metrics["StoryCreated"] = 1
 	return metrics, nil
 }
 

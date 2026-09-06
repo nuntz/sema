@@ -150,7 +150,7 @@ func TestAssignStoryCreatesAndJoins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newItem.StoryID != "founder" || repository.putStory == nil || repository.putStory.TTL != founder.TTL || repository.setStoryItem != "founder" || metrics["story_created"] != 1 || metrics["story_candidates"] != 1 {
+	if newItem.StoryID != "founder" || repository.putStory == nil || repository.putStory.TTL != founder.TTL || repository.setStoryItem != "founder" || metrics["StoryCreated"] != 1 || metrics["StoryCandidates"] != 1 {
 		t.Fatalf("item = %#v, story = %#v, metrics = %#v", newItem, repository.putStory, metrics)
 	}
 
@@ -163,7 +163,7 @@ func TestAssignStoryCreatesAndJoins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newItem.StoryID != "existing-story" || repository.addedStoryID != "existing-story" || repository.addedItemID != "new" || metrics["story_joined"] != 1 {
+	if newItem.StoryID != "existing-story" || repository.addedStoryID != "existing-story" || repository.addedItemID != "new" || metrics["StoryJoined"] != 1 {
 		t.Fatalf("join item = %#v, store = %#v, metrics = %#v", newItem, repository, metrics)
 	}
 }
