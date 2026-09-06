@@ -41,6 +41,7 @@ import {
   moveFrontPageFocus,
 } from "./front-page";
 import { gridCommand } from "./keyboard";
+import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
@@ -299,12 +300,20 @@ export function Grid(props: GridProps) {
     cancelLongPress();
     props.onFocus(story ? `story:${story.story_id}` : item.item_id);
     setSheetOffset(0);
+    if (!sheetItem())
+      pushOverlay("action-sheet", () => {
+        setSheetOffset(0);
+        setSheetItem();
+        setSheetStory();
+      });
     setSheetItem(item);
     setSheetStory(story);
     navigator.vibrate?.(10);
   };
 
   const closeSheet = () => {
+    if (!sheetItem()) return;
+    closeOverlay("action-sheet");
     setSheetOffset(0);
     setSheetItem();
     setSheetStory();

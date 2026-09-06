@@ -65,6 +65,7 @@ import {
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import { appCommand } from "./ui/keyboard";
+import { closeOverlay, pushOverlay } from "./ui/overlay-history";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
@@ -552,6 +553,31 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     searchInput?.blur();
   };
 
+  let searchInHistory = false;
+  createEffect(() => {
+    const open = phoneHeader() && searchOpen();
+    if (open === searchInHistory) return;
+    searchInHistory = open;
+    if (open)
+      pushOverlay("search", () => {
+        searchInHistory = false;
+        clearSearch();
+      });
+    else closeOverlay("search");
+  });
+
+  const openKeys = () => {
+    if (keysOpen()) return;
+    pushOverlay("keyboard-help", () => setKeysOpen(false));
+    setKeysOpen(true);
+  };
+
+  const closeKeys = () => {
+    if (!keysOpen()) return;
+    closeOverlay("keyboard-help");
+    setKeysOpen(false);
+  };
+
   const focusSearch = () => {
     setHeaderMenu();
     setSearchFocused(true);
@@ -660,12 +686,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         return;
       event.preventDefault();
       if (command === "toggle-archive") {
-        setKeysOpen(false);
+        closeKeys();
         void toggleArchive();
       } else if (command === "toggle-unread") {
         void toggleUnread();
       } else {
-        setKeysOpen((open) => (command === "toggle-help" ? !open : false));
+        if (command === "toggle-help" && !keysOpen()) openKeys();
+        else closeKeys();
       }
     };
     pollTimer = window.setInterval(() => void pollNew(), 60_000);
@@ -753,6 +780,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const openRelated = (item: Item) => {
+    if (!relatedSource())
+      pushOverlay("related", () => {
+        relatedVersion++;
+        setRelatedSource();
+        setRelatedItems([]);
+        setRelatedLoading(false);
+      });
     const version = ++relatedVersion;
     setRelatedSource(item);
     setRelatedItems([]);
@@ -771,6 +805,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const closeRelated = () => {
+    if (!relatedSource()) return;
+    closeOverlay("related");
     relatedVersion++;
     setRelatedSource();
     setRelatedItems([]);
@@ -778,8 +814,16 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const closeReader = () => {
+    if (!readerID()) return;
+    closeOverlay("reader");
     setReaderID("");
     setReaderItem();
+  };
+
+  const closeConfirmRemove = () => {
+    if (!confirmRemove()) return;
+    closeOverlay("confirm-remove");
+    setConfirmRemove();
   };
 
   const setSignal = (item: Item, value: -1 | 0 | 1) => {
@@ -845,6 +889,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         item.hearted,
       )
     ) {
+      if (!confirmRemove())
+        pushOverlay("confirm-remove", () => setConfirmRemove());
       setConfirmRemove(item);
       return;
     }
@@ -935,6 +981,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const markOpened = (item: Item, archive = item.archived === true) => {
+    if (!readerID())
+      pushOverlay("reader", () => {
+        setReaderID("");
+        setReaderItem();
+      });
     setReaderItem(item);
     recordOpened(item, archive);
     setReaderArchive(archive);
@@ -948,6 +999,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const unread = story.items
       .filter((item) => !item.read)
       .map((item) => item.item_id);
+    if (!readerID())
+      pushOverlay("reader", () => {
+        setReaderID("");
+        setReaderItem();
+      });
     for (const id of ids) pendingRead.delete(id);
     setReaderItem({ ...lead, read: true });
     setReaderArchive(false);
@@ -1265,12 +1321,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const wasFeeds = view() === "feeds";
     const wasArchive = mode() === "archive";
     setHeaderMenu();
-    setKeysOpen(false);
-    setRelatedSource();
+    closeKeys();
+    closeRelated();
     closeReader();
     setReaderArchive(false);
     clearSearch();
     setMode("live");
+    if (wasFeeds) closeOverlay("feeds");
     setView("grid");
     setScrollTarget(0);
     setScrollTopVersion((value) => value + 1);
@@ -1282,21 +1339,28 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const openFeedsAndSettings = () => {
     clearSettingsGo();
     setHeaderMenu();
-    setKeysOpen(false);
-    setRelatedSource();
+    closeKeys();
+    closeRelated();
     closeReader();
     clearSearch();
+    if (view() !== "feeds")
+      pushOverlay("feeds", () => void leaveFeedsAndSettings());
     setView("feeds");
   };
 
-  const closeFeedsAndSettings = async () => {
+  const leaveFeedsAndSettings = async () => {
     clearSettingsGo();
-    setKeysOpen(false);
+    closeKeys();
     setView("grid");
     if (!feedsGridDirty) return;
     feedsGridDirty = false;
     await feedFilterRefresh;
     await reload(order(), unreadOnly(), mode(), selectedTag());
+  };
+
+  const closeFeedsAndSettings = async () => {
+    if (view() === "feeds") closeOverlay("feeds");
+    await leaveFeedsAndSettings();
   };
 
   const toggleArchive = async () => {
@@ -1305,7 +1369,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setMode(next);
     setView("grid");
     closeReader();
-    setConfirmRemove();
+    closeConfirmRemove();
     await reload(order(), unreadOnly(), next);
   };
 
@@ -1328,13 +1392,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             api={api}
             heartCount={heartCount()}
             onBack={() => void closeFeedsAndSettings()}
-            onKeys={() => setKeysOpen(true)}
+            onKeys={openKeys}
             onSignOut={props.signOut}
             onFeedsChanged={noteFeedsChanged}
             onToast={showToast}
           />
           <Show when={keysOpen()}>
-            <KeyboardMap onClose={() => setKeysOpen(false)} />
+            <KeyboardMap onClose={closeKeys} />
           </Show>
         </>
       }
@@ -1892,18 +1956,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           )}
         </Show>
         <Show when={keysOpen()}>
-          <KeyboardMap onClose={() => setKeysOpen(false)} />
+          <KeyboardMap onClose={closeKeys} />
         </Show>
         <Show when={confirmRemove()}>
           {(item) => (
             <ConfirmRemove
-              onCancel={() => setConfirmRemove()}
+              onCancel={closeConfirmRemove}
               onConfirm={() =>
-                completeArchiveRemoval(
-                  item,
-                  () => setConfirmRemove(),
-                  performHeart,
-                )
+                completeArchiveRemoval(item, closeConfirmRemove, performHeart)
               }
             />
           )}
