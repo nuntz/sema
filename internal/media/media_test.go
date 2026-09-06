@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"image/png"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/nuntz/sema/internal/httpx"
+	"golang.org/x/image/draw"
 	"golang.org/x/net/html"
 )
 
@@ -129,6 +131,9 @@ func TestEncodeLeadFitsBothDimensionsAndNeverUpscales(t *testing.T) {
 		want          [][2]int
 	}{
 		{name: "landscape", width: 2400, height: 1600, want: [][2]int{{384, 256}, {768, 512}, {1280, 853}}},
+		{name: "large landscape", width: 4096, height: 2730, want: [][2]int{{384, 255}, {768, 511}, {1280, 853}}},
+		{name: "large portrait", width: 2730, height: 4096, want: [][2]int{{255, 384}, {511, 768}, {853, 1280}}},
+		{name: "small source within largest box", width: 1000, height: 600, want: [][2]int{{384, 230}, {768, 460}, {1000, 600}}},
 		{name: "portrait", width: 1600, height: 2400, want: [][2]int{{256, 384}, {512, 768}, {853, 1280}}},
 		{name: "small source skips larger boxes", width: 500, height: 333, want: [][2]int{{384, 255}, {500, 333}}},
 		{name: "source within smallest box", width: 300, height: 200, want: [][2]int{{300, 200}}},
@@ -157,6 +162,42 @@ func TestEncodeLeadFitsBothDimensionsAndNeverUpscales(t *testing.T) {
 				t.Errorf("largest = %dx%d, want %dx%d within cap", lead.Width, lead.Height, largest[0], largest[1])
 			}
 		})
+	}
+}
+
+func TestEncodeLeadSmallSourceKeepsDirectResize(t *testing.T) {
+	source := image.NewRGBA(image.Rect(0, 0, 1000, 600))
+	for y := 0; y < 600; y++ {
+		for x := 0; x < 1000; x++ {
+			source.SetRGBA(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: uint8(x + y), A: 255})
+		}
+	}
+	lead, err := EncodeLead(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][2]int{{384, 230}, {768, 460}, {1000, 600}}
+	if len(lead.Variants) != len(want) {
+		t.Fatalf("variant count = %d, want %d", len(lead.Variants), len(want))
+	}
+	for i, size := range want {
+		var candidate image.Image = source
+		if i < 2 {
+			target := image.NewRGBA(image.Rect(0, 0, size[0], size[1]))
+			draw.CatmullRom.Scale(target, target.Bounds(), source, source.Bounds(), draw.Over, nil)
+			candidate = target
+		}
+		quality := 85
+		if i == 0 {
+			quality = 80
+		}
+		var expected bytes.Buffer
+		if err := jpeg.Encode(&expected, candidate, &jpeg.Options{Quality: quality}); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(lead.Variants[i].Bytes, expected.Bytes()) {
+			t.Errorf("variant %d differs from direct encoding without pre-shrink", i)
+		}
 	}
 }
 

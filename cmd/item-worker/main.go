@@ -41,6 +41,9 @@ type httpClient interface {
 	Get(context.Context, string, http.Header) (httpx.Response, error)
 }
 
+// Limit concurrent image decodes and resizes to fit the Lambda memory budget.
+const maxConcurrentRecords = 2
+
 type vectorBatchStore interface {
 	PutBatch(context.Context, []vectorstore.Record) error
 	Query(context.Context, []float32, int, int64) ([]vectorstore.Match, error)
@@ -88,11 +91,14 @@ type itemStore interface {
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
 	failures := make(chan events.SQSBatchItemFailure, len(event.Records))
 	processed := make(chan processedVectors, len(event.Records))
+	semaphore := make(chan struct{}, maxConcurrentRecords)
 	var group sync.WaitGroup
 	for _, record := range event.Records {
+		semaphore <- struct{}{}
 		group.Add(1)
 		go func(record events.SQSMessage) {
 			defer group.Done()
+			defer func() { <-semaphore }()
 			vectors, err := h.process(ctx, record.Body)
 			if err != nil {
 				var message domain.ItemMessage

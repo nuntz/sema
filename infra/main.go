@@ -242,7 +242,9 @@ func main() {
 		if err != nil {
 			return err
 		}
-		itemWorker, err := function(ctx, "item-worker", itemRole, 1024, 120, 10, merge(common, storyEnvironment))
+		itemWorker, err := function(ctx, "item-worker", itemRole, 1024, 120, 10, merge(common, storyEnvironment, pulumi.StringMap{
+			"GOMEMLIMIT": pulumi.String("800MiB"),
+		}))
 		if err != nil {
 			return err
 		}

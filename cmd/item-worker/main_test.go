@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,62 @@ type fakeItemStore struct {
 type itemFailure struct {
 	user, item string
 	ttl        int64
+}
+
+type concurrentItemStore struct {
+	fakeItemStore
+	active atomic.Int32
+	peak   atomic.Int32
+	calls  atomic.Int32
+}
+
+func (s *concurrentItemStore) Feed(context.Context, string, string) (domain.Feed, error) {
+	active := s.active.Add(1)
+	defer s.active.Add(-1)
+	s.calls.Add(1)
+	for peak := s.peak.Load(); active > peak; peak = s.peak.Load() {
+		if s.peak.CompareAndSwap(peak, active) {
+			break
+		}
+	}
+	// Keep calls overlapping so an unbounded batch exposes its concurrency.
+	time.Sleep(20 * time.Millisecond)
+	return domain.Feed{}, errors.New("feed unavailable")
+}
+
+func TestRunBoundsBatchConcurrency(t *testing.T) {
+	repository := &concurrentItemStore{}
+	h := &handler{store: repository}
+	published := domain.Timestamp(time.Now().UTC())
+	event := events.SQSEvent{}
+	for _, id := range []string{"one", "two", "three", "four", "five"} {
+		event.Records = append(event.Records, events.SQSMessage{
+			MessageId: id,
+			Body:      `{"user":"user","feed_id":"feed","item_id":"` + id + `","title":"Title","published_ts":"` + published + `"}`,
+		})
+	}
+	response, err := h.run(context.Background(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if peak := repository.peak.Load(); peak < 1 || peak > 2 {
+		t.Errorf("peak concurrency = %d, want between 1 and 2", peak)
+	}
+	if calls := repository.calls.Load(); calls != 5 {
+		t.Errorf("processed records = %d, want 5", calls)
+	}
+	failures := map[string]bool{}
+	for _, failure := range response.BatchItemFailures {
+		failures[failure.ItemIdentifier] = true
+	}
+	if len(response.BatchItemFailures) != 5 {
+		t.Errorf("failures = %#v, want 5", response.BatchItemFailures)
+	}
+	for _, record := range event.Records {
+		if !failures[record.MessageId] {
+			t.Errorf("missing failure for %s", record.MessageId)
+		}
+	}
 }
 
 func (s *fakeItemStore) Content(_ context.Context, key string) ([]byte, string, error) {

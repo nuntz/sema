@@ -327,13 +327,20 @@ func EncodeLead(source image.Image) (Lead, error) {
 	if bounds.Dx() <= 0 || bounds.Dy() <= 0 {
 		return Lead{}, fmt.Errorf("empty source image")
 	}
+	// Bound CatmullRom's scratch buffer while retaining the original output sizes.
+	if max(bounds.Dx(), bounds.Dy()) > 2*1280 {
+		width, height := fit(bounds.Dx(), bounds.Dy(), 2*1280)
+		target := image.NewRGBA(image.Rect(0, 0, width, height))
+		draw.ApproxBiLinear.Scale(target, target.Bounds(), source, bounds, draw.Over, nil)
+		source = target
+	}
 	variants := make([]Image, 0, 3)
 	for _, box := range []int{384, 768, 1280} {
 		width, height := fit(bounds.Dx(), bounds.Dy(), box)
 		candidate := source
 		if width != bounds.Dx() || height != bounds.Dy() {
 			target := image.NewRGBA(image.Rect(0, 0, width, height))
-			draw.CatmullRom.Scale(target, target.Bounds(), source, bounds, draw.Over, nil)
+			draw.CatmullRom.Scale(target, target.Bounds(), source, source.Bounds(), draw.Over, nil)
 			candidate = target
 		}
 		quality := 85
