@@ -16,33 +16,40 @@ async function openFixture(
     });
 }
 
-async function bandScreenshot(page: Page) {
-  const header = await page.locator(".app-header").boundingBox();
-  if (!header) throw new Error("Header has no bounding box");
-  return page.screenshot({
-    clip: {
-      x: header.x,
-      y: header.y + header.height - 2,
-      width: header.width,
-      height: 2,
-    },
+async function scrollReaderPastHeadline(page: Page) {
+  await page.locator("#reader-last-line").waitFor();
+  await page.locator(".reader-scroll").evaluate((element) => {
+    element.scrollTop = 181;
   });
+  await expect(page.locator(".app-header")).toHaveAttribute(
+    "data-scrolled",
+    "",
+  );
 }
 
-test("grid and reader share pixel-identical brand and band chrome", async ({
+test("grid and reader share brand chrome and a 2px bottom band", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1544, height: 900 });
   await openFixture(page, "grid", "loaded");
   const gridBrand = await page.locator(".app-header__brand").screenshot();
-  const gridBand = await bandScreenshot(page);
+  const gridBandHeight = await page
+    .locator(".app-header")
+    .evaluate((header) =>
+      Number.parseFloat(getComputedStyle(header, "::after").height),
+    );
 
   await openFixture(page, "reader", "loaded");
   const readerBrand = await page.locator(".app-header__brand").screenshot();
-  const readerBand = await bandScreenshot(page);
+  const readerBandHeight = await page
+    .locator(".app-header")
+    .evaluate((header) =>
+      Number.parseFloat(getComputedStyle(header, "::after").height),
+    );
 
   expect(readerBrand).toEqual(gridBrand);
-  expect(readerBand).toEqual(gridBand);
+  expect(gridBandHeight).toBe(2);
+  expect(readerBandHeight).toBe(gridBandHeight);
 });
 
 test("both desktop views use the same 56px mono control geometry", async ({
@@ -85,7 +92,7 @@ test("both desktop views use the same 56px mono control geometry", async ({
       true,
     );
     expect(geometry.controls.every((control) => control.y === 13)).toBe(true);
-    expect(geometry.sansCount).toBe(1);
+    expect(geometry.sansCount).toBe(view === "reader" ? 2 : 1);
   }
 });
 
@@ -187,6 +194,177 @@ for (const font of ["loaded", "blocked"] as const) {
     });
   }
 }
+
+test("desktop reader progress follows the article measure inside the band", async ({
+  page,
+}) => {
+  for (const width of [1000, 1280, 1524]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, "reader", "loaded");
+    await scrollReaderPastHeadline(page);
+
+    const geometry = await page.evaluate(() => {
+      const article = document.querySelector(".article h1");
+      const header = document.querySelector(".app-header");
+      const progress = document.querySelector(".read-progress");
+      if (!article || !header || !progress)
+        throw new Error("Reader progress geometry is missing");
+      return {
+        article: article.getBoundingClientRect(),
+        bandHeight: Number.parseFloat(
+          getComputedStyle(header, "::after").height,
+        ),
+        header: header.getBoundingClientRect(),
+        progress: progress.getBoundingClientRect(),
+      };
+    });
+
+    expect(
+      Math.abs(geometry.progress.left - geometry.article.left),
+    ).toBeLessThanOrEqual(1);
+    if (width === 1000) {
+      expect(
+        Math.abs(geometry.progress.width - geometry.article.width),
+      ).toBeLessThanOrEqual(1);
+    } else {
+      expect(Math.abs(geometry.progress.width - 640)).toBeLessThanOrEqual(1);
+    }
+    expect(geometry.progress.height).toBe(2);
+    expect(geometry.bandHeight).toBe(2);
+    expect(geometry.progress.bottom).toBe(geometry.header.bottom);
+  }
+});
+
+test("scrolled reader title uses sans without overflowing desktop chrome", async ({
+  page,
+}) => {
+  for (const width of [1200, 1280, 1400, 1524]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, "reader", "loaded");
+    await scrollReaderPastHeadline(page);
+
+    const layout = await page.evaluate(() => {
+      const header = document.querySelector(".app-header");
+      const title = document.querySelector(".reader-title");
+      if (!header || !title) throw new Error("Reader title is missing");
+      return {
+        clientWidth: header.clientWidth,
+        fontFamily: getComputedStyle(title).fontFamily,
+        scrollWidth: header.scrollWidth,
+        titleClientWidth: title.clientWidth,
+        titleScrollWidth: title.scrollWidth,
+      };
+    });
+
+    expect(layout.fontFamily).toContain("Instrument Sans");
+    expect(layout.scrollWidth).toBe(layout.clientWidth);
+    if (width === 1524) {
+      expect(layout.titleScrollWidth).toBeLessThanOrEqual(
+        layout.titleClientWidth,
+      );
+    }
+  }
+});
+
+test("scrolled reader actions adopt their desktop posture", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openFixture(page, "reader", "loaded");
+  await scrollReaderPastHeadline(page);
+
+  const quietButtons = page.locator(".app-header--reader .chrome-btn--quiet");
+  await expect(quietButtons).toHaveCount(5);
+  const expectedColors = await page.evaluate(() => {
+    const header = document.querySelector(".app-header");
+    if (!header) throw new Error("Reader header is missing");
+    const probe = document.createElement("i");
+    probe.style.backgroundColor = "var(--surface-chrome-raised)";
+    probe.style.color = "var(--chrome-fg-on)";
+    document.body.append(probe);
+    const colors = {
+      header: getComputedStyle(header).backgroundColor,
+      on: getComputedStyle(probe).color,
+      raised: getComputedStyle(probe).backgroundColor,
+    };
+    probe.remove();
+    return colors;
+  });
+
+  await expect
+    .poll(() =>
+      quietButtons.evaluateAll((buttons) =>
+        buttons.map((button) => getComputedStyle(button).backgroundColor),
+      ),
+    )
+    .toEqual(Array(5).fill(expectedColors.header));
+  expect(
+    await quietButtons
+      .locator(".chrome-btn__label")
+      .evaluateAll((labels) =>
+        labels.every((label) => getComputedStyle(label).display === "none"),
+      ),
+  ).toBe(true);
+
+  const keep = page.locator(".chrome-btn--hold");
+  await expect
+    .poll(() =>
+      keep.evaluate((button) => getComputedStyle(button).backgroundColor),
+    )
+    .toBe(expectedColors.raised);
+  await expect(
+    page.locator(".chrome-btn--prev .chrome-btn__label"),
+  ).toBeVisible();
+
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(() => keep.evaluate((button) => getComputedStyle(button).color))
+    .toBe(expectedColors.on);
+
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await openFixture(page, "reader", "loaded");
+  await scrollReaderPastHeadline(page);
+  await expect(
+    page.locator(".chrome-btn--prev .chrome-btn__label"),
+  ).toBeHidden();
+});
+
+test("phone reader progress remains full width and scroll-gated", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await openFixture(page, "reader", "loaded");
+  const progress = page.locator(".read-progress");
+  const geometry = () =>
+    progress.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        background: getComputedStyle(element).backgroundColor,
+        left: rect.left,
+        opacity: getComputedStyle(element).opacity,
+        transform: getComputedStyle(element).transform,
+        width: rect.width,
+      };
+    });
+
+  expect(await geometry()).toEqual({
+    background: "rgba(0, 0, 0, 0)",
+    left: 0,
+    opacity: "0",
+    transform: "none",
+    width: 390,
+  });
+
+  await scrollReaderPastHeadline(page);
+  expect(await geometry()).toEqual({
+    background: "rgba(0, 0, 0, 0)",
+    left: 0,
+    opacity: "1",
+    transform: "none",
+    width: 390,
+  });
+});
 
 test("segmented pills preserve v1 gaps while items own the hit target", async ({
   page,
