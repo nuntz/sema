@@ -78,6 +78,7 @@ type itemStore interface {
 	ContentURL(string) string
 	Feed(context.Context, string, string) (domain.Feed, error)
 	Item(context.Context, string, string) (domain.Item, error)
+	ItemByIdentity(context.Context, string, string) (domain.Item, error)
 	OverwriteItem(context.Context, domain.Item) error
 	PutContent(context.Context, string, string, []byte) error
 	PutItem(context.Context, domain.Item) (bool, error)
@@ -172,7 +173,7 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	// Redelivery repairs indexing directly from durable vectors, without fetching
 	// content or paying for another embedding.
 	if !message.Reprocess {
-		stored, loadErr := h.store.Item(ctx, message.User, message.ItemID)
+		stored, loadErr := h.store.ItemByIdentity(ctx, message.User, message.ItemID)
 		if loadErr == nil {
 			return recordsForItem(stored), nil
 		}
@@ -184,6 +185,9 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	var existing domain.Item
 	if message.Reprocess {
 		existing, err = h.store.Item(ctx, message.User, message.ItemID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, nil
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -539,6 +543,9 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		item.FetchedTS, item.TTL = existing.FetchedTS, existing.TTL
 		item.ArchiveSK, item.HeartedTS = existing.ArchiveSK, existing.HeartedTS
 		if err := h.store.OverwriteItem(ctx, item); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		written = true
@@ -598,11 +605,13 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		}
 	} else {
 		metrics["ItemsDeduped"] = 1
-		stored, loadErr := h.store.Item(ctx, message.User, message.ItemID)
-		if loadErr != nil {
+		stored, loadErr := h.store.ItemByIdentity(ctx, message.User, message.ItemID)
+		if loadErr != nil && !errors.Is(loadErr, store.ErrNotFound) {
 			return nil, loadErr
 		}
-		vectorRecords = recordsForItem(stored)
+		if loadErr == nil {
+			vectorRecords = recordsForItem(stored)
+		}
 	}
 	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", h.emitMetrics)
 	return vectorRecords, nil

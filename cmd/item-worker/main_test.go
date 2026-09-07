@@ -119,6 +119,9 @@ func (s *fakeItemStore) Item(context.Context, string, string) (domain.Item, erro
 	}
 	return domain.Item{}, store.ErrNotFound
 }
+func (s *fakeItemStore) ItemByIdentity(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	return s.Item(ctx, userID, itemID)
+}
 func (s *fakeItemStore) OverwriteItem(_ context.Context, item domain.Item) error {
 	s.overwritten = &item
 	return nil
@@ -804,7 +807,7 @@ type dedupRaceStore struct {
 	reads int
 }
 
-func (s *dedupRaceStore) Item(context.Context, string, string) (domain.Item, error) {
+func (s *dedupRaceStore) ItemByIdentity(context.Context, string, string) (domain.Item, error) {
 	s.reads++
 	if s.reads == 1 {
 		return domain.Item{}, store.ErrNotFound
@@ -823,5 +826,91 @@ func TestDedupRaceStillIndexesWinningStoredVectors(t *testing.T) {
 	}
 	if len(vectors.records) != 1 || vectors.records[0].Data[1] != 1 || vectors.records[0].Kind != vectorstore.KindArchive {
 		t.Fatal(vectors.records)
+	}
+}
+
+type ingestionLookupStore struct {
+	fakeItemStore
+	lookupErr    error
+	overwriteErr error
+	dedup        bool
+}
+
+func (s *ingestionLookupStore) Item(context.Context, string, string) (domain.Item, error) {
+	return domain.Item{}, errors.New("legacy item lookup must not run during ingestion")
+}
+func (s *ingestionLookupStore) ItemByIdentity(context.Context, string, string) (domain.Item, error) {
+	if s.lookupErr != nil {
+		return domain.Item{}, s.lookupErr
+	}
+	return domain.Item{}, store.ErrNotFound
+}
+func (s *ingestionLookupStore) PutItem(context.Context, domain.Item) (bool, error) {
+	return !s.dedup, nil
+}
+
+func TestIngestionUsesPointReadsAndAcknowledgesTerminalDedupe(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		dedup     bool
+		lookupErr error
+		failed    bool
+	}{
+		{name: "fresh"},
+		{name: "failure marker", dedup: true},
+		{name: "lookup unavailable", lookupErr: errors.New("throttled"), failed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &ingestionLookupStore{dedup: test.dedup, lookupErr: test.lookupErr}
+			vectors := &stubVectorBatchStore{}
+			h := &handler{store: repository, media: media.New(nil), embedder: stubEmbedder{}, vectors: vectors, scoringVersion: "1"}
+			response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "item", Body: `{"user":"user","item_id":"item","feed_id":"feed","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(time.Now()) + `"}`}}})
+			if err != nil || (len(response.BatchItemFailures) > 0) != test.failed {
+				t.Fatalf("%#v %v", response, err)
+			}
+			expected := 1
+			if test.dedup || test.failed {
+				expected = 0
+			}
+			if vectors.calls != expected {
+				t.Fatalf("index calls=%d", vectors.calls)
+			}
+		})
+	}
+}
+
+type disappearingReplayStore struct {
+	fakeItemStore
+	overwriteErr error
+}
+
+func (s *disappearingReplayStore) OverwriteItem(context.Context, domain.Item) error {
+	return s.overwriteErr
+}
+
+func TestReplayAcknowledgesMissingRowsButRetriesWriteFailures(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		absent   bool
+		writeErr error
+		failed   bool
+	}{
+		{name: "gone before read", absent: true},
+		{name: "gone before update", writeErr: store.ErrNotFound},
+		{name: "write unavailable", writeErr: errors.New("throttled"), failed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			now := time.Now()
+			repository := &disappearingReplayStore{overwriteErr: test.writeErr}
+			if !test.absent {
+				repository.item = domain.Item{PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", Title: "Title", Vector: score.EncodeVector([]float32{1, 0}), TTL: now.Add(time.Hour).Unix()}
+			}
+			vectors := &stubVectorBatchStore{}
+			h := &handler{store: repository, media: media.New(nil), embedder: stubEmbedder{}, vectors: vectors, scoringVersion: "1"}
+			response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "item", Body: `{"user":"user","item_id":"item","feed_id":"feed","reprocess":true,"published_ts":"` + domain.Timestamp(now) + `"}`}}})
+			if err != nil || (len(response.BatchItemFailures) > 0) != test.failed || vectors.calls != 0 {
+				t.Fatalf("%#v %v index calls=%d", response, err, vectors.calls)
+			}
+		})
 	}
 }

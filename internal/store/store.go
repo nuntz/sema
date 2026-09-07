@@ -547,6 +547,14 @@ func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
 			ExpressionAttributeNames: names, ExpressionAttributeValues: values}},
 		{Put: &types.Put{TableName: aws.String(s.table), Item: vector}},
 	}})
+	// A deleted live row is a terminal replay outcome. Preserve retries for
+	// conflicts, throttling, and other transaction failures.
+	var canceled *types.TransactionCanceledException
+	if errors.As(err, &canceled) && len(canceled.CancellationReasons) == 2 &&
+		aws.ToString(canceled.CancellationReasons[0].Code) == "ConditionalCheckFailed" &&
+		aws.ToString(canceled.CancellationReasons[1].Code) == "None" {
+		return ErrNotFound
+	}
 	return err
 }
 
@@ -1390,6 +1398,16 @@ func itemPageKey(item map[string]types.AttributeValue, order domain.Order) map[s
 }
 
 func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	return s.item(ctx, userID, itemID, true)
+}
+
+// ItemByIdentity only uses point reads. A missing identity is expected during
+// ingestion and must not trigger the legacy partition query used by Item.
+func (s *Store) ItemByIdentity(ctx context.Context, userID, itemID string) (domain.Item, error) {
+	return s.item(ctx, userID, itemID, false)
+}
+
+func (s *Store) item(ctx context.Context, userID, itemID string, allowLegacy bool) (domain.Item, error) {
 	now := time.Now().Unix()
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)), ConsistentRead: aws.Bool(true),
@@ -1398,7 +1416,10 @@ func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, e
 		return domain.Item{}, err
 	}
 	if len(response.Item) == 0 {
-		return s.legacyItem(ctx, userID, itemID, now)
+		if allowLegacy {
+			return s.legacyItem(ctx, userID, itemID, now)
+		}
+		return domain.Item{}, ErrNotFound
 	}
 	var identity domain.ItemIdentity
 	if err := attributevalue.UnmarshalMap(response.Item, &identity); err != nil {

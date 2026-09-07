@@ -207,6 +207,66 @@ The vector backfill reuses stored embeddings and does not invoke Bedrock or chan
 
 By default, replay only re-embeds text when the stored vector is missing or belongs to a different `MODEL_VERSION`; pass `FLAGS="--force-extract"` to force a fresh text embedding.
 
+### User-scoped vector migration
+
+Vector keys now include the account ID and queries filter `user_id` before
+selecting neighbours. Old global records cannot serve these readers: switching
+readers before backfilling leaves search incomplete and similarity can return
+404. Migrate both indexes before deploying the new readers.
+
+1. Build the updated application and maintenance tools with `make build`.
+   Preview the intended stack explicitly with `cd infra && pulumi preview --stack prod`.
+2. Run the new backfill writer in dry-run mode against both indexes:
+
+   ```sh
+   make backfill-vectors STACK=prod
+   make backfill-vectors STACK=prod BACKFILL_ARGS='--image'
+   ```
+
+3. During a maintenance window, disable the item-worker SQS event-source mapping
+   and temporarily set API reserved concurrency to zero to prevent heart changes.
+   Record their original settings first. Once the mapping reports `Disabled`,
+   allow at least 120 seconds for existing item-worker and API invocations to finish.
+   Pause any manual replay or migration tools as well.
+4. Populate both indexes using the new writer while the existing application
+   readers remain deployed:
+
+   ```sh
+   make backfill-vectors STACK=prod BACKFILL_ARGS='--apply'
+   make backfill-vectors STACK=prod BACKFILL_ARGS='--image --apply'
+   ```
+
+   Both commands must succeed before switching readers. They reuse stored
+   embeddings; archive retention wins when a live and archive row share an ID.
+   Missing stored embeddings require recovery before they can be indexed.
+5. Deploy with `cd infra && pulumi up --stack prod`, then restore the recorded
+   API concurrency setting and event-source mapping state. Remove the temporary
+   concurrency limit if the API previously had no reserved limit. Verify search,
+   similarity, and archive actions for each account. The `STACK` Make variable
+   does not select the active Pulumi stack for `make deploy`.
+6. After verifying the migration and retiring all old writers, inspect and
+   optionally purge obsolete global records:
+
+   ```sh
+   make purge-legacy-vectors STACK=prod
+   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--image'
+   # After reviewing the dry-run counts:
+   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--apply'
+   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--image --apply'
+   ```
+
+The purge is idempotent and dry-run by default. It deletes only records without
+`user_id` metadata, including global archive records that ordinary expiry
+cleanup retains forever. Namespaced records remain untouched. Purging ends the
+legacy S3 fallback used by `backfill-item-vectors`; finish any required recovery
+and retain old records if rollback to global readers is still needed.
+
+An indexing outage leaves ingested items in DynamoDB and retries the SQS
+messages using stored embeddings. The queue moves messages to its DLQ after
+three receives; a prolonged outage still needs DLQ redrive after recovery or a
+vector backfill. Run redrive against the intended stack: `make redrive` uses
+the active Pulumi stack.
+
 ### Image ranking rollout
 
 Deploy the image index and writer before replaying live items or changing existing preference models:

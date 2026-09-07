@@ -742,6 +742,12 @@ func TestItemResolvesStableIdentityDirectly(t *testing.T) {
 	if err != nil || got.SK != live.SK || string(got.Vector) != "vector" || gets != 3 {
 		t.Fatalf("Item = %#v, gets %d, %v", got, gets, err)
 	}
+	gets = 0
+	got, err = New(db, nil, "table", "", "").ItemByIdentity(context.Background(), "user", "same")
+	if err != nil || got.SK != live.SK || string(got.Vector) != "vector" || gets != 3 {
+		t.Fatalf("identity lookup = %#v, gets %d, %v", got, gets, err)
+	}
+
 }
 
 func TestItemFallsBackToLegacyInRowVector(t *testing.T) {
@@ -1540,4 +1546,64 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+func TestItemByIdentityDoesNotQueryMissingOrTerminalItems(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		identity *domain.ItemIdentity
+	}{
+		{name: "fresh"},
+		{name: "terminal", identity: &domain.ItemIdentity{PK: "U#user", SK: domain.ItemIdentitySK("item"), TTL: time.Now().Add(time.Hour).Unix()}},
+		{name: "expired", identity: &domain.ItemIdentity{PK: "U#user", SK: domain.ItemIdentitySK("item"), ItemSK: "I#old", TTL: time.Now().Add(-time.Hour).Unix()}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reads := 0
+			db := &fakeDynamoDB{
+				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+					reads++
+					if reads != 1 || input.Key["SK"].(*types.AttributeValueMemberS).Value != domain.ItemIdentitySK("item") || !aws.ToBool(input.ConsistentRead) {
+						t.Fatal("expected one consistent identity read")
+					}
+					output := &dynamodb.GetItemOutput{}
+					if test.identity != nil {
+						output.Item, _ = attributevalue.MarshalMap(*test.identity)
+					}
+					return output, nil
+				},
+				query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					t.Fatal("ingestion queried the user partition")
+					return nil, nil
+				},
+			}
+			_, err := New(db, nil, "table", "", "").ItemByIdentity(context.Background(), "user", "item")
+			if !errors.Is(err, ErrNotFound) || reads != 1 {
+				t.Fatalf("reads=%d err=%v", reads, err)
+			}
+		})
+	}
+}
+
+func TestOverwriteItemOnlyMapsMissingLiveRowToNotFound(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		err     error
+		missing bool
+	}{
+		{"deleted", &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("ConditionalCheckFailed")}, {Code: aws.String("None")}}}, true},
+		{"conflict", &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("TransactionConflict")}, {Code: aws.String("None")}}}, false},
+		{"mixed", &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{{Code: aws.String("ConditionalCheckFailed")}, {Code: aws.String("ProvisionedThroughputExceeded")}}}, false},
+		{"unknown", &types.TransactionCanceledException{}, false},
+		{"transport", errors.New("unavailable"), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := &fakeDynamoDB{transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+				return nil, test.err
+			}}
+			err := New(db, nil, "table", "", "").OverwriteItem(context.Background(), domain.Item{PK: "U#user", SK: "I#item", ItemID: "item"})
+			if errors.Is(err, ErrNotFound) != test.missing || (!test.missing && err != test.err) {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
 }
