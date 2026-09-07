@@ -190,7 +190,7 @@ export function StoryCell(props: StoryCellProps) {
                       item={item}
                       sizes={props.cell.width}
                       alt=""
-                      loading="lazy"
+                      loading="eager"
                       width={item.media_w}
                       height={item.media_h}
                     />
@@ -297,7 +297,7 @@ export function StoryCell(props: StoryCellProps) {
                         item={item}
                         sizes={props.cell.width}
                         alt=""
-                        loading="lazy"
+                        loading="eager"
                       />
                     </div>
                   </PrimaryAction>

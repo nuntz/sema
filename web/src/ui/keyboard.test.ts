@@ -4,6 +4,9 @@ import { appCommand, gridCommand, readerCommand } from "./keyboard";
 
 describe("keyboard map", () => {
   it.each([
+    [" ", "page-down"],
+    ["PageDown", "page-down"],
+    ["PageUp", "page-up"],
     ["j", "down"],
     ["k", "up"],
     ["h", "left"],

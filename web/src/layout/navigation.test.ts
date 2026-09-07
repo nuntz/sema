@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../types";
 import { justify } from "./justified";
-import { nearestCell } from "./navigation";
+import { type LayoutRect, nearestCell, nearestPageCell } from "./navigation";
 
 const item = (index: number, size: Item["size"], ratio = 1.5): Item => ({
   item_id: String(index),
@@ -24,6 +24,54 @@ const item = (index: number, size: Item["size"], ratio = 1.5): Item => ({
 });
 
 describe("geometric grid navigation", () => {
+  const rect = (
+    id: string,
+    left: number,
+    top: number,
+    width = 100,
+    height = 100,
+  ): LayoutRect => ({
+    id,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    centerX: left + width / 2,
+    centerY: top + height / 2,
+  });
+
+  it("pages to the nearest visible position across unequal cells and columns", () => {
+    const rects = [
+      rect("old", 200, -200),
+      rect("left", 0, 100),
+      rect("right", 200, 100),
+      rect("lower", 200, 300),
+    ];
+    expect(nearestPageCell(rects, 250, 170, 0, 500)).toBe("right");
+    expect(nearestPageCell(rects, 50, 170, 0, 500)).toBe("left");
+    expect(nearestPageCell(rects, 250, 380, 0, 500)).toBe("lower");
+  });
+
+  it("prefers a fully visible cell over a clipped edge cell", () => {
+    expect(
+      nearestPageCell(
+        [rect("clipped", 0, -50), rect("visible", 0, 60)],
+        50,
+        20,
+        0,
+        500,
+      ),
+    ).toBe("visible");
+  });
+
+  it("supports cells taller than the viewport and an end card with no cells", () => {
+    expect(
+      nearestPageCell([rect("tall", 0, -100, 100, 800)], 50, 250, 0, 500),
+    ).toBe("tall");
+    expect(
+      nearestPageCell([rect("above", 0, -100)], 50, 250, 0, 500),
+    ).toBeUndefined();
+  });
   it("moves down from a spanning hero into its lower adjacent sub-row", () => {
     const entries = [
       item(0, "L", 1),

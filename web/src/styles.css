@@ -850,7 +850,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .new-items-pill::after { content: ""; width: 7px; height: 7px; order: -1; flex: none; border-radius: 50%; background: var(--accent-loud); }
 .new-items-pill:hover::before { background: var(--surface-chrome-hover); }
 .new-items-pill:focus-visible { outline-color: var(--accent-loud); }
-.grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; scrollbar-color: var(--scrollbar-thumb) transparent; contain: strict; }
+.grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior-y: none; overflow-anchor: none; scrollbar-color: var(--scrollbar-thumb) transparent; contain: strict; }
 .grid-scroll.reader-underlay { transform: translate3d(calc((var(--reader-reveal, 0) - 1) * 20vw), 0, 0); filter: brightness(calc(.9 + var(--reader-reveal, 0) * .1)); transition: transform 220ms cubic-bezier(.2, .75, .2, 1), filter 220ms ease-out; }
 .grid-scroll.reader-underlay-dragging { transition: none; }
 .searching > .grid-scroll, .searching > .cold-start, .searching > .archive-empty, .searching > .filtered-empty { visibility: hidden; }
@@ -1194,7 +1194,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-overflow-menu .chrome-btn:hover { background: var(--surface-raised-hover); color: var(--fg-primary); }
 .reader-overflow-menu .chrome-btn + .chrome-btn { margin-left: 0; }
 .reader-overflow-menu a.chrome-btn:last-child { justify-content: space-between; }
-.reader-scroll { flex: 1; overflow: auto; touch-action: pan-y; transition: transform 200ms cubic-bezier(.2, .75, .2, 1); }
+.reader-scroll { flex: 1; overflow: auto; overscroll-behavior-y: none; touch-action: pan-y; transition: transform 200ms cubic-bezier(.2, .75, .2, 1); }
 .reader-scroll.swiping { transition: none; }
 .article { width: min(640px, calc(100% - 44px)); margin: 0 auto; padding: 56px 0 64px; }
 .article-kicker { margin-bottom: 14px; color: var(--fg-quaternary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: 0.07em; }

@@ -457,25 +457,110 @@ test("reader title overlays the crumb and crossfades with hysteresis", async ({
   );
 });
 
-test("reader page keys scroll its article viewport", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 420 });
-  await openFixture(page, "reader");
-  await page.locator("#reader-last-line").waitFor();
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`reader page keys scroll its article viewport with ${reducedMotion} motion`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion });
+    await page.setViewportSize({ width: 1280, height: 420 });
+    await openFixture(page, "reader");
+    await page.locator("#reader-last-line").waitFor();
 
-  const scroll = page.locator(".reader-scroll");
-  const scrollTop = () => scroll.evaluate((element) => element.scrollTop);
+    const scroll = page.locator(".reader-scroll");
+    const scrollTop = () => scroll.evaluate((element) => element.scrollTop);
+    const { height, maxTop } = await scroll.evaluate((element) => {
+      const height = element.clientHeight;
+      const maxTop = element.scrollHeight - height;
+      element.addEventListener("scroll", () => {
+        if (
+          element.scrollTop > 0 &&
+          element.scrollTop < Math.min(height, maxTop)
+        )
+          element.setAttribute("data-intermediate-scroll", "true");
+      });
+      return { height, maxTop };
+    });
+    expect(maxTop).toBeGreaterThan(0);
 
-  await page.keyboard.press("Space");
-  await expect.poll(scrollTop).toBeGreaterThan(0);
-  const afterSpace = await scrollTop();
+    await page.keyboard.press("Space");
+    await expect.poll(scrollTop).toBe(Math.min(height, maxTop));
+    expect(await scroll.getAttribute("data-intermediate-scroll")).toBe(
+      reducedMotion === "reduce" ? null : "true",
+    );
+    const afterSpace = await scrollTop();
 
-  await page.keyboard.press("PageDown");
-  await expect.poll(scrollTop).toBeGreaterThan(afterSpace);
-  const afterPageDown = await scrollTop();
+    await page.keyboard.press("PageDown");
+    await expect.poll(scrollTop).toBe(Math.min(afterSpace + height, maxTop));
+    const afterPageDown = await scrollTop();
 
-  await page.keyboard.press("PageUp");
-  await expect.poll(scrollTop).toBeLessThan(afterPageDown);
-});
+    await page.keyboard.press("PageUp");
+    await expect.poll(scrollTop).toBe(Math.max(0, afterPageDown - height));
+    const afterPageUp = await scrollTop();
+
+    await page.keyboard.press("Shift+Space");
+    await expect.poll(scrollTop).toBe(Math.max(0, afterPageUp - height));
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`reader page keys stop at the content boundaries at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 420 });
+    await openFixture(page, "reader");
+    await page.locator("#reader-last-line").waitFor();
+    const scroll = page.locator(".reader-scroll");
+    const maxTop = await scroll.evaluate((element) => {
+      const maxTop = element.scrollHeight - element.clientHeight;
+      element.scrollTop = maxTop - 40;
+      for (const method of ["scrollBy", "scrollTo"] as const) {
+        element[method] = new Proxy(element[method], {
+          apply(target, thisArg, args) {
+            const top =
+              typeof args[0] === "number" ? args[1] : (args[0]?.top ?? 0);
+            const destination =
+              method === "scrollBy" ? element.scrollTop + top : top;
+            element.setAttribute(
+              "data-scroll-destination",
+              String(destination),
+            );
+            element.setAttribute(
+              "data-scroll-requests",
+              String(Number(element.getAttribute("data-scroll-requests")) + 1),
+            );
+            return Reflect.apply(target, thisArg, args);
+          },
+        });
+      }
+      return maxTop;
+    });
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => scroll.evaluate((element) => element.scrollTop))
+      .toBe(maxTop);
+    await expect(scroll).toHaveAttribute(
+      "data-scroll-destination",
+      String(maxTop),
+    );
+    for (const key of ["Space", "Space", "PageDown"])
+      await page.keyboard.press(key);
+    await expect(scroll).toHaveAttribute("data-scroll-requests", "1");
+    expect(await scroll.evaluate((element) => element.scrollTop)).toBe(maxTop);
+    await expect(page.locator("#reader-last-line")).toBeInViewport();
+    await expect(scroll).toHaveCSS("overscroll-behavior-y", "none");
+
+    await scroll.evaluate((element) => {
+      element.scrollTop = 40;
+    });
+    await page.keyboard.press("Shift+Space");
+    await expect
+      .poll(() => scroll.evaluate((element) => element.scrollTop))
+      .toBe(0);
+    await expect(scroll).toHaveAttribute("data-scroll-destination", "0");
+    for (const key of ["Shift+Space", "PageUp"]) await page.keyboard.press(key);
+    await expect(scroll).toHaveAttribute("data-scroll-requests", "2");
+  });
+}
 
 test("reader judgments preserve article scroll and do not refetch its body", async ({
   page,

@@ -717,6 +717,54 @@ test("editorial story actions match singleton hover behavior and light colors", 
   await expect(storyActions).toHaveCSS("pointer-events", "auto");
 });
 
+for (const selector of [".story-lead", ".story-headline"]) {
+  test(`Space pages the grid from a focused ${selector}`, async ({ page }) => {
+    const lead = {
+      ...item("lead", "one", "Lead coverage", 0.9, "L"),
+      story_id: "story-one",
+    };
+    const headline = {
+      ...item("headline", "two", "Another source", 0.8, "S"),
+      story_id: "story-one",
+    };
+    await stubFrontPage(
+      page,
+      [
+        {
+          story_id: "story-one",
+          source_count: 2,
+          order_key: 0.9,
+          size: "L",
+          items: [lead, headline],
+        },
+      ],
+      Array.from({ length: 20 }, (_, index) =>
+        item(`trailing-${index}`, "three", `Trailing item ${index}`, 0.5, "S"),
+      ),
+      [],
+    );
+    await page.goto("/");
+    const control = page.locator(selector).first();
+    await control.focus();
+    await expect(control).toBeFocused();
+    const grid = page.locator(".grid-scroll");
+    const { top, height } = await grid.evaluate((element) => ({
+      top: element.scrollTop,
+      height: element.clientHeight,
+    }));
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(top + height);
+    await expect(page.locator(".reader")).toHaveCount(0);
+    await page.keyboard.press("Shift+Space");
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(top);
+    await expect(page.locator(".reader")).toHaveCount(0);
+  });
+}
+
 test("stories earn their position in the interest grid", async ({ page }) => {
   const lead = {
     ...item("lead", "one", "Lead coverage", 0.7, "L"),

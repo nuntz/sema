@@ -36,6 +36,30 @@ function overlaps(startA: number, endA: number, startB: number, endB: number) {
   return startA < endB && startB < endA;
 }
 
+export function nearestPageCell(
+  rects: LayoutRect[],
+  x: number,
+  y: number,
+  viewportTop: number,
+  viewportBottom: number,
+): string | undefined {
+  const visible = rects.filter((rect) =>
+    overlaps(rect.top, rect.bottom, viewportTop, viewportBottom),
+  );
+  const fullyVisible = visible.filter(
+    (rect) => rect.top >= viewportTop && rect.bottom <= viewportBottom,
+  );
+  const candidates = fullyVisible.length > 0 ? fullyVisible : visible;
+  const distance = (rect: LayoutRect) => {
+    const centerY =
+      (Math.max(rect.top, viewportTop) +
+        Math.min(rect.bottom, viewportBottom)) /
+      2;
+    return Math.hypot(rect.centerX - x, centerY - y);
+  };
+  return candidates.sort((a, b) => distance(a) - distance(b))[0]?.id;
+}
+
 export function nearestCell(
   rows: LayoutRow[],
   focusedID: string,

@@ -18,7 +18,11 @@ import {
   totalHeight,
   visibleRows,
 } from "../layout/justified";
-import { type LayoutDirection, nearestCell } from "../layout/navigation";
+import {
+  type LayoutDirection,
+  nearestCell,
+  nearestPageCell,
+} from "../layout/navigation";
 import {
   caughtUpBoundary,
   caughtUpLabel,
@@ -133,6 +137,7 @@ export function Grid(props: GridProps) {
   let programmaticScrolling = false;
   let userScrollIntentVersion = 0;
   let endRequested = false;
+  let pageFocus: { top: number; x: number; y: number } | undefined;
   let goPending = false;
   const [storyLeadHeights, setStoryLeadHeights] = createSignal(
     new Map<string, number>(),
@@ -249,7 +254,13 @@ export function Grid(props: GridProps) {
   const rows = createMemo(() => layout().rows);
   const dividerTop = createMemo(() => layout().dividerTop);
   const visible = createMemo(() =>
-    visibleRows(rows(), scrollTop(), viewportHeight()),
+    // Mount the adjacent pages early so their images load before paging to them.
+    visibleRows(
+      rows(),
+      scrollTop(),
+      viewportHeight(),
+      Math.max(360, viewportHeight()),
+    ),
   );
   const storyList = createMemo(() => props.stories ?? []);
   const liveStories = createMemo(
@@ -294,6 +305,7 @@ export function Grid(props: GridProps) {
   };
 
   const noteUserScroll = () => {
+    pageFocus = undefined;
     cancelLongPress();
     userScrollIntentVersion++;
     cancelScrollRestore();
@@ -439,6 +451,7 @@ export function Grid(props: GridProps) {
   };
 
   const programmaticScroll = (action: () => void) => {
+    pageFocus = undefined;
     userScrolling = false;
     programmaticScrolling = true;
     window.clearTimeout(scrollIdle);
@@ -512,6 +525,17 @@ export function Grid(props: GridProps) {
       )
     )
       props.onLoadMore();
+    if (
+      pageFocus &&
+      Math.abs(
+        top -
+          Math.min(
+            pageFocus.top,
+            scroller.scrollHeight - scroller.clientHeight,
+          ),
+      ) < 1
+    )
+      finishPageFocus();
   };
 
   const onScroll = () => {
@@ -622,6 +646,52 @@ export function Grid(props: GridProps) {
     });
   };
 
+  const focusControl = (id: string) => {
+    const target = scroller.querySelector<HTMLElement>(
+      `[data-focus-id="${CSS.escape(id)}"], [data-item-id="${CSS.escape(id)}"]`,
+    );
+    return target?.matches("button, a")
+      ? target
+      : target?.querySelector<HTMLElement>(".story-lead, .cell-main");
+  };
+
+  const finishPageFocus = () => {
+    const pending = pageFocus;
+    pageFocus = undefined;
+    if (!pending || !props.active || sheetItem()) return;
+    const viewport = scroller.getBoundingClientRect();
+    const controls = Array.from(
+      scroller.querySelectorAll<HTMLElement>(
+        ".cell-main, .story-lead, .story-headline",
+      ),
+    ).filter((control) => control.getClientRects().length > 0);
+    const rects = controls.map((control) => {
+      const owner = control.closest<HTMLElement>(
+        "[data-focus-id], [data-item-id]",
+      );
+      const rect = control.getBoundingClientRect();
+      return {
+        id: owner?.dataset.focusId ?? owner?.dataset.itemId ?? "",
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        centerX: (rect.left + rect.right) / 2,
+        centerY: (rect.top + rect.bottom) / 2,
+      };
+    });
+    const id = nearestPageCell(
+      rects,
+      viewport.left + pending.x,
+      viewport.top + pending.y,
+      viewport.top,
+      viewport.bottom,
+    );
+    if (!id) return;
+    props.onFocus(id);
+    focusControl(id)?.focus({ preventScroll: true });
+  };
+
   const focusElement = (id: string) => {
     endRequested = false;
     props.onFocus(id);
@@ -631,9 +701,7 @@ export function Grid(props: GridProps) {
           `[data-focus-id="${CSS.escape(id)}"], [data-item-id="${CSS.escape(id)}"]`,
         );
         target?.scrollIntoView({ block: "nearest", inline: "nearest" });
-        const control = target?.matches("button, a")
-          ? target
-          : target?.querySelector<HTMLElement>(".story-lead, .cell-main");
+        const control = focusControl(id);
         control?.focus({ preventScroll: true });
       });
     });
@@ -738,7 +806,15 @@ export function Grid(props: GridProps) {
     if (sheetItem()) return;
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
-    if (target.matches("input, textarea, select")) return;
+    if (target.isContentEditable || target.matches("input, textarea, select"))
+      return;
+    const control = target.closest("button, a, summary");
+    if (
+      event.key === " " &&
+      control &&
+      !control.matches(".cell-main, .story-lead, .story-headline")
+    )
+      return;
     if (
       target.closest(
         ".story-heart, .story-more, .story-more-action, .cell-actions",
@@ -750,17 +826,58 @@ export function Grid(props: GridProps) {
       return;
     const item = focused();
     const command = gridCommand(event.key);
+    if (command !== "page-down" && command !== "page-up") pageFocus = undefined;
     if (!command) {
       clearGo();
-      if (
-        ["PageDown", "PageUp", " "].includes(event.key) &&
-        !(event.key === " " && target.matches("button, a"))
-      )
-        noteUserScroll();
       return;
     }
     if (command !== "go-prefix") clearGo();
     switch (command) {
+      case "page-down":
+      case "page-up": {
+        noteUserScroll();
+        const direction = command === "page-up" || event.shiftKey ? -1 : 1;
+        const maxTop = Math.max(
+          0,
+          scroller.scrollHeight - scroller.clientHeight,
+        );
+        const top = Math.max(
+          0,
+          Math.min(
+            maxTop,
+            scroller.scrollTop + scroller.clientHeight * direction,
+          ),
+        );
+        // Do not restart an animation against a boundary (including subpixel rounding).
+        if (Math.abs(top - scroller.scrollTop) < 1) break;
+        const viewport = scroller.getBoundingClientRect();
+        const focusedRect = focusControl(
+          props.focusedID,
+        )?.getBoundingClientRect();
+        pageFocus = {
+          top,
+          x: focusedRect
+            ? (focusedRect.left + focusedRect.right) / 2 - viewport.left
+            : viewport.width / 2,
+          y: focusedRect
+            ? Math.max(
+                0,
+                Math.min(
+                  viewport.height,
+                  (focusedRect.top + focusedRect.bottom) / 2 - viewport.top,
+                ),
+              )
+            : viewport.height / 2,
+        };
+        scroller.scrollTo({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+            .matches
+            ? "instant"
+            : "smooth",
+          top,
+        });
+        break;
+      }
       case "down":
         if (storyList().length > 0) moveFront(1);
         else move("down");
@@ -842,6 +959,9 @@ export function Grid(props: GridProps) {
   return (
     <div
       class="grid-scroll"
+      onPointerDown={() => {
+        pageFocus = undefined;
+      }}
       classList={{
         "reader-underlay": props.readerOpen,
         "reader-underlay-dragging": props.readerDragging,
@@ -923,7 +1043,9 @@ export function Grid(props: GridProps) {
                         pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.onExpandStory?.(id)}
                         onLeadHeight={recordStoryLeadHeight}
-                        onFocus={props.onFocus}
+                        onFocus={(id) => {
+                          if (!pageFocus) props.onFocus(id);
+                        }}
                         onOpenLead={openStoryLead}
                         onOpen={props.onOpen}
                         onExternalOpen={props.onExternalOpen}
@@ -991,7 +1113,9 @@ export function Grid(props: GridProps) {
                         height: `${cell.height ?? row.height}px`,
                       }}
                       data-item-id={item().item_id}
-                      onMouseEnter={() => props.onFocus(item().item_id)}
+                      onMouseEnter={() => {
+                        if (!pageFocus) props.onFocus(item().item_id);
+                      }}
                       onDblClick={() => {
                         if (primaryRoute().kind !== "external")
                           openPrimary(item());
@@ -1006,7 +1130,7 @@ export function Grid(props: GridProps) {
                           item={item()}
                           sizes={cell.width}
                           alt=""
-                          loading="lazy"
+                          loading="eager"
                           width={item().media_w}
                           height={item().media_h}
                           onError={(event) =>

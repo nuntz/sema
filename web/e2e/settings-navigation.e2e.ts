@@ -517,6 +517,280 @@ for (const tab of ["Unread", "All"] as const) {
   });
 }
 
+test("grid loads the next page of images before scrolling", async ({
+  page,
+}) => {
+  await page.route("**/fixture-image/*", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="teal"/></svg>',
+    }),
+  );
+  await openApp(page, {
+    initialItems: items.map((item) => ({
+      ...item,
+      media_url: `/fixture-image/${item.item_id}.svg`,
+      media_w: 640,
+      media_h: 480,
+    })),
+  });
+  const grid = page.locator(".grid-scroll");
+  await expect
+    .poll(() =>
+      grid.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        const images = [
+          ...element.querySelectorAll<HTMLImageElement>(".grid-cell > img"),
+        ];
+        const nextPage = images.filter((image) => {
+          const rect = image.getBoundingClientRect();
+          return (
+            rect.top >= bounds.bottom &&
+            rect.top < bounds.bottom + element.clientHeight
+          );
+        });
+        return (
+          nextPage.length > 0 &&
+          nextPage.every((image) => image.complete && image.naturalWidth > 0)
+        );
+      }),
+    )
+    .toBe(true);
+  // The whole next viewport is mounted, but the rest of the feed stays virtualized.
+  const mounted = await grid.locator(".grid-cell").count();
+  expect(mounted).toBeLessThan(64);
+  expect(await grid.evaluate((element) => element.scrollTop)).toBe(0);
+  const lastRowBottom = await grid
+    .locator(".grid-row")
+    .last()
+    .evaluate((row) => row.getBoundingClientRect().bottom);
+  const nextPageBottom = await grid.evaluate(
+    (element) => element.getBoundingClientRect().bottom + element.clientHeight,
+  );
+  expect(lastRowBottom).toBeGreaterThanOrEqual(nextPageBottom);
+});
+
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+  test(`grid page scrolling respects ${reducedMotion} motion preference`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion });
+    await openApp(page);
+    const grid = page.locator(".grid-scroll");
+    await grid.evaluate((element) => {
+      element.addEventListener("scroll", () => {
+        if (element.scrollTop > 0 && element.scrollTop < element.clientHeight)
+          element.setAttribute("data-intermediate-scroll", "true");
+      });
+    });
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(await grid.evaluate((element) => element.clientHeight));
+    expect(await grid.getAttribute("data-intermediate-scroll")).toBe(
+      reducedMotion === "reduce" ? null : "true",
+    );
+  });
+}
+
+test("grid page keys scroll a viewport without requiring grid focus", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  const grid = page.locator(".grid-scroll");
+  const height = await grid.evaluate((element) => element.clientHeight);
+  const scrollTop = () => grid.evaluate((element) => element.scrollTop);
+
+  await page.keyboard.press("Space");
+  await expect.poll(scrollTop).toBe(height);
+  await page.keyboard.press("PageDown");
+  await expect.poll(scrollTop).toBe(height * 2);
+  await page.keyboard.press("Shift+Space");
+  await expect.poll(scrollTop).toBe(height);
+  await page.keyboard.press("PageUp");
+  await expect.poll(scrollTop).toBe(0);
+
+  await page.keyboard.press("?");
+  await page.keyboard.press("PageDown");
+  expect(await scrollTop()).toBe(0);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Clear tag filter: #tech" }).focus();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("button", { name: "Clear tag filter: #tech" }),
+  ).toHaveCount(0);
+  expect(await scrollTop()).toBe(0);
+});
+
+test("Space pages a keyboard-focused cell while Enter and o open it", async ({
+  page,
+}) => {
+  await openApp(page);
+  await page.keyboard.press("j");
+  await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
+  const originalID = await page
+    .locator(".grid-cell.focused")
+    .getAttribute("data-item-id");
+  const grid = page.locator(".grid-scroll");
+  const { top, height } = await grid.evaluate((element) => ({
+    top: element.scrollTop,
+    height: element.clientHeight,
+  }));
+  await page.keyboard.press("Space");
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(top + height);
+  await expect(page.locator(".reader")).toHaveCount(0);
+  await expect(page.locator(".grid-cell.focused")).not.toHaveAttribute(
+    "data-item-id",
+    originalID ?? "",
+  );
+  await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
+  await expect(page.locator(".grid-cell.focused")).toBeInViewport();
+  const afterSpaceID = await page
+    .locator(".grid-cell.focused")
+    .getAttribute("data-item-id");
+  await page.keyboard.press("PageDown");
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(top + height * 2);
+  await expect(page.locator(".grid-cell.focused")).not.toHaveAttribute(
+    "data-item-id",
+    afterSpaceID ?? "",
+  );
+  await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
+  await expect(page.locator(".grid-cell.focused")).toBeInViewport();
+  await page.keyboard.press("PageUp");
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(top + height);
+  await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
+  await expect(page.locator(".grid-cell.focused")).toBeInViewport();
+  await page.keyboard.press("Shift+Space");
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(top);
+  await expect(page.locator(".reader")).toHaveCount(0);
+  await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
+  await expect(page.locator(".grid-cell.focused")).toBeInViewport();
+  const title = await page.locator(".grid-cell.focused h2").innerText();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".reader")).toBeVisible();
+  await expect(page.locator(".reader h1")).toHaveText(title);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".reader")).toHaveCount(0);
+  await page.keyboard.press("o");
+  await expect(page.locator(".reader")).toBeVisible();
+});
+
+for (const eventType of ["wheel", "touchmove"]) {
+  test(`${eventType} scrolling cancels pending keyboard page focus`, async ({
+    page,
+  }) => {
+    await openApp(page);
+    await page.keyboard.press("j");
+    const control = page.locator(".grid-cell.focused .cell-main");
+    await expect(control).toBeFocused();
+    const originalID = await page
+      .locator(".grid-cell.focused")
+      .getAttribute("data-item-id");
+    const grid = page.locator(".grid-scroll");
+    const destination = await grid.evaluate((element, type) => {
+      const destination = element.scrollTop + element.clientHeight;
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      element.dispatchEvent(new Event(type));
+      element.scrollTo({ top: destination, behavior: "instant" });
+      return destination;
+    }, eventType);
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(destination);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(page.locator(".grid-cell.focused")).toHaveAttribute(
+      "data-item-id",
+      originalID ?? "",
+    );
+    await expect(control).toBeFocused();
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`grid page keys stop at the content boundaries at ${width}px`, async ({
+    page,
+  }) => {
+    await openApp(page);
+    await page.setViewportSize({ width, height: 420 });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    const grid = page.locator(".grid-scroll");
+    const maxTop = await grid.evaluate((element) => {
+      const maxTop = element.scrollHeight - element.clientHeight;
+      element.scrollTop = maxTop - 40;
+      for (const method of ["scrollBy", "scrollTo"] as const) {
+        element[method] = new Proxy(element[method], {
+          apply(target, thisArg, args) {
+            const top =
+              typeof args[0] === "number" ? args[1] : (args[0]?.top ?? 0);
+            const destination =
+              method === "scrollBy" ? element.scrollTop + top : top;
+            element.setAttribute(
+              "data-scroll-destination",
+              String(destination),
+            );
+            element.setAttribute(
+              "data-scroll-requests",
+              String(Number(element.getAttribute("data-scroll-requests")) + 1),
+            );
+            return Reflect.apply(target, thisArg, args);
+          },
+        });
+      }
+      return maxTop;
+    });
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(maxTop);
+    await expect(grid).toHaveAttribute(
+      "data-scroll-destination",
+      String(maxTop),
+    );
+    for (const key of ["Space", "Space", "PageDown"])
+      await page.keyboard.press(key);
+    await expect(grid).toHaveAttribute("data-scroll-requests", "1");
+    expect(await grid.evaluate((element) => element.scrollTop)).toBe(maxTop);
+    await expect(page.locator(".end-of-feed")).toBeInViewport();
+    await expect(grid).toHaveCSS("overscroll-behavior-y", "none");
+
+    await grid.evaluate((element) => {
+      element.scrollTop = 40;
+    });
+    await page.keyboard.press("Shift+Space");
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(0);
+    await expect(grid).toHaveAttribute("data-scroll-destination", "0");
+    for (const key of ["Shift+Space", "PageUp"]) await page.keyboard.press(key);
+    await expect(grid).toHaveAttribute("data-scroll-requests", "2");
+  });
+}
+
 test("shift+G focuses the end action and g g returns to the top", async ({
   page,
 }) => {

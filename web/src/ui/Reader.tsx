@@ -418,13 +418,27 @@ export function Reader(props: ReaderProps) {
         if (props.canPrevious) props.onPrevious();
         break;
       case "page-down":
-        article.scrollBy({
-          top: article.clientHeight * (event.shiftKey ? -1 : 1),
+      case "page-up": {
+        const direction = command === "page-up" || event.shiftKey ? -1 : 1;
+        const maxTop = Math.max(0, article.scrollHeight - article.clientHeight);
+        const top = Math.max(
+          0,
+          Math.min(
+            maxTop,
+            article.scrollTop + article.clientHeight * direction,
+          ),
+        );
+        // Do not restart an animation against a boundary (including subpixel rounding).
+        if (Math.abs(top - article.scrollTop) < 1) break;
+        article.scrollTo({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+            .matches
+            ? "instant"
+            : "smooth",
+          top,
         });
         break;
-      case "page-up":
-        article.scrollBy({ top: -article.clientHeight });
-        break;
+      }
       case "like":
         props.onSignal(props.item.signal === 1 ? 0 : 1);
         break;

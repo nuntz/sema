@@ -1,4 +1,6 @@
 export type GridCommand =
+  | "page-down"
+  | "page-up"
   | "down"
   | "up"
   | "left"
@@ -36,6 +38,9 @@ export type ReaderCommand =
   | "related";
 
 const gridBindings: Record<string, GridCommand> = {
+  " ": "page-down",
+  PageDown: "page-down",
+  PageUp: "page-up",
   j: "down",
   ArrowDown: "down",
   k: "up",
