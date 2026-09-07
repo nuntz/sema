@@ -43,6 +43,7 @@ async function stubFrontPage(
     onPage2Request?: () => void;
   } = {},
 ) {
+  await page.clock.setFixedTime(new Date("2026-09-05T18:00:00Z"));
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -962,4 +963,140 @@ test("story read visuals follow the grid's All and Unread contexts", async ({
   await page.getByRole("radio", { name: "Unread", exact: true }).click();
   await expect(headlines.first()).toHaveClass(/\bread\b/);
   await expect(headlines.first().locator(".unread-dot")).toHaveCount(0);
+});
+
+test("desktop story titles and summaries fit their cards after resizing and expansion", async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
+  const titles = [
+    "The car industry A/B tested selling a car with and without CarPlay",
+    "Double Fine’s first game since leaving Xbox is a comedy bus-driving sim called Thank You Bus Driver",
+    "Lululemon founder Chip Wilson and wife Shannon Wilson are divorcing after building a business together over several decades",
+    "A story without an image still needs enough room for its complete headline, source, and any summary that can fit",
+    "A deliberately long headline about the car industry testing the same vehicle with and without CarPlay, what drivers chose, and why those results could change the design of the next generation of vehicles",
+    "A single-source story with an unusually long title should also remain readable when the grid is resized to a narrower desktop window",
+    "A short story title",
+  ];
+  const stories = titles.map((title, index) => {
+    const storyID = `sizing-story-${index}`;
+    const relatedCount = [1, 2, 1, 2, 5, 0, 0][index];
+    return {
+      story_id: storyID,
+      source_count: relatedCount + 1,
+      order_key: 1 - index * 0.05,
+      size: "L",
+      items: [
+        {
+          ...item(`sizing-lead-${index}`, "lead", title, 1 - index * 0.05, "L"),
+          story_id: storyID,
+          summary:
+            "Article URL: https://example.com/a-long-article-address-that-should-wrap-without-leaking-out-of-the-card Comments URL: https://example.com/discussion More details about the story appear here.",
+          ...(index === 3 ? { media_url: undefined } : {}),
+        },
+        ...Array.from({ length: relatedCount }, (_, related) => ({
+          ...item(
+            `sizing-related-${index}-${related}`,
+            "related",
+            "Another source explains what drivers chose and why CarPlay matters",
+            0.5,
+            "S",
+          ),
+          feed_title: "Daring Fireball",
+          story_id: storyID,
+        })),
+      ],
+    };
+  });
+  await stubFrontPage(page, stories, [], []);
+  await page.setViewportSize({ width: 1500, height: 2200 });
+  await page.goto("/");
+  const cards = page.locator(".story-card");
+  await expect(cards).toHaveCount(stories.length);
+  await page.evaluate(() => document.fonts.ready);
+
+  const clipping = () =>
+    cards.evaluateAll((elements) => {
+      const errors: string[] = [];
+      for (const card of elements) {
+        const shell = card.querySelector(".story-lead-shell");
+        if (!shell) throw new Error("Missing story lead");
+        const bounds = shell.getBoundingClientRect();
+        for (const selector of ["h2", "p", ".story-meta"]) {
+          const element = shell.querySelector<HTMLElement>(selector);
+          if (!element || getComputedStyle(element).display === "none")
+            continue;
+          const rect = element.getBoundingClientRect();
+          if (rect.top < bounds.top || rect.bottom > bounds.bottom + 1)
+            errors.push(
+              `${card.getAttribute("data-story-id")}: clipped ${selector}`,
+            );
+          if (element.scrollWidth > element.clientWidth + 1)
+            errors.push(
+              `${card.getAttribute("data-story-id")}: wide ${selector}`,
+            );
+          if (selector === "p") {
+            const lineHeight = Number.parseFloat(
+              getComputedStyle(element).lineHeight,
+            );
+            if (
+              Math.abs(
+                rect.height / lineHeight - Math.round(rect.height / lineHeight),
+              ) > 0.02
+            )
+              errors.push("Summary ends with a partial line");
+          }
+        }
+        const headlines = card.querySelector(".story-headlines");
+        if (
+          headlines &&
+          headlines.getBoundingClientRect().bottom >
+            card.getBoundingClientRect().bottom + 1
+        )
+          errors.push("Related headlines extend beyond the card");
+      }
+      const boxes = elements.map((element) => element.getBoundingClientRect());
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          const a = boxes[i];
+          const b = boxes[j];
+          if (
+            a.left < b.right &&
+            b.left < a.right &&
+            a.top < b.bottom &&
+            b.top < a.bottom
+          )
+            errors.push("Story cards overlap");
+        }
+      }
+      return errors;
+    });
+
+  for (const width of [1500, 900, 760, 1600]) {
+    await page.setViewportSize({ width, height: 2200 });
+    await expect.poll(clipping).toEqual([]);
+    await expect(cards.locator("h2")).toHaveText(titles);
+  }
+  await expect(
+    page.locator('[data-story-id="sizing-story-6"] .story-lead p'),
+  ).toBeVisible();
+  const relatedCopy = cards.first().locator(".story-headline-copy");
+  await expect(relatedCopy).toBeVisible();
+  expect(
+    await relatedCopy.evaluate((element) => {
+      const height = element.getBoundingClientRect().height;
+      return (
+        height > Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5
+      );
+    }),
+  ).toBe(true);
+  await page.screenshot({
+    path: "/tmp/sema-story-titles-fixed.png",
+    clip: { x: 0, y: 0, width: 1600, height: 900 },
+  });
+
+  const expandable = page.locator('[data-story-id="sizing-story-4"]');
+  await expandable.getByRole("button", { name: /more$/ }).click();
+  await expect(expandable.locator(".story-headline")).toHaveCount(5);
+  await expect.poll(clipping).toEqual([]);
 });

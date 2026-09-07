@@ -1,6 +1,17 @@
-import { createMemo, For, type JSX, Show } from "solid-js";
+import {
+  createMemo,
+  createSignal,
+  For,
+  type JSX,
+  onCleanup,
+  Show,
+} from "solid-js";
 import { Icon } from "../components/Icon";
-import type { LayoutCell, LayoutRow } from "../layout/justified";
+import {
+  type LayoutCell,
+  type LayoutRow,
+  storyCardBorderHeight,
+} from "../layout/justified";
 import { type ReadStateContext, readVisualState } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
@@ -17,6 +28,7 @@ interface StoryCellProps {
   readContext: ReadStateContext;
   pressed: boolean;
   onExpand(storyID: string): void;
+  onLeadHeight(storyID: string, height: number): void;
   onFocus(id: string): void;
   onOpenLead(story: Story): void;
   onOpen(item: Item): void;
@@ -38,10 +50,64 @@ export function StoryCell(props: StoryCellProps) {
   const remaining = () => props.cell.headlineRemaining ?? 0;
   const showHeadlines = () => (props.cell.headlineHeight ?? 0) > 0;
   const cellHeight = () => props.cell.height ?? props.row.height;
-  const leadHeight = () => cellHeight() - (props.cell.headlineHeight ?? 0);
+  const leadHeight = () =>
+    cellHeight() -
+    (props.cell.headlineHeight ?? 0) -
+    (props.cell.mobileStoryCard ? 0 : storyCardBorderHeight);
   const editorial = () =>
     props.story.size === "L" && props.cell.mobileTile !== true;
-  const compactEditorial = () => leadHeight() < 230;
+  const [copyMetrics, setCopyMetrics] = createSignal({
+    height: 0,
+    mediaHeight: 0,
+    summaryLineHeight: 0,
+    summaryMargin: 0,
+  });
+  const summaryLines = () => {
+    const metrics = copyMetrics();
+    if (props.cell.mobileStoryCard || !metrics.summaryLineHeight) return 0;
+    const available = leadHeight() - metrics.height - metrics.mediaHeight;
+    return Math.max(
+      0,
+      Math.min(
+        3,
+        Math.floor(
+          (available - metrics.summaryMargin) / metrics.summaryLineHeight,
+        ),
+      ),
+    );
+  };
+  const measureTitle = (title: HTMLHeadingElement) => {
+    // Keep optional summaries out of the minimum height to avoid a layout loop.
+    const observer = new ResizeObserver(() => {
+      if (props.cell.mobileStoryCard) return;
+      const copy = title.parentElement;
+      const meta = copy?.querySelector<HTMLElement>(".story-meta");
+      if (!copy || !meta) return;
+      const style = getComputedStyle(copy);
+      const height =
+        title.getBoundingClientRect().height +
+        Number.parseFloat(style.paddingTop) +
+        Number.parseFloat(style.paddingBottom) +
+        meta.getBoundingClientRect().height +
+        Number.parseFloat(getComputedStyle(meta).marginTop);
+      const summary = copy.querySelector("p");
+      const summaryStyle = summary ? getComputedStyle(summary) : undefined;
+      const media = copy.parentElement?.querySelector(".story-media-action");
+      const mediaStyle = media ? getComputedStyle(media) : undefined;
+      setCopyMetrics({
+        height,
+        mediaHeight: Number.parseFloat(mediaStyle?.maxHeight ?? "0"),
+        summaryLineHeight: Number.parseFloat(summaryStyle?.lineHeight ?? "0"),
+        summaryMargin: Number.parseFloat(summaryStyle?.marginTop ?? "0"),
+      });
+      props.onLeadHeight(
+        props.story.story_id,
+        Math.ceil(height + Number.parseFloat(mediaStyle?.minHeight ?? "0")),
+      );
+    });
+    observer.observe(title);
+    onCleanup(() => observer.disconnect());
+  };
   const fullyRead = () => props.story.items.every((item) => item.read);
   const cellReadVisuals = createMemo(() =>
     readVisualState(props.readContext, fullyRead()),
@@ -77,10 +143,6 @@ export function StoryCell(props: StoryCellProps) {
         focused: props.focusedID === focusID(),
         read: cellReadVisuals().dimmed,
         pressed: props.pressed,
-        compact:
-          editorial() &&
-          props.cell.mobileStoryCard !== true &&
-          compactEditorial(),
         "mobile-story-card": props.cell.mobileStoryCard === true,
         "mobile-tile-cell": props.cell.mobileTile === true,
         expanded: props.cell.headlineExpanded === true,
@@ -292,13 +354,23 @@ export function StoryCell(props: StoryCellProps) {
                   onOpen={() => props.onOpenLead(props.story)}
                   onExternalOpen={props.onExternalOpen}
                 >
-                  <h2 classList={{ read: leadReadVisuals().dimmed }}>
+                  <h2
+                    ref={measureTitle}
+                    classList={{ read: leadReadVisuals().dimmed }}
+                  >
                     {item.title}
                   </h2>
-                  <Show when={!compactEditorial() && item.summary}>
-                    <p>{item.summary}</p>
+                  <Show when={item.summary}>
+                    <p
+                      style={{ "--story-summary-lines": summaryLines() }}
+                      classList={{
+                        "story-summary-hidden": summaryLines() === 0,
+                      }}
+                    >
+                      {item.summary}
+                    </p>
                   </Show>
-                  <Show when={!compactEditorial()}>
+                  <Show when={!props.cell.mobileStoryCard}>
                     <div class="story-meta">
                       <SourceBadge
                         connector={item.connector}

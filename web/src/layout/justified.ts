@@ -29,6 +29,7 @@ export interface LayoutRow {
 export interface JustifyOptions {
   completeSegment?: boolean;
   expandedStoryIDs?: ReadonlySet<string>;
+  storyLeadHeights?: ReadonlyMap<string, number>;
 }
 
 interface LayoutItem extends Item {
@@ -48,7 +49,9 @@ const tallCompanionCount = 3;
 const mosaicMinimumCompanions = 3;
 const sizeFactor = { S: 0.8, M: 1.05, L: 1.6 } as const;
 const tallLargeFactor = 1.75;
-export const storyHeadlineHeight = 33;
+export const storyHeadlineHeight = 52;
+export const storyMoreHeight = 33;
+export const storyCardBorderHeight = 3;
 export const mobileStoryHeadlineHeight = 52;
 export const mobileStoryMoreHeight = 44;
 const storyLeadMinimumHeight = 120;
@@ -712,7 +715,7 @@ export function justify(
     if (stableCount < regularRun.length) break;
     index = end;
   }
-  return layoutStoryHeadlines(rows);
+  return layoutStoryHeadlines(rows, false, options.storyLeadHeights);
 }
 
 function appendMobileLargeBand(
@@ -884,7 +887,11 @@ function horizontalOverlap(left: LayoutCell, right: LayoutCell): boolean {
   );
 }
 
-function layoutStoryHeadlines(rows: LayoutRow[], mobile = false): LayoutRow[] {
+function layoutStoryHeadlines(
+  rows: LayoutRow[],
+  mobile = false,
+  leadHeights?: ReadonlyMap<string, number>,
+): LayoutRow[] {
   let top = 0;
   return rows.map((row) => {
     const cells = row.cells.map((cell) => ({ ...cell }));
@@ -895,8 +902,12 @@ function layoutStoryHeadlines(rows: LayoutRow[], mobile = false): LayoutRow[] {
       const mode = (cell.item as LayoutItem).layoutHeadlineMode;
       if (!mode) continue;
       const headlineCount = Math.max(0, story.items.length - 1);
-      if (headlineCount === 0) continue;
+      if (headlineCount === 0 && mobile) continue;
       const baseHeight = cell.height ?? row.height;
+      const leadMinimumHeight = Math.max(
+        storyLeadMinimumHeight,
+        mobile ? 0 : (leadHeights?.get(story.story_id) ?? 0),
+      );
       if (mode === "collapsed") {
         if (mobile) {
           const availableHeight = Math.max(
@@ -922,33 +933,39 @@ function layoutStoryHeadlines(rows: LayoutRow[], mobile = false): LayoutRow[] {
           cell.headlineRemaining = headlineRemaining;
           continue;
         }
-        const capacity = Math.max(
-          0,
-          Math.floor(
-            (baseHeight - storyLeadMinimumHeight) / storyHeadlineHeight,
-          ),
-        );
+        const availableHeight =
+          baseHeight - leadMinimumHeight - storyCardBorderHeight;
         const headlineItemCount =
-          headlineCount <= capacity ? headlineCount : Math.max(0, capacity - 1);
+          headlineCount * storyHeadlineHeight <= availableHeight
+            ? headlineCount
+            : Math.max(
+                0,
+                Math.floor(
+                  (availableHeight - storyMoreHeight) / storyHeadlineHeight,
+                ),
+              );
         const headlineRemaining = headlineCount - headlineItemCount;
-        const usedRows =
-          headlineItemCount + (headlineRemaining > 0 && capacity > 0 ? 1 : 0);
-        cell.headlineHeight = usedRows * storyHeadlineHeight;
+        cell.headlineHeight =
+          headlineItemCount * storyHeadlineHeight +
+          (headlineRemaining > 0 ? storyMoreHeight : 0);
         cell.headlineItemCount = headlineItemCount;
         cell.headlineRemaining = headlineRemaining;
-        continue;
+      } else {
+        cell.headlineHeight = mobile
+          ? headlineCount * mobileStoryHeadlineHeight + mobileStoryMoreHeight
+          : headlineCount * storyHeadlineHeight;
+        cell.headlineItemCount = headlineCount;
+        cell.headlineRemaining = 0;
+        if (mobile) cell.headlineExpanded = true;
       }
 
-      const headlineHeight = mobile
-        ? headlineCount * mobileStoryHeadlineHeight + mobileStoryMoreHeight
-        : headlineCount * storyHeadlineHeight;
-      const expandedHeight = storyLeadMinimumHeight + headlineHeight;
+      // Desktop borders surround both the lead and the related-headline strip.
+      const expandedHeight =
+        leadMinimumHeight +
+        (cell.headlineHeight ?? 0) +
+        (mobile ? 0 : storyCardBorderHeight);
       const growth = Math.max(0, expandedHeight - baseHeight);
       cell.height = baseHeight + growth;
-      cell.headlineHeight = headlineHeight;
-      cell.headlineItemCount = headlineCount;
-      cell.headlineRemaining = 0;
-      if (mobile) cell.headlineExpanded = true;
       if (growth === 0) continue;
       const baseBottom = (cell.offsetY ?? 0) + baseHeight;
       for (const companion of cells) {

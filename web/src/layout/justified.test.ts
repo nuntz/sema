@@ -176,11 +176,11 @@ describe("17c desktop bands", () => {
 
     expect(collapsed.kind).toBe("tall");
     expect(collapsed.height).toBe(288);
-    expect(collapsedStory.headlineHeight).toBe(5 * 33);
-    expect(collapsedStory.headlineItemCount).toBe(4);
-    expect(collapsedStory.headlineRemaining).toBe(3);
+    expect(collapsedStory.headlineHeight).toBe(2 * 52 + 33);
+    expect(collapsedStory.headlineItemCount).toBe(2);
+    expect(collapsedStory.headlineRemaining).toBe(5);
     expect(
-      (collapsedStory.height ?? collapsed.height) - 5 * 33,
+      (collapsedStory.height ?? collapsed.height) - (2 * 52 + 33),
     ).toBeGreaterThanOrEqual(120);
 
     const [expanded] = justify(entries, 1248, false, {
@@ -190,6 +190,62 @@ describe("17c desktop bands", () => {
     expect(expanded.cells[0].headlineItemCount).toBe(7);
     expect(expanded.cells[0].headlineRemaining).toBe(0);
   });
+
+  it.each([0, 7])(
+    "reserves measured lead space and moves later rows with %i related headlines",
+    (headlineCount) => {
+      const story: Story = {
+        story_id: "long-title",
+        source_count: headlineCount + 1,
+        order_key: 0.9,
+        size: "L",
+        items: [
+          item("lead", "L", 1),
+          ...Array.from({ length: headlineCount }, (_, index) =>
+            item(`related-${index}`, "S"),
+          ),
+        ],
+      };
+      const entries = [
+        { kind: "story" as const, story },
+        ...Array.from({ length: 12 }, (_, index) => item(index, "M")),
+      ];
+      for (const expanded of [false, true]) {
+        const rows = justify(entries, 1248, false, {
+          storyLeadHeights: new Map([[story.story_id, 400]]),
+          expandedStoryIDs: new Set(expanded ? [story.story_id] : []),
+        });
+        const cell = rows[0].cells[0];
+        expect(
+          (cell.height ?? rows[0].height) - (cell.headlineHeight ?? 0) - 3,
+        ).toBe(400);
+        expect(cell.headlineItemCount).toBe(expanded ? headlineCount : 0);
+        expect(cell.headlineRemaining).toBe(expanded ? 0 : headlineCount);
+        expect(rows[1].top).toBe(rows[0].height + rows[0].gap);
+        const cells = rows.flatMap((row) =>
+          row.cells.map((entry) => ({
+            left: entry.left,
+            right: entry.left + entry.width,
+            top: row.top + (entry.offsetY ?? 0),
+            bottom:
+              row.top + (entry.offsetY ?? 0) + (entry.height ?? row.height),
+          })),
+        );
+        for (let i = 0; i < cells.length; i++) {
+          for (let j = i + 1; j < cells.length; j++) {
+            const a = cells[i];
+            const b = cells[j];
+            expect(
+              a.left < b.right &&
+                b.left < a.right &&
+                a.top < b.bottom &&
+                b.top < a.bottom,
+            ).toBe(false);
+          }
+        }
+      }
+    },
+  );
 
   it("matches the handoff span threshold and 354px geometry", () => {
     expect(spanEligible(item("boundary", "L", 1.2))).toBe(true);

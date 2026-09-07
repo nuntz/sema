@@ -134,6 +134,15 @@ export function Grid(props: GridProps) {
   let userScrollIntentVersion = 0;
   let endRequested = false;
   let goPending = false;
+  const [storyLeadHeights, setStoryLeadHeights] = createSignal(
+    new Map<string, number>(),
+  );
+  const recordStoryLeadHeight = (storyID: string, height: number) => {
+    setStoryLeadHeights((previous) => {
+      if (previous.get(storyID) === height) return previous;
+      return new Map(previous).set(storyID, height);
+    });
+  };
   const [width, setWidth] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(
@@ -194,6 +203,7 @@ export function Grid(props: GridProps) {
       const rows = stableRows(
         justify(entries, contentWidth(), hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
+          storyLeadHeights: storyLeadHeights(),
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -209,6 +219,7 @@ export function Grid(props: GridProps) {
       const rows = stableRows(
         justify(entries, contentWidth(), hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
+          storyLeadHeights: storyLeadHeights(),
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -217,10 +228,12 @@ export function Grid(props: GridProps) {
     const above = justify(entries.slice(0, beforeIndex), contentWidth(), true, {
       completeSegment: true,
       expandedStoryIDs: props.expandedStoryIDs,
+      storyLeadHeights: storyLeadHeights(),
     });
     const aboveHeight = totalHeight(above);
     const below = justify(entries.slice(beforeIndex), contentWidth(), hasMore, {
       expandedStoryIDs: props.expandedStoryIDs,
+      storyLeadHeights: storyLeadHeights(),
     }).map((row) => ({
       ...row,
       top: row.top + aboveHeight + dividerHeight(),
@@ -909,6 +922,7 @@ export function Grid(props: GridProps) {
                         readContext={readContext()}
                         pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.onExpandStory?.(id)}
+                        onLeadHeight={recordStoryLeadHeight}
                         onFocus={props.onFocus}
                         onOpenLead={openStoryLead}
                         onOpen={props.onOpen}
