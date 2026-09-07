@@ -14,6 +14,47 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 )
 
+func TestCreateStoryDoesNotReplaceExistingMembers(t *testing.T) {
+	var stored map[string]types.AttributeValue
+	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		if aws.ToString(input.ConditionExpression) != "attribute_not_exists(PK)" {
+			t.Fatal("story creation must be conditional")
+		}
+		if stored != nil {
+			return nil, &types.ConditionalCheckFailedException{}
+		}
+		stored = input.Item
+		return &dynamodb.PutItemOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	row := domain.Story{PK: "U#user", SK: "T#founder", StoryID: "founder", MemberIDs: []string{"founder", "first"}, TTL: 100}
+	if created, err := repository.CreateStory(context.Background(), row); err != nil || !created {
+		t.Fatalf("first creation = %v, %v", created, err)
+	}
+	row.MemberIDs, row.TTL = []string{"founder", "second"}, 50
+	if created, err := repository.CreateStory(context.Background(), row); err != nil || created {
+		t.Fatalf("second creation = %v, %v", created, err)
+	}
+	var got domain.Story
+	if err := attributevalue.UnmarshalMap(stored, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.MemberIDs) != 2 || got.MemberIDs[1] != "first" || got.TTL != 100 {
+		t.Fatalf("original story changed: %#v", got)
+	}
+}
+
+func TestCreateStoryPropagatesStorageFailure(t *testing.T) {
+	want := errors.New("unavailable")
+	db := &fakeDynamoDB{putItem: func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) { return nil, want }}
+	created, err := New(db, nil, "table", "", "").CreateStory(context.Background(), domain.Story{
+		PK: "U#user", SK: "T#story", StoryID: "story", MemberIDs: []string{"a", "b"},
+	})
+	if created || !errors.Is(err, want) {
+		t.Fatalf("creation = %v, %v", created, err)
+	}
+}
+
 func TestStoryLifecycle(t *testing.T) {
 	now := time.Now().UTC()
 	want := domain.Story{

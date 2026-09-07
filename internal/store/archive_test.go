@@ -70,6 +70,34 @@ func TestArchiveBodyDoesNotCommitHTMLWhenAssetMissing(t *testing.T) {
 
 type missingArchiveBody struct{ archiveObjectStore }
 
+type unreadableArchiveBody struct{ archiveObjectStore }
+
+func (s *unreadableArchiveBody) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return nil, &smithy.GenericAPIError{Code: "AccessDenied"}
+}
+
+func TestArchiveCleanupPreservesManifestWhenReadFails(t *testing.T) {
+	objects := &unreadableArchiveBody{archiveObjectStore{objects: map[string]bool{
+		"archive/user/item/body.html":   true,
+		"archive/user/item/body-0.webp": true,
+		"archive/user/item/lead.webp":   true,
+	}}}
+	New(nil, objects, "table", "bucket", "").deleteArchiveContent(context.Background(), "user", "item", nil)
+	if len(objects.objects) != 3 {
+		t.Fatalf("cleanup destroyed recovery data after failed read: %v", objects.objects)
+	}
+}
+
+func TestArchiveCleanupDeletesMediaWhenBodyIsMissing(t *testing.T) {
+	objects := &missingArchiveBody{archiveObjectStore{objects: map[string]bool{
+		"archive/user/item/lead.webp": true,
+	}}}
+	New(nil, objects, "table", "bucket", "").deleteArchiveContent(context.Background(), "user", "item", nil)
+	if len(objects.objects) != 0 {
+		t.Fatalf("media survived cleanup: %v", objects.objects)
+	}
+}
+
 func (s *missingArchiveBody) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	return nil, &smithy.GenericAPIError{Code: "NoSuchKey"}
 }

@@ -37,6 +37,7 @@ import {
   LinkActionFailure,
 } from "./link-action";
 import { createMediaQuery } from "./media-query";
+import { PendingReads } from "./pending-reads";
 import { resolveReaderItem } from "./reader-item";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import {
@@ -164,7 +165,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   let undoFocused = false;
   let toastID = 0;
   let searchInput!: HTMLInputElement;
-  const pendingRead = new Set<string>();
+  const pendingRead = new PendingReads();
+  let disposed = false;
   const pendingEvents = new Map<string, BehaviourEvent>();
   const heartsInFlight = new Set<string>();
   const searchActive = createMemo(() => [...searchQuery().trim()].length >= 2);
@@ -732,6 +734,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     window.addEventListener("pagehide", flush);
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
+      disposed = true;
       stopWindowReturn();
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("keydown", onKeyDown);
@@ -1010,9 +1013,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     readTimer = undefined;
     const ids = [...pendingRead];
     if (ids.length === 0) return Promise.resolve();
-    pendingRead.clear();
     setUndo((current) => (current?.gridSnapshot ? current : { ids }));
-    return writeReadBatch(ids, true, keepalive).catch(handleError);
+    return pendingRead
+      .flush((batch) => api.readBatch(batch, true, keepalive))
+      .catch((caught) => {
+        handleError(caught);
+        if (!disposed && pendingRead.size > 0 && readTimer === undefined) {
+          readTimer = window.setTimeout(() => void flushPending(), 5_000);
+        }
+      });
   };
 
   const queueEvent = (itemID: string, event: BehaviourEvent) => {

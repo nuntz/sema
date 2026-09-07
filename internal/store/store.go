@@ -794,6 +794,25 @@ func (s *Store) readItemIDs(ctx context.Context, userID string) (map[string]bool
 	}
 }
 
+// CreateStory leaves an existing story and its members untouched.
+func (s *Store) CreateStory(ctx context.Context, story domain.Story) (bool, error) {
+	if story.PK == "" || story.SK == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
+		return false, errors.New("story key, ID, and members are required")
+	}
+	encoded, err := attributevalue.MarshalMap(story)
+	if err != nil {
+		return false, err
+	}
+	_, err = s.db.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.table), Item: encoded, ConditionExpression: aws.String("attribute_not_exists(PK)"),
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (s *Store) PutStory(ctx context.Context, story domain.Story) error {
 	if story.PK == "" || story.SK == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
 		return errors.New("story key, ID, and members are required")
@@ -2004,6 +2023,15 @@ func (s *Store) deleteArchiveContent(ctx context.Context, userID, itemID string,
 				keys = append(keys, objectKey)
 				seen[objectKey] = true
 			}
+		}
+	} else {
+		var apiErr smithy.APIError
+		missing := errors.As(err, &apiErr) && (apiErr.ErrorCode() == "NoSuchKey" || apiErr.ErrorCode() == "NotFound" || apiErr.ErrorCode() == "404")
+		if !missing {
+			// Keep the HTML manifest so cleanup can still discover inline assets
+			// after a transient storage or permission failure is repaired.
+			slog.ErrorContext(ctx, "read archived content for cleanup", "user", userID, "item_id", itemID, "error", err)
+			return
 		}
 	}
 	for _, variant := range variants {

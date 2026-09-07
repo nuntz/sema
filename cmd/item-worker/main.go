@@ -85,7 +85,7 @@ type itemStore interface {
 	PutItemFailure(context.Context, string, string, int64) error
 	Signals(context.Context, string) ([]domain.Signal, error)
 	ResolveItemIDs(context.Context, string, []string) ([]domain.Item, error)
-	PutStory(context.Context, domain.Story) error
+	CreateStory(context.Context, domain.Story) (bool, error)
 	AddStoryMember(context.Context, string, string, string, int64) error
 	SetItemStory(context.Context, domain.Item, string) error
 }
@@ -681,14 +681,24 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 		PK: domain.UserPK(userID), SK: domain.StorySK(storyID), StoryID: storyID,
 		MemberIDs: []string{storyID, item.ItemID}, CreatedAt: created, UpdatedAt: created, TTL: max(founder.TTL, item.TTL),
 	}
-	if err := h.store.PutStory(ctx, row); err != nil {
+	createdStory, err := h.store.CreateStory(ctx, row)
+	if err != nil {
 		return metrics, err
+	}
+	if !createdStory {
+		if err := h.store.AddStoryMember(ctx, userID, storyID, item.ItemID, item.TTL); err != nil {
+			return metrics, err
+		}
 	}
 	if err := h.store.SetItemStory(ctx, founder, storyID); err != nil {
 		return metrics, err
 	}
 	item.StoryID = storyID
-	metrics["StoryCreated"] = 1
+	if createdStory {
+		metrics["StoryCreated"] = 1
+	} else {
+		metrics["StoryJoined"] = 1
+	}
 	return metrics, nil
 }
 

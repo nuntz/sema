@@ -264,8 +264,8 @@ and retain old records if rollback to global readers is still needed.
 An indexing outage leaves ingested items in DynamoDB and retries the SQS
 messages using stored embeddings. The queue moves messages to its DLQ after
 three receives; a prolonged outage still needs DLQ redrive after recovery or a
-vector backfill. Run redrive against the intended stack: `make redrive` uses
-the active Pulumi stack.
+vector backfill. Run redrive against the intended stack with
+`make redrive STACK=prod` (the default is `dev`).
 
 ### Image ranking rollout
 

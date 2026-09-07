@@ -43,12 +43,12 @@ rescore:
 
 replay:
 	replay_model_version='$(MODEL_VERSION)'; \
-	if [ -z "$$replay_model_version" ]; then replay_model_version=$$(cd infra && pulumi stack output modelVersion); fi; \
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay $(FLAGS)
+	if [ -z "$$replay_model_version" ]; then replay_model_version=$$(cd infra && pulumi stack output modelVersion --stack $(STACK)); fi; \
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl --stack $(STACK)) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay $(FLAGS)
 
 redrive:
-	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output feedsDlqArn)" --destination-arn "$$(cd infra && pulumi stack output feedsQueueArn)"
-	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output itemsDlqArn)" --destination-arn "$$(cd infra && pulumi stack output itemsQueueArn)"
+	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output feedsDlqArn --stack $(STACK))" --destination-arn "$$(cd infra && pulumi stack output feedsQueueArn --stack $(STACK))"
+	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output itemsDlqArn --stack $(STACK))" --destination-arn "$$(cd infra && pulumi stack output itemsQueueArn --stack $(STACK))"
 
 backfill-image-signals:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) IMAGE_MODEL_VERSION=$$(cd infra && pulumi stack output imageModelVersion --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-image-signals $(BACKFILL_ARGS)
@@ -78,7 +78,7 @@ purge-legacy-vectors:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/purge-legacy-vectors $(BACKFILL_ARGS)
 
 backfill-youtube-connector:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-youtube-connector $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-youtube-connector $(BACKFILL_ARGS)
 
 clean:
 	rm -rf bin web/dist

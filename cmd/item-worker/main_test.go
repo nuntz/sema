@@ -136,12 +136,23 @@ func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) 
 func (s *fakeItemStore) ResolveItemIDs(context.Context, string, []string) ([]domain.Item, error) {
 	return append([]domain.Item(nil), s.resolved...), s.resolveErr
 }
-func (s *fakeItemStore) PutStory(_ context.Context, row domain.Story) error {
+func (s *fakeItemStore) CreateStory(_ context.Context, row domain.Story) (bool, error) {
+	if s.putStory != nil {
+		return false, nil
+	}
 	s.putStory = &row
-	return nil
+	return true, nil
 }
 func (s *fakeItemStore) AddStoryMember(_ context.Context, _ string, storyID, itemID string, _ int64) error {
 	s.addedStoryID, s.addedItemID = storyID, itemID
+	if s.putStory != nil && s.putStory.StoryID == storyID {
+		for _, member := range s.putStory.MemberIDs {
+			if member == itemID {
+				return nil
+			}
+		}
+		s.putStory.MemberIDs = append(s.putStory.MemberIDs, itemID)
+	}
 	return nil
 }
 func (s *fakeItemStore) SetItemStory(_ context.Context, item domain.Item, storyID string) error {
@@ -197,6 +208,35 @@ func (s *stubVectorBatchStore) PutBatch(_ context.Context, records []vectorstore
 
 func (s *stubVectorBatchStore) Query(context.Context, string, []float32, int, int64) ([]vectorstore.Match, error) {
 	return append([]vectorstore.Match(nil), s.matches...), nil
+}
+
+func TestAssignStoryPreservesMembersWithStaleFounder(t *testing.T) {
+	now := time.Now().UTC()
+	founder := domain.Item{PK: "U#user", SK: "I#founder", ItemID: "founder", PublishedTS: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
+	// Simulate workers that both resolved the founder before either assigned
+	// its story. Each sees the same stale snapshot, including on redelivery.
+	repository := &fakeItemStore{resolved: []domain.Item{founder}}
+	h := &handler{
+		store: repository, vectors: &stubVectorBatchStore{matches: []vectorstore.Match{{Key: "founder", Similarity: 90}}},
+		storyConfig: storycluster.Config{Threshold: 80, Window: 72 * time.Hour},
+	}
+	for index, id := range []string{"first", "second", "first"} {
+		item := domain.Item{ItemID: id, PublishedTS: founder.PublishedTS, TTL: founder.TTL}
+		metrics, err := h.assignStory(context.Background(), "user", []float32{1, 0}, &item)
+		if err != nil || item.StoryID != "founder" {
+			t.Fatalf("assignment %s = %s, %v", id, item.StoryID, err)
+		}
+		metric := "StoryCreated"
+		if index > 0 {
+			metric = "StoryJoined"
+		}
+		if metrics[metric] != 1 {
+			t.Fatalf("metrics = %v, want %s", metrics, metric)
+		}
+	}
+	if got := strings.Join(repository.putStory.MemberIDs, ","); got != "founder,first,second" {
+		t.Fatalf("members = %s", got)
+	}
 }
 
 func TestAssignStoryCreatesAndJoins(t *testing.T) {
