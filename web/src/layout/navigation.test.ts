@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Item } from "../types";
-import { justify } from "./justified";
-import { type LayoutRect, nearestCell, nearestPageCell } from "./navigation";
+import { justify, type LayoutRow } from "./justified";
+import {
+  cellRects,
+  type LayoutRect,
+  nearestCell,
+  nearestPageCell,
+} from "./navigation";
 
 const item = (index: number, size: Item["size"], ratio = 1.5): Item => ({
   item_id: String(index),
@@ -24,6 +29,84 @@ const item = (index: number, size: Item["size"], ratio = 1.5): Item => ({
 });
 
 describe("geometric grid navigation", () => {
+  it("navigates only displayed story headlines and crosses into the next row", () => {
+    const lead = item(0, "L");
+    const rows: LayoutRow[] = [
+      {
+        top: 0,
+        height: 300,
+        gap: 10,
+        kind: "standard",
+        cells: [
+          {
+            item: lead,
+            story: {
+              story_id: "story",
+              source_count: 4,
+              order_key: 1,
+              size: "L",
+              items: [lead, item(1, "S"), item(2, "S"), item(3, "S")],
+            },
+            left: 0,
+            width: 200,
+            effectiveSize: "L",
+            headlineHeight: 104,
+            headlineItemCount: 2,
+          },
+        ],
+      },
+      {
+        top: 310,
+        height: 100,
+        gap: 10,
+        kind: "standard",
+        cells: [
+          { item: item(4, "S"), left: 0, width: 200, effectiveSize: "S" },
+        ],
+      },
+    ];
+    expect(cellRects(rows).map(({ id }) => id)).toEqual([
+      "story:story",
+      "1",
+      "2",
+      "4",
+    ]);
+    expect(nearestCell(rows, "story:story", "down")).toBe("1");
+    expect(nearestCell(rows, "1", "down")).toBe("2");
+    expect(nearestCell(rows, "2", "down")).toBe("4");
+    expect(nearestCell(rows, "4", "up")).toBe("2");
+    expect(nearestCell(rows, "1", "up")).toBe("story:story");
+  });
+
+  it("does not move vertically into a same-row neighbor with a different height", () => {
+    const rows: LayoutRow[] = [
+      {
+        top: 0,
+        height: 300,
+        gap: 10,
+        kind: "standard",
+        cells: [
+          {
+            item: item(0, "S"),
+            left: 0,
+            width: 100,
+            height: 100,
+            effectiveSize: "S",
+          },
+          {
+            item: item(1, "L"),
+            left: 110,
+            width: 100,
+            height: 300,
+            effectiveSize: "L",
+          },
+        ],
+      },
+    ];
+    expect(nearestCell(rows, "0", "down")).toBe("0");
+    expect(nearestCell(rows, "1", "up")).toBe("1");
+    expect(nearestCell(rows, "0", "right")).toBe("1");
+  });
   const rect = (
     id: string,
     left: number,

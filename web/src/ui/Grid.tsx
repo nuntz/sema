@@ -19,6 +19,7 @@ import {
   visibleRows,
 } from "../layout/justified";
 import {
+  cellRects,
   type LayoutDirection,
   nearestCell,
   nearestPageCell,
@@ -39,11 +40,7 @@ import {
 import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { FrontPageEntry, Item, Order, ReadAnchor, Story } from "../types";
-import {
-  frontPageEntryItem,
-  frontPageSequence,
-  moveFrontPageFocus,
-} from "./front-page";
+import { frontPageEntryItem, frontPageSequence } from "./front-page";
 import { gridCommand } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
@@ -631,18 +628,21 @@ export function Grid(props: GridProps) {
     if (allRows.length === 0) return;
     const id = nearestCell(allRows, props.focusedID, direction);
     if (!id) return;
+    const rect = cellRects(allRows).find((candidate) => candidate.id === id);
     endRequested = false;
     props.onFocus(id);
+    programmaticScroll(() => {
+      if (!rect) return;
+      const top = rect.top + 14;
+      const bottom = rect.bottom + 14;
+      if (top < scroller.scrollTop) scroller.scrollTop = top;
+      else if (bottom > scroller.scrollTop + scroller.clientHeight)
+        scroller.scrollTop = Math.min(top, bottom - scroller.clientHeight);
+      // Mount a destination outside the current virtual window before focusing it.
+      setScrollTop(scroller.scrollTop);
+    });
     requestAnimationFrame(() => {
-      programmaticScroll(() => {
-        const cell = scroller.querySelector<HTMLElement>(
-          `[data-item-id="${CSS.escape(id)}"]`,
-        );
-        cell?.scrollIntoView({ block: "nearest", inline: "nearest" });
-        cell
-          ?.querySelector<HTMLButtonElement>(".cell-main")
-          ?.focus({ preventScroll: true });
-      });
+      focusControl(id)?.focus({ preventScroll: true });
     });
   };
 
@@ -705,11 +705,6 @@ export function Grid(props: GridProps) {
         control?.focus({ preventScroll: true });
       });
     });
-  };
-
-  const moveFront = (delta: -1 | 1) => {
-    const next = moveFrontPageFocus(frontSequence(), props.focusedID, delta);
-    if (next) focusElement(next.id);
   };
 
   const focusedEntry = () =>
@@ -879,18 +874,16 @@ export function Grid(props: GridProps) {
         break;
       }
       case "down":
-        if (storyList().length > 0) moveFront(1);
-        else move("down");
+        move("down");
         break;
       case "up":
-        if (storyList().length > 0) moveFront(-1);
-        else move("up");
+        move("up");
         break;
       case "left":
-        if (focusedEntry()?.kind !== "headline") move("left");
+        move("left");
         break;
       case "right":
-        if (focusedEntry()?.kind !== "headline") move("right");
+        move("right");
         break;
       case "open":
         if (item) openFocused(item);

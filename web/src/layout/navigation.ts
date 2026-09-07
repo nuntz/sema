@@ -1,4 +1,8 @@
-import type { LayoutRow } from "./justified";
+import {
+  type LayoutRow,
+  mobileStoryHeadlineHeight,
+  storyHeadlineHeight,
+} from "./justified";
 
 export type LayoutDirection = "up" | "down" | "left" | "right";
 
@@ -14,12 +18,13 @@ export interface LayoutRect {
 
 export function cellRects(rows: LayoutRow[]): LayoutRect[] {
   return rows.flatMap((row) =>
-    row.cells.map((cell) => {
+    row.cells.flatMap((cell) => {
       const left = cell.left;
       const top = row.top + (cell.offsetY ?? 0);
       const right = left + cell.width;
-      const bottom = top + (cell.height ?? row.height);
-      return {
+      const bottom =
+        top + (cell.height ?? row.height) - (cell.headlineHeight ?? 0);
+      const lead = {
         id: cell.story ? `story:${cell.story.story_id}` : cell.item.item_id,
         left,
         right,
@@ -28,6 +33,24 @@ export function cellRects(rows: LayoutRow[]): LayoutRect[] {
         centerX: (left + right) / 2,
         centerY: (top + bottom) / 2,
       };
+      const headlineHeight = cell.mobileStoryCard
+        ? mobileStoryHeadlineHeight
+        : storyHeadlineHeight;
+      const headlines =
+        cell.story?.items.slice(1, 1 + (cell.headlineItemCount ?? 0)) ?? [];
+      return [
+        lead,
+        ...headlines.map((item, index) => {
+          const headlineTop = bottom + index * headlineHeight;
+          return {
+            ...lead,
+            id: item.item_id,
+            top: headlineTop,
+            bottom: headlineTop + headlineHeight,
+            centerY: headlineTop + headlineHeight / 2,
+          };
+        }),
+      ];
     }),
   );
 }
@@ -95,8 +118,8 @@ export function nearestCell(
     (rect) =>
       rect.id !== current.id &&
       (direction === "up"
-        ? rect.centerY < current.centerY
-        : rect.centerY > current.centerY),
+        ? rect.centerY < current.centerY && rect.top < current.top - 1
+        : rect.centerY > current.centerY && rect.top > current.top + 1),
   );
   candidates.sort((left, right) => {
     const leftScore =

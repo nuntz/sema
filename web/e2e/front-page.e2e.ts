@@ -765,6 +765,88 @@ for (const selector of [".story-lead", ".story-headline"]) {
   });
 }
 
+for (const width of [1024, 768]) {
+  test(`arrows follow visual rows with an offscreen story at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const lead = {
+      ...item("lead", "one", "Offscreen story", 0.1, "L"),
+      story_id: "story-one",
+    };
+    await stubFrontPage(
+      page,
+      [
+        {
+          story_id: "story-one",
+          source_count: 1,
+          order_key: 0.1,
+          size: "L",
+          items: [lead],
+        },
+      ],
+      Array.from({ length: 40 }, (_, index) =>
+        item(
+          `cell-${index}`,
+          "two",
+          `Grid cell ${index}`,
+          0.9 - index / 100,
+          "S",
+        ),
+      ),
+      [],
+    );
+    await page.goto("/");
+    const row = page.locator(".grid-row").nth(1);
+    await expect(row.locator(".grid-cell").nth(2)).toBeVisible();
+    const cell = row
+      .locator(".grid-cell")
+      .nth(Math.floor((await row.locator(".grid-cell").count()) / 2));
+    for (const key of [
+      "ArrowUp",
+      "k",
+      "ArrowDown",
+      "j",
+      "ArrowLeft",
+      "ArrowRight",
+    ]) {
+      await page.keyboard.press("Home");
+      await expect(page.locator(".grid-cell.focused")).toHaveAttribute(
+        "data-item-id",
+        "cell-0",
+      );
+      for (
+        let column = 0;
+        column < Math.floor((await row.locator(".grid-cell").count()) / 2);
+        column++
+      ) {
+        await page.keyboard.press("ArrowRight");
+        await expect(
+          page.locator(".grid-cell.focused .cell-main"),
+        ).toBeFocused();
+      }
+      await page.keyboard.press("ArrowDown");
+      await expect(cell).toHaveClass(/focused/);
+      const before = await cell.boundingBox();
+      if (!before) throw new Error("missing origin cell");
+      await page.keyboard.press(key);
+      const destination = page.locator(".grid-cell.focused");
+      await expect(destination.locator(".cell-main")).toBeFocused();
+      const after = await destination.boundingBox();
+      if (!after) throw new Error("missing destination cell");
+      if (key === "ArrowUp" || key === "k")
+        expect(after.y).toBeLessThan(before.y);
+      else if (key === "ArrowDown" || key === "j")
+        expect(after.y).toBeGreaterThan(before.y);
+      else {
+        expect(after.y).toBe(before.y);
+        if (key === "ArrowLeft") expect(after.x).toBeLessThan(before.x);
+        else expect(after.x).toBeGreaterThan(before.x);
+      }
+    }
+  });
+}
+
 test("stories earn their position in the interest grid", async ({ page }) => {
   const lead = {
     ...item("lead", "one", "Lead coverage", 0.7, "L"),
@@ -812,12 +894,15 @@ test("stories earn their position in the interest grid", async ({ page }) => {
   expect(storyBox?.y).toBeLessThan(trailingBox?.y ?? 0);
 
   await expect(largeCell).toHaveClass(/focused/);
-  await page.keyboard.press("j");
+  await storyCell.locator(".story-lead").focus();
   await expect(storyCell).toHaveClass(/focused/);
-  await page.keyboard.press("j");
+  await page.keyboard.press("ArrowDown");
   await expect(storyCell.locator('[data-focus-id="headline"]')).toHaveClass(
     /focused/,
   );
+  await expect(storyCell.locator('[data-focus-id="headline"]')).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(storyCell.locator(".story-lead")).toBeFocused();
 
   await page.getByRole("radio", { name: "Latest", exact: true }).click();
   await expect(storyCell).toHaveCount(0);
