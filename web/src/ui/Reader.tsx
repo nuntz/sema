@@ -833,17 +833,27 @@ export function Reader(props: ReaderProps) {
               props.item.media_type !== "video" &&
               !isRedditItem(props.item) &&
               props.item.media_url &&
-              !hasLeadingImage(body())
+              !hasLeadingImage(body()) &&
+              props.item.item_id
             }
+            keyed
           >
-            <ResponsiveImage
-              class="article-lead"
-              item={props.item}
-              sizes="(max-width: 700px) calc(100vw - 44px), 640px"
-              alt=""
-              width={props.item.media_w}
-              height={props.item.media_h}
-            />
+            {(_itemID) => (
+              <ResponsiveImage
+                class="article-lead"
+                style={{
+                  "--article-lead-width":
+                    props.item.media_w && props.item.media_h
+                      ? `min(${props.item.media_w}px, calc(var(--article-lead-max-height) * ${props.item.media_w / props.item.media_h}))`
+                      : undefined,
+                }}
+                item={props.item}
+                sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                alt=""
+                width={props.item.media_w}
+                height={props.item.media_h}
+              />
+            )}
           </Show>
           <Show when={props.item.media_type === "video"}>
             <VideoDescription
@@ -1346,14 +1356,16 @@ function VideoMediaCard(props: { item: Item; onOriginal(): void }) {
       onClick={props.onOriginal}
     >
       <span class="video-media-band">
-        <Show when={props.item.media_url}>
-          <ResponsiveImage
-            item={props.item}
-            sizes="(max-width: 700px) calc(100vw - 44px), 640px"
-            alt=""
-            width={props.item.media_w}
-            height={props.item.media_h}
-          />
+        <Show when={props.item.media_url && props.item.item_id} keyed>
+          {(_itemID) => (
+            <ResponsiveImage
+              item={props.item}
+              sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+              alt=""
+              width={props.item.media_w}
+              height={props.item.media_h}
+            />
+          )}
         </Show>
         <span class="video-card-play" aria-hidden="true">
           <Icon name="play" size={20} filled />

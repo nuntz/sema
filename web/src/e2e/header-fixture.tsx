@@ -135,7 +135,22 @@ function GridHeaderFixture() {
 }
 
 function ReaderFixture() {
-  const [readerItem, setReaderItem] = createSignal(item);
+  const media = parameters.get("media");
+  const mediaItem = (index: number): Item => ({
+    ...item,
+    item_id: `reader-media-${index}`,
+    title: `Reader media item ${index}`,
+    summary: `Summary for reader media item ${index}.`,
+    media_type: media === "video" ? "video" : "image",
+    media_url: `/e2e/reader-media/${index}.svg`,
+    media_variants: [
+      { url: `/e2e/reader-media/${index}-320.svg`, width: 320, height: 180 },
+      { url: `/e2e/reader-media/${index}-768.svg`, width: 768, height: 432 },
+    ],
+    media_w: 640,
+    media_h: 360,
+  });
+  const [readerItem, setReaderItem] = createSignal(media ? mediaItem(0) : item);
   return (
     <Reader
       item={readerItem()}
@@ -150,7 +165,9 @@ function ReaderFixture() {
       onReveal={() => undefined}
       onHome={() => undefined}
       onPrevious={() => undefined}
-      onNext={() => undefined}
+      onNext={() => {
+        if (media) setReaderItem(mediaItem(1));
+      }}
       onSignal={(signal) =>
         setReaderItem((current) => ({ ...current, signal }))
       }

@@ -1204,11 +1204,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .summary-provenance { margin-bottom: 9px; color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: .06em; text-transform: lowercase; }
 .article-summary > p { margin: 0; color: var(--fg-tertiary); font: 400 var(--type-md)/1.6 "Instrument Sans", sans-serif; text-wrap: pretty; }
 .article-lead {
+  /* Reserve the stored image dimensions while its replacement loads. */
+  --article-lead-max-height: min(75vh, 720px);
   display: block;
-  width: auto;
+  width: var(--article-lead-width, auto);
   max-width: 100%;
   height: auto;
-  max-height: min(75vh, 720px);
+  max-height: var(--article-lead-max-height);
   margin: 0 auto 30px;
   border-radius: 4px;
 }
