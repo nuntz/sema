@@ -180,6 +180,7 @@ func (s *stubImageEmbedder) EmbedText(context.Context, string) ([]float32, error
 }
 
 type stubVectorBatchStore struct {
+	err     error
 	calls   int
 	records []vectorstore.Record
 	matches []vectorstore.Match
@@ -188,10 +189,10 @@ type stubVectorBatchStore struct {
 func (s *stubVectorBatchStore) PutBatch(_ context.Context, records []vectorstore.Record) error {
 	s.calls++
 	s.records = append([]vectorstore.Record(nil), records...)
-	return nil
+	return s.err
 }
 
-func (s *stubVectorBatchStore) Query(context.Context, []float32, int, int64) ([]vectorstore.Match, error) {
+func (s *stubVectorBatchStore) Query(context.Context, string, []float32, int, int64) ([]vectorstore.Match, error) {
 	return append([]vectorstore.Match(nil), s.matches...), nil
 }
 
@@ -310,7 +311,7 @@ func TestRunBatchesVectorsAcrossWrittenItems(t *testing.T) {
 	for _, record := range vectors.records {
 		items[record.Key] = true
 	}
-	if !items["one"] || !items["two"] {
+	if !items[vectorstore.Key("user", "one")] || !items[vectorstore.Key("user", "two")] {
 		t.Fatalf("vector records = %#v", vectors.records)
 	}
 }
@@ -368,7 +369,7 @@ func TestReprocessEmbedsStored768VariantAndBatchesImageVector(t *testing.T) {
 	if repository.overwritten == nil || repository.overwritten.ImageModelVersion != "image-v1" || len(repository.overwritten.ImageVector) == 0 {
 		t.Fatalf("overwritten item = %#v", repository.overwritten)
 	}
-	if imageVectors.calls != 1 || len(imageVectors.records) != 1 || imageVectors.records[0].Key != "item" {
+	if imageVectors.calls != 1 || len(imageVectors.records) != 1 || imageVectors.records[0].Key != vectorstore.Key("user", "item") {
 		t.Fatalf("image vector batch = %#v", imageVectors)
 	}
 }
@@ -465,7 +466,7 @@ func TestCompatibleReplayReusesImageVectorAndBatchesRecord(t *testing.T) {
 	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(imageVector) || repository.overwritten.ImageModelVersion != "image-v1" {
 		t.Fatalf("overwritten item = %#v", repository.overwritten)
 	}
-	if imageVectors.calls != 1 || len(imageVectors.records) != 1 || imageVectors.records[0].Key != "item" {
+	if imageVectors.calls != 1 || len(imageVectors.records) != 1 || imageVectors.records[0].Key != vectorstore.Key("user", "item") {
 		t.Fatalf("image vector batch = %#v", imageVectors)
 	}
 }
@@ -769,5 +770,58 @@ func TestVimeoThumbnailUsesOfficialOEmbedMetadata(t *testing.T) {
 	}
 	if got != "https://i.vimeocdn.com/video/42.jpg" || !strings.HasPrefix(client.url, "https://vimeo.com/api/oembed.json?url=") {
 		t.Fatalf("thumbnail = %q, request = %q", got, client.url)
+	}
+}
+
+func TestVectorFailureRetriesStoredEmbeddings(t *testing.T) {
+	for _, imageFailure := range []bool{false, true} {
+		repository := &fakeItemStore{item: domain.Item{PK: "U#user", ItemID: "item", Vector: score.EncodeVector([]float32{1, 0}), ImageVector: score.EncodeVector([]float32{0, 1}), ArchiveSK: "A#saved"}}
+		text, image := &stubVectorBatchStore{}, &stubVectorBatchStore{}
+		failed := text
+		if imageFailure {
+			failed = image
+		}
+		failed.err = errors.New("temporary outage")
+		h := &handler{store: repository, vectors: text, imageVectors: image}
+		event := events.SQSEvent{Records: []events.SQSMessage{{MessageId: "retry", Body: `{"user":"user","item_id":"item","published_ts":"` + domain.Timestamp(time.Now()) + `"}`}}}
+		response, err := h.run(context.Background(), event)
+		if err != nil || len(response.BatchItemFailures) != 1 || response.BatchItemFailures[0].ItemIdentifier != "retry" {
+			t.Fatalf("failure = %#v, %v", response, err)
+		}
+		failed.err = nil
+		response, err = h.run(context.Background(), event)
+		if err != nil || len(response.BatchItemFailures) != 0 {
+			t.Fatalf("retry = %#v, %v", response, err)
+		}
+		if len(text.records) != 1 || len(image.records) != 1 || text.records[0].Kind != vectorstore.KindArchive || text.calls != 2 || image.calls != 2 {
+			t.Fatal("stored vectors were not retried")
+		}
+	}
+}
+
+type dedupRaceStore struct {
+	fakeItemStore
+	reads int
+}
+
+func (s *dedupRaceStore) Item(context.Context, string, string) (domain.Item, error) {
+	s.reads++
+	if s.reads == 1 {
+		return domain.Item{}, store.ErrNotFound
+	}
+	return s.item, nil
+}
+func (s *dedupRaceStore) PutItem(context.Context, domain.Item) (bool, error) { return false, nil }
+func TestDedupRaceStillIndexesWinningStoredVectors(t *testing.T) {
+	repository := &dedupRaceStore{fakeItemStore: fakeItemStore{item: domain.Item{PK: "U#user", ItemID: "item", Vector: score.EncodeVector([]float32{0, 1}), ArchiveSK: "A#saved"}}}
+	vectors := &stubVectorBatchStore{}
+	h := &handler{store: repository, media: media.New(nil), embedder: stubEmbedder{}, vectors: vectors, scoringVersion: "1"}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
+	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "dedup", Body: body}}})
+	if err != nil || len(response.BatchItemFailures) != 0 {
+		t.Fatalf("%#v %v", response, err)
+	}
+	if len(vectors.records) != 1 || vectors.records[0].Data[1] != 1 || vectors.records[0].Kind != vectorstore.KindArchive {
+		t.Fatal(vectors.records)
 	}
 }

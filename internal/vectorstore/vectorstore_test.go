@@ -29,3 +29,15 @@ func TestSimilarityFromCosineDistance(t *testing.T) {
 		t.Fatalf("unexpected similarities: %d %d %d", Similarity(.09), Similarity(2), Similarity(-1))
 	}
 }
+
+func TestAccountsHaveIndependentVectorRetention(t *testing.T) {
+	first := domain.Item{PK: domain.UserPK("first"), ItemID: "shared", TTL: 42, Vector: score.EncodeVector([]float32{1}), ImageVector: score.EncodeVector([]float32{1})}
+	second := first
+	second.PK = domain.UserPK("second")
+	a, b := FromItem(first, KindArchive), FromItem(second, KindLive)
+	ai, _ := ImageRecordFromItem(first, KindArchive)
+	bi, _ := ImageRecordFromItem(second, KindLive)
+	if a.Key == b.Key || ai.Key == bi.Key || a.UserID != "first" || b.UserID != "second" || a.ExpiresTS != 0 || b.ExpiresTS != 42 {
+		t.Fatalf("%#v %#v", a, b)
+	}
+}

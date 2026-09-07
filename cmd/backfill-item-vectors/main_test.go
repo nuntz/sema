@@ -8,6 +8,7 @@ import (
 
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
+	"github.com/nuntz/sema/internal/vectorstore"
 )
 
 type fakeItemVectors struct {
@@ -84,7 +85,7 @@ func TestBackfillItemVectorsDryRunApplyAndIdempotence(t *testing.T) {
 	if result.Total != 4 || result.Missing != 3 || result.FromInline != 1 || result.FromS3 != 1 || result.Unavailable != 1 || result.Written != 0 {
 		t.Fatalf("dry-run result = %#v", result)
 	}
-	if repository.writes != 0 || !reflect.DeepEqual(vectors.requests, [][]string{{"external", "unavailable"}}) {
+	if repository.writes != 0 || !reflect.DeepEqual(vectors.requests, [][]string{{vectorstore.Key("user", "external"), vectorstore.Key("user", "unavailable")}, {"external", "unavailable"}}) {
 		t.Fatalf("dry-run writes = %d, requests = %#v", repository.writes, vectors.requests)
 	}
 

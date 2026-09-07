@@ -505,7 +505,7 @@ func (s *Store) ReconcileItemIdentity(ctx context.Context, userID string, canoni
 }
 
 // OverwriteItem is reserved for replay: unlike PutItem it intentionally
-// replaces the existing live row at its stable key.
+// updates worker-owned fields without replacing concurrent archive state.
 func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
 	vector, err := attributevalue.MarshalMap(domain.ItemVector{
 		PK: item.PK, SK: domain.ItemVectorSK(item.ItemID), Vector: item.Vector,
@@ -521,8 +521,30 @@ func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
 	if err != nil {
 		return err
 	}
+	names := map[string]string{}
+	values := map[string]types.AttributeValue{}
+	sets, removes := []string{}, []string{}
+	// Include omitted fields so replay can clear obsolete extraction metadata.
+	for _, field := range strings.Fields("feed_pk item_id story_id feed_id feed_title connector favicon_key url external_url post_type title summary search_text summary_source description author display_date published_ts fetched_ts media_key media_variants media_w media_h media_type video_id is_short body_key has_body extract_quality score size model_version why ttl") {
+		name := "#" + field
+		names[name] = field
+		if value, ok := encoded[field]; ok {
+			values[":"+field] = value
+			sets = append(sets, name+" = :"+field)
+		} else {
+			removes = append(removes, name)
+		}
+	}
+	// Remove legacy inline embeddings; the split vector row is authoritative.
+	for _, field := range []string{"vector", "image_vector", "image_model_version"} {
+		names["#"+field] = field
+		removes = append(removes, "#"+field)
+	}
+	expression := "SET " + strings.Join(sets, ", ") + " REMOVE " + strings.Join(removes, ", ")
 	_, err = s.db.TransactWriteItems(ctx, &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
-		{Put: &types.Put{TableName: aws.String(s.table), Item: encoded}},
+		{Update: &types.Update{TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+			UpdateExpression: aws.String(expression), ConditionExpression: aws.String("attribute_exists(PK)"),
+			ExpressionAttributeNames: names, ExpressionAttributeValues: values}},
 		{Put: &types.Put{TableName: aws.String(s.table), Item: vector}},
 	}})
 	return err
@@ -1698,7 +1720,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 			source = BodyKey(userID, item.ItemID)
 		}
 		destination := ArchiveBodyKey(userID, item.ItemID)
-		copied, copyErr := s.copyContent(ctx, source, destination)
+		copied, copyErr := s.archiveBody(ctx, userID, item.ItemID, source, destination)
 		if copyErr != nil {
 			return "", 0, copyErr
 		}
@@ -1951,6 +1973,18 @@ func (s *Store) deleteArchiveContent(ctx context.Context, userID, itemID string,
 		return
 	}
 	keys := []string{ArchiveBodyKey(userID, itemID), ArchiveMediaKey(userID, itemID)}
+	if body, _, err := s.Content(ctx, ArchiveBodyKey(userID, itemID)); err == nil {
+		prefix := "archive/" + userID + "/" + itemID + "/"
+		pattern := archiveAssetPattern(s.ContentURL(prefix))
+		seen := map[string]bool{}
+		for _, asset := range pattern.FindAllString(string(body), -1) {
+			objectKey := prefix + strings.TrimPrefix(asset, s.ContentURL(prefix))
+			if !seen[objectKey] {
+				keys = append(keys, objectKey)
+				seen[objectKey] = true
+			}
+		}
+	}
 	for _, variant := range variants {
 		if variant.Key != "" && variant.Key != ArchiveMediaKey(userID, itemID) {
 			keys = append(keys, variant.Key)

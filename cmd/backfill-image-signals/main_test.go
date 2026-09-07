@@ -177,7 +177,7 @@ func TestApplyEmbedsOnceAndUpdatesSignalBehaviourItemAndIndex(t *testing.T) {
 	if embedder.calls != 1 || string(embedder.jpeg) != string([]byte{7, 6, 8}) || repository.signalUpdates != 1 || repository.behaviourUpdates != 1 || repository.itemUpdates != 1 {
 		t.Fatalf("apply calls = embed %d jpeg %v signal %d behaviour %d item %d", embedder.calls, embedder.jpeg, repository.signalUpdates, repository.behaviourUpdates, repository.itemUpdates)
 	}
-	if vectors.calls != 1 || len(vectors.records) != 1 || vectors.records[0].Kind != vectorstore.KindLive || vectors.records[0].Key != "photo" {
+	if vectors.calls != 1 || len(vectors.records) != 1 || vectors.records[0].Kind != vectorstore.KindLive || vectors.records[0].Key != vectorstore.Key("user", "photo") {
 		t.Fatalf("vector records = %#v", vectors.records)
 	}
 }

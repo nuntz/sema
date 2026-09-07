@@ -41,11 +41,12 @@ func TestS3VectorsDevIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := NewS3(s3vectors.NewFromConfig(config), bucket, index)
-	key := fmt.Sprintf("drop5-integration-%d", time.Now().UnixNano())
+	itemID := fmt.Sprintf("drop5-integration-%d", time.Now().UnixNano())
+	key := Key("integration", itemID)
 	vector := make([]float32, dimensions)
 	vector[0] = 1
 	if err := store.Put(ctx, Record{
-		Key: key, Data: vector, Kind: KindLive, FeedID: "integration",
+		UserID: "integration", Key: key, Data: vector, Kind: KindLive, FeedID: "integration",
 		PublishedTS: time.Now().UTC().Format(time.RFC3339), ExpiresTS: time.Now().Add(time.Hour).Unix(), Title: "integration test",
 	}); err != nil {
 		t.Fatal(err)
@@ -67,12 +68,12 @@ func TestS3VectorsDevIntegration(t *testing.T) {
 		t.Fatalf("get vector: %v", err)
 	}
 	if err := eventually(ctx, func() (bool, error) {
-		matches, err := store.Query(ctx, vector, 10, time.Now().Unix())
+		matches, err := store.Query(ctx, "integration", vector, 10, time.Now().Unix())
 		if err != nil {
 			return false, err
 		}
 		for _, match := range matches {
-			if match.Key == key {
+			if match.Key == itemID {
 				return true, nil
 			}
 		}

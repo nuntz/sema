@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -66,5 +67,30 @@ func TestCookieSignerCachesUntilHalfMaxAge(t *testing.T) {
 	}
 	if reflect.DeepEqual(refreshed, first) {
 		t.Fatal("cookies were not re-signed at half their max-age")
+	}
+}
+
+func TestClearContentCookiesMatchesSignedCookiePaths(t *testing.T) {
+	cookies := ClearContentCookies("reader")
+	seen := map[string]bool{}
+	for _, raw := range cookies {
+		cookie, err := http.ParseSetCookie(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cookie.MaxAge != -1 || cookie.Value != "" || !cookie.HttpOnly || !cookie.Secure {
+			t.Fatalf("cookie = %#v", cookie)
+		}
+		seen[cookie.Path+"|"+cookie.Name] = true
+	}
+	for _, prefix := range []string{"bodies", "media", "archive"} {
+		for _, name := range []string{"CloudFront-Policy", "CloudFront-Signature", "CloudFront-Key-Pair-Id", "CloudFront-Hash-Algorithm"} {
+			if !seen["/"+prefix+"/reader/|"+name] {
+				t.Fatalf("missing %s %s", prefix, name)
+			}
+		}
+	}
+	if len(seen) != 12 {
+		t.Fatal(seen)
 	}
 }

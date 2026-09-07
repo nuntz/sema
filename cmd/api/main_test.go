@@ -614,7 +614,7 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 	if err != nil || cleared.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete session = %d, %s, %v", cleared.StatusCode, cleared.Body, err)
 	}
-	if len(cleared.Cookies) != 1 || !strings.Contains(cleared.Cookies[0], "Max-Age=0") {
+	if len(cleared.Cookies) != 13 || !strings.Contains(cleared.Cookies[0], "Max-Age=0") {
 		t.Fatalf("clear cookies = %#v", cleared.Cookies)
 	}
 	if deleted["PK"].(*types.AttributeValueMemberS).Value != sessionItem["PK"].(*types.AttributeValueMemberS).Value {

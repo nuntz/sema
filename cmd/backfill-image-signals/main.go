@@ -133,6 +133,7 @@ func run(ctx context.Context, repository imageSignalStore, embedder embed.ImageE
 				continue
 			}
 			item, kind, live := resolved.item, resolved.kind, resolved.live
+			item.PK = domain.UserPK(userID)
 			if item.MediaType == "video" || item.VideoID != "" {
 				result.SkippedVideo++
 				continue

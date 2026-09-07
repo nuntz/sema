@@ -46,7 +46,7 @@ const maxConcurrentRecords = 2
 
 type vectorBatchStore interface {
 	PutBatch(context.Context, []vectorstore.Record) error
-	Query(context.Context, []float32, int, int64) ([]vectorstore.Match, error)
+	Query(context.Context, string, []float32, int, int64) ([]vectorstore.Match, error)
 }
 
 type handler struct {
@@ -67,8 +67,9 @@ type handler struct {
 }
 
 type processedVectors struct {
-	text  vectorstore.Record
-	image *vectorstore.Record
+	messageID string
+	text      vectorstore.Record
+	image     *vectorstore.Record
 }
 
 type itemStore interface {
@@ -106,6 +107,7 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 				slog.Error("item failed", "message_id", record.MessageId, "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", err)
 				failures <- events.SQSBatchItemFailure{ItemIdentifier: record.MessageId}
 			} else if vectors != nil {
+				vectors.messageID = record.MessageId
 				processed <- *vectors
 			}
 		}(record)
@@ -119,7 +121,10 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 	}
 	vectorRecords := make([]vectorstore.Record, 0, len(processed))
 	imageRecords := make([]vectorstore.Record, 0, len(processed))
+	indexMessageIDs := []string{}
+	indexingFailed := false
 	for vectors := range processed {
+		indexMessageIDs = append(indexMessageIDs, vectors.messageID)
 		vectorRecords = append(vectorRecords, vectors.text)
 		if vectors.image != nil {
 			imageRecords = append(imageRecords, *vectors.image)
@@ -130,6 +135,7 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 		if err := h.vectors.PutBatch(ctx, vectorRecords); err != nil {
 			slog.WarnContext(ctx, "vector batch write failed", "records", len(vectorRecords), "error", err)
 			metric = "VectorPutFailed"
+			indexingFailed = true
 		}
 		h.emitMetrics(map[string]float64{metric: float64(len(vectorRecords))}, nil)
 	}
@@ -138,8 +144,14 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 		if err := h.imageVectors.PutBatch(ctx, imageRecords); err != nil {
 			slog.WarnContext(ctx, "image vector batch write failed", "records", len(imageRecords), "error", err)
 			metric = "ImageVectorPutFailed"
+			indexingFailed = true
 		}
 		h.emitMetrics(map[string]float64{metric: float64(len(imageRecords))}, nil)
+	}
+	if indexingFailed {
+		for _, id := range indexMessageIDs {
+			response.BatchItemFailures = append(response.BatchItemFailures, events.SQSBatchItemFailure{ItemIdentifier: id})
+		}
 	}
 	return response, nil
 }
@@ -156,6 +168,17 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	}
 	if published.Before(started.Add(-domain.Retention)) {
 		return nil, nil
+	}
+	// Redelivery repairs indexing directly from durable vectors, without fetching
+	// content or paying for another embedding.
+	if !message.Reprocess {
+		stored, loadErr := h.store.Item(ctx, message.User, message.ItemID)
+		if loadErr == nil {
+			return recordsForItem(stored), nil
+		}
+		if !errors.Is(loadErr, store.ErrNotFound) {
+			return nil, loadErr
+		}
 	}
 	message.Title = connector.EntryTitle(message.Title, message.SummaryRaw, message.ContentRaw)
 	var existing domain.Item
@@ -575,6 +598,11 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		}
 	} else {
 		metrics["ItemsDeduped"] = 1
+		stored, loadErr := h.store.Item(ctx, message.User, message.ItemID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		vectorRecords = recordsForItem(stored)
 	}
 	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", h.emitMetrics)
 	return vectorRecords, nil
@@ -590,7 +618,7 @@ func (h *handler) emitMetrics(metrics map[string]float64, dimensions map[string]
 
 func (h *handler) assignStory(ctx context.Context, userID string, vector []float32, item *domain.Item) (map[string]float64, error) {
 	metrics := map[string]float64{}
-	matches, err := h.vectors.Query(ctx, vector, 20, time.Now().Unix())
+	matches, err := h.vectors.Query(ctx, userID, vector, 20, time.Now().Unix())
 	if err != nil {
 		return metrics, err
 	}
@@ -961,4 +989,19 @@ func main() {
 	}
 	h.models = score.NewCache(repository, 5*time.Minute, modelVersion, h.imageModelVersion)
 	lambda.Start(h.run)
+}
+
+func recordsForItem(item domain.Item) *processedVectors {
+	if len(item.Vector) == 0 {
+		return nil
+	}
+	kind := vectorstore.KindLive
+	if item.ArchiveSK != "" {
+		kind = vectorstore.KindArchive
+	}
+	records := &processedVectors{text: vectorstore.FromItem(item, kind)}
+	if image, ok := vectorstore.ImageRecordFromItem(item, kind); ok {
+		records.image = &image
+	}
+	return records
 }

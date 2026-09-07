@@ -72,7 +72,7 @@ backfill-stories:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-stories $(BACKFILL_ARGS)
 
 backfill-vectors:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-vectors $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-vectors $(BACKFILL_ARGS)
 
 backfill-youtube-connector:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-youtube-connector $(BACKFILL_ARGS)

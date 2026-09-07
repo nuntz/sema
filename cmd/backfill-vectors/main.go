@@ -22,6 +22,7 @@ type itemStore interface {
 
 func main() {
 	apply := flag.Bool("apply", false, "write current live and archive vectors")
+	image := flag.Bool("image", false, "backfill stored image embeddings into IMAGE_VECTOR_INDEX")
 	flag.Parse()
 	ctx := context.Background()
 	repository, config, err := store.FromEnv(ctx)
@@ -29,16 +30,23 @@ func main() {
 		panic(err)
 	}
 	bucket, index := strings.TrimSpace(os.Getenv("VECTOR_BUCKET")), strings.TrimSpace(os.Getenv("VECTOR_INDEX"))
+	if *image {
+		index = strings.TrimSpace(os.Getenv("IMAGE_VECTOR_INDEX"))
+	}
 	if bucket == "" || index == "" {
 		panic("VECTOR_BUCKET and VECTOR_INDEX are required")
 	}
 	vectors := vectorstore.NewS3(s3vectors.NewFromConfig(config), bucket, index)
-	if _, _, err := run(ctx, repository, vectors, *apply); err != nil {
+	if _, _, err := runChannel(ctx, repository, vectors, *apply, *image); err != nil {
 		panic(err)
 	}
 }
 
 func run(ctx context.Context, repository itemStore, vectors vectorstore.Store, apply bool) (int, int, error) {
+	return runChannel(ctx, repository, vectors, apply, false)
+}
+
+func runChannel(ctx context.Context, repository itemStore, vectors vectorstore.Store, apply, image bool) (int, int, error) {
 	users, err := repository.UserIDs(ctx)
 	if err != nil {
 		return 0, 0, err
@@ -60,12 +68,22 @@ func run(ctx context.Context, repository itemStore, vectors vectorstore.Store, a
 			return liveCount, archiveCount, err
 		}
 		records := make([]vectorstore.Record, 0, len(live)+len(archive))
+		positions := map[string]int{}
 		for _, group := range []struct {
 			items []domain.Item
 			kind  vectorstore.Kind
 		}{{live, vectorstore.KindLive}, {archive, vectorstore.KindArchive}} {
 			for _, item := range group.items {
-				if len(item.Vector) == 0 {
+				item.PK = domain.UserPK(userID)
+				record := vectorstore.FromItem(item, group.kind)
+				if image {
+					var ok bool
+					record, ok = vectorstore.ImageRecordFromItem(item, group.kind)
+					if !ok || item.MediaType == "video" || item.VideoID != "" {
+						continue
+					}
+				}
+				if len(record.Data) == 0 {
 					continue
 				}
 				if group.kind == vectorstore.KindLive {
@@ -73,7 +91,12 @@ func run(ctx context.Context, repository itemStore, vectors vectorstore.Store, a
 				} else {
 					archiveCount++
 				}
-				records = append(records, vectorstore.FromItem(item, group.kind))
+				if position, exists := positions[record.Key]; exists {
+					records[position] = record
+				} else {
+					positions[record.Key] = len(records)
+					records = append(records, record)
+				}
 			}
 		}
 		if apply && len(records) > 0 {

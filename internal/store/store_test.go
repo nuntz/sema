@@ -1067,48 +1067,43 @@ func TestClaimFeedConditionallyLeasesDueFeed(t *testing.T) {
 	}
 }
 
-func TestReplayOverwriteIsIdempotent(t *testing.T) {
-	var writes []map[string]types.AttributeValue
-	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
-		if len(input.TransactItems) != 2 {
-			t.Fatalf("replay transaction = %#v", input.TransactItems)
-		}
-		for _, write := range input.TransactItems {
-			if write.Put.ConditionExpression != nil {
-				t.Fatalf("replay overwrite retained dedupe condition %q", aws.ToString(write.Put.ConditionExpression))
+func TestReplayOverwritePreservesConcurrentHeartState(t *testing.T) {
+	for _, archive := range []string{"", "A#concurrent"} {
+		t.Run(archive, func(t *testing.T) {
+			calls := 0
+			db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+				calls++
+				update := input.TransactItems[0].Update
+				if update == nil || aws.ToString(update.ConditionExpression) != "attribute_exists(PK)" {
+					t.Fatal("replay must update an existing row")
+				}
+				for _, field := range update.ExpressionAttributeNames {
+					if field == "archive_sk" || field == "hearted_ts" || field == "hearted" || field == "read" || field == "signal" {
+						t.Fatalf("replay modifies user state %s", field)
+					}
+				}
+				if update.ExpressionAttributeValues[":summary"].(*types.AttributeValueMemberS).Value != "new summary" {
+					t.Fatal("summary not updated")
+				}
+				if !strings.Contains(aws.ToString(update.UpdateExpression), "#media_key") {
+					t.Fatal("stale media not cleared")
+				}
+				vector := input.TransactItems[1].Put.Item
+				if string(vector["vector"].(*types.AttributeValueMemberB).Value) != "text" || string(vector["image_vector"].(*types.AttributeValueMemberB).Value) != "image" {
+					t.Fatal("split embeddings not updated")
+				}
+				return &dynamodb.TransactWriteItemsOutput{}, nil
+			}}
+			item := domain.Item{PK: "U#user", SK: "I#item", ItemID: "item", Summary: "new summary", ArchiveSK: archive, Vector: []byte("text"), ImageVector: []byte("image")}
+			for range 2 {
+				if err := New(db, nil, "table", "", "").OverwriteItem(context.Background(), item); err != nil {
+					t.Fatal(err)
+				}
 			}
-			writes = append(writes, write.Put.Item)
-		}
-		return &dynamodb.TransactWriteItemsOutput{}, nil
-	}}
-	repository := New(db, nil, "table", "", "")
-	item := domain.Item{
-		PK: "U#user", SK: "I#item", ItemID: "item", Score: 0.8, Size: "L", Summary: "new summary", Vector: []byte{1, 2},
-		ImageVector: []byte{3, 4}, ImageModelVersion: "image-v1",
-		Read: true, Signal: -1, Hearted: true, ArchiveSK: "A#kept", HeartedTS: "2026-08-20T12:00:00Z",
-	}
-	if err := repository.OverwriteItem(context.Background(), item); err != nil {
-		t.Fatal(err)
-	}
-	if err := repository.OverwriteItem(context.Background(), item); err != nil {
-		t.Fatal(err)
-	}
-	if len(writes) != 4 || writes[0]["score"].(*types.AttributeValueMemberN).Value != writes[2]["score"].(*types.AttributeValueMemberN).Value {
-		t.Fatalf("double replay writes = %#v", writes)
-	}
-	if _, exists := writes[0]["vector"]; exists || string(writes[1]["vector"].(*types.AttributeValueMemberB).Value) != string(item.Vector) {
-		t.Fatalf("replay vector rows = %#v", writes)
-	}
-	if _, exists := writes[0]["image_vector"]; exists || string(writes[1]["image_vector"].(*types.AttributeValueMemberB).Value) != string(item.ImageVector) || writes[1]["image_model_version"].(*types.AttributeValueMemberS).Value != item.ImageModelVersion {
-		t.Fatalf("replay image vector rows = %#v", writes)
-	}
-	for _, transient := range []string{"read", "signal", "hearted"} {
-		if _, ok := writes[0][transient]; ok {
-			t.Fatalf("replay embedded separate %s state in item row: %#v", transient, writes[0])
-		}
-	}
-	if writes[0]["archive_sk"].(*types.AttributeValueMemberS).Value != "A#kept" || writes[0]["hearted_ts"].(*types.AttributeValueMemberS).Value != item.HeartedTS {
-		t.Fatalf("replay did not preserve heart pointer: %#v", writes[0])
+			if calls != 2 {
+				t.Fatal(calls)
+			}
+		})
 	}
 }
 

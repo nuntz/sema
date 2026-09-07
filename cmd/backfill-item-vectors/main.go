@@ -108,14 +108,29 @@ func run(ctx context.Context, repository itemVectorStore, vectors vectorSource, 
 		}
 		keys := make([]string, len(needsS3))
 		for index, item := range needsS3 {
-			keys[index] = item.ItemID
+			keys[index] = vectorstore.Key(userID, item.ItemID)
 		}
 		external, err := vectors.GetBatch(ctx, keys)
 		if err != nil {
 			return result, fmt.Errorf("load S3 vectors for %s: %w", userID, err)
 		}
+		// Legacy keys remain readable only by this migration tool.
+		legacyKeys := []string{}
 		for _, item := range needsS3 {
-			vector := score.EncodeVector(external[item.ItemID])
+			if len(external[vectorstore.Key(userID, item.ItemID)]) == 0 {
+				legacyKeys = append(legacyKeys, item.ItemID)
+			}
+		}
+		legacy, err := vectors.GetBatch(ctx, legacyKeys)
+		if err != nil {
+			return result, fmt.Errorf("load legacy S3 vectors for %s: %w", userID, err)
+		}
+		for _, item := range needsS3 {
+			data := external[vectorstore.Key(userID, item.ItemID)]
+			if len(data) == 0 {
+				data = legacy[item.ItemID]
+			}
+			vector := score.EncodeVector(data)
 			if len(vector) == 0 {
 				result.Unavailable++
 				slog.WarnContext(ctx, "item vector unavailable", "user", userID, "item_id", item.ItemID)

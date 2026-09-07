@@ -184,7 +184,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 			return s.failure("delete session", err), nil
 		}
 		return events.APIGatewayV2HTTPResponse{
-			StatusCode: http.StatusNoContent, Headers: map[string]string{"cache-control": "no-store"}, Cookies: []string{auth.ClearSessionCookie()},
+			StatusCode: http.StatusNoContent, Headers: map[string]string{"cache-control": "no-store"}, Cookies: append(auth.ClearContentCookies(claims.Subject), auth.ClearSessionCookie()),
 		}, nil
 	}
 	var result events.APIGatewayV2HTTPResponse
@@ -406,7 +406,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 		if err != nil {
 			return queryResult{err: err}
 		}
-		matches, err := vectors.Query(ctx, score.Normalize(vector), limit, time.Now().Unix())
+		matches, err := vectors.Query(ctx, userID, score.Normalize(vector), limit, time.Now().Unix())
 		return queryResult{matches: matches, err: err}
 	}
 	textResults, imageResults := queryResult{}, queryResult{}
@@ -501,14 +501,14 @@ func (s *server) getSimilar(ctx context.Context, userID, itemID string, query ma
 	if limit < 1 || limit > 12 {
 		limit = 12
 	}
-	vector, err := s.vectors.Get(ctx, itemID)
+	vector, err := s.vectors.Get(ctx, vectorstore.Key(userID, itemID))
 	if err != nil {
 		if errors.Is(err, vectorstore.ErrNotFound) {
 			return response(http.StatusNotFound, map[string]string{"error": "item vector not found"})
 		}
 		return s.failure("load item vector", err)
 	}
-	matches, err := s.vectors.Query(ctx, vector, limit+1, time.Now().Unix())
+	matches, err := s.vectors.Query(ctx, userID, vector, limit+1, time.Now().Unix())
 	if err != nil {
 		return s.failure("query similar items", err)
 	}
@@ -520,7 +520,7 @@ func (s *server) getSimilar(ctx context.Context, userID, itemID string, query ma
 			item, imageErr = s.store.ArchiveItem(ctx, userID, itemID)
 		}
 		if imageErr == nil && len(item.ImageVector) > 0 {
-			imageMatches, imageErr = s.imageVectors.Query(ctx, score.DecodeVector(item.ImageVector), limit+1, time.Now().Unix())
+			imageMatches, imageErr = s.imageVectors.Query(ctx, userID, score.DecodeVector(item.ImageVector), limit+1, time.Now().Unix())
 			if imageErr == nil {
 				imageMatches = matchesWithoutItem(imageMatches, itemID)
 			}
@@ -1043,16 +1043,16 @@ func (s *server) syncHeartVector(ctx context.Context, userID, itemID string, hea
 			if record, ok := vectorstore.ImageRecordFromItem(item, vectorstore.KindLive); ok {
 				return s.imageVectors.Put(ctx, record)
 			}
-			return s.imageVectors.Delete(ctx, itemID)
+			return s.imageVectors.Delete(ctx, vectorstore.Key(userID, itemID))
 		}
 		return nil
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		if err := s.vectors.Delete(ctx, itemID); err != nil {
+		if err := s.vectors.Delete(ctx, vectorstore.Key(userID, itemID)); err != nil {
 			return err
 		}
 		if s.imageVectors != nil {
-			return s.imageVectors.Delete(ctx, itemID)
+			return s.imageVectors.Delete(ctx, vectorstore.Key(userID, itemID))
 		}
 		return nil
 	}

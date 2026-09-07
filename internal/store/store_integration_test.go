@@ -240,6 +240,13 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if err != nil || archiveSK == "" || count != 1 {
 		t.Fatalf("heart = %q, %d, %v", archiveSK, count, err)
 	}
+	// A replay that started before the heart must preserve the new pointer.
+	if err := repository.OverwriteItem(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := repository.Item(ctx, "keeper", item.ItemID); err != nil || current.ArchiveSK != archiveSK {
+		t.Fatalf("replay lost heart: %#v %v", current, err)
+	}
 	assertUserCounts(t, repository, "keeper", 1, 1)
 	archiveVariantKey := MediaVariantKey(ArchiveMediaKey("keeper", "kept"), 384)
 	if !objects.objects[ArchiveBodyKey("keeper", "kept")] || !objects.objects[ArchiveMediaKey("keeper", "kept")] || !objects.objects[archiveVariantKey] {
@@ -316,6 +323,10 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	}
 	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
 		t.Fatalf("unheart = %d, %v", count, err)
+	}
+	// Conversely, a replay holding the old pointer must not restore it.
+	if err := repository.OverwriteItem(ctx, live); err != nil {
+		t.Fatal(err)
 	}
 	assertUserCounts(t, repository, "keeper", 0, 1)
 	if _, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); !errors.Is(err, ErrNotFound) {
@@ -444,7 +455,10 @@ func (s *archiveObjectStore) DeleteObject(_ context.Context, input *s3.DeleteObj
 	return &s3.DeleteObjectOutput{}, nil
 }
 
-func (s *archiveObjectStore) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+func (s *archiveObjectStore) GetObject(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if !s.objects[aws.ToString(input.Key)] {
+		return nil, &smithy.GenericAPIError{Code: "NoSuchKey"}
+	}
 	return &s3.GetObjectOutput{Body: io.NopCloser(strings.NewReader(""))}, nil
 }
 

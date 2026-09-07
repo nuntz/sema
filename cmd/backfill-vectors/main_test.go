@@ -38,7 +38,7 @@ func (s *backfillVectors) PutBatch(_ context.Context, records []vectorstore.Reco
 }
 func (*backfillVectors) Delete(context.Context, string) error           { return nil }
 func (*backfillVectors) Get(context.Context, string) ([]float32, error) { return nil, nil }
-func (*backfillVectors) Query(context.Context, []float32, int, int64) ([]vectorstore.Match, error) {
+func (*backfillVectors) Query(context.Context, string, []float32, int, int64) ([]vectorstore.Match, error) {
 	return nil, nil
 }
 func (*backfillVectors) Cleanup(context.Context, int64) (int, int, error) { return 0, 0, nil }
@@ -58,5 +58,27 @@ func TestRunBatchesAllVectorsForUser(t *testing.T) {
 	}
 	if vectors.records[0].Kind != vectorstore.KindLive || vectors.records[2].Kind != vectorstore.KindArchive {
 		t.Fatalf("record kinds = %#v", vectors.records)
+	}
+}
+
+func TestBackfillDeduplicatesArchiveAndSupportsImages(t *testing.T) {
+	repository := &backfillItems{
+		live:    []domain.Item{{ItemID: "shared", TTL: 42, Vector: []byte{0, 0, 128, 63}, ImageVector: []byte{0, 0, 128, 63}}},
+		archive: []domain.Item{{ItemID: "shared", Vector: []byte{0, 0, 128, 63}, ImageVector: []byte{0, 0, 128, 63}}},
+	}
+	for _, image := range []bool{false, true} {
+		vectors := &backfillVectors{}
+		if _, _, err := runChannel(context.Background(), repository, vectors, false, image); err != nil {
+			t.Fatal(err)
+		}
+		if vectors.batchCalls != 0 {
+			t.Fatal("dry run wrote vectors")
+		}
+		if _, _, err := runChannel(context.Background(), repository, vectors, true, image); err != nil {
+			t.Fatal(err)
+		}
+		if len(vectors.records) != 1 || vectors.records[0].Kind != vectorstore.KindArchive || vectors.records[0].UserID != "user" || vectors.records[0].Key != vectorstore.Key("user", "shared") {
+			t.Fatal(vectors.records)
+		}
 	}
 }

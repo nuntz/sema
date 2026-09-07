@@ -101,3 +101,14 @@ func cloudFrontBase64(value []byte) string {
 	encoded := base64.StdEncoding.EncodeToString(value)
 	return strings.NewReplacer("+", "-", "=", "_", "/", "~").Replace(encoded)
 }
+
+// ClearContentCookies expires every signed-content cookie at its original path.
+func ClearContentCookies(userID string) []string {
+	var cookies []string
+	for _, prefix := range []string{"bodies", "media", "archive"} {
+		for _, name := range []string{"CloudFront-Policy", "CloudFront-Signature", "CloudFront-Key-Pair-Id", "CloudFront-Hash-Algorithm"} {
+			cookies = append(cookies, fmt.Sprintf("%s=; Path=/%s/%s/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Strict", name, prefix, userID))
+		}
+	}
+	return cookies
+}

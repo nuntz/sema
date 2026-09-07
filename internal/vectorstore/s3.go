@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
@@ -41,8 +42,9 @@ func (s *S3) Put(ctx context.Context, record Record) error {
 }
 
 func (s *S3) PutBatch(ctx context.Context, records []Record) error {
-	vectors := make([]types.PutInputVector, len(records))
-	sizes := make([]int, len(records))
+	vectors := make([]types.PutInputVector, 0, len(records))
+	sizes := make([]int, 0, len(records))
+	positions := make(map[string]int, len(records))
 	for index, record := range records {
 		vector, size, err := putInputVector(record)
 		if err != nil {
@@ -51,8 +53,14 @@ func (s *S3) PutBatch(ctx context.Context, records []Record) error {
 		if size+putVectorsRequestOverhead > putVectorsPayloadLimit {
 			return fmt.Errorf("vector %d exceeds PutVectors payload limit", index)
 		}
-		vectors[index] = vector
-		sizes[index] = size
+		// SQS may deliver the same item more than once in one batch.
+		if position, exists := positions[record.Key]; exists {
+			vectors[position], sizes[position] = vector, size
+		} else {
+			positions[record.Key] = len(vectors)
+			vectors = append(vectors, vector)
+			sizes = append(sizes, size)
+		}
 	}
 	for offset := 0; offset < len(vectors); {
 		end, payloadSize := offset, putVectorsRequestOverhead
@@ -75,7 +83,7 @@ func putInputVector(record Record) (types.PutInputVector, int, error) {
 		return types.PutInputVector{}, 0, fmt.Errorf("vector key and data are required")
 	}
 	metadata := map[string]any{
-		"kind": string(record.Kind), "feed_id": record.FeedID,
+		"user_id": record.UserID, "kind": string(record.Kind), "feed_id": record.FeedID,
 		"published_ts": record.PublishedTS, "title": record.Title,
 	}
 	if record.Kind == KindLive {
@@ -144,7 +152,10 @@ func (s *S3) GetBatch(ctx context.Context, keys []string) (map[string][]float32,
 	return result, nil
 }
 
-func (s *S3) Query(ctx context.Context, vector []float32, limit int, now int64) ([]Match, error) {
+func (s *S3) Query(ctx context.Context, userID string, vector []float32, limit int, now int64) ([]Match, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("vector query user is required")
+	}
 	if limit < 1 {
 		return []Match{}, nil
 	}
@@ -152,6 +163,7 @@ func (s *S3) Query(ctx context.Context, vector []float32, limit int, now int64) 
 		map[string]any{"kind": map[string]any{"$eq": string(KindArchive)}},
 		map[string]any{"expires_ts": map[string]any{"$gt": now}},
 	}}
+	filter = map[string]any{"$and": []any{map[string]any{"user_id": map[string]any{"$eq": userID}}, filter}}
 	output, err := s.client.QueryVectors(ctx, &s3vectors.QueryVectorsInput{
 		VectorBucketName: aws.String(s.bucket), IndexName: aws.String(s.index), TopK: aws.Int32(int32(limit)),
 		QueryVector: &types.VectorDataMemberFloat32{Value: vector}, Filter: document.NewLazyDocument(filter), ReturnDistance: true,
@@ -161,10 +173,10 @@ func (s *S3) Query(ctx context.Context, vector []float32, limit int, now int64) 
 	}
 	matches := make([]Match, 0, len(output.Vectors))
 	for _, candidate := range output.Vectors {
-		if candidate.Key == nil || candidate.Distance == nil {
+		if candidate.Key == nil || candidate.Distance == nil || !strings.HasPrefix(*candidate.Key, Key(userID, "")) {
 			continue
 		}
-		matches = append(matches, Match{Key: *candidate.Key, Similarity: Similarity(*candidate.Distance)})
+		matches = append(matches, Match{Key: strings.TrimPrefix(*candidate.Key, Key(userID, "")), Similarity: Similarity(*candidate.Distance)})
 	}
 	return matches, nil
 }

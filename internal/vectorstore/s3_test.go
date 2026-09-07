@@ -92,7 +92,7 @@ func (s *stubS3Vectors) QueryVectors(_ context.Context, input *s3vectors.QueryVe
 	s.query = input
 	return &s3vectors.QueryVectorsOutput{
 		DistanceMetric: types.DistanceMetricCosine,
-		Vectors:        []types.QueryOutputVector{{Key: aws.String("near"), Distance: aws.Float32(.08)}},
+		Vectors:        []types.QueryOutputVector{{Key: aws.String(Key("user", "near")), Distance: aws.Float32(.08)}},
 	}, nil
 }
 func (s *stubS3Vectors) ListVectors(context.Context, *s3vectors.ListVectorsInput, ...func(*s3vectors.Options)) (*s3vectors.ListVectorsOutput, error) {
@@ -102,7 +102,7 @@ func (s *stubS3Vectors) ListVectors(context.Context, *s3vectors.ListVectorsInput
 func TestS3VectorLifecycleAndExpiryFilter(t *testing.T) {
 	stub := &stubS3Vectors{}
 	store := NewS3(stub, "bucket", "items")
-	record := Record{Key: "item", Data: []float32{1, 0}, Kind: KindLive, FeedID: "feed", PublishedTS: "then", ExpiresTS: 90, Title: "Title"}
+	record := Record{UserID: "user", Key: Key("user", "item"), Data: []float32{1, 0}, Kind: KindLive, FeedID: "feed", PublishedTS: "then", ExpiresTS: 90, Title: "Title"}
 	if err := store.Put(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}
@@ -114,11 +114,15 @@ func TestS3VectorLifecycleAndExpiryFilter(t *testing.T) {
 	if err := json.Unmarshal(encoded, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	if metadata["kind"] != "live" || metadata["title"] != "Title" {
+	if metadata["user_id"] != "user" || metadata["kind"] != "live" || metadata["title"] != "Title" {
 		t.Fatalf("put metadata = %#v", metadata)
 	}
-	if _, err := store.Query(context.Background(), []float32{1, 0}, 12, 100); err != nil {
+	matches, err := store.Query(context.Background(), "user", []float32{1, 0}, 12, 100)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(matches) != 1 || matches[0].Key != "near" {
+		t.Fatal(matches)
 	}
 	var filter map[string]any
 	encoded, err = stub.query.Filter.MarshalSmithyDocument()
@@ -128,7 +132,14 @@ func TestS3VectorLifecycleAndExpiryFilter(t *testing.T) {
 	if err := json.Unmarshal(encoded, &filter); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := filter["$or"]; !ok {
+	expected := map[string]any{"$and": []any{
+		map[string]any{"user_id": map[string]any{"$eq": "user"}},
+		map[string]any{"$or": []any{
+			map[string]any{"kind": map[string]any{"$eq": "archive"}},
+			map[string]any{"expires_ts": map[string]any{"$gt": float64(100)}},
+		}},
+	}}
+	if !reflect.DeepEqual(filter, expected) {
 		t.Fatalf("query filter = %#v", filter)
 	}
 
@@ -173,5 +184,30 @@ func TestS3GetBatchChunksDeduplicatesAndOmitsMissing(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing get error = %v", err)
+	}
+}
+
+func TestS3PutBatchCoalescesDuplicateDeliveries(t *testing.T) {
+	stub := &stubS3Vectors{}
+	repository := NewS3(stub, "bucket", "index")
+	if err := repository.PutBatch(context.Background(), []Record{
+		{UserID: "user", Key: Key("user", "item"), Data: []float32{1}, Kind: KindLive},
+		{UserID: "user", Key: Key("user", "item"), Data: []float32{1}, Kind: KindArchive},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(stub.put.Vectors) != 1 {
+		t.Fatal(stub.put.Vectors)
+	}
+	var metadata map[string]any
+	encoded, err := stub.put.Vectors[0].Metadata.MarshalSmithyDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["kind"] != "archive" {
+		t.Fatal(metadata)
 	}
 }
