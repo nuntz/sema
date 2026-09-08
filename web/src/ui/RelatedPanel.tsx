@@ -10,6 +10,7 @@ import { Icon } from "../components/Icon";
 import { isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
+import { isEditingTarget } from "./keyboard";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { useSheetDrag } from "./use-sheet-drag";
 
@@ -66,6 +67,12 @@ export function RelatedPanel(props: {
   };
 
   const onKey = (event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      isEditingTarget(event.target)
+    )
+      return;
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     const item = props.items.find(
       (candidate) => candidate.item_id === focusedID(),

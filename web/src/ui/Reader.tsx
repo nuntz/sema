@@ -26,7 +26,7 @@ import {
 } from "../reddit-item";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
-import { readerCommand } from "./keyboard";
+import { isEditingTarget, readerCommand } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { hasLeadingImage } from "./reader-content";
@@ -390,6 +390,12 @@ export function Reader(props: ReaderProps) {
   };
 
   const onKey = (event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      isEditingTarget(event.target)
+    )
+      return;
     if (!props.active) return;
     if (sheetOpen() && event.key === "Escape") {
       closeSheet();

@@ -9,6 +9,7 @@ import {
 import { type SearchSection, visibleSearchSections } from "../search";
 import type { Item, SearchResponse } from "../types";
 import { relativeTime } from "./Grid";
+import { isEditingTarget } from "./keyboard";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
 
@@ -66,10 +67,9 @@ export function SearchResults(props: SearchResultsProps) {
   };
 
   const onKey = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing) return;
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
-    const targetIsInput =
-      event.target instanceof HTMLElement &&
-      event.target.matches("input, textarea");
+    const targetIsInput = isEditingTarget(event.target);
     if (event.key === "Escape") {
       props.onEscape();
     } else if (

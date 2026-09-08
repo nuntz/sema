@@ -36,6 +36,8 @@ export function Feeds(props: {
   heartCount: number;
   onBack(): void;
   onKeys(): void;
+  characterShortcuts?: boolean;
+  onCharacterShortcuts?(enabled: boolean): void;
   onSignOut(): void;
   onFeedsChanged?(): void;
   onToast(kind: "success" | "error", message: string): void;
@@ -375,6 +377,27 @@ export function Feeds(props: {
             {message()}
           </p>
         </Show>
+
+        <section class="keyboard-preference" aria-label="Keyboard settings">
+          <h2>Keyboard</h2>
+          <label>
+            <input
+              type="checkbox"
+              checked={props.characterShortcuts ?? true}
+              onChange={(event) =>
+                props.onCharacterShortcuts?.(event.currentTarget.checked)
+              }
+            />
+            Letter and symbol shortcuts
+          </label>
+          <p>
+            Use letters and sequences such as g → t. Turn off for speech input.
+            Arrow keys, Tab, Enter and Escape still work.
+          </p>
+          <button type="button" onClick={props.onKeys}>
+            View keyboard shortcuts
+          </button>
+        </section>
 
         <details class="feed-operations">
           <summary>Ranking &amp; storage</summary>

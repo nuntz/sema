@@ -83,6 +83,8 @@ export function TagFilter(props: {
   onMount(() => {
     const keydown = (event: KeyboardEvent) => {
       if (
+        event.defaultPrevented ||
+        event.isComposing ||
         !props.active ||
         event.repeat ||
         event.metaKey ||

@@ -162,3 +162,190 @@ test("calendar views advance at local midnight on the next poll", async ({
     .toBe("2026-09-08T07:00:00.000Z");
   await expect(page.locator('[data-item-id="Today read"]')).toHaveCount(0);
 });
+
+test("go sequences select scopes directly and preserve legacy bindings", async ({
+  page,
+}) => {
+  const requests = await openGrid(page);
+  for (const [key, label] of [
+    ["t", "Today"],
+    ["y", "Yesterday"],
+    ["a", "All"],
+    ["u", "Unread"],
+  ]) {
+    await page.keyboard.press("g");
+    await page.keyboard.press(key);
+    await expect(
+      page.getByRole("radio", { name: label, exact: true }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("radio", { name: "Front page", exact: true }),
+    ).toBeChecked();
+    await page.keyboard.press("g");
+    await page.keyboard.press("r");
+    await expect(
+      page.getByRole("button", { name: "Archive", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.getByRole("heading", { name: "Nothing kept yet" }),
+    ).toBeVisible();
+    await page.keyboard.press("g");
+    await page.keyboard.press("r");
+    await expect(
+      page.getByRole("button", { name: "Archive", exact: true }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("g");
+    await page.keyboard.press(key);
+    await expect(
+      page.getByRole("radio", { name: label, exact: true }),
+    ).toBeChecked();
+    await expect(
+      page.getByRole("button", { name: "Archive", exact: true }),
+    ).toHaveAttribute("aria-pressed", "false");
+  }
+  expect(
+    requests
+      .filter((url) => url.pathname === "/api/items")
+      .every((url) => url.searchParams.get("order") === "interest"),
+  ).toBe(true);
+  await expect(page.locator(".loading-screen")).toHaveCount(0);
+  await page.keyboard.press("a");
+  await expect(
+    page.getByRole("radio", { name: "All", exact: true }),
+  ).toBeChecked();
+  await expect(page.locator(".loading-screen")).toHaveCount(0);
+  await page.keyboard.press("a");
+  await expect(
+    page.getByRole("radio", { name: "Unread", exact: true }),
+  ).toBeChecked();
+  await expect(page.locator(".loading-screen")).toHaveCount(0);
+  await page.keyboard.press("Shift+A");
+  await expect(
+    page.getByRole("button", { name: "Archive", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".loading-screen")).toHaveCount(0);
+  await page.keyboard.press("Shift+A");
+  await expect(
+    page.getByRole("radio", { name: "Unread", exact: true }),
+  ).toBeChecked();
+  await expect(page.locator(".grid-scroll")).toBeVisible();
+  await page.keyboard.press("t");
+  await expect(
+    page.getByRole("radio", { name: "Latest", exact: true }),
+  ).toBeChecked();
+});
+
+test("go prefixes expire and pause in inputs and dialogs", async ({ page }) => {
+  await openGrid(page);
+  await page.keyboard.press("g");
+  await page.clock.fastForward(650);
+  await page.keyboard.press("t");
+  await expect(
+    page.getByRole("radio", { name: "Latest", exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("radio", { name: "Unread", exact: true }),
+  ).toBeChecked();
+  await page.keyboard.press("g");
+  await page.keyboard.press("s");
+  await expect(page.locator(".feeds-view")).toBeVisible();
+  const input = page.getByRole("searchbox", { name: "Search feeds" });
+  await input.focus();
+  await page.keyboard.type("gtgagygugr");
+  await expect(input).toHaveValue("gtgagygugr");
+  await expect(page.locator(".feeds-view")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await expect(
+    page.getByRole("radio", { name: "Today", exact: true }),
+  ).toBeChecked();
+  await page.keyboard.press("?");
+  await expect(
+    page.getByRole("dialog", { name: "Keyboard", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("g");
+  await page.keyboard.press("y");
+  await expect(
+    page.getByRole("radio", { name: "Today", exact: true }),
+  ).toBeChecked();
+  await page.keyboard.press("Escape");
+  await page.locator('[data-item-id="Today unread"] .cell-main').click();
+  await expect(page.locator(".reader")).toBeVisible();
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await expect(page.locator(".reader")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("radio", { name: "Today", exact: true }),
+  ).toBeChecked();
+});
+
+test("disabling character shortcuts persists and keeps native navigation available", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await page.keyboard.press("g");
+  await page.keyboard.press("s");
+  await page
+    .getByRole("checkbox", { name: "Letter and symbol shortcuts" })
+    .uncheck();
+  await page.locator(".feed-manager-title h1").click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".grid-scroll")).toBeVisible();
+  for (const key of ["g", "t", "a", "Shift+A", "?", "/", "#", "m", "f"])
+    await page.keyboard.press(key);
+  await expect(
+    page.getByRole("radio", { name: "Unread", exact: true }),
+  ).toBeChecked();
+  await expect(
+    page.getByRole("radio", { name: "Front page", exact: true }),
+  ).toBeChecked();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".reader")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await expect(page.locator(".grid-scroll")).toBeVisible();
+  await page.keyboard.press("a");
+  await expect(
+    page.getByRole("radio", { name: "Unread", exact: true }),
+  ).toBeChecked();
+  await page
+    .getByRole("button", { name: "Feeds & settings", exact: true })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: "Letter and symbol shortcuts" }),
+  ).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "View keyboard shortcuts", exact: true })
+    .click();
+  const help = page.getByRole("dialog", { name: "Keyboard", exact: true });
+  await expect(help.getByRole("heading")).toHaveText([
+    "Keyboard",
+    "Navigation",
+    "Views",
+    "Item actions",
+    "General",
+  ]);
+  await expect(help.getByText("Keep / unkeep", { exact: true })).toBeVisible();
+  await expect(
+    help.getByText("Show related coverage", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "/tmp/sema-keyboard-help-desktop.png" });
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.screenshot({ path: "/tmp/sema-keyboard-help-phone.png" });
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await help
+    .getByRole("checkbox", { name: "Letter and symbol shortcuts" })
+    .check();
+  await page.keyboard.press("Escape");
+  await expect(help).toHaveCount(0);
+  await page.locator(".feed-manager-title h1").click();
+  await page.keyboard.press("g");
+  await page.keyboard.press("y");
+  await expect(
+    page.getByRole("radio", { name: "Yesterday", exact: true }),
+  ).toBeChecked();
+});

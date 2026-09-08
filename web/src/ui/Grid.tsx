@@ -48,7 +48,7 @@ import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { FrontPageEntry, Item, Order, ReadAnchor, Story } from "../types";
 import { frontPageEntryItem, frontPageSequence } from "./front-page";
-import { gridCommand } from "./keyboard";
+import { gridCommand, isEditingTarget } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
@@ -832,6 +832,14 @@ export function Grid(props: GridProps) {
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      isEditingTarget(event.target)
+    ) {
+      clearGo();
+      return;
+    }
     setKeyboardFocus(true);
     if (sheetItem() && event.key === "Escape") {
       closeSheet();

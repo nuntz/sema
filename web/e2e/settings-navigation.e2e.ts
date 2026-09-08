@@ -823,14 +823,14 @@ test("shift+G focuses the end action and g g returns to the top", async ({
 
   await expect(
     page.locator('.settings-trigger + [role="tooltip"] kbd'),
-  ).toHaveText("G S");
+  ).toHaveText("g → s");
   await page.keyboard.press("?");
   await expect(
-    page.locator(".key-row").filter({ hasText: "G S" }),
-  ).toContainText("feeds & settings");
+    page.locator(".key-row").filter({ hasText: "g → s" }),
+  ).toContainText("Feeds & settings");
   await expect(
-    page.locator(".key-row").filter({ hasText: "End / ⇧ G" }),
-  ).toContainText("go to caught-up card");
+    page.locator(".key-row").filter({ hasText: "End / Shift+g" }),
+  ).toContainText("Go to caught-up card");
 });
 
 test("finish and clear focuses the empty grid and u restores it", async ({

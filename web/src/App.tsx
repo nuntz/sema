@@ -76,7 +76,15 @@ import {
 } from "./ui/front-page";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
-import { appCommand } from "./ui/keyboard";
+import {
+  appCommand,
+  characterShortcut,
+  type GoCommand,
+  goCommand,
+  isEditingTarget,
+  readCharacterShortcuts,
+  scopeShortcuts,
+} from "./ui/keyboard";
 import { closeOverlay, pushOverlay } from "./ui/overlay-history";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
@@ -134,6 +142,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [mode, setMode] = createSignal<"live" | "archive">("live");
   const [confirmRemove, setConfirmRemove] = createSignal<Item>();
   const [keysOpen, setKeysOpen] = createSignal(false);
+  const [characterShortcuts, setCharacterShortcuts] = createSignal(
+    readCharacterShortcuts(),
+  );
   const [linkActionID, setLinkActionID] = createSignal("");
   const [toast, setToast] = createSignal<Toast>();
   const [view, setView] = createSignal<"grid" | "feeds">("grid");
@@ -162,8 +173,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   let pollTimer: number | undefined;
   let pollInFlight = false;
   let markBelowInFlight = false;
-  let settingsGoPending = false;
-  let settingsGoTimer: number | undefined;
+  let goPending = false;
+  let goTimer: number | undefined;
   let gridScrollTop = 0;
   let feedsGridDirty = false;
   let feedFilterRefresh: Promise<void> | undefined;
@@ -659,14 +670,17 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     });
   };
 
-  const clearSettingsGo = () => {
-    settingsGoPending = false;
-    window.clearTimeout(settingsGoTimer);
-    settingsGoTimer = undefined;
+  const clearGo = () => {
+    goPending = false;
+    window.clearTimeout(goTimer);
+    goTimer = undefined;
   };
 
-  const settingsSequenceAvailable = () =>
+  const goSequenceAvailable = () =>
     !keysOpen() &&
+    !headerMenu() &&
+    !tagFilterOpen() &&
+    !document.querySelector("[role=dialog]") &&
     (view() === "feeds" ||
       (view() === "grid" &&
         !readerID() &&
@@ -678,8 +692,35 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     bootstrap();
     const flush = () => void flushPending(true);
     const stopWindowReturn = listenForWindowReturn(flush, () => void pollNew());
+    const onShortcutCapture = (event: KeyboardEvent) => {
+      if (event.isComposing || isEditingTarget(event.target)) {
+        clearGo();
+        return;
+      }
+      if (!characterShortcuts() && characterShortcut(event)) {
+        clearGo();
+        event.stopImmediatePropagation();
+        return;
+      }
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
+        clearGo();
+        return;
+      }
+      if (goPending) {
+        const command = goCommand(event.key);
+        clearGo();
+        if (command && goSequenceAvailable()) {
+          event.preventDefault();
+          void navigateByKey(command);
+        }
+      } else if (event.key === "g" && goSequenceAvailable()) {
+        goPending = true;
+        goTimer = window.setTimeout(clearGo, 600);
+      }
+    };
+    const clearGoOnFocus = () => clearGo();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing) return;
       const target = event.target;
       const editing =
         target instanceof HTMLElement &&
@@ -715,26 +756,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         return;
       }
       if (editing) {
-        clearSettingsGo();
+        clearGo();
         return;
       }
       if (event.repeat || event.metaKey || event.ctrlKey || event.altKey) {
-        clearSettingsGo();
-        return;
-      }
-      if (settingsGoPending) {
-        const toggleSettings = event.key === "s" && settingsSequenceAvailable();
-        clearSettingsGo();
-        if (toggleSettings) {
-          event.preventDefault();
-          if (view() === "feeds") void closeFeedsAndSettings();
-          else openFeedsAndSettings();
-          return;
-        }
-      } else if (event.key === "g" && settingsSequenceAvailable()) {
-        settingsGoPending = true;
-        settingsGoTimer = window.setTimeout(clearSettingsGo, 600);
-        if (view() === "feeds") event.preventDefault();
+        clearGo();
         return;
       }
       if (event.key === "Escape" && view() === "feeds" && !keysOpen()) {
@@ -768,10 +794,16 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       }
     };
     pollTimer = window.setInterval(() => void pollNew(), 60_000);
+    window.addEventListener("keydown", onShortcutCapture, true);
+    window.addEventListener("blur", clearGoOnFocus);
+    window.addEventListener("focusin", clearGoOnFocus);
     window.addEventListener("pagehide", flush);
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
       disposed = true;
+      window.removeEventListener("keydown", onShortcutCapture, true);
+      window.removeEventListener("blur", clearGoOnFocus);
+      window.removeEventListener("focusin", clearGoOnFocus);
       stopWindowReturn();
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("keydown", onKeyDown);
@@ -781,7 +813,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
       window.clearTimeout(undoTimer);
-      window.clearTimeout(settingsGoTimer);
+      window.clearTimeout(goTimer);
       void flushPending(true);
     });
   });
@@ -1512,7 +1544,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const openFeedsAndSettings = () => {
-    clearSettingsGo();
+    clearGo();
     setHeaderMenu();
     closeKeys();
     closeRelated();
@@ -1524,7 +1556,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const leaveFeedsAndSettings = async () => {
-    clearSettingsGo();
+    clearGo();
     closeKeys();
     setView("grid");
     if (!feedsGridDirty) return;
@@ -1548,6 +1580,37 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     await reload(order(), unreadOnly(), next);
   };
 
+  const navigateByKey = async (command: GoCommand) => {
+    if (command === "settings") {
+      if (view() === "feeds") await closeFeedsAndSettings();
+      else openFeedsAndSettings();
+      return;
+    }
+    if (view() === "feeds") await closeFeedsAndSettings();
+    if (command === "archive") {
+      if (mode() !== "archive") await toggleArchive();
+      return;
+    }
+    if (mode() === "archive") {
+      await flushRead();
+      setItemView(command);
+      setMode("live");
+      await reload();
+    } else {
+      await selectItemView(command);
+    }
+  };
+
+  const changeCharacterShortcuts = (enabled: boolean) => {
+    clearGo();
+    setCharacterShortcuts(enabled);
+    try {
+      localStorage.setItem("sema:character-shortcuts", enabled ? "on" : "off");
+    } catch {
+      /* The preference still applies for this session. */
+    }
+  };
+
   const moveReader = (delta: number) => {
     const next = frontPageItems()[selectedIndex() + delta];
     if (!next) return;
@@ -1568,12 +1631,18 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             heartCount={heartCount()}
             onBack={() => void closeFeedsAndSettings()}
             onKeys={openKeys}
+            characterShortcuts={characterShortcuts()}
+            onCharacterShortcuts={changeCharacterShortcuts}
             onSignOut={props.signOut}
             onFeedsChanged={noteFeedsChanged}
             onToast={showToast}
           />
           <Show when={keysOpen()}>
-            <KeyboardMap onClose={closeKeys} />
+            <KeyboardMap
+              onClose={closeKeys}
+              characterShortcuts={characterShortcuts()}
+              onCharacterShortcuts={changeCharacterShortcuts}
+            />
           </Show>
         </>
       }
@@ -1613,6 +1682,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                     role="radio"
                     aria-checked={gridOrder() === "interest"}
                     disabled={feedScoped()}
+                    title="Toggle order (t)"
                     onClick={() => void selectOrder("interest")}
                   >
                     <span>Front page</span>
@@ -1624,6 +1694,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                     role="radio"
                     aria-checked={gridOrder() === "chrono"}
                     disabled={feedScoped()}
+                    title="Toggle order (t)"
                     onClick={() => void selectOrder("chrono")}
                   >
                     <span>Latest</span>
@@ -1642,6 +1713,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                         classList={{ active: itemView() === option.value }}
                         role="radio"
                         aria-checked={itemView() === option.value}
+                        title={`${option.label} (${scopeShortcuts[option.value]})`}
                         onClick={() => void selectItemView(option.value)}
                       >
                         <span>{option.label}</span>
@@ -1753,7 +1825,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             </div>
             <Tooltip
               name="Archive"
-              shortcut="⇧A"
+              shortcut="g → r · Shift+a"
               disabled={headerTooltipDisabled()}
             >
               <button
@@ -1778,7 +1850,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           />
           <Tooltip
             name="Feeds & settings"
-            shortcut="G S"
+            shortcut="g → s"
             disabled={headerTooltipDisabled()}
             align="end"
           >
@@ -1839,6 +1911,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                     aria-checked={gridOrder() === "interest"}
                     classList={{ active: gridOrder() === "interest" }}
                     disabled={feedScoped()}
+                    title="Toggle order (t)"
                     onClick={() => void selectOrder("interest")}
                   >
                     Front page
@@ -1849,6 +1922,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                     aria-checked={gridOrder() === "chrono"}
                     classList={{ active: gridOrder() === "chrono" }}
                     disabled={feedScoped()}
+                    title="Toggle order (t)"
                     onClick={() => void selectOrder("chrono")}
                   >
                     Latest
@@ -1864,6 +1938,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                         type="button"
                         role="radio"
                         aria-checked={itemView() === option.value}
+                        title={`${option.label} (${scopeShortcuts[option.value]})`}
                         classList={{ active: itemView() === option.value }}
                         onClick={() => void selectItemView(option.value)}
                       >
@@ -2163,7 +2238,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           )}
         </Show>
         <Show when={keysOpen()}>
-          <KeyboardMap onClose={closeKeys} />
+          <KeyboardMap
+            onClose={closeKeys}
+            characterShortcuts={characterShortcuts()}
+            onCharacterShortcuts={changeCharacterShortcuts}
+          />
         </Show>
         <Show when={confirmRemove()}>
           {(item) => (
@@ -2314,7 +2393,7 @@ function ArchiveEmpty() {
       <Icon name="keep" size={24} filled={false} class="icon-quiet" />
       <h1>Nothing kept yet</h1>
       <p>
-        Heart an item and it lands here permanently. Everything else in the feed
+        Keep an item and it lands here permanently. Everything else in the feed
         expires after seven days; kept items don&apos;t.
       </p>
     </section>
