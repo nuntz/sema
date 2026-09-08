@@ -1,3 +1,4 @@
+import type { FetchWindow } from "../item-view";
 import type {
   Feed,
   FeedCandidate,
@@ -90,10 +91,15 @@ export class APIClient {
     includeRead = false,
     scope: GridScope = null,
     excludeStories = false,
+    window?: FetchWindow,
   ): Promise<ItemsResponse> {
     const params = new URLSearchParams({ order, limit: "100" });
     if (cursor) params.set("cursor", cursor);
     if (includeRead) params.set("include_read", "true");
+    if (window) {
+      params.set("fetched_from", window.from);
+      params.set("fetched_before", window.before);
+    }
     if (scope?.kind === "tag")
       params.set(
         "tag",
@@ -107,9 +113,14 @@ export class APIClient {
   stories(
     scope: GridScope = null,
     includeRead = false,
+    window?: FetchWindow,
   ): Promise<StoriesResponse> {
     const params = new URLSearchParams();
     if (includeRead) params.set("include_read", "true");
+    if (window) {
+      params.set("fetched_from", window.from);
+      params.set("fetched_before", window.before);
+    }
     if (scope?.kind === "tag")
       params.set(
         "tag",

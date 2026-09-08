@@ -4,6 +4,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  For,
   onCleanup,
   onMount,
   Show,
@@ -31,6 +32,12 @@ import {
   updateRead,
   visibleItemIDs,
 } from "./item-list";
+import {
+  type FetchWindow,
+  ITEM_VIEWS,
+  type ItemView,
+  itemViewWindow,
+} from "./item-view";
 import {
   copyOriginalLink,
   isCancelledShare,
@@ -115,7 +122,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [loading, setLoading] = createSignal(true);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [error, setError] = createSignal("");
-  const [unreadOnly, setUnreadOnly] = createSignal(true);
+  const [itemView, setItemView] = createSignal<ItemView>("unread");
+  const unreadOnly = () => itemView() === "unread";
+  let fetchWindow: FetchWindow | undefined;
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
   const [readerItem, setReaderItem] = createSignal<Item>();
@@ -140,6 +149,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [readerArchive, setReaderArchive] = createSignal(false);
   const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
   const phoneHeader = createMediaQuery("(max-width: 430px)");
+  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
@@ -315,6 +325,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     nextMode = mode(),
     nextScope = scope(),
   ) => {
+    fetchWindow = itemViewWindow(itemView());
     const version = ++requestVersion;
     gridClearVersion++;
     discardFinishUndo();
@@ -337,8 +348,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         page = await api.archive();
       } else if (requestOrder === "interest") {
         const [storyPage, itemPage] = await Promise.all([
-          api.stories(nextScope, includeRead),
-          api.items(requestOrder, "", includeRead, nextScope),
+          api.stories(nextScope, includeRead, fetchWindow),
+          api.items(
+            requestOrder,
+            "",
+            includeRead,
+            nextScope,
+            false,
+            fetchWindow,
+          ),
         ]);
         nextStories = storyPage.stories ?? [];
         page = {
@@ -346,7 +364,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           items: excludeRenderedStoryItems(itemPage.items ?? [], nextStories),
         };
       } else {
-        page = await api.items(requestOrder, "", includeRead, nextScope);
+        page = await api.items(
+          requestOrder,
+          "",
+          includeRead,
+          nextScope,
+          false,
+          fetchWindow,
+        );
       }
       if (version !== requestVersion) return;
       const pageItems = page.items ?? [];
@@ -398,6 +423,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               nextCursor,
               includeReadForGrid(unreadOnly()),
               scope(),
+              false,
+              fetchWindow,
             );
       if (
         version !== requestVersion ||
@@ -446,6 +473,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       document.visibilityState !== "visible"
     )
       return 0;
+    if (itemViewWindow(itemView())?.from !== fetchWindow?.from) {
+      await reload();
+      return 0;
+    }
     const version = requestVersion;
     const clearVersion = gridClearVersion;
     pollInFlight = true;
@@ -453,8 +484,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       if (gridOrder() === "interest") {
         const includeRead = includeReadForGrid(unreadOnly());
         const [storyPage, page] = await Promise.all([
-          api.stories(scope(), includeRead),
-          api.items("interest", "", includeRead, scope()),
+          api.stories(scope(), includeRead, fetchWindow),
+          api.items("interest", "", includeRead, scope(), false, fetchWindow),
         ]);
         if (version !== requestVersion) return 0;
         const incomingStories = storyPage.stories ?? [];
@@ -521,6 +552,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         "",
         includeReadForGrid(unreadOnly()),
         scope(),
+        false,
+        fetchWindow,
       );
       if (version !== requestVersion) return 0;
       const unseen = pollCandidates(
@@ -1240,6 +1273,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           nextCursor,
           includeReadForGrid(unreadOnly()),
           scope(),
+          false,
+          fetchWindow,
         );
         if (
           version !== requestVersion ||
@@ -1285,6 +1320,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           nextCursor,
           includeReadForGrid(unreadOnly()),
           scope(),
+          false,
+          fetchWindow,
         );
         if (
           version !== requestVersion ||
@@ -1309,14 +1346,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
-  const selectUnread = async (next: boolean) => {
-    if (mode() === "archive" || next === unreadOnly()) return;
+  const selectItemView = async (next: ItemView) => {
+    if (mode() === "archive" || next === itemView()) return;
     await flushRead();
-    setUnreadOnly(next);
-    void reload(order(), next);
+    setItemView(next);
+    void reload();
   };
 
-  const toggleUnread = () => selectUnread(!unreadOnly());
+  const toggleUnread = () => selectItemView(unreadOnly() ? "all" : "unread");
 
   const insertNewItems = (incoming: Item[]): number => {
     if (incoming.length === 0) return 0;
@@ -1597,32 +1634,26 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                   role="radiogroup"
                   aria-label="Items shown"
                 >
-                  <button
-                    type="button"
-                    class="segmented__item"
-                    classList={{ active: unreadOnly() }}
-                    role="radio"
-                    aria-checked={unreadOnly()}
-                    onClick={() => void selectUnread(true)}
-                  >
-                    <span>Unread</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="segmented__item"
-                    classList={{ active: !unreadOnly() }}
-                    role="radio"
-                    aria-checked={!unreadOnly()}
-                    onClick={() => void selectUnread(false)}
-                  >
-                    <span>All</span>
-                  </button>
+                  <For each={ITEM_VIEWS}>
+                    {(option) => (
+                      <button
+                        type="button"
+                        class="segmented__item"
+                        classList={{ active: itemView() === option.value }}
+                        role="radio"
+                        aria-checked={itemView() === option.value}
+                        onClick={() => void selectItemView(option.value)}
+                      >
+                        <span>{option.label}</span>
+                      </button>
+                    )}
+                  </For>
                 </div>
               </div>
               <button
                 type="button"
                 class="chrome-btn filter-button"
-                classList={{ "is-hidden": !phoneHeader() }}
+                classList={{ "is-hidden": !compactDisplayControls() }}
                 aria-haspopup="dialog"
                 aria-expanded={headerMenu() === "combined"}
                 onClick={() =>
@@ -1827,24 +1858,19 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               <div class="header-sheet-row">
                 <span>Items</span>
                 <div role="radiogroup" aria-label="Items shown">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={unreadOnly()}
-                    classList={{ active: unreadOnly() }}
-                    onClick={() => void selectUnread(true)}
-                  >
-                    Unread
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={!unreadOnly()}
-                    classList={{ active: !unreadOnly() }}
-                    onClick={() => void selectUnread(false)}
-                  >
-                    All
-                  </button>
+                  <For each={ITEM_VIEWS}>
+                    {(option) => (
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={itemView() === option.value}
+                        classList={{ active: itemView() === option.value }}
+                        onClick={() => void selectItemView(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    )}
+                  </For>
                 </div>
               </div>
             </section>

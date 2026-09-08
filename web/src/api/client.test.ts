@@ -63,6 +63,43 @@ describe("read state client", () => {
 });
 
 describe("story client", () => {
+  it("keeps calendar bounds on story requests and continuation pages", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL) =>
+        new Response(
+          JSON.stringify({ items: [], stories: [], next_cursor: null }),
+        ),
+    );
+    vi.stubGlobal("fetch", request);
+    const client = new APIClient();
+    const window = {
+      from: "2026-09-07T07:00:00.000Z",
+      before: "2026-09-08T07:00:00.000Z",
+    };
+    await client.stories({ kind: "tag", value: "tech" }, true, window);
+    await client.items(
+      "interest",
+      "next-page",
+      true,
+      { kind: "tag", value: "tech" },
+      false,
+      window,
+    );
+    for (const [path] of request.mock.calls) {
+      const params = new URL(String(path), "https://example.com").searchParams;
+      expect(params.get("fetched_from")).toBe(window.from);
+      expect(params.get("fetched_before")).toBe(window.before);
+      expect(params.get("include_read")).toBe("true");
+      expect(params.get("tag")).toBe("tech");
+    }
+    expect(
+      new URL(
+        String(request.mock.calls[1][0]),
+        "https://example.com",
+      ).searchParams.get("cursor"),
+    ).toBe("next-page");
+  });
+
   it("maps tag and feed scopes and excludes rendered stories from item pages", async () => {
     const request = vi.fn(async (input: RequestInfo | URL) =>
       input.toString().includes("/stories")

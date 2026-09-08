@@ -464,6 +464,37 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	if len(body.Stories) != 1 || math.Abs(body.Stories[0].OrderKey-1.1) > 1e-9 || body.Stories[0].Size != "M" {
 		t.Fatalf("stories = %#v", body.Stories)
 	}
+	// Date scoping happens before story rendering. Once only one source remains,
+	// that item must be available as an individual item rather than hidden.
+	windowQuery := map[string]string{
+		"include_read":   "true",
+		"fetched_from":   domain.Timestamp(now.Add(-time.Hour)),
+		"fetched_before": domain.Timestamp(now.Add(time.Hour)),
+	}
+	got = server.getStories(context.Background(), "user", windowQuery)
+	if got.StatusCode != http.StatusOK || !strings.Contains(got.Body, `"story_id":"story"`) {
+		t.Fatalf("in-window story = %d, %s", got.StatusCode, got.Body)
+	}
+	items[1].FetchedTS = domain.Timestamp(now.Add(-24 * time.Hour))
+	rowsBySK[items[1].SK] = marshal(items[1])
+	got = server.getStories(context.Background(), "user", windowQuery)
+	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
+		t.Fatalf("single-source story = %d, %s", got.StatusCode, got.Body)
+	}
+	db.query = func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal(items[0]), marshal(items[1])}}, nil
+	}
+	got = server.getItems(context.Background(), "user", windowQuery)
+	var itemBody struct {
+		Items []domain.Item `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(got.Body), &itemBody); err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != http.StatusOK || len(itemBody.Items) != 1 || itemBody.Items[0].ItemID != "lead" {
+		t.Fatalf("date-scoped items = %d, %s", got.StatusCode, got.Body)
+	}
+
 }
 
 type apiQueue struct {
@@ -1128,5 +1159,25 @@ func TestRetryItemQueuesForcedExtractionAndSummary(t *testing.T) {
 	}
 	if !message.Reprocess || !message.ForceExtract || !message.ForceSummary || message.ItemID != "item" {
 		t.Fatalf("retry message = %#v", message)
+	}
+}
+
+func TestGridEndpointsRejectInvalidFetchWindows(t *testing.T) {
+	for _, query := range []map[string]string{
+		{"fetched_from": "2026-09-07T07:00:00Z"},
+		{"fetched_before": "2026-09-08T07:00:00Z"},
+		{"fetched_from": "yesterday", "fetched_before": "today"},
+		{"fetched_from": "2026-09-07T07:00:00Z", "fetched_before": "2026-09-07T07:00:00Z"},
+		{"fetched_from": "2026-09-08T07:00:00Z", "fetched_before": "2026-09-07T07:00:00Z"},
+	} {
+		s := &server{}
+		for _, response := range []events.APIGatewayV2HTTPResponse{
+			s.getItems(context.Background(), "user", query),
+			s.getStories(context.Background(), "user", query),
+		} {
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("query %#v: response = %#v", query, response)
+			}
+		}
 	}
 }

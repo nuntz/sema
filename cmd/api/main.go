@@ -656,6 +656,10 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	if order != domain.OrderChrono && order != domain.OrderInterest {
 		return badRequest(errors.New("order must be chrono or interest"))
 	}
+	window, err := parseFetchWindow(query)
+	if err != nil {
+		return badRequest(err)
+	}
 	includeRead, err := parseIncludeRead(query["include_read"])
 	if err != nil {
 		return badRequest(err)
@@ -682,13 +686,13 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	}
 	var hidden map[string]bool
 	if excludeStories {
-		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag)
+		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window)
 		if err != nil {
 			return s.failure("render stories for item filtering", err)
 		}
 	}
 	filtered := query["tag"] != "" || query["feed"] != ""
-	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden)
+	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -717,6 +721,10 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 }
 
 func (s *server) getStories(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	window, err := parseFetchWindow(query)
+	if err != nil {
+		return badRequest(err)
+	}
 	includeRead, err := parseIncludeRead(query["include_read"])
 	if err != nil {
 		return badRequest(err)
@@ -733,14 +741,14 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 	if err != nil {
 		return s.failure("load ranking model", err)
 	}
-	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag)
+	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window)
 	if err != nil {
 		return s.failure("list stories", err)
 	}
 	return response(http.StatusOK, map[string]any{"stories": stories})
 }
 
-func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string) ([]storycluster.Rendered, map[string]bool, error) {
+func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
 	rows, err := s.store.Stories(ctx, userID)
 	if err != nil {
 		return nil, nil, err
@@ -756,7 +764,7 @@ func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowe
 	live := items[:0]
 	now := time.Now().Unix()
 	for _, item := range items {
-		if strings.HasPrefix(item.SK, "I#") && item.TTL > now {
+		if strings.HasPrefix(item.SK, "I#") && item.TTL > now && window.Contains(item.FetchedTS) {
 			live = append(live, item)
 		}
 	}
@@ -841,6 +849,19 @@ func (s *server) prepareItems(ctx context.Context, userID string, items []domain
 		items[i] = s.store.PublicItem(items[i])
 	}
 	return nil
+}
+
+func parseFetchWindow(query map[string]string) (domain.FetchWindow, error) {
+	from, before := query["fetched_from"], query["fetched_before"]
+	if from == "" && before == "" {
+		return domain.FetchWindow{}, nil
+	}
+	start, startErr := time.Parse(time.RFC3339Nano, from)
+	end, endErr := time.Parse(time.RFC3339Nano, before)
+	if startErr != nil || endErr != nil || !start.Before(end) {
+		return domain.FetchWindow{}, errors.New("fetched_from and fetched_before must be RFC3339 timestamps with fetched_from before fetched_before")
+	}
+	return domain.FetchWindow{From: start, Before: end}, nil
 }
 
 func parseIncludeRead(value string) (bool, error) {

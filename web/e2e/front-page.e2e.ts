@@ -1468,7 +1468,9 @@ test("Direction A fits singleton headlines and metadata in compact cards", async
       .toBe(true);
   }
   await page.screenshot({ path: "/tmp/sema-direction-a-compact.png" });
+  await page.locator(".filter-button").click();
   await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await page.keyboard.press("Escape");
   await expect(page.locator(".grid-scroll .unread-dot")).toHaveCount(0);
   const sessionRead = page.locator('[data-item-id="compact-light-1"]');
   await sessionRead.hover();

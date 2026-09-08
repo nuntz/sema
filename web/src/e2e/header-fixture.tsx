@@ -1,8 +1,9 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The fixture mirrors the required button-based radio controls.
-import { createSignal } from "solid-js";
+import { createSignal, For } from "solid-js";
 import { render } from "solid-js/web";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
+import { ITEM_VIEWS } from "../item-view";
 import { createMediaQuery } from "../media-query";
 import type { Item } from "../types";
 import { Reader } from "../ui/Reader";
@@ -44,6 +45,7 @@ const item: Item = {
 
 function GridHeaderFixture() {
   const phone = createMediaQuery("(max-width: 430px)");
+  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
   return (
     <AppHeader view="grid" onHome={() => undefined}>
       <div class="header-display-controls">
@@ -67,28 +69,24 @@ function GridHeaderFixture() {
             </button>
           </div>
           <div class="segmented" role="radiogroup" aria-label="Items shown">
-            <button
-              type="button"
-              class="segmented__item"
-              role="radio"
-              aria-checked="true"
-            >
-              <span>Unread</span>
-            </button>
-            <button
-              type="button"
-              class="segmented__item"
-              role="radio"
-              aria-checked="false"
-            >
-              <span>All</span>
-            </button>
+            <For each={ITEM_VIEWS}>
+              {(option) => (
+                <button
+                  type="button"
+                  class="segmented__item"
+                  role="radio"
+                  aria-checked={option.value === "unread"}
+                >
+                  <span>{option.label}</span>
+                </button>
+              )}
+            </For>
           </div>
         </div>
         <button
           type="button"
           class="chrome-btn filter-button"
-          classList={{ "is-hidden": !phone() }}
+          classList={{ "is-hidden": !compactDisplayControls() }}
         >
           <span>Front page</span>
           <Icon name="chevron-down" />

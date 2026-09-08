@@ -852,7 +852,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .header-sheet-row { min-height: 52px; padding: 6px 4px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); }
 .header-sheet-row:last-child { border-bottom: 0; }
 .header-sheet-row > span { color: var(--fg-tertiary); font: var(--chrome-font); }
-.header-sheet-row > [role="radiogroup"] { margin: 0; padding: 3px; display: flex; gap: 2px; border: 0; border-radius: 8px; background: var(--surface-sunken); }
+.header-sheet-row > [role="radiogroup"] { flex-wrap: wrap; justify-content: flex-end; margin: 0; padding: 3px; display: flex; gap: 2px; border: 0; border-radius: 8px; background: var(--surface-sunken); }
 .header-sheet-row button { height: 44px; padding: 0 10px; border-radius: 6px; background: transparent; color: var(--fg-quaternary); font: var(--chrome-font); }
 .header-sheet-row button.active { background: var(--surface-selected); color: var(--fg-primary); }
 .header-overflow-sheet > button { width: 100%; min-height: 48px; padding: 0 10px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); background: transparent; color: var(--fg-tertiary); font: var(--chrome-font); text-align: left; }
@@ -1398,6 +1398,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 
 @media (max-width: 859px) {
+  .header-segments { position: absolute; width: 0; height: var(--control-h); overflow: hidden; visibility: hidden; pointer-events: none; }
   .chrome-btn--collapse-2 { width: var(--control-icon-w); padding: 0; justify-content: center; }
   .chrome-btn--collapse-2 .chrome-btn__label, .reader-slot__text { display: none; }
 }
