@@ -23,6 +23,7 @@ import {
   type LayoutDirection,
   nearestCell,
   nearestPageCell,
+  nextGridPageTop,
 } from "../layout/navigation";
 import {
   caughtUpBoundary,
@@ -840,7 +841,13 @@ export function Grid(props: GridProps) {
           0,
           Math.min(
             maxTop,
-            scroller.scrollTop + scroller.clientHeight * direction,
+            direction === 1
+              ? nextGridPageTop(
+                  rows(),
+                  scroller.scrollTop,
+                  scroller.clientHeight,
+                )
+              : scroller.scrollTop - scroller.clientHeight,
           ),
         );
         // Do not restart an animation against a boundary (including subpixel rounding).

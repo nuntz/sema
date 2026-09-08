@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { nextPageTop } from "./grid-paging";
 
 const published = "2026-09-04T18:00:00Z";
 const item = (
@@ -748,14 +749,12 @@ for (const selector of [".story-lead", ".story-headline"]) {
     await control.focus();
     await expect(control).toBeFocused();
     const grid = page.locator(".grid-scroll");
-    const { top, height } = await grid.evaluate((element) => ({
-      top: element.scrollTop,
-      height: element.clientHeight,
-    }));
+    const top = await grid.evaluate((element) => element.scrollTop);
+    const target = await nextPageTop(grid);
     await page.keyboard.press("Space");
     await expect
       .poll(() => grid.evaluate((element) => element.scrollTop))
-      .toBe(top + height);
+      .toBe(target);
     await expect(page.locator(".reader")).toHaveCount(0);
     await page.keyboard.press("Shift+Space");
     await expect

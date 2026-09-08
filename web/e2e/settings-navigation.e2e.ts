@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { nextPageTop } from "./grid-paging";
 
 type AppState = { itemRequests: number; readBatchRequests: number };
 
@@ -577,23 +578,24 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
     await page.emulateMedia({ reducedMotion });
     await openApp(page);
     const grid = page.locator(".grid-scroll");
-    await grid.evaluate((element) => {
+    const target = await nextPageTop(grid);
+    await grid.evaluate((element, target) => {
       element.addEventListener("scroll", () => {
-        if (element.scrollTop > 0 && element.scrollTop < element.clientHeight)
+        if (element.scrollTop > 0 && element.scrollTop < target)
           element.setAttribute("data-intermediate-scroll", "true");
       });
-    });
+    }, target);
     await page.keyboard.press("Space");
     await expect
       .poll(() => grid.evaluate((element) => element.scrollTop))
-      .toBe(await grid.evaluate((element) => element.clientHeight));
+      .toBe(target);
     expect(await grid.getAttribute("data-intermediate-scroll")).toBe(
       reducedMotion === "reduce" ? null : "true",
     );
   });
 }
 
-test("grid page keys scroll a viewport without requiring grid focus", async ({
+test("grid page keys preserve partial rows without requiring grid focus", async ({
   page,
 }) => {
   await openApp(page);
@@ -602,12 +604,15 @@ test("grid page keys scroll a viewport without requiring grid focus", async ({
   const height = await grid.evaluate((element) => element.clientHeight);
   const scrollTop = () => grid.evaluate((element) => element.scrollTop);
 
+  const firstPage = await nextPageTop(grid);
+  expect(firstPage).toBeLessThan(height);
   await page.keyboard.press("Space");
-  await expect.poll(scrollTop).toBe(height);
+  await expect.poll(scrollTop).toBe(firstPage);
+  const secondPage = await nextPageTop(grid);
   await page.keyboard.press("PageDown");
-  await expect.poll(scrollTop).toBe(height * 2);
+  await expect.poll(scrollTop).toBe(secondPage);
   await page.keyboard.press("Shift+Space");
-  await expect.poll(scrollTop).toBe(height);
+  await expect.poll(scrollTop).toBe(Math.max(0, secondPage - height));
   await page.keyboard.press("PageUp");
   await expect.poll(scrollTop).toBe(0);
 
@@ -615,11 +620,11 @@ test("grid page keys scroll a viewport without requiring grid focus", async ({
   await page.keyboard.press("PageDown");
   expect(await scrollTop()).toBe(0);
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Clear tag filter: #tech" }).focus();
+  await page.getByRole("button", { name: "Search", exact: true }).focus();
   await page.keyboard.press("Space");
   await expect(
-    page.getByRole("button", { name: "Clear tag filter: #tech" }),
-  ).toHaveCount(0);
+    page.getByRole("searchbox", { name: "Search window and archive" }),
+  ).toBeVisible();
   expect(await scrollTop()).toBe(0);
 });
 
@@ -637,10 +642,11 @@ test("Space pages a keyboard-focused cell while Enter and o open it", async ({
     top: element.scrollTop,
     height: element.clientHeight,
   }));
+  const firstPage = await nextPageTop(grid);
   await page.keyboard.press("Space");
   await expect
     .poll(() => grid.evaluate((element) => element.scrollTop))
-    .toBe(top + height);
+    .toBe(firstPage);
   await expect(page.locator(".reader")).toHaveCount(0);
   await expect(page.locator(".grid-cell.focused")).not.toHaveAttribute(
     "data-item-id",
@@ -651,10 +657,11 @@ test("Space pages a keyboard-focused cell while Enter and o open it", async ({
   const afterSpaceID = await page
     .locator(".grid-cell.focused")
     .getAttribute("data-item-id");
+  const secondPage = await nextPageTop(grid);
   await page.keyboard.press("PageDown");
   await expect
     .poll(() => grid.evaluate((element) => element.scrollTop))
-    .toBe(top + height * 2);
+    .toBe(secondPage);
   await expect(page.locator(".grid-cell.focused")).not.toHaveAttribute(
     "data-item-id",
     afterSpaceID ?? "",
@@ -664,7 +671,7 @@ test("Space pages a keyboard-focused cell while Enter and o open it", async ({
   await page.keyboard.press("PageUp");
   await expect
     .poll(() => grid.evaluate((element) => element.scrollTop))
-    .toBe(top + height);
+    .toBe(Math.max(0, secondPage - height));
   await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
   await expect(page.locator(".grid-cell.focused")).toBeInViewport();
   await page.keyboard.press("Shift+Space");

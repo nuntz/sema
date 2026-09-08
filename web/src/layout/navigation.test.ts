@@ -6,7 +6,37 @@ import {
   type LayoutRect,
   nearestCell,
   nearestPageCell,
+  nextGridPageTop,
 } from "./navigation";
+
+describe("grid page scroll target", () => {
+  const rows: LayoutRow[] = [0, 210, 420, 630].map((top) => ({
+    top,
+    height: 200,
+    gap: 10,
+    kind: "standard",
+    cells: [],
+  }));
+
+  it("shows the partially visible bottom row from its top on successive pages", () => {
+    expect(nextGridPageTop(rows, 0, 500)).toBe(434);
+    expect(nextGridPageTop(rows, 224, 500)).toBe(644);
+  });
+
+  it("keeps a full viewport step when the bottom is in a gap or at a row edge", () => {
+    for (const height of [214, 220, 224]) {
+      expect(nextGridPageTop(rows, 0, height)).toBe(height);
+    }
+    expect(nextGridPageTop([], 0, 500)).toBe(500);
+  });
+
+  it("continues through rows taller than the viewport", () => {
+    const tallRows = [{ ...rows[0], height: 1000 }];
+    expect(nextGridPageTop(tallRows, 0, 500)).toBe(14);
+    expect(nextGridPageTop(tallRows, 14, 500)).toBe(514);
+    expect(nextGridPageTop(tallRows, 300, 500)).toBe(800);
+  });
+});
 
 const item = (index: number, size: Item["size"], ratio = 1.5): Item => ({
   item_id: String(index),

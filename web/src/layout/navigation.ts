@@ -6,6 +6,23 @@ import {
 
 export type LayoutDirection = "up" | "down" | "left" | "right";
 
+export function nextGridPageTop(
+  rows: LayoutRow[],
+  scrollTop: number,
+  viewportHeight: number,
+  paddingTop = 14,
+): number {
+  const bottom = scrollTop + viewportHeight;
+  const partialRow = rows.find(
+    (row) =>
+      row.top + paddingTop < bottom &&
+      row.top + paddingTop + row.height > bottom,
+  );
+  const top = partialRow ? partialRow.top + paddingTop : bottom;
+  // Oversized rows must still allow paging through their remaining content.
+  return top >= scrollTop + 1 ? top : bottom;
+}
+
 export interface LayoutRect {
   id: string;
   left: number;
