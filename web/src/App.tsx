@@ -105,6 +105,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   );
   const [readAnchor, setReadAnchor] = createSignal<ReadAnchor>();
   const [gridIDs, setGridIDs] = createSignal<string[]>([]);
+  const [gridStoryIDs, setGridStoryIDs] = createSignal<string[]>([]);
   const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
   const [layoutVersion, setLayoutVersion] = createSignal(0);
   const [scrollTopVersion, setScrollTopVersion] = createSignal(0);
@@ -324,6 +325,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setExpandedStoryIDs(new Set<string>());
     setReadAnchor();
     setGridIDs([]);
+    setGridStoryIDs([]);
     setPendingNew([]);
     setCursor("");
     try {
@@ -363,6 +365,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         gridScrollTop = 0;
         setItems(pageItems);
         setStories(nextStories);
+        setGridStoryIDs(nextStories.map((story) => story.story_id));
         setReadAnchor(page.read_anchor);
         setGridIDs(visibleIDs);
         setScrollTarget(0);
@@ -474,6 +477,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           unreadOnly(),
         );
         if (insert && clearVersion === gridClearVersion) {
+          const clearedStories = new Set(finishUndo()?.storyIDs);
+          const visibleStories = incomingStories.filter(
+            (story) => !clearedStories.has(story.story_id),
+          );
           const visible = visibleItemIDs(
             pageItems,
             unreadOnly(),
@@ -486,11 +493,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           const nextCursor = page.next_cursor ?? "";
           const nextFocusedID =
             frontPageSequence(
-              mergeFrontPage(
-                incomingStories,
-                visibleItems,
-                Boolean(nextCursor),
-              ),
+              mergeFrontPage(visibleStories, visibleItems, Boolean(nextCursor)),
             )[0]?.id ??
             visible[0] ??
             "";
@@ -498,6 +501,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             gridScrollTop = 0;
             setPendingNew([]);
             setStories(incomingStories);
+            setGridStoryIDs(visibleStories.map((story) => story.story_id));
             setItems(pageItems);
             setReadAnchor(page.read_anchor);
             setGridIDs(visible);
@@ -756,9 +760,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       return item ? [item] : [];
     });
   });
+  const gridStories = createMemo(() => {
+    const visible = new Set(gridStoryIDs());
+    return stories().filter((story) => visible.has(story.story_id));
+  });
   const frontPageEntries = createMemo(() =>
     frontPageEntriesForState(
-      stories(),
+      gridStories(),
       gridItems(),
       mode(),
       gridOrder(),
@@ -1178,6 +1186,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       gridClearVersion++;
       gridScrollTop = operation.gridSnapshot.scrollTop;
       setGridIDs([...operation.gridSnapshot.ids]);
+      setGridStoryIDs([...(operation.gridSnapshot.storyIDs ?? [])]);
       setFocusedID(operation.gridSnapshot.focusedID);
       setScrollTarget(operation.gridSnapshot.scrollTop);
       setLayoutVersion((value) => value + 1);
@@ -1190,6 +1199,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const finishAndClear = (ids: string[]) => {
     if (mode() !== "live" || !unreadOnly()) return;
     const cleared = finishAndClearGrid(gridIDs(), focusedID(), gridScrollTop);
+    cleared.snapshot.storyIDs = [...gridStoryIDs()];
     const queued =
       ids.length > 0 ? queueRead(ids, cleared.snapshot) : undefined;
     if (!queued || queued.length === 0) {
@@ -1202,6 +1212,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     gridClearVersion++;
     gridScrollTop = 0;
     setGridIDs(cleared.ids);
+    setGridStoryIDs([]);
     setFocusedID("");
     setScrollTarget(0);
     setLayoutVersion((value) => value + 1);
@@ -1975,7 +1986,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             <Grid
               items={gridItems()}
               entries={frontPageEntries()}
-              stories={stories()}
+              stories={gridStories()}
               expandedStoryIDs={expandedStoryIDs()}
               layoutKey={layoutVersion()}
               scrollToTopKey={scrollTopVersion()}

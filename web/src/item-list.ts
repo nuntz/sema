@@ -2,6 +2,7 @@ import type { Item } from "./types";
 
 export type GridClearSnapshot = {
   ids: string[];
+  storyIDs?: string[];
   focusedID: string;
   scrollTop: number;
 };

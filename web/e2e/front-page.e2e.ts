@@ -1232,3 +1232,54 @@ test("desktop story titles and summaries fit their cards after resizing and expa
   await expect(expandable.locator(".story-headline")).toHaveCount(5);
   await expect.poll(clipping).toEqual([]);
 });
+
+for (const alreadyRead of [false, true]) {
+  test(`finish and clear removes story cells and undo restores them (${alreadyRead ? "read" : "unread"})`, async ({
+    page,
+  }) => {
+    const story = {
+      story_id: "clear-story",
+      source_count: 2,
+      order_key: 0.8,
+      size: "M",
+      items: [
+        {
+          ...item("clear-lead", "one", "Story to clear", 0.8, "M"),
+          read: alreadyRead,
+        },
+        {
+          ...item("clear-member", "two", "Related coverage", 0.7, "S"),
+          read: alreadyRead,
+        },
+      ],
+    };
+    await stubFrontPage(
+      page,
+      [story],
+      [item("clear-singleton", "three", "Ordinary item", 0.5, "M")],
+      [],
+    );
+    await page.goto("/");
+    const storyCell = page.locator('[data-story-id="clear-story"]');
+    await expect(storyCell).toBeVisible();
+    await expect(
+      page.locator('[data-item-id="clear-singleton"]'),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Mark \d+ read & clear/ }).click();
+    await expect(page.locator(".grid-cell")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "You're all caught up" }),
+    ).toBeVisible();
+    await expect(page.locator(".grid-scroll")).toBeFocused();
+    await page.keyboard.press("u");
+    await expect(storyCell).toBeVisible();
+    await expect(
+      page.locator('[data-item-id="clear-singleton"]'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: `Mark ${alreadyRead ? 1 : 3} read & clear`,
+      }),
+    ).toBeVisible();
+  });
+}
