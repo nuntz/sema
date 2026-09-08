@@ -8,6 +8,11 @@ import {
 } from "solid-js";
 import { Icon } from "../components/Icon";
 import {
+  gridSourceName,
+  headlineText,
+  repeatsLeadHeadline,
+} from "../grid-display";
+import {
   type LayoutCell,
   type LayoutRow,
   storyCardBorderHeight,
@@ -26,6 +31,7 @@ interface StoryCellProps {
   row: LayoutRow;
   focusedID: string;
   readContext: ReadStateContext;
+  refined?: boolean;
   pressed: boolean;
   onExpand(storyID: string): void;
   onLeadHeight(storyID: string, height: number): void;
@@ -142,6 +148,7 @@ export function StoryCell(props: StoryCellProps) {
         "story-card": editorial(),
         focused: props.focusedID === focusID(),
         read: cellReadVisuals().dimmed,
+        "is-read": props.refined === true && cellReadVisuals().dimmed,
         pressed: props.pressed,
         "mobile-story-card": props.cell.mobileStoryCard === true,
         "mobile-tile-cell": props.cell.mobileTile === true,
@@ -247,6 +254,8 @@ export function StoryCell(props: StoryCellProps) {
                   />
                   <CellCopy
                     item={item}
+                    refined={props.refined}
+                    unreadDot={leadReadVisuals().unreadDot}
                     archive={false}
                     effectiveSize="M"
                     condensed={false}
@@ -301,6 +310,12 @@ export function StoryCell(props: StoryCellProps) {
                       />
                     </div>
                   </PrimaryAction>
+                </Show>
+                <Show when={props.refined}>
+                  <span class="ranking-hint">
+                    {props.story.source_count} sources
+                    <Show when={whyText(item)}> · {whyText(item)}</Show>
+                  </span>
                 </Show>
                 <div class="story-badges">
                   <span class="story-source-label">{sourceLabel()}</span>
@@ -358,7 +373,7 @@ export function StoryCell(props: StoryCellProps) {
                     ref={measureTitle}
                     classList={{ read: leadReadVisuals().dimmed }}
                   >
-                    {item.title}
+                    {headlineText(item.title)}
                   </h2>
                   <Show when={item.summary}>
                     <p
@@ -372,14 +387,26 @@ export function StoryCell(props: StoryCellProps) {
                   </Show>
                   <Show when={!props.cell.mobileStoryCard}>
                     <div class="story-meta">
+                      <Show when={props.refined}>
+                        <UnreadDot visible={leadReadVisuals().unreadDot} />
+                      </Show>
                       <SourceBadge
                         connector={item.connector}
                         imageURL={item.favicon_url}
                         title={item.feed_title}
                         size={16}
                       />
-                      <span>{item.feed_title || "Feed"}</span>
+                      <span>
+                        {props.refined
+                          ? gridSourceName(item)
+                          : item.feed_title || "Feed"}
+                      </span>
                       <small>· {relativeTime(item.published_ts)}</small>
+                      <Show when={props.refined && item.read}>
+                        <span class="refined-read-label">
+                          <Icon name="check" size={13} /> read
+                        </span>
+                      </Show>
                       <Show when={whyText(item)}>
                         <em title={whyText(item)}>{whyText(item)}</em>
                       </Show>
@@ -418,6 +445,12 @@ export function StoryCell(props: StoryCellProps) {
                   classList={{
                     focused: props.focusedID === item.item_id,
                     read: readVisuals().dimmed,
+                    "related-also":
+                      props.refined === true &&
+                      repeatsLeadHeadline(lead().title, item.title),
+                    "related-angle":
+                      props.refined === true &&
+                      !repeatsLeadHeadline(lead().title, item.title),
                   }}
                   data-focus-id={item.item_id}
                   onFocus={() => props.onFocus(item.item_id)}
@@ -425,23 +458,55 @@ export function StoryCell(props: StoryCellProps) {
                   onOpen={() => props.onOpen(item)}
                   onExternalOpen={props.onExternalOpen}
                 >
-                  <span class="story-headline-dot">
-                    <UnreadDot visible={readVisuals().unreadDot} />
-                  </span>
-                  <SourceBadge
-                    connector={item.connector}
-                    imageURL={item.favicon_url}
-                    title={item.feed_title}
-                    size={props.cell.mobileStoryCard ? 16 : 12}
-                  />
-                  <span class="story-headline-copy">
-                    <span class="story-headline-feed">
-                      {item.feed_title || "Feed"}
-                      {"\u00a0\u00a0"}
+                  <Show
+                    when={props.refined}
+                    fallback={
+                      <>
+                        <span class="story-headline-dot">
+                          <UnreadDot visible={readVisuals().unreadDot} />
+                        </span>
+                        <SourceBadge
+                          connector={item.connector}
+                          imageURL={item.favicon_url}
+                          title={item.feed_title}
+                          size={props.cell.mobileStoryCard ? 16 : 12}
+                        />
+                        <span class="story-headline-copy">
+                          <span class="story-headline-feed">
+                            {item.feed_title || "Feed"}
+                            {"\u00a0\u00a0"}
+                          </span>
+                          <span class="story-headline-title">
+                            {headlineText(item.title)}
+                          </span>
+                        </span>
+                        <time>{relativeTime(item.published_ts)}</time>
+                      </>
+                    }
+                  >
+                    <Icon name="stack" size={13} />
+                    <span class="story-related-copy">
+                      <Show
+                        when={repeatsLeadHeadline(lead().title, item.title)}
+                        fallback={
+                          <>
+                            <span class="story-related-source">
+                              {gridSourceName(item)} ·{" "}
+                              {relativeTime(item.published_ts)}
+                            </span>
+                            <span class="story-related-title">
+                              {headlineText(item.title)}
+                            </span>
+                          </>
+                        }
+                      >
+                        <span class="story-related-source">
+                          Also covered by <b>{gridSourceName(item)}</b> ·{" "}
+                          {relativeTime(item.published_ts)}
+                        </span>
+                      </Show>
                     </span>
-                    <span class="story-headline-title">{item.title}</span>
-                  </span>
-                  <time>{relativeTime(item.published_ts)}</time>
+                  </Show>
                 </PrimaryAction>
               );
             }}
@@ -497,7 +562,7 @@ function PrimaryAction(props: {
           onFocus={props.onFocus}
           onMouseEnter={props.onMouseEnter}
           onClick={props.onOpen}
-          aria-label={`Open ${props.item.title}`}
+          aria-label={`Open ${headlineText(props.item.title)}`}
         >
           {props.children}
         </button>
@@ -511,7 +576,7 @@ function PrimaryAction(props: {
         href={props.item.external_url}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open ${props.item.title} on ${externalHost(props.item.external_url)}`}
+        aria-label={`Open ${headlineText(props.item.title)} on ${externalHost(props.item.external_url)}`}
         onFocus={props.onFocus}
         onMouseEnter={props.onMouseEnter}
         onClick={() => props.onExternalOpen(props.item)}

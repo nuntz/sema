@@ -30,6 +30,8 @@ export interface JustifyOptions {
   completeSegment?: boolean;
   expandedStoryIDs?: ReadonlySet<string>;
   storyLeadHeights?: ReadonlyMap<string, number>;
+  storyHeadlineHeights?: ReadonlyMap<string, number>;
+  storyCardMinHeight?: number;
 }
 
 interface LayoutItem extends Item {
@@ -715,7 +717,13 @@ export function justify(
     if (stableCount < regularRun.length) break;
     index = end;
   }
-  return layoutStoryHeadlines(rows, false, options.storyLeadHeights);
+  return layoutStoryHeadlines(
+    rows,
+    false,
+    options.storyLeadHeights,
+    options.storyHeadlineHeights,
+    options.storyCardMinHeight,
+  );
 }
 
 function appendMobileLargeBand(
@@ -891,6 +899,8 @@ function layoutStoryHeadlines(
   rows: LayoutRow[],
   mobile = false,
   leadHeights?: ReadonlyMap<string, number>,
+  headlineHeights?: ReadonlyMap<string, number>,
+  minimumCardHeight = 0,
 ): LayoutRow[] {
   let top = 0;
   return rows.map((row) => {
@@ -903,6 +913,15 @@ function layoutStoryHeadlines(
       if (!mode) continue;
       const headlineCount = Math.max(0, story.items.length - 1);
       if (headlineCount === 0 && mobile) continue;
+      const heights = story.items
+        .slice(1)
+        .map(
+          (item) => headlineHeights?.get(item.item_id) ?? storyHeadlineHeight,
+        );
+      const allHeadlineHeight = heights.reduce(
+        (sum, height) => sum + height,
+        0,
+      );
       const baseHeight = cell.height ?? row.height;
       const leadMinimumHeight = Math.max(
         storyLeadMinimumHeight,
@@ -933,37 +952,47 @@ function layoutStoryHeadlines(
           cell.headlineRemaining = headlineRemaining;
           continue;
         }
-        const availableHeight =
-          baseHeight - leadMinimumHeight - storyCardBorderHeight;
-        const headlineItemCount =
-          headlineCount * storyHeadlineHeight <= availableHeight
-            ? headlineCount
-            : Math.max(
-                0,
-                Math.floor(
-                  (availableHeight - storyMoreHeight) / storyHeadlineHeight,
-                ),
-              );
+        // Taller related-coverage rows must retain at least one actionable
+        // headline. Grow the card instead of replacing its entire footer with +1.
+        const availableHeight = Math.max(
+          baseHeight - leadMinimumHeight - storyCardBorderHeight,
+          headlineHeights
+            ? (heights[0] ?? 0) + (headlineCount > 1 ? storyMoreHeight : 0)
+            : 0,
+        );
+        let headlineItemCount = headlineCount;
+        let headlineHeight = allHeadlineHeight;
+        if (allHeadlineHeight > availableHeight) {
+          headlineItemCount = 0;
+          headlineHeight = 0;
+          for (const height of heights) {
+            if (headlineHeight + height + storyMoreHeight > availableHeight)
+              break;
+            headlineHeight += height;
+            headlineItemCount++;
+          }
+        }
         const headlineRemaining = headlineCount - headlineItemCount;
         cell.headlineHeight =
-          headlineItemCount * storyHeadlineHeight +
-          (headlineRemaining > 0 ? storyMoreHeight : 0);
+          headlineHeight + (headlineRemaining > 0 ? storyMoreHeight : 0);
         cell.headlineItemCount = headlineItemCount;
         cell.headlineRemaining = headlineRemaining;
       } else {
         cell.headlineHeight = mobile
           ? headlineCount * mobileStoryHeadlineHeight + mobileStoryMoreHeight
-          : headlineCount * storyHeadlineHeight;
+          : allHeadlineHeight;
         cell.headlineItemCount = headlineCount;
         cell.headlineRemaining = 0;
         if (mobile) cell.headlineExpanded = true;
       }
 
       // Desktop borders surround both the lead and the related-headline strip.
-      const expandedHeight =
+      const expandedHeight = Math.max(
+        minimumCardHeight,
         leadMinimumHeight +
-        (cell.headlineHeight ?? 0) +
-        (mobile ? 0 : storyCardBorderHeight);
+          (cell.headlineHeight ?? 0) +
+          (mobile ? 0 : storyCardBorderHeight),
+      );
       const growth = Math.max(0, expandedHeight - baseHeight);
       cell.height = baseHeight + growth;
       if (growth === 0) continue;
@@ -981,6 +1010,19 @@ function layoutStoryHeadlines(
       row.height,
       ...cells.map((cell) => (cell.offsetY ?? 0) + (cell.height ?? row.height)),
     );
+    // A single horizontal band shares one bottom edge, even when a story
+    // needs extra room. Keep the individual heights in stacked mosaic rows.
+    if (
+      !mobile &&
+      height > row.height &&
+      row.cells.every(
+        (cell) =>
+          (cell.offsetY ?? 0) === 0 &&
+          (cell.height ?? row.height) === row.height,
+      )
+    ) {
+      for (const cell of cells) cell.height = height;
+    }
     const result = { ...row, cells, height, top };
     top += height + row.gap;
     return result;

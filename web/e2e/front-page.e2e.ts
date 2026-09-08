@@ -632,12 +632,9 @@ test("editorial story actions match singleton hover behavior and light colors", 
   const singletonActions = page
     .locator('[data-item-id="singleton"]')
     .locator(".cell-actions");
-  const singletonAge = page
-    .locator('[data-item-id="singleton"]')
-    .locator(".cell-age");
   const storyBadges = storyCell.locator(".story-badges");
 
-  await expect(storyBadges).toHaveCSS("opacity", "1");
+  await expect(storyBadges).toBeHidden();
   await expect(storyActions).toHaveCSS("opacity", "0");
   await expect(storyActions).toHaveCSS("pointer-events", "none");
 
@@ -657,7 +654,7 @@ test("editorial story actions match singleton hover behavior and light colors", 
   );
 
   await storyCell.hover();
-  await expect(storyBadges).toHaveCSS("opacity", "0");
+  await expect(storyBadges).toBeHidden();
   await expect(storyActions).toHaveCSS("opacity", "1");
   await expect(storyActions).toHaveCSS("pointer-events", "auto");
 
@@ -670,50 +667,21 @@ test("editorial story actions match singleton hover behavior and light colors", 
     await actionColors(singletonActions),
   );
 
-  const labelColors = (label: typeof singletonAge) =>
-    label.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { background: style.backgroundColor, foreground: style.color };
-    });
-  const singletonLabelColors = await labelColors(singletonAge);
-  await expect
-    .poll(() => labelColors(storyCell.locator(".story-badges span")))
-    .toEqual(singletonLabelColors);
-  await expect
-    .poll(() => labelColors(storyCell.locator(".story-corner > span")))
-    .toEqual(singletonLabelColors);
-  expect(
-    (await labelColors(storyCell.locator(".story-badges em"))).background,
-  ).toBe(singletonLabelColors.background);
-
   const headline = storyCell.locator(".story-headline").first();
   await headline.hover();
   await expect(headline).toHaveClass(/focused/);
-  const highlightColors = await headline.evaluate((element) => {
-    const style = getComputedStyle(element);
-    const resolveThemeColor = (property: string) => {
-      const probe = document.createElement("span");
-      probe.style.color = `var(${property})`;
-      document.body.append(probe);
-      const color = getComputedStyle(probe).color;
-      probe.remove();
-      return color;
-    };
-    return {
-      background: style.backgroundColor,
-      outline: style.outlineColor,
-      selectedSurface: resolveThemeColor("--surface-selected"),
-      accent: resolveThemeColor("--accent"),
-    };
-  });
-  expect(highlightColors.background).toBe(highlightColors.selectedSurface);
-  expect(highlightColors.outline).toBe(highlightColors.accent);
+  await expect(headline).toHaveCSS("background-color", "rgb(239, 236, 229)");
+  await expect(headline).toHaveCSS("outline-style", "none");
+  await headline.focus();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowDown");
+  await expect(headline).toHaveCSS("outline-style", "solid");
 
   await page.locator(".app-header").hover();
-  await expect(storyBadges).toHaveCSS("opacity", "1");
+  await expect(storyBadges).toBeHidden();
   await expect(storyActions).toHaveCSS("opacity", "0");
   await storyActions.getByRole("button", { name: "More actions" }).focus();
-  await expect(storyBadges).toHaveCSS("opacity", "0");
+  await expect(storyBadges).toBeHidden();
   await expect(storyActions).toHaveCSS("opacity", "1");
   await expect(storyActions).toHaveCSS("pointer-events", "auto");
 });
@@ -1049,9 +1017,10 @@ test("scroll-reading a story cell uses all of its unread members", async ({
   await expect(storyCell.locator(".story-lead h2")).toHaveClass(/read/);
 });
 
-test("story read visuals follow the grid's All and Unread contexts", async ({
+test("dark story read visuals follow the grid's All and Unread contexts", async ({
   page,
 }) => {
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
   const members = [
     {
       ...item("read-lead", "read-one", "Read lead", 1, "L"),
@@ -1086,6 +1055,7 @@ test("story read visuals follow the grid's All and Unread contexts", async ({
   const storyCell = page.locator('[data-story-id="read-story"]');
   const leadTitle = storyCell.locator(".story-lead h2");
   const headlines = storyCell.locator(".story-headline");
+  await storyCell.getByRole("button", { name: /\+\d+ more/ }).click();
   await expect(headlines).toHaveCount(2);
   await expect(storyCell).not.toHaveClass(/\bread\b/);
   await expect(leadTitle).not.toHaveClass(/\bread\b/);
@@ -1130,7 +1100,7 @@ test("desktop story titles and summaries fit their cards after resizing and expa
           ...item(
             `sizing-related-${index}-${related}`,
             "related",
-            "Another source explains what drivers chose and why CarPlay matters",
+            "Another source explains what drivers chose, why CarPlay matters, and what the car industry learned from testing vehicles with and without it",
             0.5,
             "S",
           ),
@@ -1212,7 +1182,7 @@ test("desktop story titles and summaries fit their cards after resizing and expa
   await expect(
     page.locator('[data-story-id="sizing-story-6"] .story-lead p'),
   ).toBeVisible();
-  const relatedCopy = cards.first().locator(".story-headline-copy");
+  const relatedCopy = cards.first().locator(".story-related-title");
   await expect(relatedCopy).toBeVisible();
   expect(
     await relatedCopy.evaluate((element) => {
@@ -1281,5 +1251,643 @@ for (const alreadyRead of [false, true]) {
         name: `Mark ${alreadyRead ? 1 : 3} read & clear`,
       }),
     ).toBeVisible();
+  });
+}
+
+test("Direction A keeps light stories readable and related coverage actionable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await page.emulateMedia({ colorScheme: "light" });
+  const titles = [
+    "Smartphone makers don't bother to comply with EU repairability requirements",
+    "SpaceX rival launches rocket in historic first, says industry is ‘desperate’ for more",
+    "EU faces 300,000 factory job cuts as China ‘colonises’ supply chains, industry warns",
+    "bzip3",
+    "Railtown: Rethinking Vancouver's industrial-creative enclave, without creating ‘another Yaletown’",
+    "Conquering Entropy: Cultivating Trust",
+    "Sony Is Reportedly Bringing Killzone Back Over A Decade Later",
+    "Onimusha Sells 1 million in a Day as Capcom Vows to ‘Re-activate’ More Old Series",
+    "Final Fantasy Resonance Mod Brings Back Classic FF Character Ariana Grande",
+  ];
+  const stories = titles.map((title, index) => ({
+    story_id: `light-${index}`,
+    source_count: 2,
+    order_key: 1 - index * 0.05,
+    size: "L",
+    items: [
+      {
+        ...item(`light-lead-${index}`, "lead", title, 1 - index * 0.05, "L"),
+        feed_title: index === 0 ? "Hacker News: Front Page" : "Ars Technica",
+        media_url: `/light-fixture-${index}.svg`,
+        summary: "",
+        read: index === 1,
+      },
+      {
+        ...item(
+          `light-related-${index}`,
+          "related",
+          index === 4
+            ? title.replace("Vancouver's", "Vancouver&#39;s")
+            : index === 1
+              ? "German company becomes first in Europe to launch fully commercial orbital rocket"
+              : title,
+          0.4,
+          "S",
+        ),
+        feed_title:
+          index === 0 ? "www.theregister.com - Articles" : "Vancouver Sun",
+        read: index === 1,
+      },
+    ],
+  }));
+  await page.route("**/light-fixture-*.svg", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200"><rect width="600" height="200" fill="#cad6d9"/><path d="M0 160L160 40L340 180L510 50L600 100V200H0Z" fill="#94abad"/></svg>',
+    }),
+  );
+  await stubFrontPage(page, stories, [], []);
+  await page.goto("/");
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  const grid = page.locator(".grid-scroll");
+  const first = page.locator('[data-story-id="light-0"]');
+  const related = first.locator(".story-headline");
+  await expect(grid).toHaveClass(/refined-grid/);
+  await expect(first.locator(".story-meta .unread-dot")).toBeVisible();
+  await expect(
+    page.locator('[data-story-id="light-1"] .story-meta .unread-dot'),
+  ).toHaveCount(0);
+  await expect(first).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(first.locator(".story-badges")).toBeHidden();
+  await expect(first.locator(".story-corner")).toBeHidden();
+  await expect(first.locator(".story-meta")).toContainText("Hacker News");
+  await expect(related).toHaveText(/Also covered by The Register/);
+  await expect(related).toHaveAccessibleName(`Open ${titles[0]}`);
+  await expect(
+    page.locator('[data-story-id="light-1"] .story-related-title'),
+  ).toContainText("German company");
+  await expect(page.locator('[data-story-id="light-1"]')).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  const readStory = page.locator('[data-story-id="light-1"]');
+  await expect(readStory).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(readStory.locator(".story-lead h2")).toHaveCSS(
+    "color",
+    "rgb(20, 22, 26)",
+  );
+  await expect(readStory.locator(".story-media")).toHaveCSS("filter", "none");
+  await expect(
+    page.locator('[data-story-id="light-1"] .refined-read-label'),
+  ).toContainText("read");
+  await expect(
+    page.locator('[data-story-id="light-4"] .related-also'),
+  ).toBeVisible();
+  await first.hover();
+  await expect(first).toHaveCSS("outline-style", "none");
+  await expect(first.locator(".ranking-hint")).toHaveCSS("opacity", "1");
+  await page.locator(".app-header").hover();
+  await expect(first.locator(".ranking-hint")).toHaveCSS("opacity", "0");
+  await page.screenshot({ path: "/tmp/sema-direction-a-desktop.png" });
+  await first.locator(".story-lead").focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(related).toBeFocused();
+  await expect(related).toHaveCSS("outline-style", "solid");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".reader")).toBeVisible();
+  await page.keyboard.press("Escape");
+  for (const width of [1024, 768, 720, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(first).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    if (width >= 768) {
+      await expect(first.locator(".story-media-action")).toHaveCSS(
+        "height",
+        "126px",
+      );
+      await expect(first.locator(".story-headline")).toBeVisible();
+    } else {
+      await expect(grid).not.toHaveClass(/refined-grid/);
+    }
+  }
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await expect(grid.locator(".unread-dot")).toHaveCount(0);
+  await expect(readStory).toHaveCSS("background-color", "rgb(247, 245, 241)");
+  await expect(readStory.locator(".story-lead h2")).toHaveCSS(
+    "color",
+    "rgb(92, 97, 105)",
+  );
+  await expect(readStory.locator(".story-media")).toHaveCSS(
+    "filter",
+    "opacity(0.55)",
+  );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(grid).toHaveClass(/refined-grid/);
+  await expect(first.locator(".story-badges")).toBeHidden();
+  await expect(first).toHaveCSS("background-color", "rgb(23, 24, 26)");
+  await expect(first.locator(".story-headlines")).toHaveCSS(
+    "background-color",
+    "rgb(16, 17, 19)",
+  );
+  await expect(readStory).toHaveCSS("background-color", "rgb(16, 17, 19)");
+  await expect(readStory.locator(".story-headlines")).toHaveCSS(
+    "background-color",
+    "rgb(11, 12, 14)",
+  );
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(first).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(first.locator(".story-headlines")).toHaveCSS(
+    "background-color",
+    "rgb(250, 249, 245)",
+  );
+});
+
+test("Direction A fits singleton headlines and metadata in compact cards", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
+  const items = Array.from({ length: 12 }, (_, index) => ({
+    ...item(
+      `compact-light-${index}`,
+      "feed",
+      "A long headline about the next generation of software and the people building it",
+      0.8 - index * 0.01,
+      index % 2 ? "S" : "M",
+    ),
+    feed_title: "Hacker News: Front Page",
+    summary: "",
+    read: index === 0,
+    media_url: "/sema-mark.svg",
+    media_w: 320,
+    media_h: 180,
+  }));
+  await stubFrontPage(page, [], items, []);
+  await page.goto("/");
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  for (const width of [1513, 1024, 768]) {
+    await page.setViewportSize({ width, height: 1071 });
+    const first = page.locator('[data-item-id="compact-light-0"]');
+    await expect(first).toBeVisible();
+    await expect(first.locator(".cell-copy h2")).toHaveCSS(
+      "color",
+      "rgb(20, 22, 26)",
+    );
+    await expect(first).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(first.locator(":scope > img")).toHaveCSS("filter", "none");
+    await expect(first.locator(".cell-corner")).toBeHidden();
+    await expect(first.locator(".refined-age")).toHaveCSS(
+      "color",
+      "rgb(92, 97, 105)",
+    );
+    await expect
+      .poll(() =>
+        page.locator(".grid-cell").evaluateAll((cells) =>
+          cells.every((cell) => {
+            const title = cell.querySelector("h2")?.getBoundingClientRect();
+            const meta = cell
+              .querySelector(".cell-meta")
+              ?.getBoundingClientRect();
+            const bounds = cell.getBoundingClientRect();
+            return (
+              title &&
+              meta &&
+              title.bottom <= meta.top + 1 &&
+              meta.bottom < bounds.bottom
+            );
+          }),
+        ),
+      )
+      .toBe(true);
+  }
+  await page.screenshot({ path: "/tmp/sema-direction-a-compact.png" });
+  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await expect(page.locator(".grid-scroll .unread-dot")).toHaveCount(0);
+  const sessionRead = page.locator('[data-item-id="compact-light-1"]');
+  await sessionRead.hover();
+  await page.keyboard.press("m");
+  await page.locator(".app-header").hover();
+  await expect(sessionRead).toHaveCSS("background-color", "rgb(247, 245, 241)");
+  await expect(sessionRead.locator(".cell-copy h2")).toHaveCSS(
+    "color",
+    "rgb(92, 97, 105)",
+  );
+  await expect(sessionRead.locator(":scope > img")).toHaveCSS(
+    "filter",
+    "opacity(0.55)",
+  );
+});
+
+test("light singleton photos use spare height while keeping copy together", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
+  const titles = [
+    "Letter from Paris | Paris, people and power",
+    "WhatsApp will soon let users chat with up to five third-party AI agents",
+    "UBC and Langara College formalize partnership to strengthen student pathways and success",
+    "The complex corporate web behind a $3.2 billion AI data center",
+    "Reports describe two ways for Apple to make more money: only one is good",
+    "Oil prices rise to 6-week high after Iran and U.S. trade blows",
+  ];
+  const items = titles.map((title, index) => ({
+    ...item(`photo-space-${index}`, "feed", title, 0.9 - index * 0.01, "L"),
+    summary: "",
+    media_w: 600,
+    media_h: 400,
+    ...(index === 2
+      ? {
+          connector: "reddit",
+          post_type: "link",
+          external_url: "https://news.ubc.ca/example",
+          feed_title: "r/vancouver",
+        }
+      : {}),
+  }));
+  await stubFrontPage(page, [], items, []);
+  await page.goto("/");
+  await expect(page.locator(".grid-cell")).toHaveCount(items.length);
+  await expect(page.locator(".grid-scroll .unread-dot")).toHaveCount(0);
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  for (const width of [1513, 1024, 768]) {
+    await page.setViewportSize({ width, height: 1071 });
+    await expect(
+      page.locator('[data-item-id="photo-space-2"] .cell-meta .unread-dot'),
+    ).toHaveCSS("width", "6px");
+    await expect
+      .poll(() =>
+        page.locator(".grid-cell").evaluateAll((cells) =>
+          cells.every((cell) => {
+            const img = cell
+              .querySelector(":scope > img")
+              ?.getBoundingClientRect();
+            const copy = cell
+              .querySelector(".cell-copy")
+              ?.getBoundingClientRect();
+            const title = cell.querySelector("h2")?.getBoundingClientRect();
+            const meta = cell
+              .querySelector(".cell-meta")
+              ?.getBoundingClientRect();
+            const lastText =
+              cell.querySelector(".reddit-domain")?.getBoundingClientRect() ??
+              title;
+            const bounds = cell.getBoundingClientRect();
+            return (
+              img &&
+              copy &&
+              title &&
+              meta &&
+              lastText &&
+              img.height > 126 &&
+              Math.abs(img.bottom - copy.top) < 1 &&
+              title.bottom <= meta.top &&
+              meta.top - lastText.bottom < 20 &&
+              meta.bottom < bounds.bottom
+            );
+          }),
+        ),
+      )
+      .toBe(true);
+  }
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await page.screenshot({ path: "/tmp/sema-direction-a-singleton-photos.png" });
+  await page.locator('[data-item-id="photo-space-0"] .cell-main').click();
+  await expect(page.locator(".reader")).toBeVisible();
+});
+
+test("story footers and neighboring singletons share the same bottom edge", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
+  const story = {
+    story_id: "aligned-story",
+    source_count: 6,
+    order_key: 0.85,
+    size: "L",
+    items: [
+      {
+        ...item(
+          "aligned-lead",
+          "ign",
+          "Until Dawn 2 Reveals Release Date in New Trailer",
+          0.85,
+          "L",
+        ),
+        summary: "",
+      },
+      ...Array.from({ length: 5 }, (_, index) =>
+        item(
+          `aligned-related-${index}`,
+          "overworld",
+          `Other coverage ${index}: the January release date and new trailer reveal more details`,
+          0.7,
+          "S",
+        ),
+      ),
+    ],
+  };
+  const items = Array.from({ length: 8 }, (_, index) => ({
+    ...item(
+      `aligned-singleton-${index}`,
+      "feed",
+      `Singleton ${index} with a headline below its photo`,
+      0.9 - index * 0.1,
+      "L",
+    ),
+    summary: "",
+  }));
+  await stubFrontPage(page, [story], items, []);
+  await page.goto("/");
+  const card = page.locator('[data-story-id="aligned-story"]');
+  const row = page.locator(".grid-row").filter({ has: card });
+  const expectAligned = async () => {
+    await expect(card).toBeVisible();
+    await expect
+      .poll(() =>
+        row.locator(".grid-cell").evaluateAll((cells) => {
+          const bounds = cells.map((cell) => cell.getBoundingClientRect());
+          return (
+            bounds.length > 1 &&
+            bounds.every(
+              (rect) =>
+                Math.abs(rect.top - bounds[0].top) < 1 &&
+                Math.abs(rect.bottom - bounds[0].bottom) < 1,
+            )
+          );
+        }),
+      )
+      .toBe(true);
+  };
+  for (const width of [1513, 1024, 768]) {
+    await page.setViewportSize({ width, height: 1071 });
+    await expectAligned();
+  }
+  await page.setViewportSize({ width: 1513, height: 1071 });
+  await expectAligned();
+  await page.screenshot({ path: "/tmp/sema-story-row-aligned.png" });
+  await card.getByRole("button", { name: /\+\d+ more/ }).click();
+  await expect(card.locator(".story-headline")).toHaveCount(5);
+  await expectAligned();
+  await expect
+    .poll(() =>
+      page.locator(".grid-row").evaluateAll((rows) => {
+        const bounds = rows
+          .map((row) => row.getBoundingClientRect())
+          .sort((a, b) => a.top - b.top);
+        return bounds.every(
+          (rect, index) => index === 0 || rect.top > bounds[index - 1].bottom,
+        );
+      }),
+    )
+    .toBe(true);
+});
+
+for (const preference of ["dark", "system"] as const) {
+  test(`dark grid uses established tokens and shared read states (${preference})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1513, height: 1071 });
+    await page.emulateMedia({
+      colorScheme: preference === "system" ? "dark" : "light",
+    });
+    await page.addInitScript(
+      (theme) => localStorage.setItem("sema:theme", theme),
+      preference,
+    );
+    const lead = {
+      ...item(
+        "dark-lead",
+        "hn",
+        "Smartphone makers don't bother to comply with EU repairability requirements",
+        0.95,
+        "L",
+      ),
+      feed_title: "Hacker News: Front Page",
+      media_url: "/dark-grid-fixture.svg",
+      summary: "",
+    };
+    const story = {
+      story_id: "dark-story",
+      source_count: 3,
+      order_key: 0.95,
+      size: "L",
+      items: [
+        lead,
+        {
+          ...item("dark-duplicate", "register", lead.title, 0.7, "S"),
+          feed_title: "www.theregister.com - Articles",
+        },
+        item(
+          "dark-angle",
+          "ars",
+          "Why repairability requirements matter to consumers",
+          0.6,
+          "S",
+        ),
+      ],
+    };
+    const readLead = {
+      ...item(
+        "dark-read-lead",
+        "vancouver",
+        "Railtown: Rethinking Vancouver's industrial-creative enclave",
+        0.85,
+        "L",
+      ),
+      feed_title: "r/vancouver",
+      read: true,
+      media_url: "/dark-grid-fixture.svg",
+      summary: "",
+    };
+    const readStory = {
+      story_id: "dark-read-story",
+      source_count: 2,
+      order_key: 0.85,
+      size: "L",
+      items: [
+        readLead,
+        {
+          ...item(
+            "dark-read-related",
+            "sun",
+            "Vancouver&#39;s industrial future",
+            0.5,
+            "S",
+          ),
+          read: true,
+        },
+      ],
+    };
+    const items = [
+      {
+        ...item(
+          "dark-single",
+          "ars",
+          "The complex corporate web behind a $3.2 billion AI data center",
+          1,
+          "L",
+        ),
+        summary: "",
+        media_url: "/dark-grid-fixture.svg",
+      },
+      {
+        ...item(
+          "dark-read-single",
+          "9to5",
+          "Reports describe two ways for Apple to make more money: only one is good",
+          0.9,
+          "L",
+        ),
+        read: true,
+        summary: "",
+        media_url: "/dark-grid-fixture.svg",
+      },
+      {
+        ...item(
+          "dark-low",
+          "ign",
+          "Until Dawn 2 Reveals Release Date in New Trailer",
+          0.8,
+          "L",
+        ),
+        summary: "",
+        media_url: "/dark-grid-fixture.svg",
+      },
+      {
+        ...item(
+          "dark-last",
+          "lobsters",
+          "Conquering Entropy: Cultivating Trust",
+          0.75,
+          "L",
+        ),
+        summary: "",
+        media_url: "/dark-grid-fixture.svg",
+      },
+    ];
+    await page.route("**/dark-grid-fixture.svg", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#50696e"/><path d="M0 250L140 40L360 220L530 70L600 140V300H0Z" fill="#91aaab"/></svg>',
+      }),
+    );
+    await stubFrontPage(page, [story, readStory], items, []);
+    await page.goto("/");
+    await page.getByRole("radio", { name: "All", exact: true }).click();
+    const grid = page.locator(".grid-scroll");
+    const card = page.locator('[data-story-id="dark-story"]');
+    const readCard = page.locator('[data-story-id="dark-read-story"]');
+    const singleton = page.locator('[data-item-id="dark-single"]');
+    const readSingleton = page.locator('[data-item-id="dark-read-single"]');
+    await expect(grid).toHaveClass(/refined-grid/);
+    await expect(page.locator(".app-header")).toHaveCSS(
+      "background-color",
+      "rgb(11, 12, 14)",
+    );
+    for (const cell of [card, readCard, singleton, readSingleton]) {
+      await expect(cell).toHaveCSS("background-color", "rgb(23, 24, 26)");
+      await expect(cell).toHaveCSS("border-top-color", "rgb(28, 29, 31)");
+      await expect(cell.locator("h2").first()).toHaveCSS(
+        "color",
+        "rgb(244, 242, 238)",
+      );
+      await expect(cell).toHaveCSS("opacity", "1");
+    }
+    await expect(readCard.locator(".story-media")).toHaveCSS("filter", "none");
+    await expect(readSingleton.locator(":scope > img")).toHaveCSS(
+      "filter",
+      "none",
+    );
+    await expect(card.locator(".story-badges")).toBeHidden();
+    await expect(card.locator(".story-corner")).toBeHidden();
+    await expect(card.locator(".story-headlines")).toHaveCSS(
+      "background-color",
+      "rgb(16, 17, 19)",
+    );
+    await expect(
+      card
+        .locator(".story-meta > span:not(.source-badge):not(.unread-dot)")
+        .first(),
+    ).toHaveCSS("color", "rgb(168, 174, 182)");
+    await expect(card.locator(".story-meta .unread-dot")).toHaveCSS(
+      "box-shadow",
+      "none",
+    );
+    await expect(card.locator(".story-meta .unread-dot")).toHaveCSS(
+      "background-color",
+      "rgb(214, 242, 75)",
+    );
+    await expect(readCard.locator(".story-meta .unread-dot")).toHaveCount(0);
+    await expect(card.locator(".story-headline").first()).toContainText(
+      "Also covered by The Register",
+    );
+    await singleton.hover();
+    await expect(singleton).toHaveCSS("background-color", "rgb(31, 33, 36)");
+    await expect(singleton).toHaveCSS("outline-style", "none");
+    const footer = card.locator(".story-headline").first();
+    await footer.hover();
+    await expect(footer).toHaveCSS("background-color", "rgb(31, 33, 36)");
+    await card.locator(".story-lead").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(footer).toBeFocused();
+    await expect(footer).toHaveCSS("outline-color", "rgb(214, 242, 75)");
+    await page.keyboard.press("ArrowUp");
+    await expect(card.locator(".story-lead")).toBeFocused();
+    await expect(card).toHaveCSS("outline-color", "rgb(214, 242, 75)");
+    await expect(card.locator(".ranking-hint")).toHaveCSS("opacity", "1");
+    await page.locator(".app-header").hover();
+    await page.screenshot({
+      path: `/tmp/sema-direction-a-dark-${preference}.png`,
+    });
+    for (const width of [1024, 768]) {
+      await page.setViewportSize({ width, height: 1071 });
+      await expect(card.locator(".story-media-action")).toHaveCSS(
+        "height",
+        "126px",
+      );
+      await expect
+        .poll(() =>
+          singleton
+            .locator(":scope > img")
+            .evaluate((img) => img.getBoundingClientRect().height),
+        )
+        .toBeGreaterThan(126);
+    }
+    await page.setViewportSize({ width: 1513, height: 1071 });
+    await page.getByRole("radio", { name: "Unread", exact: true }).click();
+    await expect(grid.locator(".unread-dot")).toHaveCount(0);
+    await expect(readCard).toHaveCSS("background-color", "rgb(16, 17, 19)");
+    await expect(readCard.locator(".story-headlines")).toHaveCSS(
+      "background-color",
+      "rgb(11, 12, 14)",
+    );
+    await expect(readCard.locator(".story-lead h2")).toHaveCSS(
+      "color",
+      "rgb(168, 174, 182)",
+    );
+    await expect(readCard.locator(".story-media")).toHaveCSS(
+      "filter",
+      "opacity(0.55)",
+    );
+    await singleton.hover();
+    await page.keyboard.press("m");
+    await page.locator(".app-header").hover();
+    await expect(singleton.locator(":scope > img")).toHaveCSS(
+      "filter",
+      "opacity(0.55)",
+    );
+    await expect(singleton.locator("h2")).toHaveCSS(
+      "color",
+      "rgb(168, 174, 182)",
+    );
+    await page.screenshot({
+      path: `/tmp/sema-direction-a-dark-unread-${preference}.png`,
+    });
   });
 }

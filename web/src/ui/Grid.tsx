@@ -12,6 +12,11 @@ import {
 import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import {
+  gridSourceName,
+  headlineText,
+  relatedCoverageHeight,
+} from "../grid-display";
+import {
   justify,
   type LayoutRow,
   reuseLayoutRows,
@@ -183,6 +188,25 @@ export function Grid(props: GridProps) {
   const contentWidth = createMemo(() =>
     Math.max(0, width() - (width() < 700 ? 24 : 32)),
   );
+  const refined = () => contentWidth() >= 700;
+  const [keyboardFocus, setKeyboardFocus] = createSignal(false);
+  const storyHeadlineHeights = createMemo(() =>
+    refined()
+      ? new Map(
+          (props.stories ?? []).flatMap((story) =>
+            story.items
+              .slice(1)
+              .map(
+                (item) =>
+                  [
+                    item.item_id,
+                    relatedCoverageHeight(story.items[0], item),
+                  ] as const,
+              ),
+          ),
+        )
+      : undefined,
+  );
   const dividerHeight = createMemo(() => {
     if (contentWidth() < 310) return 40;
     return width() < 700 ? 24 : 28;
@@ -207,6 +231,8 @@ export function Grid(props: GridProps) {
         justify(entries, contentWidth(), hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
           storyLeadHeights: storyLeadHeights(),
+          storyHeadlineHeights: storyHeadlineHeights(),
+          storyCardMinHeight: refined() ? 310 : undefined,
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -223,6 +249,8 @@ export function Grid(props: GridProps) {
         justify(entries, contentWidth(), hasMore, {
           expandedStoryIDs: props.expandedStoryIDs,
           storyLeadHeights: storyLeadHeights(),
+          storyHeadlineHeights: storyHeadlineHeights(),
+          storyCardMinHeight: refined() ? 310 : undefined,
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -232,11 +260,15 @@ export function Grid(props: GridProps) {
       completeSegment: true,
       expandedStoryIDs: props.expandedStoryIDs,
       storyLeadHeights: storyLeadHeights(),
+      storyHeadlineHeights: storyHeadlineHeights(),
+      storyCardMinHeight: refined() ? 310 : undefined,
     });
     const aboveHeight = totalHeight(above);
     const below = justify(entries.slice(beforeIndex), contentWidth(), hasMore, {
       expandedStoryIDs: props.expandedStoryIDs,
       storyLeadHeights: storyLeadHeights(),
+      storyHeadlineHeights: storyHeadlineHeights(),
+      storyCardMinHeight: refined() ? 310 : undefined,
     }).map((row) => ({
       ...row,
       top: row.top + aboveHeight + dividerHeight(),
@@ -794,6 +826,7 @@ export function Grid(props: GridProps) {
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
+    setKeyboardFocus(true);
     if (sheetItem() && event.key === "Escape") {
       closeSheet();
       event.preventDefault();
@@ -959,10 +992,14 @@ export function Grid(props: GridProps) {
   return (
     <div
       class="grid-scroll"
+      onPointerMove={() => setKeyboardFocus(false)}
       onPointerDown={() => {
+        setKeyboardFocus(false);
         pageFocus = undefined;
       }}
       classList={{
+        "refined-grid": refined(),
+        "keyboard-focus": keyboardFocus(),
         "reader-underlay": props.readerOpen,
         "reader-underlay-dragging": props.readerDragging,
       }}
@@ -1040,6 +1077,7 @@ export function Grid(props: GridProps) {
                         row={row}
                         focusedID={props.focusedID}
                         readContext={readContext()}
+                        refined={refined()}
                         pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.onExpandStory?.(id)}
                         onLeadHeight={recordStoryLeadHeight}
@@ -1089,6 +1127,7 @@ export function Grid(props: GridProps) {
                       classList={{
                         focused: item().item_id === props.focusedID,
                         read: readVisuals().dimmed,
+                        "is-read": refined() && readVisuals().dimmed,
                         "all-items-cell": readContext() === "all-items",
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
@@ -1169,6 +1208,16 @@ export function Grid(props: GridProps) {
                           />
                         </span>
                       </Show>
+                      <Show
+                        when={
+                          refined() &&
+                          !props.archive &&
+                          props.order === "interest" &&
+                          whyText(item())
+                        }
+                      >
+                        <span class="ranking-hint">{whyText(item())}</span>
+                      </Show>
                       <div class="cell-scrim" />
                       <div class="cell-corner" aria-hidden="true">
                         <UnreadDot visible={readVisuals().unreadDot} />
@@ -1224,10 +1273,12 @@ export function Grid(props: GridProps) {
                                 }
                                 openPrimary(item());
                               }}
-                              aria-label={`Open ${item().title}${readVisuals().unreadDot ? ", unread" : ""}`}
+                              aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}`}
                             />
                             <CellCopy
                               item={item()}
+                              refined={refined()}
+                              unreadDot={readVisuals().unreadDot}
                               archive={props.archive}
                               effectiveSize={cell.effectiveSize}
                               condensed={condensedLarge()}
@@ -1244,12 +1295,16 @@ export function Grid(props: GridProps) {
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={() => props.onExternalOpen(item())}
-                            aria-label={`Open ${item().title} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}`}
+                            aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}`}
                           >
-                            <span class="sr-only">Open {item().title}</span>
+                            <span class="sr-only">
+                              Open {headlineText(item().title)}
+                            </span>
                           </a>
                           <CellCopy
                             item={item()}
+                            refined={refined()}
+                            unreadDot={readVisuals().unreadDot}
                             archive={props.archive}
                             effectiveSize={cell.effectiveSize}
                             condensed={condensedLarge()}
@@ -1667,6 +1722,8 @@ export function Grid(props: GridProps) {
 
 export function CellCopy(props: {
   item: Item;
+  unreadDot: boolean;
+  refined?: boolean;
   archive: boolean;
   effectiveSize: "S" | "M" | "L";
   condensed: boolean;
@@ -1681,7 +1738,9 @@ export function CellCopy(props: {
       : "";
   return (
     <div class="cell-copy">
-      <h2 classList={{ read: props.dimmed }}>{props.item.title}</h2>
+      <h2 classList={{ read: props.dimmed }}>
+        {headlineText(props.item.title)}
+      </h2>
       <Show when={reddit() && domain()}>
         <div class="reddit-domain">{domain()}</div>
       </Show>
@@ -1696,6 +1755,9 @@ export function CellCopy(props: {
         <p>{props.item.summary}</p>
       </Show>
       <div class="cell-meta">
+        <Show when={props.refined && !props.archive}>
+          <UnreadDot visible={props.unreadDot} />
+        </Show>
         <Show
           when={
             props.archive &&
@@ -1715,8 +1777,10 @@ export function CellCopy(props: {
           when={!props.archive && props.onApplyFeed}
           fallback={
             <span>
-              {props.item.feed_title || "Feed"}
-              <Show when={reddit()}>
+              {props.refined
+                ? gridSourceName(props.item)
+                : props.item.feed_title || "Feed"}
+              <Show when={reddit() && !props.refined}>
                 {` · ${relativeTime(props.item.published_ts)}`}
               </Show>
             </span>
@@ -1725,7 +1789,7 @@ export function CellCopy(props: {
           <button
             type="button"
             class="cell-feed-filter"
-            aria-label={`Filter by feed: ${props.item.feed_title || "Feed"}`}
+            aria-label={`Filter by feed: ${props.refined ? gridSourceName(props.item) : props.item.feed_title || "Feed"}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.preventDefault();
@@ -1733,11 +1797,23 @@ export function CellCopy(props: {
               props.onApplyFeed?.();
             }}
           >
-            {props.item.feed_title || "Feed"}
-            <Show when={reddit()}>
+            {props.refined
+              ? gridSourceName(props.item)
+              : props.item.feed_title || "Feed"}
+            <Show when={reddit() && !props.refined}>
               {` · ${relativeTime(props.item.published_ts)}`}
             </Show>
           </button>
+        </Show>
+        <Show when={props.refined}>
+          <span class="refined-age">
+            · {relativeTime(props.item.published_ts)}
+          </span>
+          <Show when={props.item.read && !props.archive}>
+            <span class="refined-read-label">
+              <Icon name="check" size={13} /> read
+            </span>
+          </Show>
         </Show>
       </div>
       <Show when={!props.archive && props.effectiveSize === "L"}>

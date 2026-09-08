@@ -1081,3 +1081,96 @@ describe("layout row identity", () => {
     expect(reuseLayoutRows([previous], [regrouped])[0]).toBe(regrouped);
   });
 });
+
+describe("related coverage row sizing", () => {
+  it("grows a long lead to retain an actionable footer and budgets mixed row heights on expansion", () => {
+    const story: Story = {
+      story_id: "refined",
+      source_count: 4,
+      order_key: 0.9,
+      size: "L",
+      items: [
+        item("lead", "L"),
+        item("angle", "S"),
+        item("repeat", "S"),
+        item("another-angle", "S"),
+      ],
+    };
+    const entries = [
+      { kind: "story" as const, story },
+      ...Array.from({ length: 12 }, (_, index) => item(index, "M")),
+    ];
+    const options = {
+      storyLeadHeights: new Map([[story.story_id, 280]]),
+      storyHeadlineHeights: new Map([
+        ["angle", 72],
+        ["repeat", 44],
+        ["another-angle", 72],
+      ]),
+      storyCardMinHeight: 310,
+    };
+    const collapsed = justify(entries, 1248, false, options);
+    expect(collapsed[0].cells[0].headlineItemCount).toBe(1);
+    expect(collapsed[0].cells[0].headlineRemaining).toBe(2);
+    expect(collapsed[0].cells[0].headlineHeight).toBe(72 + 33);
+    expect(collapsed[0].cells[0].height).toBe(280 + 72 + 33 + 3);
+    expect(collapsed[1].top).toBe(collapsed[0].height + collapsed[0].gap);
+    const expanded = justify(entries, 1248, false, {
+      ...options,
+      expandedStoryIDs: new Set([story.story_id]),
+    });
+    expect(expanded[0].cells[0].headlineItemCount).toBe(3);
+    expect(expanded[0].cells[0].headlineHeight).toBe(72 + 44 + 72);
+    expect(expanded[0].cells[0].height).toBe(280 + 72 + 44 + 72 + 3);
+    expect(expanded[1].top).toBe(expanded[0].height + expanded[0].gap);
+  });
+});
+
+describe("story and singleton row alignment", () => {
+  it("shares the tallest height across a horizontal band when stories grow or expand", () => {
+    const story: Story = {
+      story_id: "aligned",
+      source_count: 6,
+      order_key: 0.9,
+      size: "L",
+      items: [
+        item("story-lead", "L"),
+        ...Array.from({ length: 5 }, (_, index) =>
+          item(`related-${index}`, "S"),
+        ),
+      ],
+    };
+    const entries = [
+      item("left", "L"),
+      { kind: "story" as const, story },
+      item("right", "L"),
+      ...Array.from({ length: 3 }, (_, index) => item(`next-${index}`, "L")),
+    ];
+    const options = {
+      storyLeadHeights: new Map([[story.story_id, 280]]),
+      storyHeadlineHeights: new Map(
+        story.items.slice(1).map((member) => [member.item_id, 72]),
+      ),
+      storyCardMinHeight: 310,
+    };
+    for (const expanded of [false, true, false]) {
+      const rows = justify(entries, 1481, false, {
+        ...options,
+        expandedStoryIDs: new Set(expanded ? [story.story_id] : []),
+      });
+      const row = rows[0];
+      expect(row.cells.map((cell) => cell.item.item_id)).toEqual([
+        "left",
+        "story-lead",
+        "right",
+      ]);
+      expect(row.height).toBe(expanded ? 280 + 5 * 72 + 3 : 280 + 72 + 33 + 3);
+      expect(row.cells.map((cell) => cell.height)).toEqual([
+        row.height,
+        row.height,
+        row.height,
+      ]);
+      expect(rows[1].top).toBe(row.height + row.gap);
+    }
+  });
+});
