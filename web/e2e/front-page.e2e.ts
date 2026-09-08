@@ -296,6 +296,7 @@ test.describe("mobile front-page tile grammar", () => {
 
     await page.goto("/");
 
+    await page.screenshot({ path: "/tmp/sema-mobile-initial.png" });
     const leadCard = page.locator('[data-story-id="mobile-lead-story"]');
     await expect(leadCard).toHaveClass(/story-card/);
     await expect(
@@ -316,9 +317,9 @@ test.describe("mobile front-page tile grammar", () => {
     ]) {
       const tile = page.locator(`[data-story-id="${storyID}"]`);
       await expect(tile).toHaveClass(/mobile-tile-cell/);
-      await expect(tile).toHaveCSS("height", "196px");
+      await expect(tile).toHaveCSS("height", "260px");
       await expect(tile.locator(".story-stack-badge")).toBeVisible();
-      await expect(tile.locator(".cell-age")).toBeVisible();
+      await expect(tile.locator(".refined-age")).toBeVisible();
       await expect(tile.locator(".story-headlines")).toHaveCount(0);
     }
     const sourcesButton = page.getByRole("button", {
@@ -362,7 +363,7 @@ test.describe("mobile front-page tile grammar", () => {
     await expect(
       leadCard.getByRole("button", { name: "Show less" }),
     ).toBeVisible();
-    await expect(leadCard.locator(".story-headline-title")).toHaveText([
+    await expect(leadCard.locator(".story-related-title")).toHaveText([
       "First related headline",
       "Second related headline",
       "Third related headline",
@@ -386,17 +387,17 @@ test.describe("mobile front-page tile grammar", () => {
     await expect(sheet).toContainText("5 sources · Feed overworld · 1d");
     const sheetHeadlines = sheet.locator(".sheet-headline");
     await expect(sheetHeadlines).toHaveCount(3);
-    await expect(sheetHeadlines.locator(".story-headline-feed")).toHaveText([
-      "Feed ign",
-      "Feed gamespot",
-      "Feed polygon",
+    await expect(sheetHeadlines.locator(".story-related-source")).toHaveText([
+      "Feed ign · 1d",
+      "Feed gamespot · 1d",
+      "Feed polygon · 1d",
     ]);
-    await expect(sheetHeadlines.locator(".story-headline-title")).toHaveText([
+    await expect(sheetHeadlines.locator(".story-related-title")).toHaveText([
       "Other game coverage",
       "Release date analysis",
       "What the new trailer reveals",
     ]);
-    await expect(sheetHeadlines.locator("time")).toHaveText(["1d", "1d", "1d"]);
+
     await sheet.screenshot({
       path: "/tmp/sema-mobile-story-headlines-sheet.png",
     });
@@ -561,13 +562,13 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
   await expect(sheet).toContainText("2 sources");
   const sheetHeadline = sheet.locator(".sheet-headline");
   await expect(sheetHeadline).toHaveCount(1);
-  await expect(sheetHeadline.locator(".story-headline-feed")).toHaveText(
-    "Feed two",
+  await expect(sheetHeadline.locator(".story-related-source")).toHaveText(
+    "Feed two · 1d",
   );
-  await expect(sheetHeadline.locator(".story-headline-title")).toHaveText(
+  await expect(sheetHeadline.locator(".story-related-title")).toHaveText(
     "Other coverage",
   );
-  await expect(sheetHeadline.locator("time")).toHaveText("1d");
+
   await sheet.getByRole("button", { name: "Bury" }).click();
   await expect
     .poll(() => signals)
@@ -1184,14 +1185,16 @@ test("desktop story titles and summaries fit their cards after resizing and expa
   ).toBeVisible();
   const relatedCopy = cards.first().locator(".story-related-title");
   await expect(relatedCopy).toBeVisible();
-  expect(
-    await relatedCopy.evaluate((element) => {
-      const height = element.getBoundingClientRect().height;
-      return (
-        height > Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5
-      );
-    }),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      relatedCopy.evaluate((element) => {
+        const height = element.getBoundingClientRect().height;
+        return (
+          height > Number.parseFloat(getComputedStyle(element).lineHeight) * 1.5
+        );
+      }),
+    )
+    .toBe(true);
   await page.screenshot({
     path: "/tmp/sema-story-titles-fixed.png",
     clip: { x: 0, y: 0, width: 1600, height: 900 },
@@ -1370,7 +1373,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
       );
       await expect(first.locator(".story-headline")).toBeVisible();
     } else {
-      await expect(grid).not.toHaveClass(/refined-grid/);
+      await expect(grid).toHaveClass(/mobile-refined-grid/);
     }
   }
   await page.setViewportSize({ width: 1513, height: 1071 });
@@ -1891,3 +1894,281 @@ for (const preference of ["dark", "system"] as const) {
     });
   });
 }
+
+test.describe("mobile shared grid design", () => {
+  test.use({ hasTouch: true, isMobile: true });
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [320, 393, 430]) {
+      test(`fits solid cards and related coverage at ${width}px in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 920 });
+        await page.addInitScript(
+          (theme) => localStorage.setItem("sema:theme", theme),
+          theme,
+        );
+        await page.route("**/mobile-landscape.svg", (route) =>
+          route.fulfill({
+            contentType: "image/svg+xml",
+            body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><path fill="#50696e" d="M0 0h640v360H0z"/><path fill="#91a9a9" d="m0 300 180-240 220 230L560 100l80 80v180H0z"/></svg>',
+          }),
+        );
+        const photo = {
+          media_url: "/mobile-landscape.svg",
+          media_w: 640,
+          media_h: 360,
+        };
+        const lead = {
+          ...item(
+            "phone-lead",
+            "hn",
+            "Smartphone makers don't bother to comply with EU repairability requirements",
+            1,
+            "L",
+          ),
+          ...photo,
+          feed_title: "Hacker News: Front Page",
+        };
+        const duplicate = {
+          ...item("phone-duplicate", "register", lead.title, 0.8, "S"),
+          feed_title: "www.theregister.com - Articles",
+        };
+        const story = {
+          story_id: "phone-story",
+          source_count: 3,
+          order_key: 1,
+          size: "L",
+          items: [
+            lead,
+            duplicate,
+            item(
+              "phone-angle",
+              "ars",
+              "What the new repairability rules mean for consumers and the devices they own",
+              0.7,
+              "S",
+            ),
+          ],
+        };
+        const readLead = {
+          ...item(
+            "phone-read",
+            "ign",
+            "Until Dawn 2 Reveals Release Date in New Trailer",
+            0.95,
+            "L",
+          ),
+          ...photo,
+          feed_title: "IGN All",
+          read: true,
+        };
+        const readStory = {
+          story_id: "phone-read-story",
+          source_count: 2,
+          order_key: 0.95,
+          size: "L",
+          items: [
+            readLead,
+            {
+              ...item(
+                "phone-read-duplicate",
+                "eurogamer",
+                readLead.title,
+                0.6,
+                "S",
+              ),
+              feed_title: "Eurogamer.net Latest Articles Feed",
+              read: true,
+            },
+          ],
+        };
+        const items = [
+          {
+            ...item(
+              "phone-single",
+              "polygon",
+              "Apple Maps changes name of Lake Ontario to Lake America",
+              0.9,
+              "L",
+            ),
+            ...photo,
+            feed_title: "Polygon.com",
+          },
+          {
+            ...item(
+              "phone-text",
+              "custom",
+              "A thoughtful look at Vancouver's changing neighbourhoods",
+              0.5,
+              "M",
+            ),
+            feed_title: "A custom community name that should be preserved",
+          },
+          {
+            ...item(
+              "phone-medium",
+              "news",
+              "How a new generation of batteries could change electric vehicles",
+              0.4,
+              "M",
+            ),
+            ...photo,
+          },
+          ...[1, 2, 3].map((n) => ({
+            ...item(
+              `phone-small-${n}`,
+              "hn",
+              "Developers discuss a new approach to software performance",
+              0.3 - n * 0.01,
+              "S",
+            ),
+            ...photo,
+            feed_title: "Hacker News: Front Page",
+          })),
+        ];
+        await stubFrontPage(page, [story, readStory], items, []);
+        await page.goto("/");
+        const grid = page.locator(".grid-scroll");
+        const card = page.locator('[data-story-id="phone-story"]');
+        const readCard = page.locator('[data-story-id="phone-read-story"]');
+        const single = page.locator('[data-item-id="phone-single"]');
+        await expect(grid).toHaveClass(/mobile-refined-grid/);
+        await expect(grid.locator(".unread-dot")).toHaveCount(0);
+        await expect(card.locator(".story-related-source")).toHaveText(
+          "Also covered by The Register · 1d",
+        );
+        await expect(card.locator(".story-meta")).toContainText("Hacker News");
+        await expect(card.locator(".story-headlines")).toHaveCSS(
+          "background-color",
+          theme === "light" ? "rgb(250, 249, 245)" : "rgb(16, 17, 19)",
+        );
+        await expect(readCard).toHaveClass(/is-read/);
+        await expect(readCard.locator(":scope > img")).toHaveCSS(
+          "filter",
+          "opacity(0.55)",
+        );
+        await expect(single).toHaveCSS(
+          "background-color",
+          theme === "light" ? "rgb(255, 255, 255)" : "rgb(23, 24, 26)",
+        );
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(() =>
+            grid.evaluate((el) => {
+              const problems: string[] = [];
+              for (const card of el.querySelectorAll<HTMLElement>(
+                ".grid-cell",
+              )) {
+                const box = card.getBoundingClientRect();
+                for (const copy of card.querySelectorAll<HTMLElement>(
+                  "h2, .cell-meta, .story-meta, .story-related-copy",
+                )) {
+                  const r = copy.getBoundingClientRect();
+                  if (r.width === 0) continue;
+                  if (
+                    r.bottom > box.bottom + 1 ||
+                    r.right > box.right + 1 ||
+                    r.left < box.left - 1
+                  )
+                    problems.push(
+                      `${card.dataset.itemId}: ${copy.className || copy.tagName}`,
+                    );
+                }
+                const img = card.querySelector<HTMLElement>(":scope > img");
+                const title = card.querySelector(".cell-copy h2");
+                if (
+                  img &&
+                  title &&
+                  img.getBoundingClientRect().bottom >
+                    title.getBoundingClientRect().top
+                )
+                  problems.push("image overlaps title");
+                if (img && img.getBoundingClientRect().height < 48)
+                  problems.push("image too short");
+              }
+              return problems;
+            }),
+          )
+          .toEqual([]);
+        await card.getByRole("button", { name: "+1 more" }).tap();
+        await expect(card.locator(".story-related-title")).toHaveText(
+          "What the new repairability rules mean for consumers and the devices they own",
+        );
+        await expect
+          .poll(() =>
+            card.evaluate((el) => {
+              const meta = el
+                .querySelector(".story-meta")
+                ?.getBoundingClientRect();
+              const footer = el
+                .querySelector(".story-headlines")
+                ?.getBoundingClientRect();
+              const copy = el
+                .querySelector(".story-related-title")
+                ?.getBoundingClientRect();
+              return (
+                !!meta &&
+                !!footer &&
+                !!copy &&
+                meta.bottom <= footer.top &&
+                copy.bottom <= el.getBoundingClientRect().bottom
+              );
+            }),
+          )
+          .toBe(true);
+        await card.getByRole("button", { name: "Show less" }).tap();
+        await page
+          .getByRole("button", { name: "Front page", exact: true })
+          .tap();
+        await page.getByRole("radio", { name: "All", exact: true }).tap();
+        await page.getByRole("button", { name: "Close feed view menu" }).tap();
+        await expect(readCard).not.toHaveClass(/is-read/);
+        await expect(readCard.locator(":scope > img")).toHaveCSS(
+          "filter",
+          "none",
+        );
+        await expect(readCard.locator("h2")).toHaveCSS(
+          "color",
+          theme === "light" ? "rgb(20, 22, 26)" : "rgb(244, 242, 238)",
+        );
+        await expect(single.locator(".cell-meta .unread-dot")).toBeVisible();
+        await expect(readCard.locator(".unread-dot")).toHaveCount(0);
+        await expect(single.locator(".cell-feed-filter")).toHaveText("Polygon");
+        await expect(
+          single.locator(".refined-age .age-separator"),
+        ).toBeHidden();
+        await expect
+          .poll(() =>
+            grid
+              .locator(".grid-cell > img")
+              .evaluateAll((images) =>
+                images.every((img) => getComputedStyle(img).opacity === "1"),
+              ),
+          )
+          .toBe(true);
+        await expect(page.locator('[data-item-id="phone-text"] h2')).toHaveCSS(
+          "padding-right",
+          "0px",
+        );
+        await page.screenshot({
+          path: `/tmp/sema-mobile-${theme}-${width}.png`,
+        });
+        await readCard
+          .getByRole("button", { name: "2 sources, show headlines" })
+          .tap();
+        const sheet = page.getByRole("dialog", {
+          name: `Actions for ${readLead.title}`,
+        });
+        await expect(sheet).toBeVisible();
+        await expect(sheet.locator(".sheet-headline")).not.toHaveClass(/read/);
+        await expect(sheet.locator(".story-related-source")).toHaveText(
+          "Also covered by Eurogamer · 1d",
+        );
+        await sheet
+          .getByRole("button", { name: `Open ${readLead.title}`, exact: true })
+          .tap();
+        await expect(page.locator(".reader-scroll")).toBeVisible();
+      });
+    }
+  }
+});

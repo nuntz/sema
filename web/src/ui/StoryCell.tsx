@@ -22,6 +22,7 @@ import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Story } from "../types";
 import { CellCopy, relativeTime, UnreadDot } from "./Grid";
+import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
 
@@ -59,7 +60,7 @@ export function StoryCell(props: StoryCellProps) {
   const leadHeight = () =>
     cellHeight() -
     (props.cell.headlineHeight ?? 0) -
-    (props.cell.mobileStoryCard ? 0 : storyCardBorderHeight);
+    (props.cell.mobileStoryCard && !props.refined ? 0 : storyCardBorderHeight);
   const editorial = () =>
     props.story.size === "L" && props.cell.mobileTile !== true;
   const [copyMetrics, setCopyMetrics] = createSignal({
@@ -85,10 +86,11 @@ export function StoryCell(props: StoryCellProps) {
   const measureTitle = (title: HTMLHeadingElement) => {
     // Keep optional summaries out of the minimum height to avoid a layout loop.
     const observer = new ResizeObserver(() => {
-      if (props.cell.mobileStoryCard) return;
+      if (props.cell.mobileStoryCard && !props.refined) return;
       const copy = title.parentElement;
       const meta = copy?.querySelector<HTMLElement>(".story-meta");
       if (!copy || !meta) return;
+      observer.observe(meta);
       const style = getComputedStyle(copy);
       const height =
         title.getBoundingClientRect().height +
@@ -385,7 +387,7 @@ export function StoryCell(props: StoryCellProps) {
                       {item.summary}
                     </p>
                   </Show>
-                  <Show when={!props.cell.mobileStoryCard}>
+                  <Show when={!props.cell.mobileStoryCard || props.refined}>
                     <div class="story-meta">
                       <Show when={props.refined}>
                         <UnreadDot visible={leadReadVisuals().unreadDot} />
@@ -484,28 +486,11 @@ export function StoryCell(props: StoryCellProps) {
                       </>
                     }
                   >
-                    <Icon name="stack" size={13} />
-                    <span class="story-related-copy">
-                      <Show
-                        when={repeatsLeadHeadline(lead().title, item.title)}
-                        fallback={
-                          <>
-                            <span class="story-related-source">
-                              {gridSourceName(item)} ·{" "}
-                              {relativeTime(item.published_ts)}
-                            </span>
-                            <span class="story-related-title">
-                              {headlineText(item.title)}
-                            </span>
-                          </>
-                        }
-                      >
-                        <span class="story-related-source">
-                          Also covered by <b>{gridSourceName(item)}</b> ·{" "}
-                          {relativeTime(item.published_ts)}
-                        </span>
-                      </Show>
-                    </span>
+                    <RelatedCoverage
+                      lead={lead()}
+                      item={item}
+                      age={relativeTime(item.published_ts)}
+                    />
                   </Show>
                 </PrimaryAction>
               );

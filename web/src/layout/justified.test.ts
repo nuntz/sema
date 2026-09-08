@@ -879,6 +879,64 @@ describe("369px mobile story bands", () => {
     ],
   });
 
+  it("reserves measured mobile copy plus an actionable related row", () => {
+    const story = largeStory("refined", 3);
+    const options = {
+      refinedMobile: true,
+      storyLeadHeights: new Map([[story.story_id, 270]]),
+      storyHeadlineHeights: new Map(
+        story.items
+          .slice(1)
+          .map((item, index) => [item.item_id, index === 0 ? 56 : 84]),
+      ),
+    };
+    const [collapsed, tail] = justify(
+      [{ kind: "story", story }, item("tail", "M")],
+      296,
+      false,
+      options,
+    );
+    expect(collapsed.cells[0].headlineItemCount).toBe(1);
+    expect(collapsed.cells[0].headlineHeight).toBe(100);
+    expect(collapsed.height).toBe(373);
+    expect(tail.top).toBe(collapsed.height + collapsed.gap);
+    const [expanded] = justify([{ kind: "story", story }], 296, false, {
+      ...options,
+      expandedStoryIDs: new Set([story.story_id]),
+    });
+    expect(expanded.cells[0].headlineItemCount).toBe(3);
+    expect(expanded.cells[0].headlineHeight).toBe(268);
+    expect(expanded.height).toBe(541);
+  });
+
+  it("gives refined mobile image pairs room and limits small rows to two cards", () => {
+    const rows = justify(
+      [
+        item("l1", "L"),
+        item("l2", "L"),
+        item("m1", "M"),
+        item("m2", "M"),
+        item("s1", "S"),
+        item("s2", "S"),
+        item("s3", "S"),
+      ],
+      296,
+      false,
+      { refinedMobile: true },
+    );
+    expect(rows.map((row) => [row.height, row.cells.length])).toEqual([
+      [260, 2],
+      [220, 2],
+      [200, 2],
+      [200, 1],
+    ]);
+    expect(rows.at(-1)?.cells[0].width).toBe(rows[0].cells[0].width);
+    for (const row of rows.filter((row) => row.cells.length === 2)) {
+      expect(row.cells[0].width).toBe(row.cells[1].width);
+      expect(row.cells[1].left + row.cells[1].width).toBe(296);
+    }
+  });
+
   it("uses one equal 196px tile band for two L stories", () => {
     const [row] = justify(
       [

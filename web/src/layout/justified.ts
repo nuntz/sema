@@ -32,6 +32,7 @@ export interface JustifyOptions {
   storyLeadHeights?: ReadonlyMap<string, number>;
   storyHeadlineHeights?: ReadonlyMap<string, number>;
   storyCardMinHeight?: number;
+  refinedMobile?: boolean;
 }
 
 interface LayoutItem extends Item {
@@ -568,8 +569,16 @@ export function justify(
   const finalFeed = !hasMore;
   if (containerWidth < 700)
     return layoutStoryHeadlines(
-      mobileRows(items, containerWidth, finalFeed, paginationOpen),
+      mobileRows(
+        items,
+        containerWidth,
+        finalFeed,
+        paginationOpen,
+        options.refinedMobile,
+      ),
       true,
+      options.storyLeadHeights,
+      options.storyHeadlineHeights,
     );
 
   const rows: LayoutRow[] = [];
@@ -731,8 +740,10 @@ function appendMobileLargeBand(
   items: Item[],
   containerWidth: number,
   kind: "tall" | "tile",
+  refined = false,
 ): void {
-  const height = kind === "tile" ? mobileLargeTileHeight : 246;
+  const height =
+    kind === "tile" ? (refined ? 260 : mobileLargeTileHeight) : 246;
   const cells =
     items.length === 1
       ? cellsWithWidths(items, [containerWidth], 0, 0, height, mobileGap)
@@ -769,10 +780,17 @@ function appendMobileLargeRun(
   rows: LayoutRow[],
   items: Item[],
   containerWidth: number,
+  refined = false,
 ): void {
   let index = 0;
   if (items.length % 2 === 1) {
-    appendMobileLargeBand(rows, items.slice(0, 1), containerWidth, "tall");
+    appendMobileLargeBand(
+      rows,
+      items.slice(0, 1),
+      containerWidth,
+      "tall",
+      refined,
+    );
     index = 1;
   }
   while (index + 1 < items.length) {
@@ -781,11 +799,18 @@ function appendMobileLargeRun(
       items.slice(index, index + 2),
       containerWidth,
       "tile",
+      refined,
     );
     index += 2;
   }
   if (index < items.length)
-    appendMobileLargeBand(rows, items.slice(index), containerWidth, "tall");
+    appendMobileLargeBand(
+      rows,
+      items.slice(index),
+      containerWidth,
+      "tall",
+      refined,
+    );
 }
 
 function mobileRows(
@@ -793,6 +818,7 @@ function mobileRows(
   containerWidth: number,
   finalFeed: boolean,
   paginationOpen: boolean,
+  refined = false,
 ): LayoutRow[] {
   const rows: LayoutRow[] = [];
   const baseUnit = 120;
@@ -802,13 +828,22 @@ function mobileRows(
       let runEnd = index + 1;
       while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
       if (paginationOpen && runEnd === items.length) break;
-      appendMobileLargeRun(rows, items.slice(index, runEnd), containerWidth);
+      appendMobileLargeRun(
+        rows,
+        items.slice(index, runEnd),
+        containerWidth,
+        refined,
+      );
       index = runEnd;
       continue;
     }
 
     const triple = items.slice(index, index + 3);
-    if (triple.length === 3 && triple.every((entry) => entry.size === "S")) {
+    if (
+      !refined &&
+      triple.length === 3 &&
+      triple.every((entry) => entry.size === "S")
+    ) {
       const height = 112;
       const final = finalFeed && index + triple.length === items.length;
       const cells = final
@@ -842,7 +877,11 @@ function mobileRows(
     }
 
     const next = items[index + 1];
-    const height = 152;
+    const height = refined
+      ? item.size === "S" && next?.size === "S"
+        ? 200
+        : 220
+      : 152;
     if (next && next.size !== "L") {
       if (
         paginationOpen &&
@@ -855,7 +894,9 @@ function mobileRows(
       const final = finalFeed && index + 2 === items.length;
       const line = final ? naturalLineCells : justifiedLineCells;
       rows.push({
-        cells: line(pair, containerWidth, 0, 0, height, mobileGap, baseUnit),
+        cells: refined
+          ? weightedLineCells(pair, [1, 1], containerWidth, height, mobileGap)
+          : line(pair, containerWidth, 0, 0, height, mobileGap, baseUnit),
         height,
         top: topAfter(rows, mobileGap),
         gap: mobileGap,
@@ -866,19 +907,26 @@ function mobileRows(
     }
 
     if (paginationOpen && !next) break;
-    const singleHeight = item.size === "S" ? 112 : 152;
+    const singleHeight = refined
+      ? item.size === "S"
+        ? 200
+        : 220
+      : item.size === "S"
+        ? 112
+        : 152;
     const final = finalFeed && index + 1 === items.length;
     const line = final ? naturalLineCells : justifiedLineCells;
     rows.push({
-      cells: line(
-        [item],
-        containerWidth,
-        0,
-        0,
-        singleHeight,
-        mobileGap,
-        baseUnit,
-      ),
+      cells: refined
+        ? cellsWithWidths(
+            [item],
+            [(containerWidth - mobileGap) / 2],
+            0,
+            0,
+            singleHeight,
+            mobileGap,
+          )
+        : line([item], containerWidth, 0, 0, singleHeight, mobileGap, baseUnit),
       height: singleHeight,
       top: topAfter(rows, mobileGap),
       gap: mobileGap,
@@ -912,7 +960,7 @@ function layoutStoryHeadlines(
       const mode = (cell.item as LayoutItem).layoutHeadlineMode;
       if (!mode) continue;
       const headlineCount = Math.max(0, story.items.length - 1);
-      if (headlineCount === 0 && mobile) continue;
+      if (headlineCount === 0 && mobile && !headlineHeights) continue;
       const heights = story.items
         .slice(1)
         .map(
@@ -925,10 +973,12 @@ function layoutStoryHeadlines(
       const baseHeight = cell.height ?? row.height;
       const leadMinimumHeight = Math.max(
         storyLeadMinimumHeight,
-        mobile ? 0 : (leadHeights?.get(story.story_id) ?? 0),
+        mobile && !headlineHeights
+          ? 0
+          : (leadHeights?.get(story.story_id) ?? 0),
       );
       if (mode === "collapsed") {
-        if (mobile) {
+        if (mobile && !headlineHeights) {
           const availableHeight = Math.max(
             0,
             baseHeight - storyLeadMinimumHeight,
@@ -954,10 +1004,11 @@ function layoutStoryHeadlines(
         }
         // Taller related-coverage rows must retain at least one actionable
         // headline. Grow the card instead of replacing its entire footer with +1.
+        const moreHeight = mobile ? mobileStoryMoreHeight : storyMoreHeight;
         const availableHeight = Math.max(
           baseHeight - leadMinimumHeight - storyCardBorderHeight,
           headlineHeights
-            ? (heights[0] ?? 0) + (headlineCount > 1 ? storyMoreHeight : 0)
+            ? (heights[0] ?? 0) + (headlineCount > 1 ? moreHeight : 0)
             : 0,
         );
         let headlineItemCount = headlineCount;
@@ -966,20 +1017,22 @@ function layoutStoryHeadlines(
           headlineItemCount = 0;
           headlineHeight = 0;
           for (const height of heights) {
-            if (headlineHeight + height + storyMoreHeight > availableHeight)
-              break;
+            if (headlineHeight + height + moreHeight > availableHeight) break;
             headlineHeight += height;
             headlineItemCount++;
           }
         }
         const headlineRemaining = headlineCount - headlineItemCount;
         cell.headlineHeight =
-          headlineHeight + (headlineRemaining > 0 ? storyMoreHeight : 0);
+          headlineHeight + (headlineRemaining > 0 ? moreHeight : 0);
         cell.headlineItemCount = headlineItemCount;
         cell.headlineRemaining = headlineRemaining;
       } else {
         cell.headlineHeight = mobile
-          ? headlineCount * mobileStoryHeadlineHeight + mobileStoryMoreHeight
+          ? (headlineHeights
+              ? allHeadlineHeight
+              : headlineCount * mobileStoryHeadlineHeight) +
+            mobileStoryMoreHeight
           : allHeadlineHeight;
         cell.headlineItemCount = headlineCount;
         cell.headlineRemaining = 0;
@@ -991,7 +1044,7 @@ function layoutStoryHeadlines(
         minimumCardHeight,
         leadMinimumHeight +
           (cell.headlineHeight ?? 0) +
-          (mobile ? 0 : storyCardBorderHeight),
+          (mobile && !headlineHeights ? 0 : storyCardBorderHeight),
       );
       const growth = Math.max(0, expandedHeight - baseHeight);
       cell.height = baseHeight + growth;

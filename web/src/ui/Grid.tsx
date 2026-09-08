@@ -15,6 +15,7 @@ import {
   gridSourceName,
   headlineText,
   relatedCoverageHeight,
+  repeatsLeadHeadline,
 } from "../grid-display";
 import {
   justify,
@@ -50,6 +51,7 @@ import { frontPageEntryItem, frontPageSequence } from "./front-page";
 import { gridCommand } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
+import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SourceBadge } from "./SourceBadge";
 import { StoryCell } from "./StoryCell";
@@ -188,24 +190,24 @@ export function Grid(props: GridProps) {
   const contentWidth = createMemo(() =>
     Math.max(0, width() - (width() < 700 ? 24 : 32)),
   );
-  const refined = () => contentWidth() >= 700;
+  const mobile = () => contentWidth() < 700;
   const [keyboardFocus, setKeyboardFocus] = createSignal(false);
-  const storyHeadlineHeights = createMemo(() =>
-    refined()
-      ? new Map(
-          (props.stories ?? []).flatMap((story) =>
-            story.items
-              .slice(1)
-              .map(
-                (item) =>
-                  [
-                    item.item_id,
-                    relatedCoverageHeight(story.items[0], item),
-                  ] as const,
-              ),
-          ),
-        )
-      : undefined,
+  const storyHeadlineHeights = createMemo(
+    () =>
+      new Map(
+        (props.stories ?? []).flatMap((story) =>
+          story.items
+            .slice(1)
+            .map(
+              (item) =>
+                [
+                  item.item_id,
+                  relatedCoverageHeight(story.items[0], item) +
+                    (mobile() ? 12 : 0),
+                ] as const,
+            ),
+        ),
+      ),
   );
   const dividerHeight = createMemo(() => {
     if (contentWidth() < 310) return 40;
@@ -232,7 +234,8 @@ export function Grid(props: GridProps) {
           expandedStoryIDs: props.expandedStoryIDs,
           storyLeadHeights: storyLeadHeights(),
           storyHeadlineHeights: storyHeadlineHeights(),
-          storyCardMinHeight: refined() ? 310 : undefined,
+          storyCardMinHeight: mobile() ? undefined : 310,
+          refinedMobile: true,
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -250,7 +253,8 @@ export function Grid(props: GridProps) {
           expandedStoryIDs: props.expandedStoryIDs,
           storyLeadHeights: storyLeadHeights(),
           storyHeadlineHeights: storyHeadlineHeights(),
-          storyCardMinHeight: refined() ? 310 : undefined,
+          storyCardMinHeight: mobile() ? undefined : 310,
+          refinedMobile: true,
         }),
       );
       return { rows, height: totalHeight(rows) };
@@ -261,14 +265,16 @@ export function Grid(props: GridProps) {
       expandedStoryIDs: props.expandedStoryIDs,
       storyLeadHeights: storyLeadHeights(),
       storyHeadlineHeights: storyHeadlineHeights(),
-      storyCardMinHeight: refined() ? 310 : undefined,
+      storyCardMinHeight: mobile() ? undefined : 310,
+      refinedMobile: true,
     });
     const aboveHeight = totalHeight(above);
     const below = justify(entries.slice(beforeIndex), contentWidth(), hasMore, {
       expandedStoryIDs: props.expandedStoryIDs,
       storyLeadHeights: storyLeadHeights(),
       storyHeadlineHeights: storyHeadlineHeights(),
-      storyCardMinHeight: refined() ? 310 : undefined,
+      storyCardMinHeight: mobile() ? undefined : 310,
+      refinedMobile: true,
     }).map((row) => ({
       ...row,
       top: row.top + aboveHeight + dividerHeight(),
@@ -998,7 +1004,8 @@ export function Grid(props: GridProps) {
         pageFocus = undefined;
       }}
       classList={{
-        "refined-grid": refined(),
+        "refined-grid": true,
+        "mobile-refined-grid": mobile(),
         "keyboard-focus": keyboardFocus(),
         "reader-underlay": props.readerOpen,
         "reader-underlay-dragging": props.readerDragging,
@@ -1077,7 +1084,7 @@ export function Grid(props: GridProps) {
                         row={row}
                         focusedID={props.focusedID}
                         readContext={readContext()}
-                        refined={refined()}
+                        refined={true}
                         pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.onExpandStory?.(id)}
                         onLeadHeight={recordStoryLeadHeight}
@@ -1127,7 +1134,7 @@ export function Grid(props: GridProps) {
                       classList={{
                         focused: item().item_id === props.focusedID,
                         read: readVisuals().dimmed,
-                        "is-read": refined() && readVisuals().dimmed,
+                        "is-read": readVisuals().dimmed,
                         "all-items-cell": readContext() === "all-items",
                         "archive-cell": props.archive,
                         "text-cell": !item().media_url,
@@ -1210,7 +1217,6 @@ export function Grid(props: GridProps) {
                       </Show>
                       <Show
                         when={
-                          refined() &&
                           !props.archive &&
                           props.order === "interest" &&
                           whyText(item())
@@ -1277,7 +1283,7 @@ export function Grid(props: GridProps) {
                             />
                             <CellCopy
                               item={item()}
-                              refined={refined()}
+                              refined={true}
                               unreadDot={readVisuals().unreadDot}
                               archive={props.archive}
                               effectiveSize={cell.effectiveSize}
@@ -1303,7 +1309,7 @@ export function Grid(props: GridProps) {
                           </a>
                           <CellCopy
                             item={item()}
-                            refined={refined()}
+                            refined={true}
                             unreadDot={readVisuals().unreadDot}
                             archive={props.archive}
                             effectiveSize={cell.effectiveSize}
@@ -1532,7 +1538,7 @@ export function Grid(props: GridProps) {
               />
               <section
                 ref={sheetPanel}
-                class="action-sheet"
+                class="action-sheet refined-sheet"
                 classList={{ "sheet-dragging": sheetDrag.dragging() }}
                 role="dialog"
                 aria-modal="true"
@@ -1545,7 +1551,7 @@ export function Grid(props: GridProps) {
               >
                 <i class="sheet-handle" aria-hidden="true" />
                 <header>
-                  <strong>{item.title}</strong>
+                  <strong>{headlineText(item.title)}</strong>
                   <span>
                     <Show when={sheetStory()} keyed>
                       {(story) => (
@@ -1555,8 +1561,7 @@ export function Grid(props: GridProps) {
                         </>
                       )}
                     </Show>
-                    {item.feed_title || "Feed"} ·{" "}
-                    {relativeTime(item.published_ts)}
+                    {gridSourceName(item)} · {relativeTime(item.published_ts)}
                   </span>
                 </header>
                 <Show when={sheetStory()} keyed>
@@ -1570,29 +1575,26 @@ export function Grid(props: GridProps) {
                               <button
                                 type="button"
                                 class="sheet-headline"
-                                classList={{ read: headline.read }}
+                                classList={{
+                                  read: readVisualState(
+                                    readContext(),
+                                    headline.read,
+                                  ).dimmed,
+                                  "related-also": repeatsLeadHeadline(
+                                    story.items[0].title,
+                                    headline.title,
+                                  ),
+                                }}
+                                aria-label={`Open ${headlineText(headline.title)}`}
                                 onClick={() =>
                                   runSheetAction(() => props.onOpen(headline))
                                 }
                               >
-                                <SourceBadge
-                                  connector={headline.connector}
-                                  imageURL={headline.favicon_url}
-                                  title={headline.feed_title}
-                                  size={16}
+                                <RelatedCoverage
+                                  lead={story.items[0]}
+                                  item={headline}
+                                  age={relativeTime(headline.published_ts)}
                                 />
-                                <span class="story-headline-copy">
-                                  <span class="story-headline-feed">
-                                    {headline.feed_title || "Feed"}
-                                    {"\u00a0\u00a0"}
-                                  </span>
-                                  <span class="story-headline-title">
-                                    {headline.title}
-                                  </span>
-                                </span>
-                                <time>
-                                  {relativeTime(headline.published_ts)}
-                                </time>
                               </button>
                             )}
                           </For>
@@ -1807,7 +1809,8 @@ export function CellCopy(props: {
         </Show>
         <Show when={props.refined}>
           <span class="refined-age">
-            · {relativeTime(props.item.published_ts)}
+            <span class="age-separator">· </span>
+            {relativeTime(props.item.published_ts)}
           </span>
           <Show when={props.item.read && !props.archive}>
             <span class="refined-read-label">

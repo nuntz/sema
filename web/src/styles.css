@@ -2134,3 +2134,70 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > img { flex: 1 1 0; min-height: 0; height: 0; }
 .refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy { position: relative; inset: auto; height: auto; flex: none; }
 .refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-meta { margin-top: 9px; padding-top: 0; }
+
+/* Phone cards keep the shared surfaces and copy hierarchy with room for touch. */
+.mobile-refined-grid .grid-row > .grid-cell:not(.story-card) { display: flex; flex-direction: column; }
+.mobile-refined-grid .grid-row > .grid-cell:not(.story-card) > img { flex: 1 1 0; min-height: 0; height: 0; }
+.mobile-refined-grid.refined-grid .grid-row > .grid-cell:not(.story-card) .cell-copy {
+  position: relative; inset: auto; height: auto; flex: none; padding: 12px;
+  display: flex; flex-direction: column; justify-content: flex-start; background: transparent;
+}
+.mobile-refined-grid.refined-grid .grid-row > .grid-cell.text-cell .cell-copy { flex: 1; justify-content: flex-end; }
+.mobile-refined-grid.refined-grid .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: 56px; }
+.mobile-refined-grid .grid-row > .grid-cell:is(.size-l, .size-m, .size-s) .cell-copy h2 {
+  padding-right: 0; font: 700 16px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; -webkit-line-clamp: 4;
+}
+.mobile-refined-grid .grid-row > .grid-cell.size-l .cell-copy h2 { -webkit-line-clamp: 4; }
+.mobile-refined-grid .grid-row > .grid-cell.size-s .cell-copy h2 { font-size: 15px; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.tall-hero .cell-copy h2 { font-size: 22px; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell .cell-copy :is(p, .reddit-domain) { display: none; }
+.mobile-refined-grid .grid-row > .grid-cell .cell-meta { margin-top: 9px; padding-top: 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.mobile-refined-grid .cell-meta > .source-badge { display: none; }
+.mobile-refined-grid .grid-row > .grid-cell .cell-meta > span:not(.source-badge),
+.mobile-refined-grid .grid-row > .grid-cell .cell-feed-filter { font-size: 12px; line-height: 1.2; letter-spacing: 0; }
+.mobile-refined-grid .grid-row > .grid-cell .cell-meta > span:not(:is(.unread-dot, .refined-age, .refined-read-label, .source-badge)),
+.mobile-refined-grid .grid-row > .grid-cell .cell-feed-filter { flex: 1 1 calc(100% - 16px); }
+.mobile-refined-grid .cell-feed-filter { min-height: 24px; }
+.mobile-refined-grid .grid-row > .grid-cell .cell-meta > .refined-age { white-space: pre; }
+.mobile-refined-grid .grid-row > .grid-cell .ranking-hint { display: none; }
+.mobile-refined-grid .story-stack-badge { opacity: 1; background: var(--surface-raised); color: var(--fg-secondary); border: 1px solid var(--border-hairline); }
+.mobile-refined-grid .grid-cell .story-badges { display: flex; opacity: 1; top: 10px; left: 10px; }
+.mobile-refined-grid .story-badges > :not(.story-source-count) { display: none; }
+.mobile-refined-grid .story-source-count { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; background: var(--surface-raised); color: var(--fg-secondary); border: 1px solid var(--border-hairline); font: 500 12px/1 "IBM Plex Mono", monospace; }
+.mobile-refined-grid .story-source-count b { font: inherit; }
+.mobile-refined-grid .story-source-count .icon { color: currentColor; }
+.mobile-refined-grid .story-media-action { display: block; padding: 0; min-height: 126px; max-height: 126px; flex: 0 0 126px; }
+.mobile-refined-grid .story-lead { position: relative; inset: auto; padding: 12px; }
+.mobile-refined-grid .story-card.no-media .story-lead { padding-top: 46px; }
+.mobile-refined-grid .story-lead h2 { font-size: 22px; line-height: 1.18; -webkit-line-clamp: 3; }
+.mobile-refined-grid .story-meta { display: flex; flex-wrap: wrap; row-gap: 6px; }
+.mobile-refined-grid .story-meta > span:not(.source-badge) { min-width: 0; }
+.mobile-refined-grid .story-meta > .unread-dot { flex: none; }
+.mobile-refined-grid .story-headlines { margin: 0; }
+.mobile-refined-grid .story-headline { padding: 11px 12px; gap: 8px; }
+.mobile-refined-grid .story-headline.related-also { height: 56px; }
+.mobile-refined-grid .story-headline.related-angle { height: 84px; }
+.mobile-refined-grid .story-related-copy { flex: 1; }
+.mobile-refined-grid .story-related-source { font-size: 12px; }
+.mobile-refined-grid .related-also .story-related-source { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mobile-refined-grid .story-related-title { font-size: 14px; line-height: 1.35; }
+.mobile-refined-grid .story-more { height: 44px; text-transform: none; letter-spacing: 0; font-size: 13px; }
+@media (hover: none) {
+  .mobile-refined-grid .grid-row > .grid-cell:hover { background: var(--surface-raised); border-color: var(--border-hairline); }
+  .mobile-refined-grid .grid-row > .grid-cell.is-read:hover { background: var(--card-read-bg); border-color: var(--card-read-border); }
+  .mobile-refined-grid .story-headline:hover { background: transparent; }
+}
+
+.mobile-refined-grid .mobile-tile-cell button.story-stack-badge { background: transparent; border: 0; }
+.mobile-refined-grid .mobile-tile-cell button.story-stack-badge::before { background: var(--surface-raised); border: 1px solid var(--border-hairline); }
+
+.mobile-refined-grid .age-separator { display: none; }
+.refined-sheet .sheet-headline { height: auto; min-height: 76px; padding: 12px 4px; gap: 9px; }
+.refined-sheet .sheet-headline.related-also { min-height: 56px; align-items: center; }
+.refined-sheet .sheet-headline > .icon { flex: none; color: var(--fg-quaternary); }
+.refined-sheet .story-related-copy { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
+.refined-sheet .story-related-source { color: var(--fg-tertiary); font: 400 12px/1.4 "IBM Plex Mono", monospace; }
+.refined-sheet .story-related-source b { color: var(--fg-primary); font-weight: 500; }
+.refined-sheet .story-related-title { color: var(--fg-secondary); font: 500 14px/1.35 "Instrument Sans", sans-serif; }
+.refined-sheet .sheet-headline.read .story-related-title { color: var(--fg-tertiary); }
+.refined-sheet .sheet-headline-more { min-height: 44px; }
