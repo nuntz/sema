@@ -125,6 +125,28 @@ describe("lightbox set", () => {
       expect(originalSource(result[0])).toBe(image.src);
     }
   });
+  it("keeps archived lead and body images with their archived sources and variants", () => {
+    const lead = {
+      ...member("https://sema.test/archive/user/item/lead.jpg"),
+      variants: [
+        {
+          url: "/archive/user/item/lead-full.jpg",
+          width: 2400,
+          height: 1200,
+        },
+      ],
+    };
+    const result = buildLightboxSet(
+      body(member("/archive/user/item/body-0.webp")),
+      lead,
+    );
+    expect(result.map((image) => image.src)).toEqual([
+      lead.src,
+      "https://sema.test/archive/user/item/body-0.webp",
+    ]);
+    expect(originalSource(result[0])).toBe(lead.variants[0].url);
+    expect(originalSource(result[1])).toBe(result[1].src);
+  });
   it("rejects page links, text links, unsupported descendants, and malformed hrefs", () => {
     for (const anchor of [
       { href: "https://www.artstation.com/artwork/zzPkW2" },
@@ -152,8 +174,10 @@ describe("lightbox set", () => {
     for (const src of [
       "https://cdn.example/photo.jpg",
       "https://cdn.example/media/photo.jpg",
+      "https://cdn.example/archive/photo.jpg",
       "https://sema.test/other/photo.jpg",
       "https://sema.test/media-other/photo.jpg",
+      "https://sema.test/archive-other/photo.jpg",
     ]) {
       expect(buildLightboxSet(body(member(src)))).toEqual([]);
       expect(

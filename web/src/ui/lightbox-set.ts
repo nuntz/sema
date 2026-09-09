@@ -70,7 +70,8 @@ export function buildLightboxSet(
     }
     if (
       source.origin !== document.location.origin ||
-      !source.pathname.startsWith("/media/") ||
+      (!source.pathname.startsWith("/media/") &&
+        !source.pathname.startsWith("/archive/")) ||
       element.closest(excluded) ||
       seen.has(source.href)
     )
