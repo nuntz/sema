@@ -1311,6 +1311,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .lb-help p { color: var(--fg-secondary); font-size: 12px; }
 .lb-help kbd { white-space: nowrap; font: inherit; }
 @media (min-width: 620px) { .lb-overlay[data-idle] :is(.lb-top, .lb-nav) { opacity: .55; } }
+@media (min-width: 620px) {
+  .lb-caption { bottom: 20px; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 40px); box-sizing: border-box; padding: 12px 16px; border-radius: 8px; background: var(--lb-control); backdrop-filter: blur(14px); }
+  .lb-caption .lb-caption-previous { top: 12px; left: 16px; right: 16px; }
+  :root[data-theme="light"] .lb-caption p { color: var(--lb-glyph-light); }
+}
+@media (prefers-color-scheme: light) and (min-width: 620px) { :root:not([data-theme="dark"]) .lb-caption p { color: var(--lb-glyph-light); } }
 @media (max-width: 619px) {
   .lb-top { top: 0; left: 0; right: 0; height: 44px; padding: 0 12px; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-bottom: .5px solid rgba(244,242,238,.14); }
   .lb-caption { padding: 16px 20px 30px; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-top: .5px solid rgba(244,242,238,.14); }
