@@ -1,5 +1,6 @@
 export type OverlayKind =
   | "reader"
+  | "lightbox"
   | "action-sheet"
   | "related"
   | "feeds"

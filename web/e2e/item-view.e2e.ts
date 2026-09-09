@@ -324,6 +324,7 @@ test("disabling character shortcuts persists and keeps native navigation availab
   const help = page.getByRole("dialog", { name: "Keyboard", exact: true });
   await expect(help.getByRole("heading")).toHaveText([
     "Keyboard",
+    "Lightbox",
     "Navigation",
     "Views",
     "Item actions",

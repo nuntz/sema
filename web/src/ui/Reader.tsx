@@ -7,7 +7,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { Portal } from "solid-js/web";
+import { Portal, render } from "solid-js/web";
 import { isOlderThanThirtyDays } from "../archive";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
@@ -27,6 +27,8 @@ import {
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { isEditingTarget, readerCommand } from "./keyboard";
+import { Lightbox } from "./Lightbox";
+import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { hasLeadingImage } from "./reader-content";
@@ -83,6 +85,11 @@ export function Reader(props: ReaderProps) {
   let moreButton!: HTMLButtonElement;
   let sheetPanel!: HTMLElement;
   let sheetFirstAction!: HTMLButtonElement;
+  const [lightbox, setLightbox] = createSignal<{
+    images: LightboxImage[];
+    index: number;
+  }>();
+  const lightboxOpen = () => !!lightbox();
   const [body, setBody] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [progress, setProgress] = createSignal(0);
@@ -312,7 +319,7 @@ export function Reader(props: ReaderProps) {
   };
 
   const onTouchStart = (event: TouchEvent) => {
-    if (event.touches.length !== 1) return;
+    if (lightboxOpen() || event.touches.length !== 1) return;
     const touch = event.touches[0];
     touchX = touch.clientX;
     swipe = beginSwipe(
@@ -389,6 +396,90 @@ export function Reader(props: ReaderProps) {
     props.onReveal(0, false);
   };
 
+  createEffect(() => {
+    body();
+    const item = props.item;
+    let disposed = false;
+    let removeAffordances = () => {};
+    const rebuild = () => {
+      if (disposed) return;
+      removeAffordances();
+      const lead =
+        item.media_type !== "video" && !isRedditItem(item)
+          ? article.querySelector<HTMLImageElement>(".article-lead")
+          : null;
+      const images = buildLightboxSet(
+        article.querySelector(".article-body"),
+        lead
+          ? {
+              element: lead,
+              src: new URL(item.media_url || lead.src, document.baseURI).href,
+              alt: lead.alt,
+              caption: "",
+              width: item.media_w,
+              height: item.media_h,
+              variants: item.media_variants ?? [],
+            }
+          : undefined,
+      );
+      const cleanups = images.map((member, index) => {
+        const element = member.element;
+        const previousTab = element.getAttribute("tabindex");
+        // The lead remains in its Solid-owned parent; only injected body nodes move.
+        const leadHost = element.closest<HTMLElement>(".lb-lead-host");
+        const wrapper = leadHost ?? document.createElement("span");
+        wrapper.classList.add("lb-inline");
+        if (!leadHost) {
+          element.before(wrapper);
+          wrapper.append(element);
+        }
+        const pill = document.createElement("span");
+        pill.className = "lb-hover-pill";
+        pill.setAttribute("aria-hidden", "true");
+        const disposePill = render(
+          () => <Icon name="expand" size={13} />,
+          pill,
+        );
+        if (images.length > 1) pill.append(` ${index + 1} / ${images.length}`);
+        wrapper.append(pill);
+        element.classList.add("lb-openable");
+        element.tabIndex = 0;
+        const open = () => setLightbox({ images, index });
+        const key = (event: KeyboardEvent) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          open();
+        };
+        wrapper.addEventListener("click", open);
+        element.addEventListener("keydown", key);
+        return () => {
+          disposePill();
+          wrapper.removeEventListener("click", open);
+          element.removeEventListener("keydown", key);
+          element.classList.remove("lb-openable");
+          if (previousTab === null) element.removeAttribute("tabindex");
+          else element.setAttribute("tabindex", previousTab);
+          pill.remove();
+          if (leadHost) wrapper.classList.remove("lb-inline");
+          else if (wrapper.parentNode) wrapper.replaceWith(element);
+        };
+      });
+      removeAffordances = () =>
+        cleanups.forEach((cleanup) => {
+          cleanup();
+        });
+    };
+    queueMicrotask(rebuild);
+    // Extracted images may have no dimensions until their first inline load.
+    article.addEventListener("load", rebuild, true);
+    onCleanup(() => {
+      article.removeEventListener("load", rebuild, true);
+      disposed = true;
+      removeAffordances();
+      setLightbox(undefined);
+    });
+  });
+
   const onKey = (event: KeyboardEvent) => {
     if (
       event.defaultPrevented ||
@@ -396,7 +487,7 @@ export function Reader(props: ReaderProps) {
       isEditingTarget(event.target)
     )
       return;
-    if (!props.active) return;
+    if (!props.active || lightboxOpen()) return;
     if (sheetOpen() && event.key === "Escape") {
       closeSheet();
       event.preventDefault();
@@ -845,20 +936,22 @@ export function Reader(props: ReaderProps) {
             keyed
           >
             {(_itemID) => (
-              <ResponsiveImage
-                class="article-lead"
-                style={{
-                  "--article-lead-width":
-                    props.item.media_w && props.item.media_h
-                      ? `min(${props.item.media_w}px, calc(var(--article-lead-max-height) * ${props.item.media_w / props.item.media_h}))`
-                      : undefined,
-                }}
-                item={props.item}
-                sizes="(max-width: 700px) calc(100vw - 44px), 640px"
-                alt=""
-                width={props.item.media_w}
-                height={props.item.media_h}
-              />
+              <div class="lb-lead-host">
+                <ResponsiveImage
+                  class="article-lead"
+                  style={{
+                    "--article-lead-width":
+                      props.item.media_w && props.item.media_h
+                        ? `min(${props.item.media_w}px, calc(var(--article-lead-max-height) * ${props.item.media_w / props.item.media_h}))`
+                        : undefined,
+                  }}
+                  item={props.item}
+                  sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                  alt=""
+                  width={props.item.media_w}
+                  height={props.item.media_h}
+                />
+              </div>
             )}
           </Show>
           <Show when={props.item.media_type === "video"}>
@@ -1020,6 +1113,15 @@ export function Reader(props: ReaderProps) {
           </button>
         </div>
       </nav>
+      <Show when={lightbox()}>
+        {(state) => (
+          <Lightbox
+            images={state().images}
+            initialIndex={state().index}
+            onClose={() => setLightbox(undefined)}
+          />
+        )}
+      </Show>
       <Portal>
         <Show when={sheetOpen()}>
           <div

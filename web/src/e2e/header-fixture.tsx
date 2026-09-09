@@ -1,11 +1,12 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The fixture mirrors the required button-based radio controls.
-import { createSignal, For } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { render } from "solid-js/web";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
 import { ITEM_VIEWS } from "../item-view";
 import { createMediaQuery } from "../media-query";
 import type { Item } from "../types";
+import { pushOverlay } from "../ui/overlay-history";
 import { Reader } from "../ui/Reader";
 import "../styles.css";
 
@@ -133,6 +134,8 @@ function GridHeaderFixture() {
 }
 
 function ReaderFixture() {
+  const [open, setOpen] = createSignal(true);
+  if (parameters.has("lightbox")) pushOverlay("reader", () => setOpen(false));
   const media = parameters.get("media");
   const mediaItem = (index: number): Item => ({
     ...item,
@@ -144,44 +147,63 @@ function ReaderFixture() {
     media_variants: [
       { url: `/e2e/reader-media/${index}-320.svg`, width: 320, height: 180 },
       { url: `/e2e/reader-media/${index}-768.svg`, width: 768, height: 432 },
+      ...(parameters.has("lightbox")
+        ? [
+            {
+              url: `/e2e/reader-media/${index}-2000.svg`,
+              width: 2000,
+              height: 1125,
+            },
+          ]
+        : []),
     ],
     media_w: 640,
     media_h: 360,
   });
   const [readerItem, setReaderItem] = createSignal(media ? mediaItem(0) : item);
   return (
-    <Reader
-      item={readerItem()}
-      active={true}
-      archive={false}
-      hearted={readerItem().hearted}
-      linkActionActive={false}
-      canPrevious={true}
-      canNext={true}
-      closing={false}
-      onClose={() => undefined}
-      onReveal={() => undefined}
-      onHome={() => undefined}
-      onPrevious={() => undefined}
-      onNext={() => {
-        if (media) setReaderItem(mediaItem(1));
-      }}
-      onSignal={(signal) =>
-        setReaderItem((current) => ({ ...current, signal }))
-      }
-      onHeart={() =>
-        setReaderItem((current) => ({
-          ...current,
-          hearted: !current.hearted,
-        }))
-      }
-      onCopy={() => undefined}
-      onOriginal={() => undefined}
-      onRelated={() => undefined}
-      onApplyFeed={() => undefined}
-      onRetry={() => undefined}
-      onDwell={() => undefined}
-    />
+    <Show when={open()}>
+      <Reader
+        item={readerItem()}
+        active={true}
+        archive={false}
+        hearted={readerItem().hearted}
+        linkActionActive={false}
+        canPrevious={true}
+        canNext={true}
+        closing={false}
+        onClose={() => {
+          if (parameters.has("lightbox")) setOpen(false);
+        }}
+        onReveal={() => undefined}
+        onHome={() => undefined}
+        onPrevious={() => undefined}
+        onNext={() => {
+          if (media) setReaderItem(mediaItem(1));
+          else if (parameters.has("lightbox"))
+            setReaderItem({
+              ...item,
+              item_id: "next-reader-fixture",
+              title: "Next fixture article",
+            });
+        }}
+        onSignal={(signal) =>
+          setReaderItem((current) => ({ ...current, signal }))
+        }
+        onHeart={() =>
+          setReaderItem((current) => ({
+            ...current,
+            hearted: !current.hearted,
+          }))
+        }
+        onCopy={() => undefined}
+        onOriginal={() => undefined}
+        onRelated={() => undefined}
+        onApplyFeed={() => undefined}
+        onRetry={() => undefined}
+        onDwell={() => undefined}
+      />
+    </Show>
   );
 }
 

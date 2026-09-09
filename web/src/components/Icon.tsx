@@ -11,6 +11,7 @@ import ChevronUp from "lucide-solid/icons/chevron-up";
 import Clock from "lucide-solid/icons/clock";
 import Download from "lucide-solid/icons/download";
 import Ellipsis from "lucide-solid/icons/ellipsis";
+import Expand from "lucide-solid/icons/expand";
 import ExternalLink from "lucide-solid/icons/external-link";
 import Heart from "lucide-solid/icons/heart";
 import ImageIcon from "lucide-solid/icons/image";
@@ -33,6 +34,8 @@ import Trash2 from "lucide-solid/icons/trash-2";
 import Unplug from "lucide-solid/icons/unplug";
 import Upload from "lucide-solid/icons/upload";
 import X from "lucide-solid/icons/x";
+import ZoomIn from "lucide-solid/icons/zoom-in";
+import ZoomOut from "lucide-solid/icons/zoom-out";
 import { type JSX, splitProps } from "solid-js";
 import { Dynamic } from "solid-js/web";
 
@@ -68,6 +71,9 @@ function SemaRows(props: SemaRowsProps) {
 }
 
 const glyphs = {
+  "zoom-in": ZoomIn,
+  "zoom-out": ZoomOut,
+  expand: Expand,
   "add-feed": Plus,
   archive: Archive,
   "back-to-grid": ArrowLeft,

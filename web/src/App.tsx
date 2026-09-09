@@ -720,6 +720,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     };
     const clearGoOnFocus = () => clearGo();
     const onKeyDown = (event: KeyboardEvent) => {
+      // A reader lightbox owns its key card and suspends global view shortcuts.
+      if (document.querySelector(".lb-overlay")) return;
       if (event.defaultPrevented || event.isComposing) return;
       const target = event.target;
       const editing =

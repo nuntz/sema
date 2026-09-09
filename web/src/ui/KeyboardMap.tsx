@@ -1,6 +1,11 @@
 import { For, onCleanup, onMount } from "solid-js";
+import { lightboxBindings } from "./lightbox-keys";
 
 const groups = [
+  {
+    title: "Lightbox",
+    bindings: lightboxBindings,
+  },
   {
     title: "Navigation",
     bindings: [
@@ -106,7 +111,8 @@ export function KeyboardMap(props: {
         </header>
         <p class="keys-note">
           Press sequences one key at a time: g → t means g, then t. Shortcuts
-          pause while typing.
+          pause while typing. Reader keys are suspended while the lightbox is
+          open.
         </p>
         <label class="keys-preference">
           <input
