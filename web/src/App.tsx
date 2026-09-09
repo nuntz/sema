@@ -356,7 +356,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       let page: ItemsResponse;
       let nextStories: Story[] = [];
       if (nextMode === "archive") {
-        page = await api.archive();
+        page = await api.archive("", nextScope);
       } else if (requestOrder === "interest") {
         const [storyPage, itemPage] = await Promise.all([
           api.stories(nextScope, includeRead, fetchWindow),
@@ -428,7 +428,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     try {
       const page =
         mode() === "archive"
-          ? await api.archive(nextCursor)
+          ? await api.archive(nextCursor, scope())
           : await api.items(
               gridOrder(),
               nextCursor,
@@ -1427,7 +1427,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const applyTag = async (tag: string) => {
     const nextScope: GridScope = tag ? { kind: "tag", value: tag } : null;
-    if (mode() === "archive" || sameGridScope(scope(), nextScope)) return;
+    if (sameGridScope(scope(), nextScope)) return;
     await flushRead();
     setScope(nextScope);
     closeReader();
@@ -1441,14 +1441,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         : current,
     );
     api.patchMe({ tag_pref: tag }).catch(handleError);
-    await reload(order(), unreadOnly(), "live", nextScope);
+    await reload(order(), unreadOnly(), mode(), nextScope);
   };
 
   const applyFeed = async (feedID: string) => {
     const nextScope: GridScope = feedID
       ? { kind: "feed", value: feedID }
       : null;
-    if (mode() === "archive" || sameGridScope(scope(), nextScope)) return;
+    if (sameGridScope(scope(), nextScope)) return;
     await flushRead();
     setScope(nextScope);
     closeReader();
@@ -1462,7 +1462,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         : current,
     );
     api.patchMe({ feed_pref: feedID }).catch(handleError);
-    await reload(order(), unreadOnly(), "live", nextScope);
+    await reload(order(), unreadOnly(), mode(), nextScope);
   };
 
   const applyScope = (nextScope: GridScope) => {
@@ -2073,14 +2073,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               Boolean(readAnchor())
             }
             fallback={
-              mode() === "archive" ? (
-                <ArchiveEmpty />
-              ) : scope() ? (
+              scope() ? (
                 <FilteredEmpty
                   scope={scope()}
+                  archive={mode() === "archive"}
                   feedTitle={activeFeedTitle()}
                   onClear={() => void applyScope(null)}
                 />
+              ) : mode() === "archive" ? (
+                <ArchiveEmpty />
               ) : (
                 <ColdStart onImport={openFeedsAndSettings} />
               )
@@ -2404,6 +2405,7 @@ function ArchiveEmpty() {
 
 function FilteredEmpty(props: {
   scope: GridScope;
+  archive: boolean;
   feedTitle: string;
   onClear(): void;
 }) {
@@ -2412,7 +2414,11 @@ function FilteredEmpty(props: {
   return (
     <section class="archive-empty">
       <h1>No items in {label()}</h1>
-      <p>This filter has no visible items in the current seven-day window.</p>
+      <p>
+        {props.archive
+          ? "No archived items match this filter."
+          : "This filter has no visible items in the current seven-day window."}
+      </p>
       <button type="button" class="original-cta" onClick={props.onClear}>
         Show all feeds
       </button>

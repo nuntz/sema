@@ -350,3 +350,59 @@ test("disabling character shortcuts persists and keeps native navigation availab
     page.getByRole("radio", { name: "Yesterday", exact: true }),
   ).toBeChecked();
 });
+
+test("archive preserves tag filtering and allows clearing and changing scopes", async ({
+  page,
+}) => {
+  await openGrid(page);
+  await page.route("**/api/feeds", (route) =>
+    route.fulfill({
+      json: {
+        feeds: [
+          {
+            feed_id: "daily",
+            title: "Daily",
+            url: "https://example.com/feed",
+            tags: ["tech", "empty"],
+          },
+        ],
+      },
+    }),
+  );
+  const requests: URL[] = [];
+  await page.route("**/api/archive?*", (route) => {
+    const url = new URL(route.request().url());
+    requests.push(url);
+    const tag = url.searchParams.get("tag");
+    const items =
+      tag === "empty"
+        ? []
+        : [makeItem("Kept tech", "2026-09-01T00:00:00Z", true)];
+    if (!tag) items.push(makeItem("Kept other", "2026-09-01T00:00:00Z", true));
+    return route.fulfill({ json: { items, next_cursor: "" } });
+  });
+  await page.reload();
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.keyboard.press("#");
+  await page.getByRole("option", { name: /^tech/ }).click();
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await expect(page.locator('[data-item-id="Kept tech"]')).toBeVisible();
+  expect(requests.at(-1)?.searchParams.get("tag")).toBe("tech");
+  await expect(page.locator('[data-item-id="Kept other"]')).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Clear tag filter: #tech", exact: true })
+    .click();
+  await expect(page.locator('[data-item-id="Kept other"]')).toBeVisible();
+  expect(requests.at(-1)?.searchParams.has("tag")).toBe(false);
+  await page.keyboard.press("#");
+  await page.getByRole("option", { name: /^empty/ }).click();
+  await expect(
+    page.getByText("No archived items match this filter."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Show all feeds" }).click();
+  await expect(page.locator('[data-item-id="Kept other"]')).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Archive", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.screenshot({ path: "/tmp/sema-archive-filter-cleared.png" });
+});

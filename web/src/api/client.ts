@@ -137,9 +137,15 @@ export class APIClient {
     );
   }
 
-  archive(cursor = ""): Promise<ItemsResponse> {
+  archive(cursor = "", scope: GridScope = null): Promise<ItemsResponse> {
     const params = new URLSearchParams({ limit: "100" });
     if (cursor) params.set("cursor", cursor);
+    if (scope?.kind === "tag")
+      params.set(
+        "tag",
+        scope.value === "untagged" ? "__untagged" : scope.value,
+      );
+    if (scope?.kind === "feed") params.set("feed", scope.value);
     return this.request(`/archive?${params}`);
   }
 

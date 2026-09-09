@@ -372,6 +372,9 @@ func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 		{name: "stories", get: func() events.APIGatewayV2HTTPResponse {
 			return server.getStories(context.Background(), "user", query)
 		}},
+		{name: "archive", get: func() events.APIGatewayV2HTTPResponse {
+			return server.getArchive(context.Background(), "user", query)
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got := test.get()

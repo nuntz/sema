@@ -801,12 +801,40 @@ func (s *server) loadRankingModel(ctx context.Context, userID string) (domain.Mo
 
 func (s *server) getArchive(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
 	limit, _ := strconv.Atoi(query["limit"])
-	items, next, err := s.store.Archives(ctx, userID, query["cursor"], limit)
-	if err != nil {
-		if errors.Is(err, store.ErrInvalidCursor) {
-			return badRequest(err)
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+	filtered := query["tag"] != "" || query["feed"] != ""
+	var allowed map[string]bool
+	if filtered {
+		var err error
+		allowed, err = s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
+		if err != nil {
+			if errors.Is(err, errInvalidFeedTag) {
+				return badRequest(err)
+			}
+			return s.failure("load feeds for archive filtering", err)
 		}
-		return s.failure("list archive", err)
+	}
+	items := []domain.Item{}
+	next := query["cursor"]
+	for {
+		page, cursor, err := s.store.Archives(ctx, userID, next, limit-len(items))
+		if err != nil {
+			if errors.Is(err, store.ErrInvalidCursor) {
+				return badRequest(err)
+			}
+			return s.failure("list archive", err)
+		}
+		for _, item := range page {
+			if !filtered || allowed[item.FeedID] {
+				items = append(items, item)
+			}
+		}
+		next = cursor
+		if !filtered || next == "" || len(items) >= limit {
+			break
+		}
 	}
 	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
 		return s.failure("apply archive feed presentation", err)

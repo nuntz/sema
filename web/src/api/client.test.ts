@@ -271,3 +271,26 @@ describe("session authentication", () => {
     expect(request).not.toHaveBeenCalled();
   });
 });
+
+describe("archive filters", () => {
+  it("sends tag and feed scopes on initial and subsequent pages", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL) =>
+        new Response(JSON.stringify({ items: [] })),
+    );
+    vi.stubGlobal("fetch", request);
+    const client = new APIClient();
+    await client.archive("", { kind: "tag", value: "tech" });
+    await client.archive("next-page", { kind: "tag", value: "tech" });
+    await client.archive("", { kind: "tag", value: "untagged" });
+    await client.archive("", { kind: "feed", value: "daily" });
+    await client.archive();
+    expect(request.mock.calls.map((call) => call[0])).toEqual([
+      "/api/archive?limit=100&tag=tech",
+      "/api/archive?limit=100&cursor=next-page&tag=tech",
+      "/api/archive?limit=100&tag=__untagged",
+      "/api/archive?limit=100&feed=daily",
+      "/api/archive?limit=100",
+    ]);
+  });
+});
