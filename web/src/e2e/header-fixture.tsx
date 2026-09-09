@@ -143,14 +143,22 @@ function ReaderFixture() {
     title: `Reader media item ${index}`,
     summary: `Summary for reader media item ${index}.`,
     media_type: media === "video" ? "video" : "image",
-    media_url: `/e2e/reader-media/${index}.svg`,
+    media_url: `/media/e2e/reader-media/${index}.svg`,
     media_variants: [
-      { url: `/e2e/reader-media/${index}-320.svg`, width: 320, height: 180 },
-      { url: `/e2e/reader-media/${index}-768.svg`, width: 768, height: 432 },
+      {
+        url: `/media/e2e/reader-media/${index}-320.svg`,
+        width: 320,
+        height: 180,
+      },
+      {
+        url: `/media/e2e/reader-media/${index}-768.svg`,
+        width: 768,
+        height: 432,
+      },
       ...(parameters.has("lightbox")
         ? [
             {
-              url: `/e2e/reader-media/${index}-2000.svg`,
+              url: `/media/e2e/reader-media/${index}-2000.svg`,
               width: 2000,
               height: 1125,
             },

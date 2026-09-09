@@ -445,16 +445,29 @@ export function Reader(props: ReaderProps) {
         element.classList.add("lb-openable");
         element.tabIndex = 0;
         const open = () => setLightbox({ images, index });
+        const click = (event: MouseEvent) => {
+          if (
+            event.button !== 0 ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            event.altKey
+          )
+            return;
+          event.preventDefault();
+          event.stopPropagation();
+          open();
+        };
         const key = (event: KeyboardEvent) => {
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
           open();
         };
-        wrapper.addEventListener("click", open);
+        wrapper.addEventListener("click", click);
         element.addEventListener("keydown", key);
         return () => {
           disposePill();
-          wrapper.removeEventListener("click", open);
+          wrapper.removeEventListener("click", click);
           element.removeEventListener("keydown", key);
           element.classList.remove("lb-openable");
           if (previousTab === null) element.removeAttribute("tabindex");

@@ -4,7 +4,21 @@ import solid from "vite-plugin-solid";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   return {
-    plugins: [solid()],
+    plugins: [
+      solid(),
+      {
+        name: "reader-media-fixtures",
+        apply: "serve",
+        configureServer(server) {
+          server.middlewares.use((request, _response, next) => {
+            if (request.url?.startsWith("/media/e2e/")) {
+              request.url = request.url.slice("/media".length);
+            }
+            next();
+          });
+        },
+      },
+    ],
     server: {
       proxy: { "/api": env.SEMA_API_ORIGIN || "http://localhost:8787" },
     },

@@ -227,7 +227,7 @@ test("single-image reduced-motion view omits navigation and returns focus", asyn
   await page.route("**/reader-body.html", (route) =>
     route.fulfill({
       contentType: "text/html",
-      body: '<img src="/e2e/lightbox-images/1.svg" width="1600" height="1000" alt="Only image">',
+      body: '<img src="/media/e2e/lightbox-images/1.svg" width="1600" height="1000" alt="Only image">',
     }),
   );
   await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
@@ -250,7 +250,7 @@ test("filmstrip keeps the selection visible and survives phone chrome idle", asy
       body: Array.from(
         { length: 12 },
         (_, index) =>
-          `<img src="/e2e/lightbox-images/1.svg?image=${index}" width="1600" height="1000" alt="Image ${index + 1}">`,
+          `<img src="/media/e2e/lightbox-images/1.svg?image=${index}" width="1600" height="1000" alt="Image ${index + 1}">`,
       ).join(""),
     }),
   );
@@ -283,7 +283,7 @@ test("unloaded body images remain reachable from the first image", async ({
   await page.route("**/reader-body.html", (route) =>
     route.fulfill({
       contentType: "text/html",
-      body: '<img src="/e2e/lightbox-images/1.svg" width="1600" height="1000" alt="First"><p>Later image, still loading:</p><img src="/e2e/lightbox-images/2.svg" alt="Later">',
+      body: '<img src="/media/e2e/lightbox-images/1.svg" width="1600" height="1000" alt="First"><p>Later image, still loading:</p><img src="/media/e2e/lightbox-images/2.svg" alt="Later">',
     }),
   );
   await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1", {
@@ -315,4 +315,93 @@ test("unloaded body images remain reachable from the first image", async ({
         .evaluate((image) => (image as HTMLImageElement).naturalWidth),
     )
     .toBeGreaterThan(0);
+});
+
+for (const width of [1280, 390]) {
+  test(`linked cached image opens without navigation at ${width}px`, async ({
+    page,
+    context,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.route("**/reader-body.html", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: '<a href="https://publisher.example/original.JPG?1788861996" target="_blank" rel="noopener noreferrer"><img src="/media/e2e/lightbox-images/1.svg" width="1600" height="1000" alt="Linked image"></a>',
+      }),
+    );
+    await context.route("https://publisher.example/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "Original image destination",
+      }),
+    );
+    await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+    const image = page.locator(".article-body img");
+    await expect(image).toHaveClass("lb-openable");
+    const popups: unknown[] = [];
+    page.on("popup", (popup) => popups.push(popup));
+    const pagesBefore = context.pages().length;
+    await image.click();
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    await expect(page.locator(".lb-image")).toHaveAttribute(
+      "src",
+      /\/media\/e2e\/lightbox-images\/1.svg$/,
+    );
+    // Give any default anchor navigation time to create its target before asserting.
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".lb-overlay")).toHaveCount(0);
+    expect(popups).toHaveLength(0);
+    expect(context.pages()).toHaveLength(pagesBefore);
+    await expect(image).toBeFocused();
+    for (const key of ["Enter", "Space"]) {
+      await image.press(key);
+      await expect(page.locator(".lb-overlay")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".lb-overlay")).toHaveCount(0);
+    }
+    expect(popups).toHaveLength(0);
+    const popupPromise = context.waitForEvent("page");
+    await image.click({ modifiers: ["ControlOrMeta"] });
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL(
+      "https://publisher.example/original.JPG?1788861996",
+    );
+    await expect(page.locator(".lb-overlay")).toHaveCount(0);
+    await popup.close();
+    const middlePromise = context.waitForEvent("page");
+    await image.click({ button: "middle" });
+    const middle = await middlePromise;
+    await expect(middle).toHaveURL(
+      "https://publisher.example/original.JPG?1788861996",
+    );
+    await expect(page.locator(".lb-overlay")).toHaveCount(0);
+  });
+}
+
+test("page links, mixed-content links and media cards retain native navigation", async ({
+  page,
+  context,
+}) => {
+  await page.route("**/reader-body.html", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: '<a href="https://publisher.example/article.html" target="_blank"><img src="/media/e2e/lightbox-images/1.svg" width="1600" height="1000" alt="Page link"></a><a href="https://publisher.example/photo.jpg">Read more<img src="/media/e2e/lightbox-images/2.svg" width="1600" height="1000"></a><a class="media-card" href="https://publisher.example/photo.jpg"><img src="/media/e2e/lightbox-images/3.svg" width="1600" height="1000"></a>',
+    }),
+  );
+  await context.route("https://publisher.example/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "Article destination" }),
+  );
+  await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+  const images = page.locator(".article-body img");
+  await expect(images).toHaveCount(3);
+  await expect(
+    page.locator(".lb-openable, .lb-inline, .lb-hover-pill"),
+  ).toHaveCount(0);
+  for (const image of await images.all())
+    await expect(image).not.toHaveAttribute("tabindex");
+  const popupPromise = context.waitForEvent("page");
+  await images.first().click();
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL("https://publisher.example/article.html");
+  await expect(page.locator(".lb-overlay")).toHaveCount(0);
 });

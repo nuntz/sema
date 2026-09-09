@@ -13,7 +13,7 @@ for (const { media, width } of [
     const pendingImage = new Promise<void>((resolve) => {
       releaseImage = resolve;
     });
-    await page.route("**/e2e/reader-media/*.svg", async (route) => {
+    await page.route("**/media/e2e/reader-media/*.svg", async (route) => {
       const next = new URL(route.request().url()).pathname.includes("/1");
       if (next) await pendingImage;
       await route.fulfill({
@@ -55,7 +55,10 @@ for (const { media, width } of [
       ).toBe(false);
       expect(await previousImage.getAttribute("src")).toBeNull();
       expect(await previousImage.getAttribute("srcset")).toBeNull();
-      await expect(image).toHaveAttribute("src", "/e2e/reader-media/1.svg");
+      await expect(image).toHaveAttribute(
+        "src",
+        "/media/e2e/reader-media/1.svg",
+      );
       expect(
         await image.evaluate(
           (element: HTMLImageElement) => element.naturalWidth,
@@ -80,7 +83,7 @@ for (const { media, width } of [
         .toBe(true);
       expect(
         await image.evaluate((element: HTMLImageElement) => element.currentSrc),
-      ).toContain("/e2e/reader-media/1-");
+      ).toContain("/media/e2e/reader-media/1-");
     } finally {
       releaseImage();
     }

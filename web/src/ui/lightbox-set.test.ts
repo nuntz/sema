@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildLightboxSet,
   fittedRect,
@@ -6,8 +6,24 @@ import {
   originalSource,
 } from "./lightbox-set";
 
+beforeEach(() => {
+  vi.stubGlobal("document", {
+    baseURI: "https://sema.test/reader",
+    location: { origin: "https://sema.test" },
+  });
+});
+afterEach(() => vi.unstubAllGlobals());
+
+function elementNode(selector: string, childNodes: unknown[] = []) {
+  return {
+    nodeType: 1,
+    childNodes,
+    matches: (selectors: string) => selectors.split(", ").includes(selector),
+  };
+}
+
 function member(
-  src = "https://example.com/a.jpg",
+  src = "https://sema.test/media/a.jpg",
   options: {
     width?: number;
     height?: number;
@@ -16,8 +32,37 @@ function member(
     caption?: string;
     naturalWidth?: number;
     naturalHeight?: number;
+    anchor?: {
+      href: string;
+      imageOnly?: boolean;
+      descendant?: string;
+      injected?: boolean;
+    };
   } = {},
 ): LightboxImage {
+  const link = options.anchor;
+  const imageNode = elementNode("img");
+  const anchor = link
+    ? {
+        getAttribute: () => link.href,
+        childNodes: [
+          link.injected
+            ? elementNode("span.lb-inline", [
+                imageNode,
+                elementNode("span.lb-hover-pill", [
+                  elementNode("svg"),
+                  { nodeType: 3, textContent: "1 / 3" },
+                ]),
+              ])
+            : imageNode,
+          {
+            nodeType: 3,
+            textContent: link.imageOnly === false ? "Go to image" : " \n ",
+          },
+          ...(link.descendant ? [elementNode(link.descendant)] : []),
+        ],
+      }
+    : null;
   const element = {
     src,
     alt: "Description",
@@ -36,9 +81,11 @@ function member(
               textContent: options.caption ?? " Caption ",
             }),
           }
-        : options.excluded
-          ? {}
-          : null,
+        : selector === "a"
+          ? anchor
+          : options.excluded
+            ? {}
+            : null,
   } as unknown as HTMLImageElement;
   return {
     element,
@@ -55,15 +102,87 @@ const body = (...images: LightboxImage[]) =>
   }) as unknown as ParentNode;
 
 describe("lightbox set", () => {
+  it("keeps same-origin cached images, including relative sources", () => {
+    expect(buildLightboxSet(body(member("/media/body-0.webp")))[0].src).toBe(
+      "https://sema.test/media/body-0.webp",
+    );
+    expect(buildLightboxSet(body(member()))).toHaveLength(1);
+  });
+  it("keeps image-only links to image-file pathnames without changing the cached source", () => {
+    for (const href of [
+      "https://cdnb.artstation.com/artwork.JPG?1788861996",
+      "/original.jpeg",
+      "/original.png#view",
+      "/original.gif",
+      "/original.webp",
+      "/original.avif",
+      "/original.SVG",
+    ]) {
+      const image = member(undefined, { anchor: { href } });
+      const result = buildLightboxSet(body(image));
+      expect(result).toHaveLength(1);
+      expect(result[0].src).toBe(image.src);
+      expect(originalSource(result[0])).toBe(image.src);
+    }
+  });
+  it("rejects page links, text links, unsupported descendants, and malformed hrefs", () => {
+    for (const anchor of [
+      { href: "https://www.artstation.com/artwork/zzPkW2" },
+      { href: "/page.html?image=photo.jpg" },
+      { href: "/image.jpg", imageOnly: false },
+      { href: "/image.jpg", descendant: "button" },
+      { href: "/image.jpg", descendant: "span" },
+      { href: "http://[invalid/image.jpg" },
+    ])
+      expect(buildLightboxSet(body(member(undefined, { anchor })))).toEqual([]);
+  });
+  it("allows picture/source and reader-injected wrappers and pills during rebuilds", () => {
+    for (const descendant of ["picture", "source"])
+      expect(
+        buildLightboxSet(
+          body(
+            member(undefined, {
+              anchor: { href: "/image.jpg", injected: true, descendant },
+            }),
+          ),
+        ),
+      ).toHaveLength(1);
+  });
+  it("rejects hotlinked images whether linked or unlinked, and local non-media paths", () => {
+    for (const src of [
+      "https://cdn.example/photo.jpg",
+      "https://cdn.example/media/photo.jpg",
+      "https://sema.test/other/photo.jpg",
+      "https://sema.test/media-other/photo.jpg",
+    ]) {
+      expect(buildLightboxSet(body(member(src)))).toEqual([]);
+      expect(
+        buildLightboxSet(
+          body(
+            member(src, { anchor: { href: "https://cdn.example/photo.jpg" } }),
+          ),
+        ),
+      ).toEqual([]);
+    }
+  });
+  it("still excludes media-card anchors with image-file links", () => {
+    expect(
+      buildLightboxSet(
+        body(
+          member(undefined, { excluded: true, anchor: { href: "/image.jpg" } }),
+        ),
+      ),
+    ).toEqual([]);
+  });
   it("keeps lead then body order, captions and variants", () => {
     const lead = {
-      ...member("https://example.com/lead.jpg"),
+      ...member("https://sema.test/media/lead.jpg"),
       variants: [
-        { url: "https://example.com/full.jpg", width: 2000, height: 1000 },
+        { url: "https://sema.test/media/full.jpg", width: 2000, height: 1000 },
       ],
     };
     const first = member();
-    const second = member("https://example.com/b.jpg");
+    const second = member("https://sema.test/media/b.jpg");
     const result = buildLightboxSet(body(first, second), lead);
     expect(result.map((image) => image.src)).toEqual([
       lead.src,
@@ -77,13 +196,13 @@ describe("lightbox set", () => {
     const lead = member();
     expect(buildLightboxSet(body(member(), member()), lead)).toEqual([lead]);
   });
-  it("excludes linked/media images, small declared or rendered images and non-http sources", () => {
+  it("excludes media images, small declared or rendered images and non-cached sources", () => {
     expect(
       buildLightboxSet(
         body(
-          member("https://example.com/link", { excluded: true }),
-          member("https://example.com/small", { width: 199, height: 10 }),
-          member("https://example.com/rendered", { rendered: 199 }),
+          member("https://sema.test/media/link", { excluded: true }),
+          member("https://sema.test/media/small", { width: 199, height: 10 }),
+          member("https://sema.test/media/rendered", { rendered: 199 }),
           member("data:image/png;base64,abc"),
           member("javascript:alert(1)"),
         ),
@@ -91,12 +210,12 @@ describe("lightbox set", () => {
     ).toEqual([]);
     expect(
       buildLightboxSet(
-        body(member("https://example.com/boundary", { width: 200 })),
+        body(member("https://sema.test/media/boundary", { width: 200 })),
       ),
     ).toHaveLength(1);
   });
   it("keeps images whose unloaded inline placeholder is smaller than 200px", () => {
-    const image = member("https://example.com/later.jpg", {
+    const image = member("https://sema.test/media/later.jpg", {
       rendered: 32,
       naturalWidth: 0,
       naturalHeight: 0,
@@ -123,7 +242,7 @@ describe("lightbox set", () => {
 describe("fixed image geometry", () => {
   it("fits the lead from stored dimensions and picks the largest variant", () => {
     const lead = {
-      ...member("https://example.com/a", { width: 2400, height: 1200 }),
+      ...member("https://sema.test/media/a", { width: 2400, height: 1200 }),
       variants: [
         { url: "large", width: 2400, height: 1200 },
         { url: "small", width: 640, height: 320 },
