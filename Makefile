@@ -7,7 +7,7 @@ GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
 STACK ?= dev
 AWS_REGION ?= us-east-1
 
-.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
+.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
 all: test build
 
@@ -52,6 +52,9 @@ redrive:
 
 backfill-image-signals:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) IMAGE_MODEL_VERSION=$$(cd infra && pulumi stack output imageModelVersion --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-image-signals $(BACKFILL_ARGS)
+
+backfill-archive-identities:
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-archive-identities $(BACKFILL_ARGS)
 
 backfill-item-identities:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-item-identities $(BACKFILL_ARGS)

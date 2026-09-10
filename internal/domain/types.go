@@ -260,13 +260,15 @@ type Read struct {
 	TTL    int64  `dynamodbav:"ttl"`
 }
 
-// ItemIdentity makes item_id, rather than the timestamp-bearing live-item key,
-// the uniqueness boundary for the rolling window.
+// ItemIdentity is the stable lookup for live and archived items. Archive
+// identities never expire; LiveSK/LiveTTL preserve live-first resolution.
 type ItemIdentity struct {
-	PK     string `dynamodbav:"PK"`
-	SK     string `dynamodbav:"SK"`
-	ItemSK string `dynamodbav:"item_sk,omitempty"`
-	TTL    int64  `dynamodbav:"ttl"`
+	PK      string `dynamodbav:"PK"`
+	SK      string `dynamodbav:"SK"`
+	ItemSK  string `dynamodbav:"item_sk,omitempty"`
+	TTL     int64  `dynamodbav:"ttl,omitempty"`
+	LiveSK  string `dynamodbav:"live_sk,omitempty"`
+	LiveTTL int64  `dynamodbav:"live_ttl,omitempty"`
 }
 
 type ItemVector struct {

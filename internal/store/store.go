@@ -497,6 +497,13 @@ func (s *Store) ReconcileItemIdentity(ctx context.Context, userID string, canoni
 			ConditionExpression: aws.String("item_id = :item_id"), ExpressionAttributeValues: values,
 		}})
 	}
+	if archiveSK != "" {
+		permanent, err := attributevalue.MarshalMap(archiveIdentity(userID, archiveSK, canonical))
+		if err != nil {
+			return err
+		}
+		writes[0].Put.Item = permanent
+	}
 	if len(writes) > 100 {
 		return fmt.Errorf("item %s has too many duplicate rows to reconcile atomically", canonical.ItemID)
 	}
@@ -1143,7 +1150,7 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 
 // ResolveItemIDs returns currently searchable rows in the requested order.
 // Live rows win while they exist; once their TTL passes, the permanent archive
-// copy becomes the resolution target when its archive_sk pointer is available.
+// copy resolves through its permanent identity or a legacy archive_sk pointer.
 // Missing identities and deleted pointers are absent; this path never scans
 // live or archive partitions to recover legacy rows.
 func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
@@ -1232,11 +1239,20 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 	}
 
 	now := time.Now().Unix()
+	archivePointers := make(map[string]string)
 	liveKeys := make([]map[string]types.AttributeValue, 0, len(identities))
 	for _, id := range ids {
 		identity, ok := identities[id]
 		if !ok {
 			continue
+		}
+		if strings.HasPrefix(identity.ItemSK, "A#") {
+			archivePointers[id] = identity.ItemSK
+			identity.ItemSK, identity.TTL = identity.LiveSK, identity.LiveTTL
+			identities[id] = identity
+			if identity.TTL <= now {
+				continue
+			}
 		}
 		if strings.HasPrefix(identity.ItemSK, "I#") {
 			liveKeys = append(liveKeys, key(pk, identity.ItemSK))
@@ -1247,7 +1263,6 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 		return nil, nil, err
 	}
 	live := make(map[string]domain.Item, len(liveRows))
-	archiveKeys := make([]map[string]types.AttributeValue, 0)
 	for _, row := range liveRows {
 		var item domain.Item
 		if err := attributevalue.UnmarshalMap(row, &item); err != nil {
@@ -1258,8 +1273,14 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 			if identity.TTL > now && item.TTL > now {
 				live[item.ItemID] = item
 			} else if strings.HasPrefix(item.ArchiveSK, "A#") {
-				archiveKeys = append(archiveKeys, key(pk, item.ArchiveSK))
+				archivePointers[item.ItemID] = item.ArchiveSK
 			}
+		}
+	}
+	archiveKeys := make([]map[string]types.AttributeValue, 0, len(archivePointers))
+	for id, archiveSK := range archivePointers {
+		if _, ok := live[id]; !ok {
+			archiveKeys = append(archiveKeys, key(pk, archiveSK))
 		}
 	}
 	return live, archiveKeys, nil
@@ -1508,6 +1529,9 @@ func (s *Store) item(ctx context.Context, userID, itemID string, allowLegacy boo
 	if err := attributevalue.UnmarshalMap(response.Item, &identity); err != nil {
 		return domain.Item{}, err
 	}
+	if strings.HasPrefix(identity.ItemSK, "A#") {
+		identity.ItemSK, identity.TTL = identity.LiveSK, identity.LiveTTL
+	}
 	if identity.TTL <= now || !strings.HasPrefix(identity.ItemSK, "I#") {
 		return domain.Item{}, ErrNotFound
 	}
@@ -1729,6 +1753,19 @@ func (s *Store) ArchiveItem(ctx context.Context, userID, itemID string) (domain.
 			return archive, archiveErr
 		}
 	}
+	identityRow, identityErr := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)), ConsistentRead: aws.Bool(true),
+	})
+	if identityErr != nil {
+		return domain.Item{}, identityErr
+	}
+	var identity domain.ItemIdentity
+	if err := attributevalue.UnmarshalMap(identityRow.Item, &identity); err != nil {
+		return domain.Item{}, err
+	}
+	if strings.HasPrefix(identity.ItemSK, "A#") {
+		return s.archiveItemBySK(ctx, userID, identity.ItemSK)
+	}
 	return s.scanArchiveItem(ctx, userID, itemID)
 }
 
@@ -1797,6 +1834,14 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		return s.removeHeart(ctx, userID, itemID)
 	}
 	item, err := s.Item(ctx, userID, itemID)
+	if errors.Is(err, ErrNotFound) {
+		archive, archiveErr := s.ArchiveItem(ctx, userID, itemID)
+		if archiveErr == nil {
+			count, countErr := s.heartCount(ctx, userID)
+			return archive.SK, count, countErr
+		}
+		return "", 0, archiveErr
+	}
 	if err != nil {
 		return "", 0, err
 	}
@@ -1885,7 +1930,12 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		":archive": &types.AttributeValueMemberS{Value: archiveSK},
 		":one":     &types.AttributeValueMemberN{Value: "1"},
 	}
+	identity, err := attributevalue.MarshalMap(archiveIdentity(userID, archiveSK, item))
+	if err != nil {
+		return "", 0, err
+	}
 	stateWrites := []types.TransactWriteItem{
+		{Put: &types.Put{TableName: aws.String(s.table), Item: identity}},
 		{Put: &types.Put{TableName: aws.String(s.table), Item: encodedArchive, ConditionExpression: aws.String("attribute_not_exists(SK)")}},
 		{Update: &types.Update{
 			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), item.SK),
@@ -1937,6 +1987,9 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 
 func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string, int, error) {
 	item, itemErr := s.Item(ctx, userID, itemID)
+	if itemErr != nil && !errors.Is(itemErr, ErrNotFound) {
+		return "", 0, itemErr
+	}
 	var archive domain.Item
 	var err error
 	if itemErr == nil && item.ArchiveSK != "" {
@@ -1965,6 +2018,27 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 			UpdateExpression:          aws.String("REMOVE archive_sk, hearted"),
 			ConditionExpression:       aws.String("archive_sk = :archive"),
 			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": &types.AttributeValueMemberS{Value: archive.SK}},
+		}})
+	}
+	identityValues := map[string]types.AttributeValue{":archive": &types.AttributeValueMemberS{Value: archive.SK}}
+	identityCondition := "attribute_not_exists(SK) OR item_sk = :archive"
+	if itemErr == nil {
+		identityValues[":live"] = &types.AttributeValueMemberS{Value: item.SK}
+		identityCondition += " OR item_sk = :live"
+		identity, marshalErr := attributevalue.MarshalMap(domain.ItemIdentity{
+			PK: domain.UserPK(userID), SK: domain.ItemIdentitySK(itemID), ItemSK: item.SK, TTL: item.TTL,
+		})
+		if marshalErr != nil {
+			return "", 0, marshalErr
+		}
+		baseWrites = append(baseWrites, types.TransactWriteItem{Put: &types.Put{
+			TableName: aws.String(s.table), Item: identity, ConditionExpression: aws.String(identityCondition), ExpressionAttributeValues: identityValues,
+		}})
+	} else {
+		baseWrites = append(baseWrites, types.TransactWriteItem{Delete: &types.Delete{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)),
+			ConditionExpression: aws.String(identityCondition + " OR #ttl <= :now"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": identityValues[":archive"], ":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)}},
 		}})
 	}
 	stateWrites := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Update: &types.Update{

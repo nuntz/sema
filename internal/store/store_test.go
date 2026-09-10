@@ -1483,6 +1483,28 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 					signalImage = write.Put.Item["image_vector"].(*types.AttributeValueMemberB).Value
 				}
 			}
+			for _, transaction := range transactions {
+				found := false
+				for _, write := range transaction.TransactItems {
+					if write.Put == nil || write.Put.Item["SK"].(*types.AttributeValueMemberS).Value != domain.ItemIdentitySK(item.ItemID) {
+						continue
+					}
+					found = true
+					var identity domain.ItemIdentity
+					if err := attributevalue.UnmarshalMap(write.Put.Item, &identity); err != nil {
+						t.Fatal(err)
+					}
+					if _, ok := write.Put.Item["ttl"]; ok {
+						t.Fatal("archive identity must have no ttl attribute")
+					}
+					if !strings.HasPrefix(identity.ItemSK, "A#") || identity.LiveSK != item.SK || identity.LiveTTL != item.TTL {
+						t.Fatalf("archive identity = %#v", identity)
+					}
+				}
+				if !found {
+					t.Fatal("heart transaction did not write a permanent identity")
+				}
+			}
 			if archiveSearch != "title summary" {
 				t.Fatalf("archive search_text = %q", archiveSearch)
 			}

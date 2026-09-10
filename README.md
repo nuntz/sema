@@ -191,6 +191,26 @@ make backfill-item-vectors STACK=prod BACKFILL_ARGS=--apply
 
 The command is idempotent and dry-run by default. It creates only missing or expired `V#` rows, preferring a surviving inline embedding and otherwise restoring the original embedding from S3 Vectors. Investigate any non-zero `unavailable` count and replay those items before rescoring. The separate `backfill-vectors` command below copies DynamoDB embeddings in the opposite direction, into the S3 vector index.
 
+### Permanent archive identities
+
+Deploy the permanent archive-identity writer before running this migration.
+It updates the existing `D#<item-id>` row to point at the timestamped `A#` key
+and removes its TTL, so semantic search and similar results continue resolving
+archives after the seven-day live window expires. Live key/expiry metadata keeps
+hearted items available in the live window; unheart restores or removes the identity.
+
+```sh
+make deploy STACK=prod
+make backfill-archive-identities STACK=prod
+make backfill-archive-identities STACK=prod BACKFILL_ARGS=--apply
+```
+
+The command is dry-run by default and idempotent. It lists archive rows only in
+this maintenance path, preserves existing live identity metadata, and checks that
+the archive and identity have not changed before writing. Repeat the apply pass
+if concurrent changes caused a row to be skipped. No key-schema, GSI, or IAM
+changes are required. Existing archives need this backfill to regain resolution.
+
 ### Search rollout and vector migrations
 
 Deploy search writers first, then reindex live items and backfill search text and vectors:
