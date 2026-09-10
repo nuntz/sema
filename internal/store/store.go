@@ -900,6 +900,59 @@ func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID stri
 	return err
 }
 
+// PruneStoryMembers removes confirmed absent IDs only if membership has not
+// changed since rendering. Strong confirmation prevents eventual read lag from
+// pruning a newly ingested item. Callers should run this as bounded background work.
+func (s *Store) PruneStoryMembers(ctx context.Context, userID string, story domain.Story, missing []string) error {
+	if userID == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
+		return errors.New("story identity and observed members are required")
+	}
+	observed := make(map[string]bool, len(story.MemberIDs))
+	for _, id := range story.MemberIDs {
+		observed[id] = true
+	}
+	ids := make([]string, 0, len(missing))
+	for _, id := range missing {
+		if observed[id] {
+			ids = append(ids, id)
+			delete(observed, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	resolved, err := s.ResolveItemIDsConsistent(ctx, userID, ids)
+	if err != nil {
+		return err
+	}
+	for _, item := range resolved {
+		observed[item.ItemID] = true
+	}
+	dead := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !observed[id] {
+			dead = append(dead, id)
+		}
+	}
+	if len(dead) == 0 {
+		return nil
+	}
+	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(story.StoryID)),
+		UpdateExpression:    aws.String("DELETE member_ids :dead"),
+		ConditionExpression: aws.String("attribute_exists(PK) AND member_ids = :observed"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":dead":     &types.AttributeValueMemberSS{Value: dead},
+			":observed": &types.AttributeValueMemberSS{Value: story.MemberIDs},
+		},
+	})
+	var conditional *types.ConditionalCheckFailedException
+	if errors.As(err, &conditional) {
+		return nil // Concurrent membership changes win; a later render can retry.
+	}
+	return err
+}
+
 func (s *Store) SetItemStory(ctx context.Context, item domain.Item, storyID string) error {
 	if item.PK == "" || item.SK == "" || item.ItemID == "" {
 		return errors.New("item key and ID are required")

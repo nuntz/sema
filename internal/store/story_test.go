@@ -216,3 +216,74 @@ func TestIngestResolutionKeepsStrongReads(t *testing.T) {
 		t.Fatalf("calls = %d, error = %v", calls, err)
 	}
 }
+
+func TestPruneStoryMembersConditionalAndConfirmed(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		reappeared bool
+		updateErr  error
+	}{
+		{name: "remove absent"},
+		{name: "eventual lag", reappeared: true},
+		{name: "concurrent change", updateErr: &types.ConditionalCheckFailedException{}},
+		{name: "storage failure", updateErr: errors.New("unavailable")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			db := &fakeDynamoDB{
+				batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+					request := input.RequestItems["table"]
+					if !aws.ToBool(request.ConsistentRead) && aws.ToString(request.ProjectionExpression) == "" {
+						t.Fatal("pruning must strongly confirm absence")
+					}
+					rows := []map[string]types.AttributeValue{}
+					sk := request.Keys[0]["SK"].(*types.AttributeValueMemberS).Value
+					var value any
+					if test.reappeared && sk == "D#dead" {
+						value = domain.ItemIdentity{PK: "U#user", SK: sk, ItemSK: "I#dead", TTL: time.Now().Add(time.Hour).Unix()}
+					} else if test.reappeared && sk == "I#dead" {
+						value = domain.Item{PK: "U#user", SK: sk, ItemID: "dead", TTL: time.Now().Add(time.Hour).Unix()}
+					}
+					if value != nil {
+						row, err := attributevalue.MarshalMap(value)
+						if err != nil {
+							t.Fatal(err)
+						}
+						rows = append(rows, row)
+					}
+					return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+				},
+				updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+					calls++
+					if aws.ToString(input.UpdateExpression) != "DELETE member_ids :dead" ||
+						aws.ToString(input.ConditionExpression) != "attribute_exists(PK) AND member_ids = :observed" ||
+						input.Key["SK"].(*types.AttributeValueMemberS).Value != "T#story" {
+						t.Fatalf("unsafe prune: %#v", input)
+					}
+					dead := input.ExpressionAttributeValues[":dead"].(*types.AttributeValueMemberSS).Value
+					observed := input.ExpressionAttributeValues[":observed"].(*types.AttributeValueMemberSS).Value
+					if len(dead) != 1 || dead[0] != "dead" || len(observed) != 2 {
+						t.Fatalf("dead = %v, observed = %v", dead, observed)
+					}
+					return &dynamodb.UpdateItemOutput{}, test.updateErr
+				},
+			}
+			err := New(db, nil, "table", "", "").PruneStoryMembers(context.Background(), "user",
+				domain.Story{StoryID: "story", MemberIDs: []string{"live", "dead"}}, []string{"dead", "dead", "unrelated"})
+			if test.name == "storage failure" {
+				if !errors.Is(err, test.updateErr) {
+					t.Fatalf("error = %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if test.reappeared {
+				want = 0
+			}
+			if calls != want {
+				t.Fatalf("updates = %d, want %d", calls, want)
+			}
+		})
+	}
+}

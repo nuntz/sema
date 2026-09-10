@@ -835,6 +835,23 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 	if err != nil {
 		return nil, nil, err
 	}
+	resolvedIDs := make(map[string]bool, len(items))
+	for _, item := range items {
+		resolvedIDs[item.ItemID] = true
+	}
+	var pruneStory domain.Story
+	var missing []string
+	for _, row := range rows {
+		for _, id := range row.MemberIDs {
+			if !resolvedIDs[id] {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
+			pruneStory = row
+			break // At most one story per uncached render.
+		}
+	}
 	live := items[:0]
 	now := time.Now().Unix()
 	for _, item := range items {
@@ -862,6 +879,15 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 		}
 	}
 	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model, tag)
+	if len(missing) > 0 {
+		go func() {
+			pruneCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			if err := s.store.PruneStoryMembers(pruneCtx, userID, pruneStory, missing); err != nil {
+				slog.Warn("prune story members", "story_id", pruneStory.StoryID, "error", err)
+			}
+		}()
+	}
 	return rendered, hidden, nil
 }
 
