@@ -1075,6 +1075,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if input.Hearted == nil {
 			return badRequest(errors.New("hearted is required"))
 		}
+		defer s.invalidateStories(userID)
 		archiveSK, heartCount, err := s.store.SetHeart(ctx, userID, itemID, *input.Hearted)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -1111,6 +1112,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if input.Value != 0 && len(item.Vector) == 0 {
 			return response(http.StatusConflict, map[string]string{"error": "item has no embedding"})
 		}
+		defer s.invalidateStories(userID)
 		if err := s.store.SetSignal(ctx, userID, item, input.Value); err != nil {
 			return s.failure("set signal", err)
 		}

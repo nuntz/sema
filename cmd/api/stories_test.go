@@ -70,6 +70,49 @@ func TestRenderedStoriesCache(t *testing.T) {
 	if calls != 10 {
 		t.Fatalf("error was cached: calls = %d", calls)
 	}
+	for _, action := range []string{"heart", "signal"} {
+		t.Run(action+" invalidation", func(t *testing.T) {
+			item := domain.Item{PK: "U#user", SK: "I#item", ItemID: "item", TTL: time.Now().Add(time.Hour).Unix()}
+			if action == "heart" {
+				item.ArchiveSK = "A#archive"
+			}
+			db.getItem = func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+				var value any
+				switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+				case "D#item":
+					value = domain.ItemIdentity{PK: item.PK, SK: "D#item", ItemSK: item.SK, TTL: item.TTL}
+				case item.SK:
+					value = item
+				case "PROFILE":
+					value = domain.User{PK: item.PK, SK: "PROFILE", HeartCount: 1}
+				default:
+					return &dynamodb.GetItemOutput{}, nil
+				}
+				row, err := attributevalue.MarshalMap(value)
+				return &dynamodb.GetItemOutput{Item: row}, err
+			}
+			db.delete = func(*dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
+				return &dynamodb.DeleteItemOutput{}, nil
+			}
+			load("user", nil, true, "", domain.FetchWindow{})
+			load("other", nil, true, "", domain.FetchWindow{})
+			before := calls
+			body := `{"hearted":true}`
+			if action == "signal" {
+				body = `{"value":0}`
+			}
+			got := s.itemRoute(context.Background(), "user", "POST", "item/"+action, body)
+			if got.StatusCode != 200 {
+				t.Fatalf("mutation = %d, %s", got.StatusCode, got.Body)
+			}
+			load("user", nil, true, "", domain.FetchWindow{})
+			load("other", nil, true, "", domain.FetchWindow{})
+			if calls != before+1 {
+				t.Fatalf("mutation did not invalidate only this user: calls=%d, before=%d", calls, before)
+			}
+		})
+	}
+
 }
 
 type pruneDynamo struct {
