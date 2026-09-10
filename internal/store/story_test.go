@@ -107,6 +107,9 @@ func TestStoriesQueriesLivePrefix(t *testing.T) {
 		if aws.ToString(input.KeyConditionExpression) != "PK = :pk AND begins_with(SK, :prefix)" || input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value != "T#" {
 			t.Fatalf("query = %#v", input)
 		}
+		if aws.ToBool(input.ConsistentRead) {
+			t.Fatal("Stories must use eventual consistency")
+		}
 		if aws.ToString(input.FilterExpression) != "#ttl > :now" {
 			t.Fatalf("filter = %q", aws.ToString(input.FilterExpression))
 		}
@@ -181,5 +184,35 @@ func TestStoryNotFound(t *testing.T) {
 	_, err := New(db, nil, "table", "", "").Story(context.Background(), "user", "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Story error = %v", err)
+	}
+}
+
+func TestMaintenanceListsUseEventualReads(t *testing.T) {
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if aws.ToBool(input.ConsistentRead) {
+			t.Fatal("list query must use eventual consistency")
+		}
+		return &dynamodb.QueryOutput{}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	if _, err := repository.LiveItems(context.Background(), "user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.ArchiveItems(context.Background(), "user"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIngestResolutionKeepsStrongReads(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		calls++
+		if !aws.ToBool(input.RequestItems["table"].ConsistentRead) {
+			t.Fatal("ingest resolution must stay consistent")
+		}
+		return &dynamodb.BatchGetItemOutput{}, nil
+	}}
+	if _, err := New(db, nil, "table", "", "").ResolveItemIDsConsistent(context.Background(), "user", []string{"missing"}); err != nil || calls != 1 {
+		t.Fatalf("calls = %d, error = %v", calls, err)
 	}
 }

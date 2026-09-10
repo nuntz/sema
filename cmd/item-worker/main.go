@@ -84,7 +84,7 @@ type itemStore interface {
 	PutItem(context.Context, domain.Item) (bool, error)
 	PutItemFailure(context.Context, string, string, int64) error
 	Signals(context.Context, string) ([]domain.Signal, error)
-	ResolveItemIDs(context.Context, string, []string) ([]domain.Item, error)
+	ResolveItemIDsConsistent(context.Context, string, []string) ([]domain.Item, error)
 	CreateStory(context.Context, domain.Story) (bool, error)
 	AddStoryMember(context.Context, string, string, string, int64) error
 	SetItemStory(context.Context, domain.Item, string) error
@@ -640,7 +640,7 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 		ids = append(ids, match.Key)
 		similarities[match.Key] = match.Similarity
 	}
-	resolved, err := h.store.ResolveItemIDs(ctx, userID, ids)
+	resolved, err := h.store.ResolveItemIDsConsistent(ctx, userID, ids)
 	if err != nil {
 		return metrics, err
 	}

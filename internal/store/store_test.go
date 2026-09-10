@@ -890,8 +890,8 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
 			batchCalls++
 			request := input.RequestItems["table"]
-			if !aws.ToBool(request.ConsistentRead) && aws.ToString(request.ProjectionExpression) == "" {
-				t.Fatal("item batch lookup was not consistent")
+			if aws.ToBool(request.ConsistentRead) {
+				t.Fatal("render lookup must use eventual consistency")
 			}
 			prefix := request.Keys[0]["SK"].(*types.AttributeValueMemberS).Value[:2]
 			var rows []map[string]types.AttributeValue

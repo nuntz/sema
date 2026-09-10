@@ -854,7 +854,7 @@ func (s *Store) Stories(ctx context.Context, userID string) ([]domain.Story, err
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "T#"},
 				":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
 			},
-			ExclusiveStartKey: start, ConsistentRead: aws.Bool(true),
+			ExclusiveStartKey: start,
 		})
 		if err != nil {
 			return nil, err
@@ -941,7 +941,6 @@ func (s *Store) LiveItems(ctx context.Context, userID string) ([]domain.Item, er
 				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
 			},
 			ExclusiveStartKey: start,
-			ConsistentRead:    aws.Bool(true),
 		})
 		if err != nil {
 			return nil, err
@@ -969,7 +968,7 @@ func (s *Store) ArchiveItems(ctx context.Context, userID string) ([]domain.Item,
 			ExpressionAttributeValues: map[string]types.AttributeValue{
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "A#"},
 			},
-			ExclusiveStartKey: start, ConsistentRead: aws.Bool(true), ScanIndexForward: aws.Bool(false),
+			ExclusiveStartKey: start, ScanIndexForward: aws.Bool(false),
 		})
 		if err != nil {
 			return nil, err
@@ -1095,6 +1094,15 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 // Missing identities and deleted pointers are absent; this path never scans
 // live or archive partitions to recover legacy rows.
 func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
+	return s.resolveItemIDs(ctx, userID, ids, false)
+}
+
+// ResolveItemIDsConsistent preserves strong reads for ingestion candidate selection.
+func (s *Store) ResolveItemIDsConsistent(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
+	return s.resolveItemIDs(ctx, userID, ids, true)
+}
+
+func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string, consistent bool) ([]domain.Item, error) {
 	if len(ids) == 0 {
 		return []domain.Item{}, nil
 	}
@@ -1107,12 +1115,12 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string)
 		requested[id] = true
 		orderedIDs = append(orderedIDs, id)
 	}
-	live, archiveKeys, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs)
+	live, archiveKeys, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs, consistent)
 	if err != nil {
 		return nil, err
 	}
 	archive := make(map[string]domain.Item)
-	archivedRows, err := s.batchGetRows(ctx, archiveKeys)
+	archivedRows, err := s.batchGetRowsWithConsistency(ctx, archiveKeys, consistent)
 	if err != nil {
 		return nil, err
 	}
@@ -1151,13 +1159,13 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string)
 	return result, nil
 }
 
-func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string) (map[string]domain.Item, []map[string]types.AttributeValue, error) {
+func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string, consistent bool) (map[string]domain.Item, []map[string]types.AttributeValue, error) {
 	pk := domain.UserPK(userID)
 	identityKeys := make([]map[string]types.AttributeValue, 0, len(ids))
 	for _, id := range ids {
 		identityKeys = append(identityKeys, key(pk, domain.ItemIdentitySK(id)))
 	}
-	rows, err := s.batchGetRows(ctx, identityKeys)
+	rows, err := s.batchGetRowsWithConsistency(ctx, identityKeys, consistent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1181,7 +1189,7 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 			liveKeys = append(liveKeys, key(pk, identity.ItemSK))
 		}
 	}
-	liveRows, err := s.batchGetRows(ctx, liveKeys)
+	liveRows, err := s.batchGetRowsWithConsistency(ctx, liveKeys, consistent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1205,12 +1213,16 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 }
 
 func (s *Store) batchGetRows(ctx context.Context, keys []map[string]types.AttributeValue) ([]map[string]types.AttributeValue, error) {
+	return s.batchGetRowsWithConsistency(ctx, keys, false)
+}
+
+func (s *Store) batchGetRowsWithConsistency(ctx context.Context, keys []map[string]types.AttributeValue, consistent bool) ([]map[string]types.AttributeValue, error) {
 	rows := make([]map[string]types.AttributeValue, 0, len(keys))
 	for offset := 0; offset < len(keys); offset += 100 {
 		pending := keys[offset:min(offset+100, len(keys))]
 		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
 			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
-				Keys: pending, ConsistentRead: aws.Bool(true),
+				Keys: pending, ConsistentRead: aws.Bool(consistent),
 			}}})
 			if err != nil {
 				return nil, err
@@ -1500,7 +1512,7 @@ func (s *Store) LoadItemVectors(ctx context.Context, userID string, items []doma
 		seen[item.ItemID] = true
 		keys = append(keys, key(pk, domain.ItemVectorSK(item.ItemID)))
 	}
-	rows, err := s.batchGetRows(ctx, keys)
+	rows, err := s.batchGetRowsWithConsistency(ctx, keys, true)
 	if err != nil {
 		return err
 	}
