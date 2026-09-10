@@ -66,6 +66,8 @@ type server struct {
 	rescore          func(context.Context, string) error
 	discover         feedDiscoverer
 	media            *media.Processor
+	storyMu          sync.Mutex
+	storyCache       map[storyCacheKey]cachedStoryList
 	feedMu           sync.Mutex
 	feedCache        map[string]cachedFeedList
 	feedDetailCache  map[string]cachedFeedList
@@ -748,7 +750,79 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 	return response(http.StatusOK, map[string]any{"stories": stories})
 }
 
+const storyCacheTTL = 60 * time.Second
+
+type storyCacheKey struct {
+	userID  string
+	filters string
+}
+
+type cachedStoryList struct {
+	loaded  time.Time
+	stories []storycluster.Rendered
+	hidden  map[string]bool
+}
+
+// Results are immutable after rendering. Include the model's public ranking
+// cutoffs as well as filters so a newly computed model cannot reuse old sizes.
 func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
+	filters, err := json.Marshal(struct {
+		Allowed    map[string]bool
+		UnreadOnly bool
+		Tag        string
+		Window     domain.FetchWindow
+		Model      domain.Model
+	}{allowed, unreadOnly, tag, window, model})
+	if err != nil {
+		return nil, nil, err
+	}
+	key := storyCacheKey{userID, string(filters)}
+	// Serialize fills and invalidation so a concurrent read mutation cannot
+	// leave a stale in-flight fill cached after invalidation.
+	s.storyMu.Lock()
+	defer s.storyMu.Unlock()
+	now := time.Now()
+	if entry, ok := s.storyCache[key]; ok && now.Sub(entry.loaded) < storyCacheTTL {
+		return entry.stories, entry.hidden, nil
+	}
+	stories, hidden, err := s.renderStories(ctx, userID, allowed, unreadOnly, model, tag, window)
+	if err != nil {
+		return nil, nil, err
+	}
+	if s.storyCache == nil {
+		s.storyCache = make(map[storyCacheKey]cachedStoryList)
+	}
+	for key, entry := range s.storyCache {
+		if now.Sub(entry.loaded) >= storyCacheTTL {
+			delete(s.storyCache, key)
+		}
+	}
+	// Bound memory across users and arbitrary filter combinations in warm Lambdas.
+	if len(s.storyCache) >= 128 {
+		var oldest storyCacheKey
+		oldestTime := now
+		for key, entry := range s.storyCache {
+			if entry.loaded.Before(oldestTime) {
+				oldest, oldestTime = key, entry.loaded
+			}
+		}
+		delete(s.storyCache, oldest)
+	}
+	s.storyCache[key] = cachedStoryList{now, stories, hidden}
+	return stories, hidden, nil
+}
+
+func (s *server) invalidateStories(userID string) {
+	s.storyMu.Lock()
+	defer s.storyMu.Unlock()
+	for key := range s.storyCache {
+		if key.userID == userID {
+			delete(s.storyCache, key)
+		}
+	}
+}
+
+func (s *server) renderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
 	rows, err := s.store.Stories(ctx, userID)
 	if err != nil {
 		return nil, nil, err
@@ -1027,6 +1101,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if err := decodeJSON(body, &input); err != nil {
 			return badRequest(err)
 		}
+		defer s.invalidateStories(userID)
 		if err := s.store.SetRead(ctx, userID, []string{itemID}, input.Read); err != nil {
 			return s.failure("set read state", err)
 		}
@@ -1123,6 +1198,7 @@ func (s *server) readBatch(ctx context.Context, userID, body string) events.APIG
 	if input.Read != nil {
 		read = *input.Read
 	}
+	defer s.invalidateStories(userID)
 	if err := s.store.SetRead(ctx, userID, input.IDs, read); err != nil {
 		return s.failure("batch read state", err)
 	}

@@ -504,6 +504,7 @@ func (s *server) cachedFeeds(ctx context.Context, userID string) ([]domain.Feed,
 }
 
 func (s *server) invalidateFeeds(userID string) {
+	s.invalidateStories(userID)
 	s.feedMu.Lock()
 	delete(s.feedCache, userID)
 	delete(s.feedDetailCache, userID)

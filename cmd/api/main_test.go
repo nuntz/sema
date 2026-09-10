@@ -481,6 +481,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	}
 	items[1].FetchedTS = domain.Timestamp(now.Add(-24 * time.Hour))
 	rowsBySK[items[1].SK] = marshal(items[1])
+	server.invalidateStories("user")
 	got = server.getStories(context.Background(), "user", windowQuery)
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
 		t.Fatalf("single-source story = %d, %s", got.StatusCode, got.Body)
