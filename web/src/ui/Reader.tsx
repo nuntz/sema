@@ -90,6 +90,8 @@ export function Reader(props: ReaderProps) {
     index: number;
   }>();
   const lightboxOpen = () => !!lightbox();
+  const [redditImageAttempt, setRedditImageAttempt] =
+    createSignal<RedditResolvedImageAttempt>();
   const [body, setBody] = createSignal("");
   const [loading, setLoading] = createSignal(false);
   const [progress, setProgress] = createSignal(0);
@@ -398,6 +400,7 @@ export function Reader(props: ReaderProps) {
 
   createEffect(() => {
     body();
+    redditImageAttempt();
     const item = props.item;
     let disposed = false;
     let removeAffordances = () => {};
@@ -405,8 +408,12 @@ export function Reader(props: ReaderProps) {
       if (disposed) return;
       removeAffordances();
       const lead =
-        item.media_type !== "video" && !isRedditItem(item)
-          ? article.querySelector<HTMLImageElement>(".article-lead")
+        item.media_type !== "video"
+          ? article.querySelector<HTMLImageElement>(
+              isRedditItem(item)
+                ? ".lb-lead-host img.reddit-lead-image"
+                : ".article-lead",
+            )
           : null;
       const images = buildLightboxSet(
         article.querySelector(".article-body"),
@@ -921,6 +928,7 @@ export function Reader(props: ReaderProps) {
               <RedditReaderIntro
                 item={props.item}
                 onClickThrough={props.onOriginal}
+                onImageChange={setRedditImageAttempt}
               />
             )}
           </Show>
@@ -1209,7 +1217,11 @@ export function Reader(props: ReaderProps) {
   );
 }
 
-function RedditReaderIntro(props: { item: Item; onClickThrough(): void }) {
+function RedditReaderIntro(props: {
+  item: Item;
+  onClickThrough(): void;
+  onImageChange(attempt: RedditResolvedImageAttempt | undefined): void;
+}) {
   const destination = () => props.item.external_url || "";
   const textPost = () => props.item.post_type === "text";
   const imagePost = () =>
@@ -1231,6 +1243,7 @@ function RedditReaderIntro(props: { item: Item; onClickThrough(): void }) {
         }
       >
         <RedditImageCard
+          onImageChange={props.onImageChange}
           item={props.item}
           onClickThrough={props.onClickThrough}
         />
@@ -1286,7 +1299,11 @@ function RedditDestinationCard(props: { item: Item; onClickThrough(): void }) {
   );
 }
 
-function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
+function RedditImageCard(props: {
+  item: Item;
+  onClickThrough(): void;
+  onImageChange(attempt: RedditResolvedImageAttempt | undefined): void;
+}) {
   const [attempt, setAttempt] = createSignal<RedditImageAttempt>({
     sourceIndex: 0,
     decoding: "async",
@@ -1308,6 +1325,7 @@ function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
     const source = sources()[state.sourceIndex];
     return source ? { ...state, source } : undefined;
   });
+  createEffect(() => props.onImageChange(currentAttempt()));
   const target = () => props.item.external_url || props.item.url;
 
   const advanceSource = (current: RedditResolvedImageAttempt) => {
@@ -1332,40 +1350,52 @@ function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
   };
 
   return (
-    <a
-      class="reddit-media-card reddit-image-card"
-      href={target()}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={props.onClickThrough}
-    >
-      <span class="reddit-media-band reddit-image-band">
-        <Show
-          when={currentAttempt()}
-          keyed
-          fallback={
-            <span class="reddit-image-unavailable">
-              Image unavailable · open on Reddit
+    <div class="reddit-media-card reddit-image-card">
+      <Show
+        when={currentAttempt()}
+        keyed
+        fallback={
+          <a
+            href={target()}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={props.onClickThrough}
+          >
+            <span class="reddit-media-band reddit-image-band">
+              <span class="reddit-image-unavailable">
+                Image unavailable · open on Reddit
+              </span>
             </span>
-          }
-        >
-          {(current) => (
-            <Show
-              when={current.source.kind === "stored"}
-              fallback={
-                <RedditExternalImage
-                  source={
-                    (current.source as { kind: "external"; url: string }).url
-                  }
-                  alt={props.item.title}
-                  decoding={current.decoding}
-                  onLoad={(image) => watchDecode(current, image)}
-                  onError={() => advanceSource(current)}
-                />
-              }
-            >
+          </a>
+        }
+      >
+        {(current) => (
+          <Show
+            when={current.source.kind === "stored"}
+            fallback={
+              <a
+                href={target()}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={props.onClickThrough}
+              >
+                <span class="reddit-media-band reddit-image-band">
+                  <RedditExternalImage
+                    source={
+                      (current.source as { kind: "external"; url: string }).url
+                    }
+                    alt={props.item.title}
+                    decoding={current.decoding}
+                    onLoad={(image) => watchDecode(current, image)}
+                    onError={() => advanceSource(current)}
+                  />
+                </span>
+              </a>
+            }
+          >
+            <span class="reddit-media-band reddit-image-band lb-lead-host">
               <ResponsiveImage
-                class="reddit-full-image"
+                class="reddit-full-image reddit-lead-image"
                 item={props.item}
                 sizes="(max-width: 700px) calc(100vw - 44px), 640px"
                 alt={props.item.title}
@@ -1376,11 +1406,17 @@ function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
                 onLoad={(event) => watchDecode(current, event.currentTarget)}
                 onError={() => advanceSource(current)}
               />
-            </Show>
-          )}
-        </Show>
-      </span>
-      <span class="reddit-provider-strip">
+            </span>
+          </Show>
+        )}
+      </Show>
+      <a
+        class="reddit-provider-strip"
+        href={target()}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={props.onClickThrough}
+      >
         <b>REDDIT</b>
         <i />
         <span>{externalHost(target()) || "reddit.com"}</span>
@@ -1388,8 +1424,8 @@ function RedditImageCard(props: { item: Item; onClickThrough(): void }) {
           Open
           <Icon name="open-original" />
         </strong>
-      </span>
-    </a>
+      </a>
+    </div>
   );
 }
 

@@ -29,6 +29,7 @@ function member(
     height?: number;
     rendered?: number;
     excluded?: boolean;
+    ancestors?: string[];
     caption?: string;
     naturalWidth?: number;
     naturalHeight?: number;
@@ -83,7 +84,17 @@ function member(
           }
         : selector === "a"
           ? anchor
-          : options.excluded
+          : options.excluded ||
+              options.ancestors?.some((ancestor) =>
+                selector
+                  .split(", ")
+                  .some(
+                    (candidate) =>
+                      candidate === ancestor ||
+                      (candidate.startsWith(".") &&
+                        ancestor.endsWith(candidate)),
+                  ),
+              )
             ? {}
             : null,
   } as unknown as HTMLImageElement;
@@ -107,6 +118,21 @@ describe("lightbox set", () => {
       "https://sema.test/media/body-0.webp",
     );
     expect(buildLightboxSet(body(member()))).toHaveLength(1);
+  });
+  it("allows a stored image in a block Reddit card and lead host", () => {
+    const image = member("/media/reddit.jpg", {
+      ancestors: ["span.lb-lead-host", "div.reddit-media-card"],
+    });
+    expect(buildLightboxSet(body(image))).toHaveLength(1);
+    expect(buildLightboxSet(null, image)).toHaveLength(1);
+  });
+  it("excludes an image in an anchor Reddit card", () => {
+    const image = member("/media/reddit.jpg", {
+      ancestors: ["a.reddit-media-card"],
+      anchor: { href: "https://i.redd.it/image.jpg" },
+    });
+    expect(buildLightboxSet(body(image))).toEqual([]);
+    expect(buildLightboxSet(null, image)).toEqual([]);
   });
   it("keeps image-only links to image-file pathnames without changing the cached source", () => {
     for (const href of [

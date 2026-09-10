@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 for (const width of [1280, 390]) {
   test(`reader lightbox navigation, history and focus at ${width}px`, async ({
@@ -404,4 +404,109 @@ test("page links, mixed-content links and media cards retain native navigation",
   const popup = await popupPromise;
   await expect(popup).toHaveURL("https://publisher.example/article.html");
   await expect(page.locator(".lb-overlay")).toHaveCount(0);
+});
+
+async function serveRedditMedia(page: Page) {
+  await page.route("**/media/e2e/reader-media/*.svg", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><path fill="#52697c" d="M0 0h640v360H0z"/></svg>',
+    }),
+  );
+}
+
+for (const width of [1280, 390]) {
+  test(`stored Reddit image opens the lightbox at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await serveRedditMedia(page);
+    await page.goto("/e2e/header-fixture.html?view=reader&reddit=image");
+    const card = page.locator(".reddit-image-card");
+    const image = card.locator("img");
+    await expect(image).toHaveClass(/lb-openable/);
+    await expect(card.locator(".lb-hover-pill")).toHaveCount(1);
+    await expect(card.locator("a.reddit-provider-strip")).toHaveAttribute(
+      "href",
+      "https://i.redd.it/fixture.png",
+    );
+    await expect(card.locator("a.reddit-provider-strip")).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+    let popupOpened = false;
+    page.on("popup", () => {
+      popupOpened = true;
+    });
+    await image.click();
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".lb-overlay")).toHaveCount(0);
+    await expect(page.locator(".reader")).toBeVisible();
+    expect(popupOpened).toBe(false);
+    await page.screenshot({ path: `/tmp/sema-reddit-lightbox-${width}.png` });
+  });
+
+  test(`Reddit link card keeps click-through at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await serveRedditMedia(page);
+    await page.goto("/e2e/header-fixture.html?view=reader&reddit=link");
+    const card = page.locator("a.reddit-media-card");
+    await expect(card).toHaveAttribute("href", "https://i.redd.it/fixture.png");
+    await expect(card).toHaveAttribute("target", "_blank");
+    await expect(card.locator("img")).toBeVisible();
+    await expect(card.locator(".lb-openable, .lb-hover-pill")).toHaveCount(0);
+  });
+}
+
+test("Reddit decode failure removes the lead affordance before external load", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    HTMLImageElement.prototype.decode = function () {
+      if (this.closest(".lb-lead-host")) {
+        return new Promise((_, reject) => {
+          window.addEventListener(
+            "fail-reddit-decode",
+            () => reject(new Error("decode failed")),
+            { once: true },
+          );
+        });
+      }
+      return Promise.resolve();
+    };
+  });
+  let releaseExternal = () => {};
+  const externalPending = new Promise<void>((resolve) => {
+    releaseExternal = resolve;
+  });
+  await page.route("https://i.redd.it/**", async (route) => {
+    await externalPending;
+    await route.abort();
+  });
+  await serveRedditMedia(page);
+  await page.goto("/e2e/header-fixture.html?view=reader&reddit=image");
+  const card = page.locator(".reddit-image-card");
+  await expect(card.locator("img.lb-openable")).toBeVisible();
+  await page.evaluate(() =>
+    window.dispatchEvent(new Event("fail-reddit-decode")),
+  );
+  await expect(card.locator("a .reddit-full-image")).toHaveAttribute(
+    "src",
+    "https://i.redd.it/fixture.png",
+  );
+  await expect(
+    card.locator(".lb-lead-host, .lb-openable, .lb-hover-pill"),
+  ).toHaveCount(0);
+  releaseExternal();
+  await expect(card.locator(".reddit-image-unavailable")).toBeVisible();
+  await expect(
+    card.locator(".lb-lead-host, .lb-openable, .lb-hover-pill"),
+  ).toHaveCount(0);
+  await expect(card.locator("a").first()).toHaveAttribute(
+    "href",
+    "https://i.redd.it/fixture.png",
+  );
 });

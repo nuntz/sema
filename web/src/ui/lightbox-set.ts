@@ -11,7 +11,7 @@ export interface LightboxImage {
 }
 
 const excluded =
-  ".media-card, .video-media-card, .reddit-media-card, video, iframe, .video-wrapper, .iframe-wrapper, .video-container, .video-embed, .iframe-embed, .embed-container, .embed-responsive, .embed, [data-video]";
+  ".media-card, .video-media-card, a.reddit-media-card, video, iframe, .video-wrapper, .iframe-wrapper, .video-container, .video-embed, .iframe-embed, .embed-container, .embed-responsive, .embed, [data-video]";
 
 function imageOnlyLink(anchor: HTMLAnchorElement): boolean {
   const imageOnly = (node: Node): boolean => {

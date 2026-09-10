@@ -137,6 +137,7 @@ function ReaderFixture() {
   const [open, setOpen] = createSignal(true);
   if (parameters.has("lightbox")) pushOverlay("reader", () => setOpen(false));
   const media = parameters.get("media");
+  const reddit = parameters.get("reddit");
   const mediaItem = (index: number): Item => ({
     ...item,
     item_id: `reader-media-${index}`,
@@ -168,7 +169,19 @@ function ReaderFixture() {
     media_w: 640,
     media_h: 360,
   });
-  const [readerItem, setReaderItem] = createSignal(media ? mediaItem(0) : item);
+  const [readerItem, setReaderItem] = createSignal<Item>(
+    reddit
+      ? {
+          ...mediaItem(0),
+          connector: "reddit",
+          post_type: reddit === "link" ? "link" : "image",
+          external_url: "https://i.redd.it/fixture.png",
+          url: "https://www.reddit.com/r/pics/comments/fixture/image/",
+        }
+      : media
+        ? mediaItem(0)
+        : item,
+  );
   return (
     <Show when={open()}>
       <Reader

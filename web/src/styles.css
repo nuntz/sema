@@ -2119,6 +2119,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .related-cell:has(> img) .reddit-discussion .icon { color: currentColor; }
 
 .reddit-media-card { margin: 2px 0 10px; display: block; overflow: hidden; border: 1px solid var(--line-medium); border-radius: var(--media-radius); background: var(--surface); box-shadow: var(--shadow-raised); color: inherit; text-decoration: none; }
+.reddit-image-card > a { color: inherit; text-decoration: none; }
 .reddit-media-card:hover { border-color: var(--line-heavy); }
 .reddit-media-band { position: relative; max-height: min(58vh, 520px); display: block; overflow: hidden; background: var(--surface-2); }
 .reddit-media-band > img { width: 100%; max-height: min(58vh, 520px); display: block; object-fit: cover; }
