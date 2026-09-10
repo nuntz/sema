@@ -1027,8 +1027,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-row > .grid-cell { position: absolute; }
 .grid-cell.size-l:not(.text-cell) { background: var(--media-tint-l); }
 .grid-cell.size-m:not(.text-cell) { background: var(--media-tint-m); }
-.grid-cell > img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 0; animation: image-in 120ms ease-out forwards; }
-@keyframes image-in { to { opacity: 1; } }
+/* Keep flex-sized photos in normal painting as virtual rows resize and scroll. */
+.grid-cell > img { display: block; width: 100%; height: 100%; object-fit: cover; opacity: 1; }
 .grid-cell.read { opacity: 0.34; border-color: var(--line-faint); }
 .grid-cell.archive-cell { opacity: 1; }
 .grid-cell:hover, .grid-cell.focused { z-index: 2; border-color: var(--line-heavy); }

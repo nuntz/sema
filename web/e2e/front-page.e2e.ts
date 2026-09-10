@@ -1565,6 +1565,117 @@ test("light singleton photos use spare height while keeping copy together", asyn
   await expect(page.locator(".reader")).toBeVisible();
 });
 
+test("delayed singleton photos fill their cards after resizing and scrolling", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1470, height: 833 });
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
+  await page.addInitScript(() => {
+    const decode = HTMLImageElement.prototype.decode;
+    HTMLImageElement.prototype.decode = function () {
+      return decode.call(this).then(() => {
+        this.dataset.decodedSource = this.currentSrc;
+      });
+    };
+  });
+  let releaseImages = () => {};
+  const imagesReady = new Promise<void>((resolve) => {
+    releaseImages = resolve;
+  });
+  await page.route("**/delayed-grid-*.svg", async (route) => {
+    await imagesReady;
+    await route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="240" fill="teal"/><rect y="240" width="640" height="240" fill="coral"/></svg>',
+    });
+  });
+  const items = Array.from({ length: 48 }, (_, index) => ({
+    ...item(`delayed-${index}`, "feed", `Delayed photo ${index}`, 0.9, "L"),
+    media_url: `/delayed-grid-${index}.svg`,
+    media_w: 640,
+    media_h: 480,
+  }));
+  await stubFrontPage(page, [], items, []);
+  try {
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    const photo = page.locator('[data-item-id="delayed-0"] > img');
+    await expect(photo).toBeAttached();
+    expect(await photo.evaluate((img: HTMLImageElement) => img.complete)).toBe(
+      false,
+    );
+    await page.setViewportSize({ width: 1024, height: 833 });
+    releaseImages();
+    const checkPhoto = async () => {
+      await expect
+        .poll(() =>
+          photo.evaluate((img: HTMLImageElement) => {
+            const bounds = img.getBoundingClientRect();
+            const copy = img.parentElement
+              ?.querySelector(".cell-copy")
+              ?.getBoundingClientRect();
+            return (
+              img.complete &&
+              img.dataset.decodedSource === img.currentSrc &&
+              img.naturalWidth === 640 &&
+              bounds.height > 126 &&
+              !!copy &&
+              Math.abs(bounds.bottom - copy.top) < 1
+            );
+          }),
+        )
+        .toBe(true);
+      await expect(photo).toHaveCSS("opacity", "1");
+    };
+    await checkPhoto();
+    const grid = page.locator(".grid-scroll");
+    await grid.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(photo).toHaveCount(0);
+    await grid.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await checkPhoto();
+    await page.setViewportSize({ width: 1470, height: 833 });
+    await checkPhoto();
+    await page.screenshot({
+      path: testInfo.outputPath("loaded-grid-photos.png"),
+    });
+  } finally {
+    releaseImages();
+  }
+});
+
+test("grid remains usable when explicit image decoding rejects", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.addInitScript(() => {
+    HTMLImageElement.prototype.decode = function () {
+      this.dataset.decodeAttempted = "true";
+      return Promise.reject(
+        new DOMException("Source changed", "EncodingError"),
+      );
+    };
+  });
+  await stubFrontPage(
+    page,
+    [],
+    [item("decode-error", "feed", "Decode failure", 0.9, "L")],
+    [],
+  );
+  await page.goto("/");
+  const card = page.locator('[data-item-id="decode-error"]');
+  await expect(card.locator(":scope > img")).toHaveAttribute(
+    "data-decode-attempted",
+    "true",
+  );
+  await card.locator(".cell-main").click();
+  await expect(page.locator(".reader")).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("story footers and neighboring singletons share the same bottom edge", async ({
   page,
 }) => {

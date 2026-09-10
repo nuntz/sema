@@ -1,4 +1,5 @@
-import { createMemo, type JSX, onCleanup, splitProps } from "solid-js";
+import { createMemo, type JSX, onCleanup, onMount, splitProps } from "solid-js";
+import { decodeImageWithin } from "../image-decode";
 import { responsiveMediaSource } from "../media-image";
 import type { Item } from "../types";
 
@@ -24,7 +25,22 @@ export function ResponsiveImage(props: ResponsiveImageProps) {
   );
   let image: HTMLImageElement | undefined;
 
+  const decodeLoadedImage = () => {
+    // Safari can report a loaded image while only painting part of it. Explicit
+    // decoding restores the full image, including after a srcset change.
+    if (image?.complete && image.naturalWidth > 0) {
+      void decodeImageWithin(image, 4_000);
+    }
+  };
+
+  onMount(() => {
+    image?.addEventListener("load", decodeLoadedImage);
+    // Cached images may have finished loading before the listener was attached.
+    decodeLoadedImage();
+  });
+
   onCleanup(() => {
+    image?.removeEventListener("load", decodeLoadedImage);
     // WebKit may retain a decoded image after its detached DOM node disappears.
     // Clear the selected source while the element is still owned by this cell.
     image?.removeAttribute("srcset");
