@@ -864,6 +864,7 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 	liveItems := []domain.Item{
 		{PK: domain.UserPK("user"), SK: "I#live", ItemID: "live", TTL: now.Add(time.Hour).Unix()},
 		{PK: domain.UserPK("user"), SK: "I#read", ItemID: "read", TTL: now.Add(time.Hour).Unix()},
+		{PK: domain.UserPK("user"), SK: "I#archive", ItemID: "archive", ArchiveSK: domain.ArchiveSK(now, "archive"), TTL: now.Add(-time.Hour).Unix()},
 	}
 	identities := []domain.ItemIdentity{
 		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("archive"), ItemSK: "I#archive", TTL: now.Add(-time.Hour).Unix()},
@@ -871,7 +872,7 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("read"), ItemSK: "I#read", TTL: liveItems[1].TTL},
 		{PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("missing"), ItemSK: "I#missing", TTL: now.Add(-time.Hour).Unix()},
 	}
-	archive := domain.Item{PK: domain.UserPK("user"), SK: "A#archive", ItemID: "archive", Read: true}
+	archive := domain.Item{PK: domain.UserPK("user"), SK: domain.ArchiveSK(now, "archive"), ItemID: "archive", Read: true}
 	marshalList := func(values any) []map[string]types.AttributeValue {
 		rows, err := attributevalue.MarshalList(values)
 		if err != nil {
@@ -899,6 +900,11 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 				rows = marshalList(identities)
 			case "I#":
 				rows = marshalList(liveItems)
+			case "A#":
+				if len(request.Keys) != 1 || request.Keys[0]["SK"].(*types.AttributeValueMemberS).Value != archive.SK {
+					t.Fatalf("archive keys = %#v", request.Keys)
+				}
+				rows = marshalList([]domain.Item{archive})
 			case "R#":
 				rows = []map[string]types.AttributeValue{{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("read")}}}
 			default:
@@ -908,13 +914,11 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 		},
 		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 			queries++
-			if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value != "A#" {
-				t.Fatalf("unexpected fallback query: %#v", input)
-			}
-			return &dynamodb.QueryOutput{Items: marshalList([]domain.Item{archive})}, nil
+			t.Fatalf("resolution must not query partitions: %#v", input)
+			return nil, nil
 		},
 	}
-	got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"archive", "live", "archive", "read", "missing"})
+	got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"archive", "live", "archive", "read", "missing", "no-identity"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -924,7 +928,7 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 	if !got[0].Archived || !got[0].Hearted || got[0].ArchiveSK != archive.SK || got[0].Read {
 		t.Fatalf("archive flags = %#v", got[0])
 	}
-	if got[1].Read || !got[2].Read || batchCalls != 3 || queries != 1 {
+	if got[1].Read || !got[2].Read || batchCalls != 4 || queries != 0 {
 		t.Fatalf("read state = %#v, batch calls %d, queries %d", got, batchCalls, queries)
 	}
 }

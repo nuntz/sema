@@ -1091,7 +1091,9 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 
 // ResolveItemIDs returns currently searchable rows in the requested order.
 // Live rows win while they exist; once their TTL passes, the permanent archive
-// copy becomes the resolution target.
+// copy becomes the resolution target when its archive_sk pointer is available.
+// Missing identities and deleted pointers are absent; this path never scans
+// live or archive partitions to recover legacy rows.
 func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
 	if len(ids) == 0 {
 		return []domain.Item{}, nil
@@ -1105,20 +1107,21 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string)
 		requested[id] = true
 		orderedIDs = append(orderedIDs, id)
 	}
-	live, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs)
+	live, archiveKeys, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs)
 	if err != nil {
 		return nil, err
 	}
 	archive := make(map[string]domain.Item)
-	if len(live) < len(orderedIDs) {
-		archivedItems, archiveErr := s.ArchiveItems(ctx, userID)
-		if archiveErr != nil {
-			return nil, archiveErr
+	archivedRows, err := s.batchGetRows(ctx, archiveKeys)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range archivedRows {
+		var item domain.Item
+		if err := attributevalue.UnmarshalMap(row, &item); err != nil {
+			return nil, err
 		}
-		for _, item := range archivedItems {
-			if !requested[item.ItemID] {
-				continue
-			}
+		if requested[item.ItemID] && strings.HasPrefix(item.SK, "A#") {
 			item.ArchiveSK, item.Hearted, item.Archived, item.Read = item.SK, true, true, false
 			archive[item.ItemID] = item
 		}
@@ -1148,7 +1151,7 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string)
 	return result, nil
 }
 
-func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string) (map[string]domain.Item, error) {
+func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string) (map[string]domain.Item, []map[string]types.AttributeValue, error) {
 	pk := domain.UserPK(userID)
 	identityKeys := make([]map[string]types.AttributeValue, 0, len(ids))
 	for _, id := range ids {
@@ -1156,57 +1159,49 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 	}
 	rows, err := s.batchGetRows(ctx, identityKeys)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	identities := make(map[string]domain.ItemIdentity, len(rows))
 	for _, row := range rows {
 		var identity domain.ItemIdentity
 		if err := attributevalue.UnmarshalMap(row, &identity); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		identities[strings.TrimPrefix(identity.SK, "D#")] = identity
 	}
 
 	now := time.Now().Unix()
 	liveKeys := make([]map[string]types.AttributeValue, 0, len(identities))
-	legacyIDs := make(map[string]bool)
 	for _, id := range ids {
 		identity, ok := identities[id]
 		if !ok {
-			legacyIDs[id] = true
 			continue
 		}
-		if identity.TTL > now && strings.HasPrefix(identity.ItemSK, "I#") {
+		if strings.HasPrefix(identity.ItemSK, "I#") {
 			liveKeys = append(liveKeys, key(pk, identity.ItemSK))
 		}
 	}
 	liveRows, err := s.batchGetRows(ctx, liveKeys)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	live := make(map[string]domain.Item, len(liveRows))
+	archiveKeys := make([]map[string]types.AttributeValue, 0)
 	for _, row := range liveRows {
 		var item domain.Item
 		if err := attributevalue.UnmarshalMap(row, &item); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		identity, ok := identities[item.ItemID]
-		if ok && identity.ItemSK == item.SK && item.TTL > now {
-			live[item.ItemID] = item
-		}
-	}
-	if len(legacyIDs) > 0 {
-		legacy, err := s.LiveItems(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		for _, item := range legacy {
-			if legacyIDs[item.ItemID] {
+		if ok && identity.ItemSK == item.SK {
+			if identity.TTL > now && item.TTL > now {
 				live[item.ItemID] = item
+			} else if strings.HasPrefix(item.ArchiveSK, "A#") {
+				archiveKeys = append(archiveKeys, key(pk, item.ArchiveSK))
 			}
 		}
 	}
-	return live, nil
+	return live, archiveKeys, nil
 }
 
 func (s *Store) batchGetRows(ctx context.Context, keys []map[string]types.AttributeValue) ([]map[string]types.AttributeValue, error) {
