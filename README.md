@@ -199,6 +199,11 @@ and removes its TTL, so semantic search and similar results continue resolving
 archives after the seven-day live window expires. Live key/expiry metadata keeps
 hearted items available in the live window; unheart restores or removes the identity.
 
+A hearted item keeps a permanent identity, so a feed that republishes it after
+the live window is treated as a duplicate (`ItemsDeduped`) and does not re-enter
+the live grid. Unhearting clears the identity after the live window has expired;
+within that window, it restores the expiring live identity.
+
 ```sh
 make deploy STACK=prod
 make backfill-archive-identities STACK=prod

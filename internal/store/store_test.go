@@ -713,6 +713,29 @@ func TestItemExistsReadsStableIdentityMarker(t *testing.T) {
 	}
 }
 
+func TestItemExistsTreatsPermanentArchiveIdentityAsDuplicate(t *testing.T) {
+	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("hearted"),
+		ItemSK: domain.ArchiveSK(time.Now().Add(-2*domain.Retention), "hearted"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := identity["ttl"]; ok {
+		t.Fatal("permanent archive identity must have no ttl attribute")
+	}
+	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		if got := input.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("hearted") {
+			t.Fatalf("identity key = %q", got)
+		}
+		return &dynamodb.GetItemOutput{Item: identity}, nil
+	}}
+	exists, err := New(db, nil, "table", "", "").ItemExists(context.Background(), "user", "hearted")
+	if err != nil || !exists {
+		t.Fatalf("permanently hearted item must remain a duplicate: ItemExists = %v, %v", exists, err)
+	}
+}
+
 func TestItemResolvesStableIdentityDirectly(t *testing.T) {
 	now := time.Now()
 	live := domain.Item{
