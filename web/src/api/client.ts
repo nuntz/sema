@@ -232,10 +232,15 @@ export class APIClient {
     );
   }
 
-  feedItemCounts(): Promise<FeedItemCounts> {
-    return this.request<{ feeds: FeedItemCounts }>("/feeds/counts").then(
-      (payload) => payload.feeds,
-    );
+  feedItemCounts(window?: FetchWindow): Promise<FeedItemCounts> {
+    const params = new URLSearchParams();
+    if (window) {
+      params.set("fetched_from", window.from);
+      params.set("fetched_before", window.before);
+    }
+    return this.request<{ feeds: FeedItemCounts }>(
+      `/feeds/counts${window ? `?${params}` : ""}`,
+    ).then((payload) => payload.feeds);
   }
 
   discoverFeed(url: string): Promise<FeedCandidate[]> {

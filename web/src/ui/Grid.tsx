@@ -17,6 +17,7 @@ import {
   relatedCoverageHeight,
   repeatsLeadHeadline,
 } from "../grid-display";
+import type { ItemView } from "../item-view";
 import {
   justify,
   type LayoutRow,
@@ -46,7 +47,15 @@ import {
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
-import type { FrontPageEntry, Item, Order, ReadAnchor, Story } from "../types";
+import type { ScopeCellModel } from "../scope-cell";
+import type {
+  FrontPageEntry,
+  GridScope,
+  Item,
+  Order,
+  ReadAnchor,
+  Story,
+} from "../types";
 import { frontPageEntryItem, frontPageSequence } from "./front-page";
 import { gridCommand, isEditingTarget } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
@@ -66,6 +75,11 @@ import {
 import { useSheetDrag } from "./use-sheet-drag";
 
 interface GridProps {
+  scopeCell?: ScopeCellModel;
+  scope?: GridScope;
+  itemView?: ItemView;
+  onClearScope?(): void;
+  onShowAll?(): void;
   items: Item[];
   entries: FrontPageEntry[];
   stories?: Story[];
@@ -287,8 +301,50 @@ export function Grid(props: GridProps) {
         below.length > 0 ? totalHeight(rows) : aboveHeight + dividerHeight(),
     };
   });
-  const rows = createMemo(() => layout().rows);
-  const dividerTop = createMemo(() => layout().dividerTop);
+  const scopeCellHeight = createMemo(() =>
+    props.scopeCell ? 44 + (mobile() ? 8 : 10) : 0,
+  );
+  const rows = createMemo<LayoutRow[]>((previous) =>
+    reuseLayoutRows(
+      previous ?? [],
+      layout().rows.map((row) => ({
+        ...row,
+        top: row.top + scopeCellHeight(),
+      })),
+    ),
+  );
+  const filteredEmpty = createMemo(() => {
+    if (props.archive || props.entries.length) return undefined;
+    const scope = props.scope;
+    if (scope) {
+      const tag = scope.kind === "tag";
+      const name = props.scopeCell?.title ?? scope.value;
+      return {
+        heading: `Nothing ${tag ? "under" : "from"} ${name}`,
+        body: `No ${props.unreadOnly ? "unread items" : "items"} ${tag ? "carry this tag" : "from this feed"} right now. New arrivals appear at the top as they are fetched.`,
+        hint: `ESC CLEAR THE ${tag ? "TAG" : "FEED"}${props.unreadOnly ? " · A INCLUDE READ ITEMS" : ""}`,
+        button: tag ? "Clear tag" : "Clear feed",
+        action: props.onClearScope,
+      };
+    }
+    if (props.itemView === "today" || props.itemView === "yesterday")
+      return {
+        heading:
+          props.itemView === "today"
+            ? "Nothing new today"
+            : "Nothing from yesterday",
+        body: "New arrivals appear at the top as they are fetched.",
+        hint: "G → A SHOW ALL",
+        button: "Show all",
+        action: props.onShowAll,
+      };
+    return undefined;
+  });
+  const dividerTop = createMemo(() =>
+    layout().dividerTop === undefined
+      ? undefined
+      : (layout().dividerTop ?? 0) + scopeCellHeight(),
+  );
   const visible = createMemo(() =>
     // Mount the adjacent pages early so their images load before paging to them.
     visibleRows(
@@ -321,8 +377,12 @@ export function Grid(props: GridProps) {
   );
   const gridEndTop = createMemo(() => {
     if (!props.archive && props.unreadOnly && props.entries.length === 0)
-      return 0;
-    return layout().height + (!props.archive && props.unreadOnly ? 22 : 28);
+      return scopeCellHeight();
+    return (
+      scopeCellHeight() +
+      layout().height +
+      (!props.archive && props.unreadOnly ? 22 : 28)
+    );
   });
   const endTop = createMemo(() => gridEndTop());
   const canvasHeight = createMemo(
@@ -1072,6 +1132,33 @@ export function Grid(props: GridProps) {
             pullDistance() > 0 ? `translateY(${pullDistance()}px)` : undefined,
         }}
       >
+        <Show when={props.scopeCell} keyed>
+          {(model) => (
+            <h2 class="scope-cell" title={model.title}>
+              <Show when={model.faviconFeed} keyed>
+                {(feed) => (
+                  <SourceBadge
+                    connector={feed.connector}
+                    imageURL={feed.favicon_url}
+                    title={model.title}
+                    size={mobile() ? 20 : 22}
+                  />
+                )}
+              </Show>
+              <span class="scope-cell__title">{model.title}</span>
+              <span class="scope-cell__meta">
+                <Show when={model.count !== undefined} fallback={model.text}>
+                  <span class="scope-cell__count">
+                    {model.count?.toLocaleString("en-US")}
+                  </span>
+                  {model.text.slice(
+                    model.count?.toLocaleString("en-US").length,
+                  )}
+                </Show>
+              </span>
+            </h2>
+          )}
+        </Show>
         <For each={visible()}>
           {(row) => (
             <div
@@ -1434,96 +1521,125 @@ export function Grid(props: GridProps) {
           >
             <div>
               <Show
-                when={props.archive}
+                when={!filteredEmpty()}
                 fallback={
-                  <Show
-                    when={props.unreadOnly}
-                    fallback={
-                      <>
-                        <h2>You&apos;re all caught up</h2>
-                        <p>Everything currently loaded is behind you.</p>
-                      </>
-                    }
-                  >
+                  <>
+                    <h2>{filteredEmpty()?.heading}</h2>
+                    <p>{filteredEmpty()?.body}</p>
+                    <span class="caughtup-label scope-empty-hint">
+                      {filteredEmpty()?.hint}
+                    </span>
+                    <button
+                      class="scope-empty-button"
+                      type="button"
+                      onClick={() => filteredEmpty()?.action?.()}
+                    >
+                      {filteredEmpty()?.button}
+                    </button>
+                  </>
+                }
+              >
+                <Show
+                  when={props.archive}
+                  fallback={
                     <Show
-                      when={props.entries.length > 0}
+                      when={props.unreadOnly}
                       fallback={
                         <>
-                          <i class="caughtup-empty__mark" aria-hidden="true" />
                           <h2>You&apos;re all caught up</h2>
-                          <p>
-                            Unread is empty. Anything that arrives from here on
-                            shows up at the top.
-                          </p>
+                          <p>Everything currently loaded is behind you.</p>
                         </>
                       }
                     >
                       <Show
-                        when={showEndMarkAction()}
+                        when={props.entries.length > 0}
                         fallback={
-                          <div class="finish-card__copy finish-card__variant">
-                            <h2>
-                              <i class="finish-card__mark" aria-hidden="true" />
-                              All caught up — everything here is already read
-                            </h2>
+                          <>
+                            <i
+                              class="caughtup-empty__mark"
+                              aria-hidden="true"
+                            />
+                            <h2>You&apos;re all caught up</h2>
                             <p>
-                              Clearing marks nothing — it just empties the grid.
+                              Unread is empty. Anything that arrives from here
+                              on shows up at the top.
+                            </p>
+                          </>
+                        }
+                      >
+                        <Show
+                          when={showEndMarkAction()}
+                          fallback={
+                            <div class="finish-card__copy finish-card__variant">
+                              <h2>
+                                <i
+                                  class="finish-card__mark"
+                                  aria-hidden="true"
+                                />
+                                All caught up — everything here is already read
+                              </h2>
+                              <p>
+                                Clearing marks nothing — it just empties the
+                                grid.
+                                <span class="finish-card__hint">
+                                  {" "}
+                                  New arrivals come back as a pill at the top.
+                                </span>
+                              </p>
+                            </div>
+                          }
+                        >
+                          <div class="finish-card__copy finish-card__variant">
+                            <h2>Everything loaded is behind you</h2>
+                            <p>
+                              {unreadIDs().length}{" "}
+                              {unreadIDs().length === 1
+                                ? "item is"
+                                : "items are"}{" "}
+                              still unread. Clearing marks them and empties the
+                              grid
                               <span class="finish-card__hint">
                                 {" "}
-                                New arrivals come back as a pill at the top.
+                                — new arrivals come back as a pill at the top.
                               </span>
                             </p>
                           </div>
-                        }
-                      >
-                        <div class="finish-card__copy finish-card__variant">
-                          <h2>Everything loaded is behind you</h2>
-                          <p>
-                            {unreadIDs().length}{" "}
-                            {unreadIDs().length === 1 ? "item is" : "items are"}{" "}
-                            still unread. Clearing marks them and empties the
-                            grid
-                            <span class="finish-card__hint">
-                              {" "}
-                              — new arrivals come back as a pill at the top.
-                            </span>
-                          </p>
-                        </div>
-                      </Show>
-                      <Show when={showEndAction()}>
-                        <button
-                          ref={endButton}
-                          type="button"
-                          onClick={finishAndClear}
-                        >
-                          <Show
-                            when={showEndMarkAction()}
-                            fallback={
-                              <span class="finish-card__button-label">
-                                Clear grid
-                              </span>
-                            }
+                        </Show>
+                        <Show when={showEndAction()}>
+                          <button
+                            ref={endButton}
+                            type="button"
+                            onClick={finishAndClear}
                           >
-                            <span class="finish-card__button-label">
-                              Mark {unreadIDs().length} read &amp; clear
-                            </span>
-                          </Show>
-                        </button>
+                            <Show
+                              when={showEndMarkAction()}
+                              fallback={
+                                <span class="finish-card__button-label">
+                                  Clear grid
+                                </span>
+                              }
+                            >
+                              <span class="finish-card__button-label">
+                                Mark {unreadIDs().length} read &amp; clear
+                              </span>
+                            </Show>
+                          </button>
+                        </Show>
                       </Show>
                     </Show>
-                  </Show>
-                }
-              >
-                <small>END OF ARCHIVE</small>
-                <h2>That&apos;s everything you&apos;ve kept</h2>
-                <p>
-                  {props.items.length}{" "}
-                  {props.items.length === 1 ? "item" : "items"}
-                  {oldestHeartMonth(props.items)
-                    ? `, oldest kept in ${oldestHeartMonth(props.items)}`
-                    : ""}
-                  . Nothing here expires.
-                </p>
+                  }
+                >
+                  <small>END OF ARCHIVE</small>
+                  <h2>That&apos;s everything you&apos;ve kept</h2>
+                  <p>
+                    {props.items.length}{" "}
+                    {props.items.length === 1 ? "item" : "items"}
+                    {oldestHeartMonth(props.items)
+                      ? `, oldest kept in ${oldestHeartMonth(props.items)}`
+                      : ""}
+                    . Nothing here expires.
+                  </p>
+                </Show>
               </Show>
             </div>
           </section>

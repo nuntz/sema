@@ -8,6 +8,7 @@ import (
 	"math"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1181,6 +1182,58 @@ func TestGridEndpointsRejectInvalidFetchWindows(t *testing.T) {
 			if response.StatusCode != http.StatusBadRequest {
 				t.Fatalf("query %#v: response = %#v", query, response)
 			}
+		}
+	}
+}
+
+func TestFeedCountsRejectsInvalidFetchWindow(t *testing.T) {
+	for _, query := range []map[string]string{
+		{"fetched_from": "invalid"},
+		{"fetched_from": "2026-09-07T00:00:00Z", "fetched_before": "2026-09-06T00:00:00Z"},
+		{"fetched_before": "2026-09-07T00:00:00Z"},
+	} {
+		got := (&server{}).getFeedItemCounts(context.Background(), "user", query)
+		if got.StatusCode != http.StatusBadRequest {
+			t.Fatalf("response = %#v", got)
+		}
+	}
+}
+
+func TestFeedCountsAppliesFetchWindow(t *testing.T) {
+	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value == "R#" {
+			return &dynamodb.QueryOutput{}, nil
+		}
+		var items []map[string]types.AttributeValue
+		for i, fetched := range []string{"2026-09-06T12:00:00Z", "2026-09-07T12:00:00Z", "2026-09-08T00:00:00Z"} {
+			item, err := attributevalue.MarshalMap(domain.Item{ItemID: strconv.Itoa(i), FeedID: "feed", FetchedTS: fetched})
+			if err != nil {
+				t.Fatal(err)
+			}
+			items = append(items, item)
+		}
+		return &dynamodb.QueryOutput{Items: items}, nil
+	}}
+	s := &server{store: store.New(db, nil, "table", "", "")}
+	for _, test := range []struct {
+		query map[string]string
+		want  int
+	}{
+		{nil, 3},
+		{map[string]string{"fetched_from": "2026-09-07T00:00:00Z", "fetched_before": "2026-09-08T00:00:00Z"}, 1},
+	} {
+		got := s.getFeedItemCounts(context.Background(), "user", test.query)
+		var body struct {
+			Feeds map[string]domain.FeedItemCount `json:"feeds"`
+		}
+		if got.StatusCode != http.StatusOK {
+			t.Fatalf("response = %#v", got)
+		}
+		if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Feeds["feed"].All != test.want || body.Feeds["feed"].Unread != test.want {
+			t.Fatalf("counts = %#v", body.Feeds)
 		}
 	}
 }

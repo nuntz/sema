@@ -837,6 +837,10 @@ test("finish and clear focuses the empty grid and u restores it", async ({
   page,
 }) => {
   await openApp(page);
+  await page
+    .getByRole("button", { name: "Clear tag filter: #tech", exact: true })
+    .click();
+  await expect(page.locator(".loading-screen")).toHaveCount(0);
   await page.keyboard.press("Shift+G");
 
   const action = page.getByRole("button", { name: /Mark \d+ read & clear/ });

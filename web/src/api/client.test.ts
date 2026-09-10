@@ -141,7 +141,7 @@ describe("story client", () => {
 describe("feed management client", () => {
   it("loads retained and unread counts for grid scopes", async () => {
     const request = vi.fn(
-      async () =>
+      async (_input: RequestInfo | URL) =>
         new Response(
           JSON.stringify({ feeds: { daily: { all: 12, unread: 3 } } }),
           {
@@ -158,6 +158,17 @@ describe("feed management client", () => {
     expect(request).toHaveBeenCalledWith("/api/feeds/counts", {
       headers: expect.any(Headers),
     });
+    const window = {
+      from: "2026-09-07T07:00:00.000Z",
+      before: "2026-09-08T07:00:00.000Z",
+    };
+    await new APIClient().feedItemCounts(window);
+    const url = new URL(
+      String(request.mock.calls.at(-1)?.[0]),
+      "https://sema.test",
+    );
+    expect(url.searchParams.get("fetched_from")).toBe(window.from);
+    expect(url.searchParams.get("fetched_before")).toBe(window.before);
   });
 
   it("wires feed detail edits to the encoded PATCH route", async () => {

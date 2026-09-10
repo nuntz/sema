@@ -593,7 +593,7 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 // FeedItemCounts returns per-feed totals for the retained live-item window.
 // It deliberately does not use Feed.ItemCount, which is a lifetime ingest
 // counter and therefore includes expired and read items.
-func (s *Store) FeedItemCounts(ctx context.Context, userID string) (map[string]domain.FeedItemCount, error) {
+func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow) (map[string]domain.FeedItemCount, error) {
 	readItemIDs, err := s.readItemIDs(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -606,7 +606,7 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string) (map[string]d
 			TableName:              aws.String(s.table),
 			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 			FilterExpression:       aws.String("#ttl > :now"),
-			ProjectionExpression:   aws.String("item_id, feed_id"),
+			ProjectionExpression:   aws.String("item_id, feed_id, fetched_ts"),
 			ExpressionAttributeNames: map[string]string{
 				"#ttl": "ttl",
 			},
@@ -622,14 +622,15 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string) (map[string]d
 			return nil, err
 		}
 		var page []struct {
-			ItemID string `dynamodbav:"item_id"`
-			FeedID string `dynamodbav:"feed_id"`
+			ItemID    string `dynamodbav:"item_id"`
+			FeedID    string `dynamodbav:"feed_id"`
+			FetchedTS string `dynamodbav:"fetched_ts"`
 		}
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, err
 		}
 		for _, item := range page {
-			if item.FeedID == "" || seenItemIDs[item.ItemID] {
+			if item.FeedID == "" || seenItemIDs[item.ItemID] || !window.Contains(item.FetchedTS) {
 				continue
 			}
 			seenItemIDs[item.ItemID] = true

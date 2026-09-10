@@ -215,7 +215,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case method == http.MethodGet && path == "/feeds":
 		result = s.getFeeds(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/feeds/counts":
-		result = s.getFeedItemCounts(ctx, claims.Subject)
+		result = s.getFeedItemCounts(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/feeds/export.opml":
 		result = s.exportFeeds(ctx, claims.Subject)
 	case method == http.MethodPost && path == "/feeds/discover":
@@ -1137,8 +1137,12 @@ func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV
 	return response(http.StatusOK, map[string]any{"feeds": feeds})
 }
 
-func (s *server) getFeedItemCounts(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
-	counts, err := s.store.FeedItemCounts(ctx, userID)
+func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	window, err := parseFetchWindow(query)
+	if err != nil {
+		return badRequest(err)
+	}
+	counts, err := s.store.FeedItemCounts(ctx, userID, window)
 	if err != nil {
 		return s.failure("count live feed items", err)
 	}

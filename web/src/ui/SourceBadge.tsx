@@ -1,7 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import { connectorKind } from "../reddit-item";
 
-export type BadgeSize = 12 | 16 | 20 | 28 | 32 | 36;
+export type BadgeSize = 12 | 16 | 20 | 22 | 28 | 32 | 36;
 
 export function SourceBadge(props: {
   connector?: string;
@@ -28,7 +28,7 @@ export function SourceBadge(props: {
   const showImage = () =>
     Boolean(props.imageURL) &&
     !failed() &&
-    (channel() || reddit() || props.size <= 20);
+    (channel() || reddit() || props.size <= 22);
 
   return (
     <span

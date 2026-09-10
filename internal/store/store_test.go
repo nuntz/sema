@@ -113,7 +113,7 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 	marshal := func(id, feedID string) map[string]types.AttributeValue {
 		item, err := attributevalue.MarshalMap(domain.Item{
 			PK: domain.UserPK("user"), SK: domain.ItemSK(now, id), ItemID: id,
-			FeedID: feedID, TTL: now.Add(time.Hour).Unix(),
+			FeedID: feedID, FetchedTS: now.Format(time.RFC3339Nano), TTL: now.Add(time.Hour).Unix(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -127,7 +127,7 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 				{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("read")}},
 			}}, nil
 		}
-		if aws.ToString(input.FilterExpression) != "#ttl > :now" || aws.ToString(input.ProjectionExpression) != "item_id, feed_id" {
+		if aws.ToString(input.FilterExpression) != "#ttl > :now" || aws.ToString(input.ProjectionExpression) != "item_id, feed_id, fetched_ts" {
 			t.Fatalf("item count query = %#v", input)
 		}
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
@@ -138,7 +138,7 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 		}}, nil
 	}}
 
-	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user")
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +148,25 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("feed item counts = %#v, want %#v", got, want)
+	}
+}
+
+func TestFeedItemCountsExcludesOutsideWindow(t *testing.T) {
+	now := time.Now().UTC()
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value == "R#" {
+			return &dynamodb.QueryOutput{}, nil
+		}
+		var items []map[string]types.AttributeValue
+		for i, ts := range []time.Time{now.Add(-time.Hour), now, now.Add(time.Hour)} {
+			item, _ := attributevalue.MarshalMap(domain.Item{ItemID: strconv.Itoa(i), FeedID: "feed", FetchedTS: ts.Format(time.RFC3339Nano)})
+			items = append(items, item)
+		}
+		return &dynamodb.QueryOutput{Items: items}, nil
+	}}
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{From: now, Before: now.Add(time.Hour)})
+	if err != nil || got["feed"].All != 1 || got["feed"].Unread != 1 {
+		t.Fatalf("counts = %#v, %v", got, err)
 	}
 }
 

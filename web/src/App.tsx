@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The settled header contract requires button elements with radio roles.
+
 import {
   batch,
   createEffect,
@@ -46,6 +47,7 @@ import {
 import { createMediaQuery } from "./media-query";
 import { PendingReads } from "./pending-reads";
 import { resolveReaderItem } from "./reader-item";
+import { scopeCellModel } from "./scope-cell";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import {
   excludeRenderedStoryItems,
@@ -113,6 +115,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [scope, setScope] = createSignal<GridScope>(null);
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [feedItemCounts, setFeedItemCounts] = createSignal<FeedItemCounts>({});
+  const [scopeCountsWindowKey, setScopeCountsWindowKey] =
+    createSignal<string>();
+  const [readAdjust, setReadAdjust] = createSignal(0);
+  const scopePhone = createMediaQuery("(max-width: 619px)");
+
   const [items, setItems] = createSignal<Item[]>([]);
   const [stories, setStories] = createSignal<Story[]>([]);
   const [expandedStoryIDs, setExpandedStoryIDs] = createSignal<Set<string>>(
@@ -169,6 +176,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   let searchVersion = 0;
   let relatedVersion = 0;
   let readTimer: number | undefined;
+  const readFlushes = new Set<Promise<void>>();
   let readerCloseTimer: number | undefined;
   let pollTimer: number | undefined;
   let pollInFlight = false;
@@ -297,6 +305,23 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
+  const scopeCell = createMemo(() => {
+    if (mode() === "archive" || searchActive()) return undefined;
+    const model = scopeCellModel(
+      scope(),
+      itemView(),
+      feedFilters(),
+      scopeCountsWindowKey() === (itemViewWindow(itemView())?.from ?? "")
+        ? feedItemCounts()
+        : undefined,
+      readAdjust(),
+      scopePhone(),
+    );
+    return !scope() && itemView() === "unread" && model.count === 0
+      ? undefined
+      : model;
+  });
+
   const bootstrap = async () => {
     setLoading(true);
     setError("");
@@ -311,9 +336,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           ? { kind: "tag", value: me.profile.tag_pref }
           : null;
       setScope(profileScope);
-      const [availableFeeds, availableCounts] = await Promise.all([
+      const [availableFeeds] = await Promise.all([
         api.feeds(),
-        api.feedItemCounts(),
         reload(
           me.profile.order_pref || "interest",
           unreadOnly(),
@@ -322,7 +346,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         ),
       ]);
       setFeedFilters(availableFeeds);
-      setFeedItemCounts(availableCounts);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -337,6 +360,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     nextScope = scope(),
   ) => {
     fetchWindow = itemViewWindow(itemView());
+    void refreshFeedItemCounts();
     const version = ++requestVersion;
     gridClearVersion++;
     discardFinishUndo();
@@ -553,6 +577,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             setFocusedID(nextFocusedID);
             setLayoutVersion((value) => value + 1);
           });
+          void refreshFeedItemCounts();
         } else if (unseen.length > 0) {
           setPendingNew((current) => mergeNewItems(current, unseen));
         }
@@ -1063,6 +1088,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     );
     const unread = [...requested].filter((id) => !alreadyRead.has(id));
     if (unread.length === 0) return;
+    setReadAdjust((value) => value + unread.length);
     for (const id of unread) pendingRead.add(id);
     if (!gridSnapshot) clearUndoTimer();
     setUndo({
@@ -1089,14 +1115,17 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     const ids = [...pendingRead];
     if (ids.length === 0) return Promise.resolve();
     setUndo((current) => (current?.gridSnapshot ? current : { ids }));
-    return pendingRead
+    const operation = pendingRead
       .flush((batch) => api.readBatch(batch, true, keepalive))
       .catch((caught) => {
         handleError(caught);
         if (!disposed && pendingRead.size > 0 && readTimer === undefined) {
           readTimer = window.setTimeout(() => void flushPending(), 5_000);
         }
-      });
+      })
+      .finally(() => readFlushes.delete(operation));
+    readFlushes.add(operation);
+    return operation;
   };
 
   const queueEvent = (itemID: string, event: BehaviourEvent) => {
@@ -1123,8 +1152,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const recordOpened = (item: Item, archive = item.archived === true) => {
     if (!archive) api.events(item.item_id, { opened: true }).catch(handleError);
     if (!archive && !item.read) {
+      setReadAdjust((value) => value + 1);
       replaceItem(item.item_id, { read: true });
       api.read(item.item_id, true).catch((caught) => {
+        setReadAdjust((value) => value - 1);
         replaceItem(item.item_id, { read: false });
         handleError(caught);
       });
@@ -1159,6 +1190,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       requestAnimationFrame(() => {
         if (readFailed) return;
         readUpdateApplied = true;
+        setReadAdjust((value) => value + unread.length);
         setStories((current) => updateStoriesRead(current, ids, true));
         setItems((current) => updateRead(current, ids, true));
       });
@@ -1167,6 +1199,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     api.readBatch(ids, true).catch((caught) => {
       readFailed = true;
       if (readUpdateApplied) {
+        setReadAdjust((value) => value - unread.length);
         setStories((current) => updateStoriesRead(current, unread, false));
         setItems((current) => updateRead(current, unread, false));
       }
@@ -1200,8 +1233,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       window.clearTimeout(readTimer);
       readTimer = undefined;
     }
+    setReadAdjust((value) => value + (item.read ? -1 : 1));
     replaceItem(item.item_id, { read: !item.read });
     api.read(item.item_id, !item.read).catch((caught) => {
+      setReadAdjust((value) => value - (item.read ? -1 : 1));
       replaceItem(item.item_id, { read: item.read });
       handleError(caught);
     });
@@ -1210,11 +1245,16 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const toggleStoryRead = (story: Story) => {
     if (mode() === "archive") return;
     const read = story.items.some((item) => !item.read);
+    const adjustment =
+      story.items.filter((item) => item.read !== read).length * (read ? 1 : -1);
+    setReadAdjust((value) => value + adjustment);
+
     const ids = story.items.map((item) => item.item_id);
     for (const id of ids) pendingRead.delete(id);
     setStories((current) => updateStoriesRead(current, ids, read));
     setItems((current) => updateRead(current, ids, read));
     api.readBatch(ids, read).catch((caught) => {
+      setReadAdjust((value) => value - adjustment);
       setStories((current) =>
         current.map((currentStory) =>
           currentStory.story_id !== story.story_id
@@ -1237,6 +1277,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   function undoLast() {
     const operation = undo();
     if (!operation) return;
+    setReadAdjust((value) => value - operation.ids.length);
     clearUndoTimer();
     undoRemaining = 8_000;
     setUndo(undefined);
@@ -1404,6 +1445,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
     setScrollTarget(0);
     setScrollTopVersion((value) => value + 1);
+    void refreshFeedItemCounts();
     return added.length;
   };
 
@@ -1473,9 +1515,20 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const refreshFeedItemCounts = async () => {
     const version = ++feedItemCountVersion;
+    const window = itemViewWindow(itemView());
     try {
-      const latest = await api.feedItemCounts();
-      if (version === feedItemCountVersion) setFeedItemCounts(latest);
+      // Counts must include queued and already-in-flight read writes before
+      // they replace the optimistic adjustment (including finish-and-clear).
+      await flushRead();
+      await Promise.all(readFlushes);
+      if (version !== feedItemCountVersion || pendingRead.size > 0) return;
+      const latest = await api.feedItemCounts(window);
+      if (version === feedItemCountVersion)
+        batch(() => {
+          setFeedItemCounts(latest ?? {});
+          setScopeCountsWindowKey(window?.from ?? "");
+          setReadAdjust(0);
+        });
     } catch (caught) {
       handleError(caught);
     }
@@ -1483,12 +1536,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const refreshFeedFilters = async () => {
     try {
-      const [latest, latestCounts] = await Promise.all([
+      const [latest] = await Promise.all([
         api.feeds(),
-        api.feedItemCounts(),
+        refreshFeedItemCounts(),
       ]);
       setFeedFilters(latest);
-      setFeedItemCounts(latestCounts);
       const activeScope = scope();
       if (
         activeScope?.kind === "tag" &&
@@ -2036,6 +2088,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           <button
             type="button"
             class="new-items-pill"
+            classList={{ "new-items-pill--scope": Boolean(scopeCell()) }}
             onClick={insertPendingNew}
           >
             {pendingNew().length} new
@@ -2070,7 +2123,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             when={
               items().length > 0 ||
               stories().length > 0 ||
-              Boolean(readAnchor())
+              Boolean(readAnchor()) ||
+              (mode() === "live" &&
+                (feedFilters().length > 0 ||
+                  Boolean(scope()) ||
+                  itemView() !== "unread"))
             }
             fallback={
               scope() ? (
@@ -2109,6 +2166,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               readerReveal={readerReveal()}
               readerDragging={readerDragging()}
               hasMore={cursor() !== ""}
+              scopeCell={scopeCell()}
+              scope={scope()}
+              itemView={itemView()}
+              onClearScope={() =>
+                scope()?.kind === "feed"
+                  ? void applyFeed("")
+                  : void applyTag("")
+              }
+              onShowAll={() => void selectItemView("all")}
               archive={mode() === "archive"}
               unreadOnly={unreadOnly()}
               order={gridOrder()}
