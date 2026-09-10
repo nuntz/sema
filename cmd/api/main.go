@@ -880,13 +880,13 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 	}
 	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model, tag)
 	if len(missing) > 0 {
-		go func() {
-			pruneCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer cancel()
-			if err := s.store.PruneStoryMembers(pruneCtx, userID, pruneStory, missing); err != nil {
-				slog.Warn("prune story members", "story_id", pruneStory.StoryID, "error", err)
-			}
-		}()
+		// Lambda freezes background work when the handler returns. Complete one
+		// bounded best-effort prune while this invocation is still running.
+		pruneCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		if err := s.store.PruneStoryMembers(pruneCtx, userID, pruneStory, missing); err != nil {
+			slog.Warn("prune story members", "story_id", pruneStory.StoryID, "error", err)
+		}
 	}
 	return rendered, hidden, nil
 }

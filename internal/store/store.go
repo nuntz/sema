@@ -909,7 +909,7 @@ func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID stri
 
 // PruneStoryMembers removes confirmed absent IDs only if membership has not
 // changed since rendering. Strong confirmation prevents eventual read lag from
-// pruning a newly ingested item. Callers should run this as bounded background work.
+// pruning a newly ingested item. Callers should bound this best-effort work.
 func (s *Store) PruneStoryMembers(ctx context.Context, userID string, story domain.Story, missing []string) error {
 	if userID == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
 		return errors.New("story identity and observed members are required")
