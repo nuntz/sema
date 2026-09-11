@@ -31,7 +31,7 @@ import { Lightbox } from "./Lightbox";
 import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { ResponsiveImage } from "./ResponsiveImage";
-import { hasLeadingImage } from "./reader-content";
+import { type PreparedReaderBody, prepareReaderBody } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
 import {
   expandToolbar,
@@ -92,8 +92,10 @@ export function Reader(props: ReaderProps) {
   const lightboxOpen = () => !!lightbox();
   const [redditImageAttempt, setRedditImageAttempt] =
     createSignal<RedditResolvedImageAttempt>();
-  const [body, setBody] = createSignal("");
-  const [loading, setLoading] = createSignal(false);
+  const [body, setBody] = createSignal<PreparedReaderBody>();
+  const [loading, setLoading] = createSignal(
+    !!props.item.body_url && props.item.has_body,
+  );
   const [progress, setProgress] = createSignal(0);
   const [scrolled, setScrolled] = createSignal(false);
   const [headlineVisible, setHeadlineVisible] = createSignal(true);
@@ -195,7 +197,8 @@ export function Reader(props: ReaderProps) {
   createEffect(() => {
     const source = bodySource();
     const url = source.url;
-    setBody("");
+    setBody(undefined);
+    setLoading(false);
     if (!url || !source.hasBody) return;
     const controller = new AbortController();
     setLoading(true);
@@ -204,11 +207,20 @@ export function Reader(props: ReaderProps) {
         if (!response.ok) throw new Error("body unavailable");
         return response.text();
       })
-      .then(setBody)
-      .catch((error) => {
-        if (error.name !== "AbortError") setBody("");
+      .then(async (markup) => {
+        if (controller.signal.aborted) return;
+        const prepared = markup.trim()
+          ? await prepareReaderBody(markup)
+          : undefined;
+        if (!controller.signal.aborted) setBody(prepared);
       })
-      .finally(() => setLoading(false));
+      .catch((error) => {
+        if (!controller.signal.aborted && error.name !== "AbortError")
+          setBody(undefined);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
     onCleanup(() => controller.abort());
   });
 
@@ -404,9 +416,9 @@ export function Reader(props: ReaderProps) {
     const item = props.item;
     let disposed = false;
     let removeAffordances = () => {};
+    let decorated: HTMLImageElement[] = [];
     const rebuild = () => {
       if (disposed) return;
-      removeAffordances();
       const lead =
         item.media_type !== "video"
           ? article.querySelector<HTMLImageElement>(
@@ -429,6 +441,13 @@ export function Reader(props: ReaderProps) {
             }
           : undefined,
       );
+      if (
+        images.length === decorated.length &&
+        images.every((member, index) => member.element === decorated[index])
+      )
+        return;
+      removeAffordances();
+      decorated = images.map((member) => member.element);
       const cleanups = images.map((member, index) => {
         const element = member.element;
         const previousTab = element.getAttribute("tabindex");
@@ -875,7 +894,8 @@ export function Reader(props: ReaderProps) {
               {Math.max(
                 1,
                 Math.round(
-                  (body() || displaySummary() || "").split(/\s+/).length / 220,
+                  (body()?.markup || displaySummary() || "").split(/\s+/)
+                    .length / 220,
                 ),
               )}{" "}
               MIN READ
@@ -951,7 +971,8 @@ export function Reader(props: ReaderProps) {
               props.item.media_type !== "video" &&
               !isRedditItem(props.item) &&
               props.item.media_url &&
-              !hasLeadingImage(body()) &&
+              !loading() &&
+              !body()?.leadingImage &&
               props.item.item_id
             }
             keyed
@@ -1013,7 +1034,7 @@ export function Reader(props: ReaderProps) {
               </Show>
             }
           >
-            <div class="article-body" innerHTML={body()} />
+            {body()?.element}
           </Show>
           <Show
             when={
