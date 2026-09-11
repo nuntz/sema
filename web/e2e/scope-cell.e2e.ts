@@ -186,7 +186,7 @@ for (const width of [1440, 393]) {
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^design/ }).click();
     await expect(
-      page.getByRole("heading", { name: "Nothing under #design" }),
+      page.getByRole("heading", { name: "End of #design" }),
     ).toBeVisible();
     if (width < 620)
       await page
@@ -359,5 +359,41 @@ for (const grouped of [false, true]) {
       page.locator('[data-item-id="pending-arrival"]'),
     ).toBeVisible();
     await expect(count).toHaveText("1");
+  });
+}
+
+for (const [width, height, theme] of [
+  [1440, 900, "light"],
+  [1440, 900, "dark"],
+  [390, 844, "light"],
+] as const) {
+  test(`closed section ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme: theme });
+    await openGrid(page, true);
+    await page.keyboard.press("#");
+    await page.getByRole("option", { name: /^design/ }).click();
+    const section = page.locator(".end-of-feed.empty-grid");
+    await expect(section.getByRole("heading")).toHaveText("End of #design");
+    await expect(section.getByRole("button").first()).toHaveText(
+      width < 620 ? "Clear tagEsc" : "Show read itemsA",
+    );
+    await expect(page.locator(".scope-cell__count")).toHaveAttribute(
+      "data-zero",
+      "true",
+    );
+    const cell = await page.locator(".scope-cell").boundingBox();
+    const rect = await section.boundingBox();
+    if (!cell || !rect) throw new Error("Missing section or scope cell");
+    expect(rect.y - cell.y - cell.height).toBe(26);
+    const copy = await section.locator(":scope > div").boundingBox();
+    expect(copy?.x).toBe(width < 620 ? 12 : 16);
+    expect(
+      await section.evaluate((el) => getComputedStyle(el, "::before").width),
+    ).toBe(`${width - (width < 620 ? 24 : 32)}px`);
+    await page.screenshot({
+      path: `/tmp/sema-closed-section-${width}-${theme}.png`,
+      animations: "disabled",
+    });
   });
 }

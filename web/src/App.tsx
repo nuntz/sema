@@ -2175,6 +2175,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                   : void applyTag("")
               }
               onShowAll={() => void selectItemView("all")}
+              onShowRead={() => void selectItemView("all")}
+              onOpenArchive={() => void navigateByKey("archive")}
+              onSelectView={(view) => void selectItemView(view)}
+              clearedCount={finishUndo()?.count}
               archive={mode() === "archive"}
               unreadOnly={unreadOnly()}
               order={gridOrder()}

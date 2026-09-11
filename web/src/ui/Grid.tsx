@@ -56,6 +56,7 @@ import type {
   ReadAnchor,
   Story,
 } from "../types";
+import { emptyState } from "./empty-state";
 import { frontPageEntryItem, frontPageSequence } from "./front-page";
 import { gridCommand, isEditingTarget } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
@@ -80,6 +81,10 @@ interface GridProps {
   itemView?: ItemView;
   onClearScope?(): void;
   onShowAll?(): void;
+  onShowRead?(): void;
+  onOpenArchive?(): void;
+  onSelectView?(view: "today" | "yesterday"): void;
+  clearedCount?: number;
   items: Item[];
   entries: FrontPageEntry[];
   stories?: Story[];
@@ -313,33 +318,15 @@ export function Grid(props: GridProps) {
       })),
     ),
   );
-  const filteredEmpty = createMemo(() => {
-    if (props.archive || props.entries.length) return undefined;
-    const scope = props.scope;
-    if (scope) {
-      const tag = scope.kind === "tag";
-      const name = props.scopeCell?.title ?? scope.value;
-      return {
-        heading: `Nothing ${tag ? "under" : "from"} ${name}`,
-        body: `No ${props.unreadOnly ? "unread items" : "items"} ${tag ? "carry this tag" : "from this feed"} right now. New arrivals appear at the top as they are fetched.`,
-        hint: `ESC CLEAR THE ${tag ? "TAG" : "FEED"}${props.unreadOnly ? " · A INCLUDE READ ITEMS" : ""}`,
-        button: tag ? "Clear tag" : "Clear feed",
-        action: props.onClearScope,
-      };
-    }
-    if (props.itemView === "today" || props.itemView === "yesterday")
-      return {
-        heading:
-          props.itemView === "today"
-            ? "Nothing new today"
-            : "Nothing from yesterday",
-        body: "New arrivals appear at the top as they are fetched.",
-        hint: "G → A SHOW ALL",
-        button: "Show all",
-        action: props.onShowAll,
-      };
-    return undefined;
-  });
+  const closedEmpty = createMemo(() =>
+    !props.archive && props.entries.length === 0
+      ? emptyState({
+          ...props,
+          scopeTitle: props.scopeCell?.title,
+          phone: mobile(),
+        })
+      : undefined,
+  );
   const dividerTop = createMemo(() =>
     layout().dividerTop === undefined
       ? undefined
@@ -376,8 +363,7 @@ export function Grid(props: GridProps) {
     () => showEndAction() && unreadIDs().length > 0,
   );
   const gridEndTop = createMemo(() => {
-    if (!props.archive && props.unreadOnly && props.entries.length === 0)
-      return scopeCellHeight();
+    if (closedEmpty()) return (props.scopeCell ? 44 : 0) + 26;
     return (
       scopeCellHeight() +
       layout().height +
@@ -1148,7 +1134,7 @@ export function Grid(props: GridProps) {
               <span class="scope-cell__title">{model.title}</span>
               <span class="scope-cell__meta">
                 <Show when={model.count !== undefined} fallback={model.text}>
-                  <span class="scope-cell__count">
+                  <span class="scope-cell__count" data-zero={model.count === 0}>
                     {model.count?.toLocaleString("en-US")}
                   </span>
                   {model.text.slice(
@@ -1499,43 +1485,48 @@ export function Grid(props: GridProps) {
                 props.unreadOnly &&
                 props.entries.length > 0 &&
                 unreadIDs().length === 0,
-              "caughtup-empty":
-                !props.archive &&
-                props.unreadOnly &&
-                props.entries.length === 0,
-              "caughtup-empty--pending":
-                !props.archive &&
-                props.unreadOnly &&
-                props.entries.length === 0 &&
+              "closed-empty": Boolean(closedEmpty()),
+              "closed-empty--pending":
+                Boolean(closedEmpty()) &&
+                !props.scope &&
+                props.itemView !== "today" &&
+                props.itemView !== "yesterday" &&
                 props.pendingNewCount > 0,
               "no-action": !showEndAction(),
             }}
             style={{
               top: `${endTop()}px`,
-              "min-height": `${
-                !props.archive && props.unreadOnly && props.entries.length === 0
-                  ? Math.max(viewportHeight(), width() < 520 ? 474 : 520)
-                  : viewportHeight()
-              }px`,
+              "min-height": closedEmpty() ? undefined : `${viewportHeight()}px`,
             }}
           >
             <div>
               <Show
-                when={!filteredEmpty()}
+                when={!closedEmpty()}
                 fallback={
                   <>
-                    <h2>{filteredEmpty()?.heading}</h2>
-                    <p>{filteredEmpty()?.body}</p>
-                    <span class="caughtup-label scope-empty-hint">
-                      {filteredEmpty()?.hint}
-                    </span>
-                    <button
-                      class="scope-empty-button"
-                      type="button"
-                      onClick={() => filteredEmpty()?.action?.()}
-                    >
-                      {filteredEmpty()?.button}
-                    </button>
+                    <i class="empty-mark" aria-hidden="true" />
+                    <h2>{closedEmpty()?.heading}</h2>
+                    <p>{closedEmpty()?.body}</p>
+                    <div class="empty-actions">
+                      <For each={closedEmpty()?.actions}>
+                        {(action) => (
+                          <button
+                            type="button"
+                            aria-keyshortcuts={
+                              action.key === "Esc" ? "Escape" : action.key
+                            }
+                            onClick={action.run}
+                          >
+                            {action.label}
+                            <Show when={action.key}>
+                              <span class="empty-key" aria-hidden="true">
+                                {action.key}
+                              </span>
+                            </Show>
+                          </button>
+                        )}
+                      </For>
+                    </div>
                   </>
                 }
               >
@@ -1555,10 +1546,7 @@ export function Grid(props: GridProps) {
                         when={props.entries.length > 0}
                         fallback={
                           <>
-                            <i
-                              class="caughtup-empty__mark"
-                              aria-hidden="true"
-                            />
+                            <i class="empty-mark" aria-hidden="true" />
                             <h2>You&apos;re all caught up</h2>
                             <p>
                               Unread is empty. Anything that arrives from here
