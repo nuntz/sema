@@ -33,8 +33,6 @@ import {
   nextGridPageTop,
 } from "../layout/navigation";
 import {
-  caughtUpBoundary,
-  caughtUpLabel,
   endMarkActionEnabled,
   gridReadStateContext,
   nextScrollReassert,
@@ -48,16 +46,9 @@ import {
 import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { ScopeCellModel } from "../scope-cell";
-import type {
-  FrontPageEntry,
-  GridScope,
-  Item,
-  Order,
-  ReadAnchor,
-  Story,
-} from "../types";
+import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
 import { emptyState } from "./empty-state";
-import { frontPageEntryItem, frontPageSequence } from "./front-page";
+import { frontPageSequence } from "./front-page";
 import { gridCommand, isEditingTarget } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
@@ -102,8 +93,6 @@ interface GridProps {
   archive: boolean;
   unreadOnly: boolean;
   order: Order;
-  readStateItems: Item[];
-  readAnchor?: ReadAnchor;
   linkActionID: string;
   pendingNewCount: number;
   onFocus(id: string): void;
@@ -197,15 +186,6 @@ export function Grid(props: GridProps) {
   const readContext = createMemo(() =>
     gridReadStateContext(props.archive, props.unreadOnly),
   );
-  const caughtUp = createMemo(() =>
-    caughtUpBoundary(
-      readContext(),
-      props.order,
-      props.readStateItems,
-      props.items,
-      props.readAnchor,
-    ),
-  );
   const contentWidth = createMemo(() =>
     Math.max(0, width() - (width() < 700 ? 24 : 32)),
   );
@@ -228,10 +208,6 @@ export function Grid(props: GridProps) {
         ),
       ),
   );
-  const dividerHeight = createMemo(() => {
-    if (contentWidth() < 310) return 40;
-    return width() < 700 ? 24 : 28;
-  });
   const layoutSnapshot = createMemo(
     on(
       () => props.layoutKey,
@@ -246,65 +222,16 @@ export function Grid(props: GridProps) {
   };
   const layout = createMemo(() => {
     const { entries, hasMore } = layoutSnapshot();
-    const boundary = caughtUp();
-    if (!boundary) {
-      const rows = stableRows(
-        justify(entries, contentWidth(), hasMore, {
-          expandedStoryIDs: props.expandedStoryIDs,
-          storyLeadHeights: storyLeadHeights(),
-          storyHeadlineHeights: storyHeadlineHeights(),
-          storyCardMinHeight: mobile() ? undefined : 310,
-          refinedMobile: true,
-        }),
-      );
-      return { rows, height: totalHeight(rows) };
-    }
-
-    const beforeIndex = boundary.beforeItemID
-      ? entries.findIndex(
-          (entry) =>
-            frontPageEntryItem(entry)?.item_id === boundary.beforeItemID,
-        )
-      : entries.length;
-    if (beforeIndex < 0) {
-      const rows = stableRows(
-        justify(entries, contentWidth(), hasMore, {
-          expandedStoryIDs: props.expandedStoryIDs,
-          storyLeadHeights: storyLeadHeights(),
-          storyHeadlineHeights: storyHeadlineHeights(),
-          storyCardMinHeight: mobile() ? undefined : 310,
-          refinedMobile: true,
-        }),
-      );
-      return { rows, height: totalHeight(rows) };
-    }
-
-    const above = justify(entries.slice(0, beforeIndex), contentWidth(), true, {
-      completeSegment: true,
-      expandedStoryIDs: props.expandedStoryIDs,
-      storyLeadHeights: storyLeadHeights(),
-      storyHeadlineHeights: storyHeadlineHeights(),
-      storyCardMinHeight: mobile() ? undefined : 310,
-      refinedMobile: true,
-    });
-    const aboveHeight = totalHeight(above);
-    const below = justify(entries.slice(beforeIndex), contentWidth(), hasMore, {
-      expandedStoryIDs: props.expandedStoryIDs,
-      storyLeadHeights: storyLeadHeights(),
-      storyHeadlineHeights: storyHeadlineHeights(),
-      storyCardMinHeight: mobile() ? undefined : 310,
-      refinedMobile: true,
-    }).map((row) => ({
-      ...row,
-      top: row.top + aboveHeight + dividerHeight(),
-    }));
-    const rows = stableRows([...above, ...below]);
-    return {
-      rows,
-      dividerTop: aboveHeight + 14,
-      height:
-        below.length > 0 ? totalHeight(rows) : aboveHeight + dividerHeight(),
-    };
+    const rows = stableRows(
+      justify(entries, contentWidth(), hasMore, {
+        expandedStoryIDs: props.expandedStoryIDs,
+        storyLeadHeights: storyLeadHeights(),
+        storyHeadlineHeights: storyHeadlineHeights(),
+        storyCardMinHeight: mobile() ? undefined : 310,
+        refinedMobile: true,
+      }),
+    );
+    return { rows, height: totalHeight(rows) };
   });
   const scopeCellHeight = createMemo(() =>
     props.scopeCell ? 44 + (mobile() ? 8 : 10) : 0,
@@ -326,11 +253,6 @@ export function Grid(props: GridProps) {
           phone: mobile(),
         })
       : undefined,
-  );
-  const dividerTop = createMemo(() =>
-    layout().dividerTop === undefined
-      ? undefined
-      : (layout().dividerTop ?? 0) + scopeCellHeight(),
   );
   const visible = createMemo(() =>
     // Mount the adjacent pages early so their images load before paging to them.
@@ -1448,31 +1370,6 @@ export function Grid(props: GridProps) {
             </div>
           )}
         </For>
-        <Show when={dividerTop()} keyed>
-          {(top) => (
-            <div
-              class="caughtup-shell"
-              style={{
-                top: `${top}px`,
-                height: `${dividerHeight()}px`,
-              }}
-            >
-              <div class="caughtup">
-                <hr
-                  class="caughtup-semantic"
-                  aria-label={caughtUpLabel(caughtUp()?.count ?? 0)}
-                />
-                <i />
-                <span class="caughtup-label" aria-hidden="true">
-                  NEW SINCE YOU LAST CAUGHT UP{" "}
-                  <span class="caughtup-separator">·</span>{" "}
-                  <span class="caughtup-count">{caughtUp()?.count}</span>
-                </span>
-                <i />
-              </div>
-            </div>
-          )}
-        </Show>
         <Show when={shouldShowEndCard(props.hasMore)}>
           <section
             class="end-of-feed"

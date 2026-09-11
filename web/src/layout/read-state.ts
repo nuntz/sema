@@ -1,4 +1,3 @@
-import type { Item, Order, ReadAnchor } from "../types";
 import type { LayoutRow } from "./justified";
 
 export type ReadStateContext = "unread" | "all-items" | "search" | "archive";
@@ -6,11 +5,6 @@ export type ReadStateContext = "unread" | "all-items" | "search" | "archive";
 export interface ReadVisualState {
   dimmed: boolean;
   unreadDot: boolean;
-}
-
-export interface CaughtUpBoundary {
-  count: number;
-  beforeItemID?: string;
 }
 
 export interface ScrollReassertState {
@@ -73,51 +67,6 @@ export function automaticReadEnabled(context: ReadStateContext): boolean {
 
 export function endMarkActionEnabled(context: ReadStateContext): boolean {
   return context === "unread";
-}
-
-export function caughtUpBoundary(
-  context: ReadStateContext,
-  order: Order,
-  loadedItems: Item[],
-  visibleItems: Item[],
-  readAnchor?: ReadAnchor,
-): CaughtUpBoundary | undefined {
-  if (order !== "chrono" || (context !== "unread" && context !== "all-items"))
-    return undefined;
-
-  const newestLoadedReadIndex = loadedItems.findIndex((item) => item.read);
-  if (context === "all-items") {
-    if (newestLoadedReadIndex <= 0) return undefined;
-
-    const visible = new Set(visibleItems.map((item) => item.item_id));
-    const beforeItemID = loadedItems
-      .slice(newestLoadedReadIndex)
-      .find((item) => visible.has(item.item_id))?.item_id;
-    return { count: newestLoadedReadIndex, beforeItemID };
-  }
-
-  const newestLoadedRead = loadedItems[newestLoadedReadIndex];
-  const anchor =
-    newestLoadedRead &&
-    (!readAnchor || newestLoadedRead.published_ts >= readAnchor.published_ts)
-      ? newestLoadedRead
-      : readAnchor;
-  if (!anchor) return undefined;
-
-  const beforeIndex = visibleItems.findIndex(
-    (item) => item.published_ts <= anchor.published_ts,
-  );
-  const count = beforeIndex < 0 ? visibleItems.length : beforeIndex;
-  if (count === 0) return undefined;
-  return {
-    count,
-    beforeItemID:
-      beforeIndex < 0 ? undefined : visibleItems[beforeIndex].item_id,
-  };
-}
-
-export function caughtUpLabel(count: number): string {
-  return `New since you last caught up · ${count}`;
 }
 
 export function fullyPassedRows(

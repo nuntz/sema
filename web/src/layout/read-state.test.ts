@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { updateRead } from "../item-list";
 import type { Item, Story } from "../types";
 import { justify } from "./justified";
 import {
   automaticReadEnabled,
-  caughtUpBoundary,
-  caughtUpLabel,
   endMarkActionEnabled,
   fullyPassedRows,
   gridReadStateContext,
@@ -127,125 +124,6 @@ describe("read state", () => {
     expect(endMarkActionEnabled("unread")).toBe(true);
     expect(endMarkActionEnabled("all-items")).toBe(false);
     expect(endMarkActionEnabled("archive")).toBe(false);
-  });
-
-  it("positions the caught-up divider above the newest read item in All", () => {
-    const loaded = [make(0), make(1), { ...make(2), read: true }, make(3)];
-
-    expect(caughtUpBoundary("all-items", "chrono", loaded, loaded)).toEqual({
-      count: 2,
-      beforeItemID: "2",
-    });
-  });
-
-  it("positions the unread divider between items straddling the read item", () => {
-    const loaded = [make(0), make(1), { ...make(2), read: true }, make(3)];
-    const unread = loaded.filter((item) => !item.read);
-
-    expect(caughtUpBoundary("unread", "chrono", loaded, unread)).toEqual({
-      count: 2,
-      beforeItemID: "3",
-    });
-  });
-
-  it("positions the unread divider from a server-loaded read anchor", () => {
-    const unread = [make(0), make(1), make(3), make(4)];
-
-    expect(
-      caughtUpBoundary("unread", "chrono", unread, unread, {
-        item_id: "anchor",
-        published_ts: make(2).published_ts,
-      }),
-    ).toEqual({ count: 2, beforeItemID: "3" });
-  });
-
-  it("hides the caught-up divider outside Latest grid views", () => {
-    const loaded = [make(0), { ...make(1), read: true }, make(2)];
-
-    expect(
-      caughtUpBoundary("unread", "interest", loaded, loaded),
-    ).toBeUndefined();
-    expect(
-      caughtUpBoundary("all-items", "interest", loaded, loaded),
-    ).toBeUndefined();
-    expect(
-      caughtUpBoundary("search", "chrono", loaded, loaded),
-    ).toBeUndefined();
-    expect(
-      caughtUpBoundary("archive", "chrono", loaded, loaded),
-    ).toBeUndefined();
-  });
-
-  it("does not guess when no read anchor is loaded or nothing is above it", () => {
-    const unread = [make(0), make(1), make(2)];
-    expect(
-      caughtUpBoundary("all-items", "chrono", unread, unread),
-    ).toBeUndefined();
-    const anchorLoadedLater = [...unread, { ...make(3), read: true }, make(4)];
-    expect(
-      caughtUpBoundary(
-        "all-items",
-        "chrono",
-        anchorLoadedLater,
-        anchorLoadedLater,
-      ),
-    ).toEqual({ count: 3, beforeItemID: "3" });
-
-    const newestRead = [{ ...make(0), read: true }, make(1)];
-    expect(
-      caughtUpBoundary("all-items", "chrono", newestRead, newestRead),
-    ).toBeUndefined();
-    expect(
-      caughtUpBoundary("unread", "chrono", unread, unread),
-    ).toBeUndefined();
-  });
-
-  it("labels the caught-up divider", () => {
-    const boundary = { count: 34, beforeItemID: "anchor" };
-    expect(caughtUpLabel(boundary.count)).toBe(
-      "New since you last caught up · 34",
-    );
-  });
-
-  it("recomputes the boundary after m-style toggles and undo", () => {
-    const initial = [make(0), make(1), { ...make(2), read: true }, make(3)];
-    const marked = updateRead(initial, ["1"], true);
-    const undone = updateRead(marked, ["1"], false);
-    const noReads = updateRead(undone, ["2"], false);
-
-    expect(
-      caughtUpBoundary("all-items", "chrono", initial, initial)?.count,
-    ).toBe(2);
-    expect(caughtUpBoundary("all-items", "chrono", marked, marked)).toEqual({
-      count: 1,
-      beforeItemID: "1",
-    });
-    expect(caughtUpBoundary("all-items", "chrono", undone, undone)?.count).toBe(
-      2,
-    );
-    expect(
-      caughtUpBoundary("all-items", "chrono", noReads, noReads),
-    ).toBeUndefined();
-  });
-
-  it("recomputes an unread boundary against the persisted anchor", () => {
-    const initial = [make(0), make(1), make(3)];
-    const anchor = {
-      item_id: "anchor",
-      published_ts: make(2).published_ts,
-    };
-    const marked = updateRead(initial, ["1"], true);
-    const undone = updateRead(marked, ["1"], false);
-
-    expect(
-      caughtUpBoundary("unread", "chrono", initial, initial, anchor),
-    ).toEqual({ count: 2, beforeItemID: "3" });
-    expect(
-      caughtUpBoundary("unread", "chrono", marked, marked, anchor),
-    ).toEqual({ count: 1, beforeItemID: "1" });
-    expect(
-      caughtUpBoundary("unread", "chrono", undone, undone, anchor),
-    ).toEqual({ count: 2, beforeItemID: "3" });
   });
 
   it("only returns newly fully-passed rows", () => {

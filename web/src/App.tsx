@@ -2182,8 +2182,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               archive={mode() === "archive"}
               unreadOnly={unreadOnly()}
               order={gridOrder()}
-              readStateItems={items()}
-              readAnchor={readAnchor()}
               linkActionID={linkActionID()}
               pendingNewCount={pendingNew().length}
               onFocus={setFocusedID}
