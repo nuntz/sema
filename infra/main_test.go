@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -138,9 +139,11 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 
 	var dashboard struct {
 		Widgets []struct {
+			Type       string `json:"type"`
 			Properties struct {
 				Title   string  `json:"title"`
 				Metrics [][]any `json:"metrics"`
+				Query   string  `json:"query"`
 			} `json:"properties"`
 		} `json:"widgets"`
 	}
@@ -151,8 +154,15 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		t.Fatal("dashboard has no widgets")
 	}
 
+	// Mirrors observability.ExtractedMetrics: the only Sema metric names that exist
+	// as custom metrics. Anything else on the dashboard would chart an empty series.
+	extracted := map[string]bool{
+		"FeedsEnqueued": true, "SummariesGenerated": true, "StoryAssignmentFailed": true, "ItemsWritten": true, "FeedsFailed": true,
+		"ExtractionFailed": true, "MediaFailed": true, "ItemWorkerDurationMs": true, "BedrockLatencyMs": true, "StoryCreated": true,
+	}
 	metrics := 0
 	metricsByTitle := map[string][][]any{}
+	logWidgets := 0
 	for index, widget := range dashboard.Widgets {
 		title := strings.TrimSpace(widget.Properties.Title)
 		if title == "" {
@@ -160,20 +170,33 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		}
 		metrics += len(widget.Properties.Metrics)
 		metricsByTitle[title] = widget.Properties.Metrics
+		for _, metric := range widget.Properties.Metrics {
+			if len(metric) >= 2 && metric[0] == "Sema" && !extracted[metric[1].(string)] {
+				t.Errorf("widget %q charts Sema/%v, which is not an extracted metric", title, metric[1])
+			}
+			if expression, ok := metric[0].(map[string]any); ok && strings.Contains(fmt.Sprint(expression["expression"]), "{Sema") {
+				t.Errorf("widget %q searches Sema metrics: %v; dimensioned Sema metrics are no longer extracted", title, expression["expression"])
+			}
+		}
+		if widget.Type == "log" {
+			logWidgets++
+			if !strings.HasPrefix(widget.Properties.Query, "SOURCE '/aws/lambda/sema-dev-item-worker' | ") || !strings.Contains(widget.Properties.Query, "by FeedID") {
+				t.Errorf("log widget %q query = %q, want item worker log group grouped by FeedID", title, widget.Properties.Query)
+			}
+		}
 	}
 	if metrics >= 50 {
 		t.Errorf("dashboard charts %d metrics, want fewer than 50", metrics)
 	}
-	if metrics != 49 {
-		t.Errorf("dashboard charts %d metrics, want 49", metrics)
+	if metrics != 40 {
+		t.Errorf("dashboard charts %d metrics, want 40", metrics)
+	}
+	if logWidgets != 1 {
+		t.Errorf("dashboard has %d log widgets, want 1 for failures by feed", logWidgets)
 	}
 	storyMetrics := metricsByTitle["Story assignment"]
-	if len(storyMetrics) != 1 {
-		t.Fatalf("Story assignment metrics = %#v, want one SEARCH expression", storyMetrics)
-	}
-	storyExpression, ok := storyMetrics[0][0].(map[string]any)
-	if !ok || storyExpression["expression"] != `SEARCH('{Sema} ("StoryCreated" OR "StoryJoined" OR "StoryAssignmentFailed")', 'Sum', 300)` {
-		t.Fatalf("Story assignment metric = %#v", storyMetrics[0])
+	if len(storyMetrics) != 2 || storyMetrics[0][1] != "StoryCreated" || storyMetrics[1][1] != "StoryAssignmentFailed" {
+		t.Fatalf("Story assignment metrics = %#v, want StoryCreated and StoryAssignmentFailed", storyMetrics)
 	}
 	foundTransactionConflict := false
 	for _, metric := range metricsByTitle["DynamoDB errors"] {

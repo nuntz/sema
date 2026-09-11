@@ -828,6 +828,9 @@ func (g *dashboardGrid) row(height int, properties ...map[string]any) {
 		if _, ok := property["alarms"]; ok {
 			kind = "alarm"
 		}
+		if _, ok := property["query"]; ok {
+			kind = "log"
+		}
 		g.widgets = append(g.widgets, dashboardWidget{Type: kind, X: index * width, Y: g.y, Width: width, Height: height, Properties: property})
 	}
 	g.y += height
@@ -837,6 +840,11 @@ func timeSeries(region, title, stat string, period int, metrics ...[]any) map[st
 	return map[string]any{
 		"title": title, "view": "timeSeries", "stacked": false, "region": region, "stat": stat, "period": period, "metrics": metrics,
 	}
+}
+
+// logsInsights builds a Logs Insights table widget; query must start with a SOURCE clause.
+func logsInsights(region, title, query string) map[string]any {
+	return map[string]any{"title": title, "view": "table", "region": region, "query": query}
 }
 
 func dashboardMetric(namespace, name string, tail ...any) []any {
@@ -864,29 +872,30 @@ func horizontal(value float64, label string) map[string]any {
 	return map[string]any{"horizontal": []any{annotation}}
 }
 
-// dashboardBody renders the Sema dashboard. Metrics that are only emitted with a
-// dimension (ExtractionFailed, MediaFailed and RescoreDurationMs carry one, the API
-// metrics carry Route and Status) are folded back into a single series with SEARCH,
-// because CloudWatch does not aggregate a dimensioned metric into a bare one.
+// dashboardBody renders the Sema dashboard. Only the metric names listed in
+// observability.ExtractedMetrics exist as custom metrics, so the charts lean on
+// those ten plus the free AWS/Lambda, AWS/SQS, AWS/ApiGateway and AWS/DynamoDB
+// metrics. Per-feed failure detail lives in the log stream and is surfaced by a
+// Logs Insights widget instead of dimensioned metrics.
 func dashboardBody(resources dashboardResources) (string, error) {
 	region := resources.region
 	grid := &dashboardGrid{}
 
 	grid.row(4, map[string]any{"title": "Alarms", "alarms": resources.alarmArns, "sortBy": "stateUpdatedTimestamp"})
 
+	failures := timeSeries(region, "Item failures", "Sum", 300,
+		dashboardMetric("Sema", "ExtractionFailed"),
+		dashboardMetric("Sema", "MediaFailed"),
+	)
+	failures["stacked"] = true
 	grid.row(6,
-		timeSeries(region, "Feeds", "Sum", 300,
+		timeSeries(region, "Pipeline", "Sum", 300,
 			dashboardMetric("Sema", "FeedsEnqueued"),
-			dashboardMetric("Sema", "FeedsFetched"),
-			dashboardMetric("Sema", "FeedsNotModified"),
 			dashboardMetric("Sema", "FeedsFailed"),
-			dashboardMetric("Sema", "FeedsRateLimited"),
-		),
-		timeSeries(region, "Items", "Sum", 300,
-			dashboardMetric("Sema", "ItemsEnqueued"),
 			dashboardMetric("Sema", "ItemsWritten"),
-			dashboardMetric("Sema", "ItemsDeduped"),
 		),
+		failures,
+		timeSeries(region, "Item worker duration p95", "p95", 300, dashboardMetric("Sema", "ItemWorkerDurationMs")),
 	)
 
 	deadLetters := timeSeries(region, "Dead letters", "Maximum", 300,
@@ -930,47 +939,29 @@ func dashboardBody(resources dashboardResources) (string, error) {
 			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.feedWorker),
 			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.itemWorker),
 		),
-		timeSeries(region, "Scheduled job duration", "p95", 3600,
-			dashboardMetric("Sema", "SchedulerDurationMs"),
-			dashboardExpression("rescore_duration", `MAX(SEARCH('{Sema,User} MetricName="RescoreDurationMs"', 'Maximum', 3600))`, "RescoreDurationMs", nil),
+		timeSeries(region, "Scheduled job duration p95", "p95", 3600,
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.scheduler),
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.rescore),
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.vectorCleanup),
 		),
 	)
-
-	extraction := timeSeries(region, "Extraction", "Sum", 300,
-		dashboardMetric("Sema", "ExtractionSucceeded"),
-		dashboardExpression("extraction_failed", `SUM(SEARCH('{Sema,FeedID} MetricName="ExtractionFailed"', 'Sum', 300))`, "ExtractionFailed", nil),
-	)
-	extraction["stacked"] = true
-	media := timeSeries(region, "Media", "Sum", 300,
-		dashboardMetric("Sema", "MediaSucceeded"),
-		dashboardExpression("media_failed", `SUM(SEARCH('{Sema,FeedID} MetricName="MediaFailed"', 'Sum', 300))`, "MediaFailed", nil),
-	)
-	media["stacked"] = true
-	embedding := timeSeries(region, "Embedding", "p95", 300,
-		dashboardMetric("Sema", "BedrockLatencyMs"),
-		dashboardMetric("Sema", "ImageEmbedFailed", map[string]any{"stat": "Sum", "yAxis": "right"}),
-		dashboardMetric("Sema", "VectorPutFailed", map[string]any{"stat": "Sum", "yAxis": "right"}),
-	)
-	embedding["yAxis"] = map[string]any{
-		"left":  map[string]any{"label": "ms", "showUnits": false},
-		"right": map[string]any{"label": "failures", "showUnits": false, "min": 0},
-	}
-	grid.row(6, extraction, media, embedding)
 
 	summaries := timeSeries(region, "Summaries generated per day", "Sum", 86400,
 		dashboardMetric("Sema", "SummariesGenerated"),
 	)
 	summaries["annotations"] = horizontal(2000, "daily cost guard")
-	grid.row(6, summaries,
-		timeSeries(region, "Summary latency p95", "p95", 300, dashboardMetric("Sema", "SummaryLatencyMs")),
+	grid.row(6,
+		timeSeries(region, "Embedding latency p95", "p95", 300, dashboardMetric("Sema", "BedrockLatencyMs")),
+		summaries,
 		timeSeries(region, "Story assignment", "Sum", 300,
-			dashboardExpression("story", `SEARCH('{Sema} ("StoryCreated" OR "StoryJoined" OR "StoryAssignmentFailed")', 'Sum', 300)`, "", nil),
+			dashboardMetric("Sema", "StoryCreated"),
+			dashboardMetric("Sema", "StoryAssignmentFailed"),
 		),
 	)
 
 	traffic := timeSeries(region, "API traffic", "Sum", 300,
-		dashboardExpression("requests", `SUM(SEARCH('{Sema,Route,Status} MetricName="APIRequests"', 'Sum', 300))`, "APIRequests", nil),
-		dashboardExpression("errors", `SUM(SEARCH('{Sema,Route,Status} MetricName="APIServerErrors"', 'Sum', 300))`, "APIServerErrors", nil),
+		dashboardMetric("AWS/ApiGateway", "Count", "ApiId", resources.apiID, map[string]any{"id": "requests"}),
+		dashboardMetric("AWS/ApiGateway", "5xx", "ApiId", resources.apiID, map[string]any{"id": "errors"}),
 		dashboardExpression("error_rate", "IF(requests>0, errors/requests*100, 0)", "5xx rate", map[string]any{"yAxis": "right"}),
 	)
 	traffic["yAxis"] = map[string]any{"right": map[string]any{"label": "%", "showUnits": false, "min": 0, "max": 100}}
@@ -981,26 +972,24 @@ func dashboardBody(resources dashboardResources) (string, error) {
 	edge["yAxis"] = map[string]any{"right": map[string]any{"label": "%", "showUnits": false, "min": 0}}
 	grid.row(6, traffic,
 		timeSeries(region, "API latency p95", "p95", 300,
-			dashboardExpression("api_latency", `MAX(SEARCH('{Sema,Route,Status} MetricName="APIRequestDurationMs"', 'p95', 300))`, "slowest route p95", nil),
+			dashboardMetric("AWS/ApiGateway", "Latency", "ApiId", resources.apiID),
 		),
 		edge,
 	)
 
-	vectorIndexes := timeSeries(region, "Vector index size", "Maximum", 86400,
-		dashboardMetric("Sema", "VectorIndexSize"),
-		dashboardMetric("Sema", "ImageVectorIndexSize"),
-	)
-	// The weekly cleanup is the only writer, so show its latest datapoint rather than a range.
-	vectorIndexes["view"] = "singleValue"
-	vectorIndexes["setPeriodToTimeRange"] = false
-	vectorIndexes["sparkline"] = true
 	grid.row(6,
 		timeSeries(region, "DynamoDB errors", "Sum", 300,
 			dashboardMetric("AWS/DynamoDB", "ThrottledRequests", "TableName", resources.table),
 			dashboardMetric("AWS/DynamoDB", "SystemErrors", "TableName", resources.table),
 			dashboardMetric("AWS/DynamoDB", "TransactionConflict", "TableName", resources.table),
 		),
-		vectorIndexes,
+		// Failure metrics are extracted without their FeedID dimension to stay within
+		// the custom metric free tier; the field is still in the log line, so the
+		// per-feed breakdown comes from Logs Insights instead.
+		logsInsights(region, "Failures by feed", fmt.Sprintf(
+			"SOURCE '/aws/lambda/%s' | filter ispresent(FeedID) | stats sum(ExtractionFailed) as extraction, sum(MediaFailed) as media, sum(BodyImageFailed) as bodyImage by FeedID | sort extraction desc, media desc | limit 20",
+			resources.functions.itemWorker,
+		)),
 	)
 
 	encoded, err := json.Marshal(map[string]any{"widgets": grid.widgets})
