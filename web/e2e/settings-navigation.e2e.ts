@@ -481,7 +481,7 @@ async function setMidScroll(page: Page): Promise<number> {
 }
 
 for (const tab of ["Unread", "All"] as const) {
-  test(`g s then Escape restores the ${tab} grid without refetching`, async ({
+  test(`g s then Escape twice restores the ${tab} grid without refetching`, async ({
     page,
   }) => {
     const state = await openApp(page);
@@ -499,6 +499,10 @@ for (const tab of ["Unread", "All"] as const) {
     await page.keyboard.press("g");
     await page.keyboard.press("s");
     await expect(page.locator(".feeds-view")).toBeVisible();
+    await expect(
+      page.getByRole("searchbox", { name: "Search feeds" }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
 
     await expect(page.locator(".grid-scroll")).toBeVisible();
@@ -948,7 +952,11 @@ test("Settings inputs consume Escape and suppress g s while typing", async ({
   await page.keyboard.press("s");
 
   const search = page.getByRole("searchbox", { name: "Search feeds" });
-  await search.fill("Tech");
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue("");
+  await page.keyboard.type("Techgs");
+  await expect(search).toHaveValue("Techgs");
+  await expect(page.locator(".feeds-view")).toBeVisible();
   await search.press("Escape");
   await expect(page.locator(".feeds-view")).toBeVisible();
   await expect(search).toHaveValue("");
@@ -959,6 +967,7 @@ test("Settings inputs consume Escape and suppress g s while typing", async ({
   await page.keyboard.press("g");
   await page.keyboard.press("s");
 
+  await expect(search).toBeFocused();
   await page.getByRole("button", { name: "Add feed" }).click();
   const address = page.getByPlaceholder("example.com");
   await address.press("g");
@@ -982,6 +991,7 @@ test("g s toggles Settings back to the cached grid", async ({ page }) => {
   await page.keyboard.press("g");
   await page.keyboard.press("s");
   await expect(page.locator(".feeds-view")).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.keyboard.press("g");
   await page.keyboard.press("s");
 

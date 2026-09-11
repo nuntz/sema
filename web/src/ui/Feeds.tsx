@@ -33,6 +33,7 @@ type FeedSort = "title" | "updated" | "errors" | "prior" | "quality";
 
 export function Feeds(props: {
   api: APIClient;
+  focusSearch?: boolean;
   heartCount: number;
   onBack(): void;
   onKeys(): void;
@@ -57,6 +58,11 @@ export function Feeds(props: {
   const [undoFeed, setUndoFeed] = createSignal<Feed>();
   let undoTimer: number | undefined;
   let input!: HTMLInputElement;
+  let searchInput!: HTMLInputElement;
+
+  onMount(() => {
+    if (props.focusSearch) searchInput.focus();
+  });
 
   const selected = createMemo(() =>
     feeds()?.find((feed) => feed.feed_id === selectedID()),
@@ -257,6 +263,7 @@ export function Feeds(props: {
             <Icon name="search" />
             <input
               type="search"
+              ref={searchInput}
               value={query()}
               placeholder="Search feeds"
               aria-label="Search feeds"

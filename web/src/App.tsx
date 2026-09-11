@@ -155,6 +155,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [linkActionID, setLinkActionID] = createSignal("");
   const [toast, setToast] = createSignal<Toast>();
   const [view, setView] = createSignal<"grid" | "feeds">("grid");
+  const [focusFeedSearch, setFocusFeedSearch] = createSignal(false);
   const [undo, setUndo] = createSignal<Undo>();
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchResponse, setSearchResponse] = createSignal<SearchResponse>();
@@ -1597,7 +1598,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       await reload(order(), unreadOnly(), "live", scope());
   };
 
-  const openFeedsAndSettings = () => {
+  const openFeedsAndSettings = (focusSearch = false) => {
+    setFocusFeedSearch(focusSearch);
     clearGo();
     setHeaderMenu();
     closeKeys();
@@ -1637,7 +1639,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const navigateByKey = async (command: GoCommand) => {
     if (command === "settings") {
       if (view() === "feeds") await closeFeedsAndSettings();
-      else openFeedsAndSettings();
+      else openFeedsAndSettings(true);
       return;
     }
     if (view() === "feeds") await closeFeedsAndSettings();
@@ -1682,6 +1684,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         <>
           <Feeds
             api={api}
+            focusSearch={focusFeedSearch()}
             heartCount={heartCount()}
             onBack={() => void closeFeedsAndSettings()}
             onKeys={openKeys}
@@ -1912,7 +1915,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               type="button"
               class="chrome-icon header-icon-button settings-trigger"
               aria-label="Feeds & settings"
-              onClick={openFeedsAndSettings}
+              onClick={() => openFeedsAndSettings()}
             >
               <Icon name="settings" size={18} />
             </button>
@@ -2068,7 +2071,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                 <span>Theme: {props.theme.preference()}</span>
                 <kbd>next</kbd>
               </button>
-              <button type="button" onClick={openFeedsAndSettings}>
+              <button type="button" onClick={() => openFeedsAndSettings()}>
                 <Icon name="settings" size={18} />
                 <span>Feeds &amp; settings</span>
                 <kbd>G S</kbd>
