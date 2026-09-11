@@ -35,6 +35,10 @@ export function emptyState(input: EmptyStateInputs) {
   };
   let heading = "You're all caught up";
   let actions: EmptyStateAction[];
+  // Scoped and day views hang from the scope cell, so they read as the tail
+  // of a section. The unscoped caught-up state has nothing above it and is
+  // centered in the viewport instead.
+  let centered = false;
   if (input.scope) {
     const tag = input.scope.kind === "tag";
     heading = `End of ${input.scopeTitle ?? `${tag ? "#" : ""}${input.scope.value}`}`;
@@ -62,10 +66,11 @@ export function emptyState(input: EmptyStateInputs) {
       },
     ];
   } else {
+    centered = true;
     actions = [
       showRead,
       { label: "Archive", key: "G R", run: () => input.onOpenArchive?.() },
     ];
   }
-  return { heading, body, actions };
+  return { heading, body, actions, centered };
 }

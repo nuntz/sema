@@ -389,8 +389,8 @@ for (const [width, height, theme] of [
     const copy = await section.locator(":scope > div").boundingBox();
     expect(copy?.x).toBe(width < 620 ? 12 : 16);
     expect(
-      await section.evaluate((el) => getComputedStyle(el, "::before").width),
-    ).toBe(`${width - (width < 620 ? 24 : 32)}px`);
+      await section.evaluate((el) => getComputedStyle(el, "::before").content),
+    ).toBe("none");
     await page.screenshot({
       path: `/tmp/sema-closed-section-${width}-${theme}.png`,
       animations: "disabled",

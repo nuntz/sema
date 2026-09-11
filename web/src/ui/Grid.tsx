@@ -285,6 +285,7 @@ export function Grid(props: GridProps) {
     () => showEndAction() && unreadIDs().length > 0,
   );
   const gridEndTop = createMemo(() => {
+    if (closedEmpty()?.centered) return scopeCellHeight();
     if (closedEmpty()) return (props.scopeCell ? 44 : 0) + 26;
     return (
       scopeCellHeight() +
@@ -1383,17 +1384,18 @@ export function Grid(props: GridProps) {
                 props.entries.length > 0 &&
                 unreadIDs().length === 0,
               "closed-empty": Boolean(closedEmpty()),
+              "closed-empty--centered": Boolean(closedEmpty()?.centered),
               "closed-empty--pending":
-                Boolean(closedEmpty()) &&
-                !props.scope &&
-                props.itemView !== "today" &&
-                props.itemView !== "yesterday" &&
-                props.pendingNewCount > 0,
+                Boolean(closedEmpty()?.centered) && props.pendingNewCount > 0,
               "no-action": !showEndAction(),
             }}
             style={{
               top: `${endTop()}px`,
-              "min-height": closedEmpty() ? undefined : `${viewportHeight()}px`,
+              "min-height": closedEmpty()?.centered
+                ? `${Math.max(viewportHeight(), width() < 520 ? 474 : 520)}px`
+                : closedEmpty()
+                  ? undefined
+                  : `${viewportHeight()}px`,
             }}
           >
             <div>

@@ -38,6 +38,7 @@ for (const [input, heading, labels, primary] of states) {
   it(heading, () => {
     const result = emptyState({ ...base, ...input });
     expect(result.heading).toBe(heading);
+    expect(result.centered).toBe(heading === "You're all caught up");
     expect(result.actions.map((action) => action.label)).toEqual(labels);
     expect(
       emptyState({ ...base, ...input, phone: true }).actions[0].label,
