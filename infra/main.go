@@ -745,7 +745,7 @@ func uploadWeb(ctx *pulumi.Context, bucket *s3.Bucket) error {
 
 func webCacheControl(relative string) string {
 	switch filepath.ToSlash(relative) {
-	case "index.html", "sw.js":
+	case "index.html", "sw.js", "version.json":
 		return "no-cache"
 	case "manifest.webmanifest":
 		return "public,max-age=300,must-revalidate"

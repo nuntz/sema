@@ -56,6 +56,7 @@ func TestWebCacheControl(t *testing.T) {
 	tests := map[string]string{
 		"index.html":           "no-cache",
 		"sw.js":                "no-cache",
+		"version.json":         "no-cache",
 		"manifest.webmanifest": "public,max-age=300,must-revalidate",
 		"icon-192.png":         "public,max-age=86400",
 		"icon-512.png":         "public,max-age=86400",

@@ -1,4 +1,10 @@
 :root {
+  --upd-strip: #14161a;
+  --accent-hover: #e6ff6f;
+  --upd-button-bg: transparent;
+  --upd-button-ink: var(--accent-loud);
+  --upd-button-hover: var(--accent-hover);
+
   --scope-cell-h: 44px;
   --scope-title-max: 620px;
   --scope-title-max-sm: 250px;
@@ -342,6 +348,12 @@
 
 /* Light token blocks must stay in sync. */
 :root[data-theme="light"] {
+  --upd-strip: #e3e0d9;
+  --accent-hover: #e6ff6f;
+  --upd-button-bg: var(--accent-loud);
+  --upd-button-ink: var(--accent-ink);
+  --upd-button-hover: var(--accent-ink);
+
   --scope-count-ink: var(--fg-accent);
   --lb-scrim: rgba(11, 12, 14, 0.9);
   --lb-control: var(--lb-control-light);
@@ -545,6 +557,12 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
+    --upd-strip: #e3e0d9;
+    --accent-hover: #e6ff6f;
+    --upd-button-bg: var(--accent-loud);
+    --upd-button-ink: var(--accent-ink);
+    --upd-button-hover: var(--accent-ink);
+
     --scope-count-ink: var(--fg-accent);
     --lb-scrim: rgba(11, 12, 14, 0.9);
     --lb-control: var(--lb-control-light);
@@ -2361,3 +2379,41 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .end-of-feed.closed-empty button:first-child { background: var(--accent-block); color: var(--accent-ink); }
   .empty-key { display: none; }
 }
+
+
+.update-notice {
+  flex: 0 0 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px;
+  background: var(--upd-strip);
+  box-shadow: inset 0 -1px 0 var(--line-rule);
+  color: var(--fg-secondary);
+  font: 12.5px "IBM Plex Mono", monospace;
+  animation: update-enter 160ms ease-out;
+}
+.update-dot { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--accent-loud); }
+.update-meta { color: var(--fg-quaternary); font-size: 11.5px; }
+.update-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.update-reload { height: 22px; border: 0; border-radius: 6px; padding: 0 8px; background: var(--upd-button-bg); color: var(--upd-button-ink); font: 500 12px "IBM Plex Mono", monospace; letter-spacing: .04em; display: flex; align-items: center; gap: 6px; }
+.update-reload:hover { color: var(--upd-button-hover); }
+.update-reload:disabled { opacity: .62; cursor: default; }
+.update-dismiss { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--fg-secondary); }
+.update-actions button:focus-visible { outline: 2px solid var(--fg-primary); outline-offset: 2px; }
+.update-dots { display: flex; gap: 3px; }
+.update-dots i { width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: update-pulse 1.2s infinite; }
+.update-dots i:nth-child(2) { animation-delay: .16s; }
+.update-dots i:nth-child(3) { animation-delay: .32s; }
+@keyframes update-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes update-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+@media (max-width: 619px) {
+  .update-notice { padding: 0 12px; }
+  .update-meta { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-notice { animation-name: update-fade; }
+  .update-dots i { animation: none; opacity: .6; }
+}
+@keyframes update-fade { from { opacity: 0; } to { opacity: 1; } }

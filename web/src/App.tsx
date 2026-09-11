@@ -21,6 +21,7 @@ import { AppHeader } from "./components/AppHeader";
 import { Icon } from "./components/Icon";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Tooltip } from "./components/Tooltip";
+import { UpdateNotice } from "./components/UpdateNotice";
 import { effectiveGridOrder, sameGridScope } from "./grid-scope";
 import {
   finishAndClearGrid,
@@ -93,6 +94,7 @@ import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
 import { TagFilter } from "./ui/TagFilter";
 import { displayFeedTitle } from "./ui/tag-options";
+import { createUpdateNotice, type UpdateState } from "./update-notice";
 import { listenForWindowReturn } from "./window-activity";
 
 type Undo = {
@@ -714,10 +716,31 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         !searchActive() &&
         !relatedSource()));
 
+  const announcedUpdateBuilds = new Set<string>();
+  const [updateState, setUpdateState] = createSignal<UpdateState>();
+  let updateNotice: ReturnType<typeof createUpdateNotice> | undefined;
   onMount(() => {
+    updateNotice = createUpdateNotice({
+      currentBuild: __SEMA_BUILD__,
+      fetch: (url, init) => fetch(url, init),
+      storage: {
+        getItem: (key) => localStorage.getItem(key),
+        setItem: (key, value) => localStorage.setItem(key, value),
+      },
+      now: Date.now,
+      visible: () => document.visibilityState === "visible",
+      setInterval: (callback, ms) => window.setInterval(callback, ms),
+      clearInterval: (timer) => window.clearInterval(timer as number),
+      changed: setUpdateState,
+      flush: () => flushPending(true),
+      reload: () => location.reload(),
+    });
     bootstrap();
     const flush = () => void flushPending(true);
-    const stopWindowReturn = listenForWindowReturn(flush, () => void pollNew());
+    const stopWindowReturn = listenForWindowReturn(flush, () => {
+      void pollNew();
+      void updateNotice?.onReturn();
+    });
     const onShortcutCapture = (event: KeyboardEvent) => {
       if (event.isComposing || isEditingTarget(event.target)) {
         clearGo();
@@ -833,6 +856,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       window.removeEventListener("blur", clearGoOnFocus);
       window.removeEventListener("focusin", clearGoOnFocus);
       stopWindowReturn();
+      updateNotice?.dispose();
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("keydown", onKeyDown);
       window.clearTimeout(readTimer);
@@ -1936,6 +1960,16 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             <Icon name="menu" size={18} />
           </button>
         </AppHeader>
+        <Show
+          when={updateState()?.available && !readerID() && !readerClosing()}
+        >
+          <UpdateNotice
+            state={updateState() as UpdateState}
+            announcedBuilds={announcedUpdateBuilds}
+            onReload={() => void updateNotice?.reload()}
+            onDismiss={() => updateNotice?.dismiss()}
+          />
+        </Show>
         <Show when={headerMenu() === "combined"}>
           <div class="header-sheet-layer">
             <button
