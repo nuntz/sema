@@ -2582,65 +2582,107 @@ test.describe("grid thumbnail budget", () => {
 });
 
 for (const theme of ["dark", "light", "system"] as const) {
-  test(`feedback action colors stay consistent on hover in ${theme}`, async ({
-    page,
-  }) => {
+  test(`feedback controls follow the ${theme} theme`, async ({ page }) => {
+    const light = theme !== "dark";
+    const rest = light ? "rgb(244, 241, 234)" : "rgba(6, 7, 9, 0.72)";
+    const secondary = light ? "rgb(61, 67, 75)" : "rgb(199, 204, 211)";
+    const selected = light ? "rgb(224, 220, 210)" : "rgb(42, 45, 49)";
+    const hover = light ? selected : "rgb(31, 33, 36)";
+    const primary = light ? "rgb(20, 22, 26)" : "rgb(244, 242, 238)";
+    const fixtures = [
+      { ...item("boosted", "one", "Boosted item", 0.9, "M"), signal: 1 },
+      { ...item("buried", "one", "Buried image", 0.8, "L"), signal: -1 },
+      { ...item("buried-text", "one", "Buried text", 0.7, "M"), signal: -1 },
+      {
+        ...item("kept", "one", "Kept boosted item", 0.6, "M"),
+        signal: 1,
+        hearted: true,
+      },
+    ];
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
     await page.addInitScript(
       (theme) => localStorage.setItem("sema:theme", theme),
       theme,
     );
-    await stubFrontPage(
-      page,
-      [],
-      [
-        { ...item("boosted", "one", "Boosted item", 0.9, "M"), signal: 1 },
-        { ...item("buried", "one", "Buried item", 0.8, "M"), signal: -1 },
-        {
-          ...item("kept", "one", "Kept boosted item", 0.7, "M"),
-          signal: 1,
-          hearted: true,
-        },
-      ],
-      [],
-    );
+    await stubFrontPage(page, [], fixtures, []);
+    for (const fixture of fixtures) {
+      await page.route(`**/api/items/${fixture.item_id}`, (route) =>
+        route.fulfill({ json: fixture }),
+      );
+    }
     await page.goto("/");
-    for (const id of ["boosted", "buried", "kept"]) {
-      const cell = page.locator(`[data-item-id="${id}"]`);
+    for (const fixture of fixtures) {
+      const cell = page.locator(`[data-item-id="${fixture.item_id}"]`);
       await cell.hover();
+      const label = cell.locator(".cell-signal-label");
+      await expect(label).toHaveCSS(
+        "background-color",
+        await cell
+          .locator(".cell-age")
+          .evaluate((el) => getComputedStyle(el).backgroundColor),
+      );
+      await expect(label).toHaveCSS(
+        "color",
+        fixture.signal === 1
+          ? light
+            ? "rgb(95, 122, 12)"
+            : "rgb(214, 242, 75)"
+          : await cell
+              .locator(".cell-age")
+              .evaluate((el) => getComputedStyle(el).color),
+      );
+      const more = cell.locator('button[data-action="more"]');
+      await expect(more).toHaveCSS("background-color", rest);
+      await expect(more.locator(".icon")).toHaveCSS("color", secondary);
       for (const action of ["boost", "bury", "keep", "more"]) {
         const button = cell.locator(`button[data-action="${action}"]`);
         await button.hover();
         const pressed = (await button.getAttribute("aria-pressed")) === "true";
         const disabled = await button.isDisabled();
         const background = disabled
-          ? "rgba(6, 7, 9, 0.72)"
+          ? rest
           : pressed
             ? action === "boost"
               ? "rgb(214, 242, 75)"
-              : "rgb(42, 45, 49)"
-            : "rgb(31, 33, 36)";
+              : selected
+            : hover;
         const foreground = disabled
-          ? "rgb(199, 204, 211)"
+          ? secondary
           : pressed && action === "boost"
             ? "rgb(18, 22, 10)"
-            : "rgb(244, 242, 238)";
+            : primary;
         await expect(button).toHaveCSS("background-color", background);
         await expect(button).toHaveCSS("color", foreground);
         await expect(button.locator(".icon")).toHaveCSS("color", foreground);
+        if (disabled) await expect(button).toHaveCSS("opacity", "0.4");
       }
     }
-    await page.screenshot({ path: `/tmp/sema-feedback-hover-${theme}.png` });
-    await page.setViewportSize({ width: 390, height: 844 });
-    for (const [id, background, foreground] of [
-      ["boosted", "rgb(214, 242, 75)", "rgb(18, 22, 10)"],
-      ["buried", "rgb(42, 45, 49)", "rgb(244, 242, 238)"],
-    ]) {
-      const chip = page.locator(`[data-item-id="${id}"] .signal-mobile-chip`);
-      await expect(chip).toBeVisible();
-      await expect(chip).toHaveCSS("background-color", background);
-      await expect(chip.locator(".icon")).toHaveCSS("color", foreground);
+    await page.screenshot({ path: `/tmp/sema-feedback-theme-${theme}.png` });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const [id, action, background, foreground] of [
+        ["boosted", "boost", "rgb(214, 242, 75)", "rgb(18, 22, 10)"],
+        ["buried", "bury", selected, primary],
+      ]) {
+        const cell = page.locator(`[data-item-id="${id}"]`);
+        if (width === 390) {
+          const chip = cell.locator(".signal-mobile-chip");
+          await expect(chip).toBeVisible();
+          await expect(chip).toHaveCSS("background-color", background);
+          await expect(chip.locator(".icon")).toHaveCSS("color", foreground);
+        }
+        await cell.locator(".cell-main").click();
+        const button = page.locator(
+          `.reader [data-action="${action}"]:visible`,
+        );
+        await expect(button).toHaveCSS("background-color", background);
+        await expect(button.locator(".icon")).toHaveCSS("color", foreground);
+        await button.hover();
+        await expect(button).toHaveCSS("background-color", background);
+        await expect(button.locator(".icon")).toHaveCSS("color", foreground);
+        await page.keyboard.press("Escape");
+      }
     }
   });
 }
