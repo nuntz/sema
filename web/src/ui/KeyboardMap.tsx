@@ -40,6 +40,7 @@ const groups = [
       ["− / ,", "Bury / undo bury"],
       ["f", "Keep / unkeep"],
       ["m", "Toggle read for the item or story (grid)"],
+      ["Shift+F10 / Menu", "More actions for the item or story (grid)"],
       ["Shift+m", "Mark read from here on Front page; below here in Latest"],
       ["u", "Undo last read batch / grid clear"],
       ["c", "Copy or share original; Reddit discussion in grid"],

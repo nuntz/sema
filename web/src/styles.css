@@ -4,6 +4,7 @@
   --signal-bury-border: rgba(255,255,255,.05);
   --signal-bury-ink: var(--fg-tertiary);
   --signal-bury-meta: var(--fg-quaternary);
+  --signal-bury-label: var(--fg-quaternary);
   --signal-bury-surface: var(--surface-raised);
   --signal-boost-wash: rgba(214,242,75,.07);
   --signal-boost-pulse: rgba(214,242,75,.16);
@@ -366,6 +367,7 @@
   --signal-bury-border: rgba(0,0,0,.05);
   --signal-bury-ink: #5c6169;
   --signal-bury-meta: #5c6169;
+  --signal-bury-label: #5f7a0c;
   --signal-bury-surface: #f0ede7;
   --signal-boost-wash: rgba(214,242,75,.14);
   --signal-boost-border: #a9b95c;
@@ -586,6 +588,7 @@
   --signal-bury-border: rgba(0,0,0,.05);
   --signal-bury-ink: #5c6169;
   --signal-bury-meta: #5c6169;
+  --signal-bury-label: #5f7a0c;
   --signal-bury-surface: #f0ede7;
   --signal-boost-wash: rgba(214,242,75,.14);
   --signal-boost-border: #a9b95c;
@@ -2457,20 +2460,22 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-cell[data-signal="-1"] > img, .grid-cell[data-signal="-1"] .story-media img { filter: saturate(var(--signal-bury-saturate)); opacity: var(--signal-bury-media-opacity); transition-duration: 140ms; }
 .grid-cell.read[data-signal="-1"] > img, .grid-cell.read[data-signal="-1"] .story-media img { opacity: 1; filter: none; }
 .refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-copy h2, .cell-copy p, .story-lead h2, .story-lead p, .story-related-title, .story-headline-title) { color: var(--signal-bury-ink); }
-.refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-meta > span:not(.source-badge), .cell-feed-filter, .story-meta > span:not(.source-badge), .story-meta small, .story-related-source, .why-hint) { color: var(--signal-bury-meta); }
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-meta > span:not(.source-badge), .cell-feed-filter, .story-meta > span:not(.source-badge), .story-meta small, .story-related-source, .story-related-source b, .why-hint) { color: var(--signal-bury-meta); }
 .grid-cell[data-signal="-1"] .story-headlines { background: var(--signal-bury-surface); }
 .grid-cell[data-signal="1"] { border-color: var(--signal-boost-border); }
 .grid-cell::after { content: ""; position: absolute; inset: 0; z-index: 3; background: transparent; pointer-events: none; transition: background 120ms ease-out; }
 .grid-cell[data-signal="1"]::after { background: var(--signal-boost-wash); transition-duration: 160ms; }
 .grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-pulse); }
-.grid-cell .cell-signal-label { padding: 5px 7px; border-radius: 5px; background: rgba(6,7,9,.72); color: #8b8f96; font: 400 13px/1 "IBM Plex Mono", monospace; white-space: nowrap; animation: signal-label-in 100ms ease-out 40ms both; }
+.grid-cell .cell-corner .cell-signal-label { padding: 5px 7px; border-radius: 5px; background: rgba(6,7,9,.72); color: #8b8f96; font: 400 13px/1 "IBM Plex Mono", monospace; white-space: nowrap; animation: signal-label-in 100ms ease-out 40ms both; }
 .grid-cell[data-signal="1"] .cell-signal-label { color: var(--accent-loud); animation-delay: 160ms; }
-.grid-cell:is(.text-cell, .no-media) .cell-signal-label { background: transparent; color: var(--signal-bury-meta); }
+.grid-cell:is(.text-cell, .no-media) .cell-signal-label { background: transparent; color: var(--signal-bury-label); }
 .grid-cell:is(.text-cell, .no-media)[data-signal="1"] .cell-signal-label { color: var(--signal-label-ink); }
 @keyframes signal-label-in { from { opacity: 0; } to { opacity: 1; } }
 .refined-grid .grid-cell[data-signal]:not([data-signal="0"]) .cell-corner { display: flex; }
 .refined-grid .grid-cell .why-hint.has-signal { display: block; opacity: 1; position: absolute; bottom: 2px; left: 14px; right: 14px; z-index: 4; margin: 0; pointer-events: auto; }
-.refined-grid .grid-cell:has(.why-hint.has-signal) :is(.cell-meta, .story-meta) { transform: translateY(-16px); }
+/* Reserve the hint line in every L/M cell, including neutral, so feedback never moves copy. */
+.refined-grid .grid-row > .grid-cell[data-signal]:not(.size-s) .cell-copy,
+.refined-grid .grid-row > .grid-cell .story-lead { padding-bottom: 32px; }
 .grid-cell[data-signal="1"] .why-hint.has-signal { color: var(--signal-label-ink); }
 .signal-why button { padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
 .signal-why button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
@@ -2483,13 +2488,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-cell .signal-actions { display: flex; gap: 5px; opacity: 1; pointer-events: none; }
 .grid-cell .signal-actions button { width: 26px; height: 26px; margin: 0; border: 1px solid rgba(255,255,255,.13); background: rgba(6,7,9,.72); color: #c7ccd3; opacity: 0; pointer-events: none; transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, opacity 120ms ease-out; }
 .grid-cell .signal-actions button::before { content: none; }
-.grid-cell:is(:hover, :focus-within, .focused) .signal-actions button, .grid-cell .signal-actions button[aria-pressed="true"] { opacity: 1; pointer-events: auto; }
+.grid-cell:is(:hover, :focus-within) .signal-actions button, .grid-cell .signal-actions button[aria-pressed="true"] { opacity: 1; pointer-events: auto; }
 .grid-cell .signal-actions button:hover { background: var(--surface-raised-hover); border-color: rgba(255,255,255,.22); color: var(--fg-primary); }
 .grid-cell .signal-actions button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; box-shadow: none; }
 .grid-cell .signal-actions button.boost[aria-pressed="true"] { background: var(--accent-loud); border-color: transparent; color: var(--accent-ink); }
 .grid-cell .signal-actions button.bury[aria-pressed="true"] { background: var(--cluster-pressed-down); border-color: rgba(255,255,255,.22); color: #f4f2ee; }
 .grid-cell .signal-actions button:disabled { opacity: 0; cursor: default; }
-.grid-cell:is(:hover, :focus-within, .focused) .signal-actions button:disabled { opacity: .4; background: rgba(6,7,9,.72); color: #c7ccd3; }
+.grid-cell:is(:hover, :focus-within) .signal-actions button:disabled { opacity: .4; background: rgba(6,7,9,.72); color: #c7ccd3; }
 .grid-cell.size-s .signal-actions button { width: 24px; height: 24px; }
 .grid-cell:has(.signal-actions button.heart) .kept-marker { display: none; }
 .grid-cell.size-s .kept-marker { top: 40px; opacity: 1; }
@@ -2512,7 +2517,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .signal-hint button { padding: 0; color: var(--signal-label-ink); background: transparent; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .signal-hint button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 3px; }
 @media (max-width: 619px) {
-  .signal-hint { position: fixed; z-index: 110; left: 14px; right: 14px; bottom: calc(20px + env(safe-area-inset-bottom)); height: 46px; padding: 0 14px; gap: 8px; border-radius: 11px; background: var(--surface-raised-hover); border: 1px solid var(--line-rule); font-size: 12px; }
+  .signal-hint { position: fixed; z-index: 110; left: 14px; right: 14px; bottom: calc(20px + env(safe-area-inset-bottom)); height: 46px; padding: 0 14px; gap: 8px; border-radius: 11px; background: var(--surface-raised-hover); border: 1px solid var(--line-rule); font-size: 13px; }
   .signal-hint > i { display: none; }
   .signal-hint button { margin-left: auto; min-height: 44px; }
   .signal-hint--expired { display: none; }
@@ -2526,3 +2531,25 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @media (prefers-reduced-motion: reduce) {
   .reader :is(.chrome-btn, .reader-toolbar-action)[data-action] { transition: none !important; }
 }
+
+/* Refined cards have stronger base selectors than the older grid treatment. */
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] { background: var(--signal-bury-surface); border-color: var(--signal-bury-border); }
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] > img,
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] .story-media img { filter: saturate(var(--signal-bury-saturate)); opacity: var(--signal-bury-media-opacity); }
+.refined-grid .grid-row > .grid-cell.read[data-signal="-1"] { opacity: .34; }
+.refined-grid .grid-row > .grid-cell.read[data-signal="-1"] > img,
+.refined-grid .grid-row > .grid-cell.read[data-signal="-1"] .story-media,
+.refined-grid .grid-row > .grid-cell.read[data-signal="-1"] .story-media img { opacity: 1; filter: none; }
+.refined-grid .grid-row > .grid-cell[data-signal="1"] { border-color: var(--signal-boost-border); }
+.refined-grid.keyboard-focus .grid-cell.focused[data-signal],
+.refined-grid .grid-row > .grid-cell[data-signal]:has(:is(.cell-main, .story-lead):focus-visible) { outline-color: var(--signal-focus); }
+.grid-cell.size-s .cell-corner:has(.cell-signal-label) { top: 38px; }
+.grid-cell .cell-corner:has(.cell-signal-label) > .unread-dot { display: none; }
+
+@media (max-width: 619px) {
+  .mobile-refined-grid .grid-cell:has(.signal-mobile-chip) .story-badges { left: 42px; }
+  .mobile-refined-grid .grid-cell:has(.signal-mobile-chip) .story-stack-badge { left: 42px; }
+}
+.signal-why { display: flex; align-items: baseline; min-width: 0; }
+.signal-why-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.signal-why-undo { flex: none; white-space: pre; }

@@ -47,20 +47,24 @@ export function SignalWhy(props: {
 }) {
   return (
     <span class="signal-why">
-      {signalWhy(props.value, props.story).replace(" · undo", "")}
+      <span class="signal-why-text">
+        {signalWhy(props.value, props.story).replace(" · undo", "")}
+      </span>
       <Show when={props.value === -1}>
-        {" · "}
-        <button
-          type="button"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onUndo();
-          }}
-        >
-          undo
-        </button>
+        <span class="signal-why-undo">
+          {" · "}
+          <button
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              props.onUndo();
+            }}
+          >
+            undo
+          </button>
+        </span>
       </Show>
     </span>
   );

@@ -865,7 +865,7 @@ function GridContent(props: GridProps) {
       return;
     if (
       target.closest(
-        ".story-heart, .story-more, .story-more-action, .cell-actions",
+        ".story-heart, .story-more, .story-more-action, .cell-actions, .signal-why, .signal-hint",
       ) &&
       (event.key === "Enter" || event.key === " ")
     )
@@ -873,6 +873,16 @@ function GridContent(props: GridProps) {
     if (target === endButton && (event.key === "Enter" || event.key === " "))
       return;
     const item = focused();
+    if (
+      event.key === "ContextMenu" ||
+      (event.key === "F10" && event.shiftKey)
+    ) {
+      const story = focusedStory();
+      const lead = story?.items[0] ?? item;
+      if (lead) openSheet(lead, story);
+      event.preventDefault();
+      return;
+    }
     const command = gridCommand(event.key);
     if (command !== "page-down" && command !== "page-up") pageFocus = undefined;
     if (!command) {
