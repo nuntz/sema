@@ -398,12 +398,7 @@ export function StoryCell(props: StoryCellProps) {
                     </div>
                   </Show>
                 </PrimaryAction>
-                <Show
-                  when={
-                    item.signal !== 0 &&
-                    !cellReadVisuals().dimmed
-                  }
-                >
+                <Show when={item.signal !== 0 && !cellReadVisuals().dimmed}>
                   <div class="why-hint has-signal story-signal-why">
                     <SignalWhy
                       value={item.signal}

@@ -2506,3 +2506,14 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @media (prefers-reduced-motion: reduce) {
   .grid-cell .signal-actions button { transition: none !important; }
 }
+
+.signal-hint { display: flex; align-items: center; flex: none; gap: 10px; height: 36px; padding: 0 20px; background: rgba(214,242,75,.08); border-bottom: 1px solid var(--hairline); color: var(--fg-secondary); font: 400 13px/1 "IBM Plex Mono", monospace; }
+.signal-hint > i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--signal-label-ink); }
+.signal-hint button { padding: 0; color: var(--signal-label-ink); background: transparent; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.signal-hint button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 3px; }
+@media (max-width: 619px) {
+  .signal-hint { position: fixed; z-index: 110; left: 14px; right: 14px; bottom: calc(20px + env(safe-area-inset-bottom)); height: 46px; padding: 0 14px; gap: 8px; border-radius: 11px; background: var(--surface-raised-hover); border: 1px solid var(--line-rule); font-size: 12px; }
+  .signal-hint > i { display: none; }
+  .signal-hint button { margin-left: auto; min-height: 44px; }
+  .signal-hint--expired { display: none; }
+}

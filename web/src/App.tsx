@@ -51,6 +51,11 @@ import { resolveReaderItem } from "./reader-item";
 import { scopeCellModel } from "./scope-cell";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import {
+  buryDisabled,
+  nextSignalNotice,
+  type SignalNotice,
+} from "./signal-feedback";
+import {
   excludeRenderedStoryItems,
   updateStoriesRead,
   updateStoryItem,
@@ -92,6 +97,7 @@ import { closeOverlay, pushOverlay } from "./ui/overlay-history";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
+import { SignalHint } from "./ui/SignalHint";
 import { TagFilter } from "./ui/TagFilter";
 import { displayFeedTitle } from "./ui/tag-options";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
@@ -112,6 +118,9 @@ const READER_EXIT_MS = 220;
 export function App(props: { signOut(): void; theme: ThemeController }) {
   const api = new APIClient();
   const [, setProfile] = createSignal<Profile>();
+  const [signalCount, setSignalCount] = createSignal(5);
+  const [signalNotice, setSignalNotice] = createSignal<SignalNotice>();
+  let signalNoticeID = 0;
   const [heartCount, setHeartCount] = createSignal(0);
   const [order, setOrder] = createSignal<Order>("interest");
   const [scope, setScope] = createSignal<GridScope>(null);
@@ -331,6 +340,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     try {
       const me = await api.me();
       setProfile(me.profile);
+      setSignalCount(me.signal_count);
       setHeartCount(me.heart_count ?? me.profile.heart_count ?? 0);
       setOrder(me.profile.order_pref || "interest");
       const profileScope: GridScope = me.profile.feed_pref
@@ -1021,12 +1031,33 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setConfirmRemove();
   };
 
+  createEffect(() => {
+    // Navigation retires desktop feedback; reader actions share the lifetime gate.
+    view();
+    mode();
+    scope();
+    readerID();
+    searchActive();
+    itemView();
+    order();
+    setSignalNotice(undefined);
+  });
+
   const setSignal = (item: Item, value: -1 | 0 | 1) => {
+    if (value === -1 && buryDisabled(item)) return;
     const previous = item.signal;
     const effective = item.hearted && value === 0 ? 1 : value;
+    const noticeID = ++signalNoticeID;
+    setSignalNotice(
+      nextSignalNotice(signalCount(), noticeID, item.item_id, effective),
+    );
+    setSignalCount((count) => count + 1);
     replaceItem(item.item_id, { signal: effective });
     api.signal(item.item_id, value).catch((caught) => {
       replaceItem(item.item_id, { signal: previous });
+      setSignalNotice((notice) =>
+        notice?.id === noticeID ? undefined : notice,
+      );
       handleError(caught);
     });
   };
@@ -1960,6 +1991,25 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             <Icon name="menu" size={18} />
           </button>
         </AppHeader>
+        <SignalHint
+          notice={signalNotice()}
+          visible={
+            view() === "grid" &&
+            mode() !== "archive" &&
+            !readerID() &&
+            !searchActive()
+          }
+          onUndo={(notice) => {
+            const item =
+              items().find(
+                (candidate) => candidate.item_id === notice.itemID,
+              ) ??
+              stories()
+                .flatMap((story) => story.items)
+                .find((candidate) => candidate.item_id === notice.itemID);
+            if (item) setSignal(item, 0);
+          }}
+        />
         <Show
           when={updateState()?.available && !readerID() && !readerClosing()}
         >
