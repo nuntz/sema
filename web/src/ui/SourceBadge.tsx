@@ -1,5 +1,6 @@
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, useContext } from "solid-js";
 import { connectorKind } from "../reddit-item";
+import { ImageLoadingEnabledContext } from "./image-loading";
 
 export type BadgeSize = 12 | 16 | 20 | 22 | 28 | 32 | 36;
 
@@ -10,6 +11,7 @@ export function SourceBadge(props: {
   size: BadgeSize;
   class?: string;
 }) {
+  const imagesEnabled = useContext(ImageLoadingEnabledContext);
   const [failed, setFailed] = createSignal(false);
   const connector = () => connectorKind(props.connector);
   const channel = () => connector() === "youtube";
@@ -39,7 +41,11 @@ export function SourceBadge(props: {
         when={showImage()}
         fallback={<span class="source-badge-fallback">{initials()}</span>}
       >
-        <img src={props.imageURL} alt="" onError={() => setFailed(true)} />
+        <img
+          src={imagesEnabled ? props.imageURL : undefined}
+          alt=""
+          onError={() => setFailed(true)}
+        />
       </Show>
     </span>
   );

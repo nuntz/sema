@@ -1571,11 +1571,9 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
   await page.setViewportSize({ width: 1470, height: 833 });
   await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
   await page.addInitScript(() => {
-    const decode = HTMLImageElement.prototype.decode;
     HTMLImageElement.prototype.decode = function () {
-      return decode.call(this).then(() => {
-        this.dataset.decodedSource = this.currentSrc;
-      });
+      this.dataset.decodeAttempted = "true";
+      return Promise.resolve();
     };
   });
   let releaseImages = () => {};
@@ -1615,7 +1613,7 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
               ?.getBoundingClientRect();
             return (
               img.complete &&
-              img.dataset.decodedSource === img.currentSrc &&
+              img.dataset.decodeAttempted === undefined &&
               img.naturalWidth === 640 &&
               bounds.height > 126 &&
               !!copy &&
@@ -1646,7 +1644,247 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
   }
 });
 
-test("grid remains usable when explicit image decoding rejects", async ({
+test("overscan photos prefetch just outside the viewport without explicit decoding", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1470, height: 833 });
+  await page.addInitScript(() => {
+    const decode = HTMLImageElement.prototype.decode;
+    HTMLImageElement.prototype.decode = function () {
+      this.dataset.decodeAttempted = "true";
+      return decode.call(this);
+    };
+  });
+  await stubFrontPage(
+    page,
+    [],
+    Array.from({ length: 48 }, (_, index) =>
+      item(`viewport-${index}`, "feed", `Photo ${index}`, 0.9, "L"),
+    ),
+    [],
+  );
+  await page.goto("/");
+  const grid = page.locator(".grid-scroll");
+  const first = page.locator('[data-item-id="viewport-0"] > img');
+  await expect
+    .poll(() =>
+      first.evaluate(
+        (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+      ),
+    )
+    .toBe(true);
+  await expect(first).not.toHaveAttribute("data-decode-attempted");
+  const bufferedIDs = () =>
+    grid.evaluate((element) => {
+      const bottom = element.getBoundingClientRect().bottom;
+      const margin = Math.min(240, element.clientHeight / 4);
+      return Array.from(element.querySelectorAll(".grid-cell > img"))
+        .filter((image) => {
+          const top = image.getBoundingClientRect().top;
+          return top >= bottom && top < bottom + margin;
+        })
+        .map((image) => image.parentElement?.getAttribute("data-item-id"));
+    });
+  await expect
+    .poll(async () => (await bufferedIDs()).length)
+    .toBeGreaterThan(0);
+  const targetID = (await bufferedIDs())[0];
+  const target = page.locator(`[data-item-id="${targetID}"] > img`);
+  // Fetch ahead within the existing mounted buffer, before scrolling to it.
+  await expect(target).toHaveAttribute("src", "/sema-mark.svg");
+  await expect
+    .poll(() =>
+      target.evaluate(
+        (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+      ),
+    )
+    .toBe(true);
+  await expect(target).not.toHaveAttribute("data-decode-attempted");
+});
+
+for (const width of [1470, 390]) {
+  test(`image-free grid preserves layout and suppresses media requests at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 833 });
+    const requests: string[] = [];
+    await page.route("**/memory-experiment/**", async (route) => {
+      requests.push(route.request().url());
+      await route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="teal"/></svg>',
+      });
+    });
+    const photo = (index: number) => ({
+      ...item(`no-images-${index}`, "feed", `Photo ${index}`, 0.9, "L"),
+      media_url: `/memory-experiment/photo-${index}.svg`,
+      media_w: 640,
+      media_h: 480,
+      media_variants: [
+        {
+          url: `/memory-experiment/variant-${index}.svg`,
+          width: 640,
+          height: 480,
+        },
+      ],
+      favicon_url: "/memory-experiment/favicon.svg",
+    });
+    await stubFrontPage(
+      page,
+      [
+        {
+          story_id: "no-images-story",
+          source_count: 3,
+          order_key: 0.95,
+          size: "L",
+          items: [photo(100), photo(101), photo(102)],
+        },
+      ],
+      Array.from({ length: 48 }, (_, index) => photo(index)),
+      [],
+    );
+    const grid = page.locator(".grid-scroll");
+    const geometry = () =>
+      grid.evaluate((element) => ({
+        height: element.scrollHeight,
+        cells: Array.from(element.querySelectorAll(".grid-cell")).map(
+          (cell) => {
+            const rect = (node: Element) => {
+              const r = node.getBoundingClientRect();
+              return [r.x, r.y, r.width, r.height].map(
+                (v) => Math.round(v * 10) / 10,
+              );
+            };
+            return {
+              id: cell.getAttribute("data-item-id"),
+              rect: rect(cell),
+              images: Array.from(cell.querySelectorAll("img")).map(rect),
+            };
+          },
+        ),
+      }));
+    await page.goto("/");
+    await expect(grid).toHaveAttribute("data-grid-images", "on");
+    await expect.poll(() => requests.length).toBeGreaterThan(0);
+    await expect
+      .poll(() =>
+        grid
+          .locator("img[src]")
+          .evaluateAll((images) =>
+            images.every((image) => (image as HTMLImageElement).complete),
+          ),
+      )
+      .toBe(true);
+    // Wait for image loading and story measurements to finish before comparison.
+    await grid.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    const normal = await geometry();
+    requests.length = 0;
+    await page.goto("/?grid-images=off");
+    await expect(grid).toHaveAttribute("data-grid-images", "off");
+    await expect.poll(geometry).toEqual(normal);
+    await expect(grid.locator("img")).not.toHaveCount(0);
+    await expect(grid.locator("img[src], img[srcset]")).toHaveCount(0);
+    expect(requests).toEqual([]);
+    await page.keyboard.press("PageDown");
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await grid.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect(page.locator('[data-item-id="no-images-47"]')).toBeVisible();
+    await expect(grid.locator("img[src], img[srcset]")).toHaveCount(0);
+    expect(requests).toEqual([]);
+    await grid.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await expect(page.locator('[data-item-id="no-images-0"]')).toBeVisible();
+    await page.locator('[data-item-id="no-images-0"] .cell-main').click();
+    await expect(page.locator(".reader .article-lead")).toHaveAttribute(
+      "src",
+      "/memory-experiment/photo-0.svg",
+    );
+    await expect.poll(() => requests.length).toBeGreaterThan(0);
+    requests.length = 0;
+    await page.goto("/");
+    await expect(grid).toHaveAttribute("data-grid-images", "on");
+    await expect.poll(() => requests.length).toBeGreaterThan(0);
+  });
+}
+
+test("grid releases detached nodes after repeated scrolling through loaded items", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "DOM counters require Chromium's CDP");
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1470, height: 833 });
+  await stubFrontPage(
+    page,
+    [],
+    Array.from({ length: 400 }, (_, index) => ({
+      ...item(`retention-${index}`, "feed", `Photo ${index}`, 0.9, "L"),
+      // Plain-src fixtures miss retention through native responsive listeners.
+      media_variants: [
+        { url: `/sema-mark.svg?small=${index}`, width: 768, height: 510 },
+        { url: `/sema-mark.svg?large=${index}`, width: 1280, height: 850 },
+      ],
+    })),
+    [],
+  );
+  await page.goto("/");
+  const session = await page.context().newCDPSession(page);
+  const grid = page.locator(".grid-scroll");
+  const roundTrip = () =>
+    grid.evaluate(async (element) => {
+      const bottom = element.scrollHeight - element.clientHeight;
+      const step = element.clientHeight;
+      const visit = async (top: number) => {
+        element.scrollTop = top;
+        // Let virtual rows, intersection callbacks, and cached loads settle.
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+      };
+      for (let top = 0; top < bottom; top += step) await visit(top);
+      await visit(bottom);
+      for (let top = bottom; top > 0; top -= step) await visit(top);
+      await visit(0);
+    });
+  const sample = async () => {
+    await expect(
+      page.locator('[data-item-id="retention-0"] > img'),
+    ).toBeVisible();
+    await session.send("HeapProfiler.collectGarbage");
+    return {
+      ...(await session.send("Memory.getDOMCounters")),
+      ...(await session.send("Runtime.getHeapUsage")),
+    };
+  };
+  const initial = await sample();
+  await roundTrip();
+  const baseline = await sample();
+  await roundTrip();
+  const after = await sample();
+  console.log("Grid retention after warm-up and another round trip", {
+    initial,
+    baseline,
+    after,
+  });
+  // Count detached as well as connected nodes. Allow small browser bookkeeping
+  // differences, but not another viewport's worth of retained cards.
+  expect(after.nodes).toBeLessThan(initial.nodes + 400);
+  expect(after.nodes).toBeLessThan(baseline.nodes + 200);
+  expect(after.jsEventListeners).toBeLessThan(baseline.jsEventListeners + 20);
+  await session.detach();
+});
+
+test("grid uses native decoding while reader retains its decode workaround", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -1667,12 +1905,24 @@ test("grid remains usable when explicit image decoding rejects", async ({
   );
   await page.goto("/");
   const card = page.locator('[data-item-id="decode-error"]');
-  await expect(card.locator(":scope > img")).toHaveAttribute(
+  await expect
+    .poll(() =>
+      card
+        .locator(":scope > img")
+        .evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+    )
+    .toBe(true);
+  await expect(card.locator(":scope > img")).not.toHaveAttribute(
     "data-decode-attempted",
-    "true",
   );
   await card.locator(".cell-main").click();
   await expect(page.locator(".reader")).toBeVisible();
+  await expect(page.locator(".reader .article-lead")).toHaveAttribute(
+    "data-decode-attempted",
+    "true",
+  );
   expect(errors).toEqual([]);
 });
 
@@ -2284,4 +2534,49 @@ test.describe("mobile shared grid design", () => {
       });
     }
   }
+});
+
+test.describe("grid thumbnail budget", () => {
+  test.use({ viewport: { width: 1470, height: 833 }, deviceScaleFactor: 2 });
+
+  test("Retina grid selects a small variant while the reader keeps the large image", async ({
+    page,
+  }) => {
+    const requests: string[] = [];
+    await page.route("**/thumbnail-budget/**", async (route) => {
+      requests.push(route.request().url());
+      const width = route.request().url().includes("small") ? 768 : 1280;
+      await route.fulfill({
+        contentType: "image/svg+xml",
+        body: `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width / 2}"><rect width="100%" height="100%" fill="teal"/></svg>`,
+      });
+    });
+    const photo = {
+      ...item("thumbnail-budget", "feed", "Thumbnail budget", 0.9, "L"),
+      media_url: "/thumbnail-budget/large.svg",
+      media_w: 1280,
+      media_h: 640,
+      media_variants: [
+        { url: "/thumbnail-budget/small.svg", width: 768, height: 384 },
+        { url: "/thumbnail-budget/large.svg", width: 1280, height: 640 },
+      ],
+    };
+    await stubFrontPage(page, [], [photo], []);
+    await page.goto("/");
+    const image = page.locator('[data-item-id="thumbnail-budget"] img').first();
+    await expect
+      .poll(() =>
+        image.evaluate((node) => (node as HTMLImageElement).currentSrc),
+      )
+      .toContain("/thumbnail-budget/small.svg");
+    await expect(page.locator(".grid-scroll img[srcset]")).toHaveCount(0);
+    expect(requests.some((url) => url.endsWith("/large.svg"))).toBe(false);
+    await page.locator('[data-item-id="thumbnail-budget"] .cell-main').click();
+    const lead = page.locator(".reader .article-lead");
+    await expect
+      .poll(() =>
+        lead.evaluate((node) => (node as HTMLImageElement).currentSrc),
+      )
+      .toContain("/thumbnail-budget/large.svg");
+  });
 });

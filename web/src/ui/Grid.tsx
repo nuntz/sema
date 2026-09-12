@@ -8,6 +8,7 @@ import {
   onMount,
   Show,
   untrack,
+  useContext,
 } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
@@ -49,6 +50,11 @@ import type { ScopeCellModel } from "../scope-cell";
 import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
+import {
+  GridPixelRatioContext,
+  gridImageOverscan,
+  ImageLoadingEnabledContext,
+} from "./image-loading";
 import { gridCommand, isEditingTarget } from "./keyboard";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
@@ -127,6 +133,28 @@ function shortWhyText(item: Item): string {
 }
 
 export function Grid(props: GridProps) {
+  const imagesEnabled =
+    new URLSearchParams(window.location.search).get("grid-images") !== "off";
+  const [pixelRatio, setPixelRatio] = createSignal(
+    window.devicePixelRatio || 1,
+  );
+  onMount(() => {
+    if (!imagesEnabled) return;
+    const updatePixelRatio = () => setPixelRatio(window.devicePixelRatio || 1);
+    window.addEventListener("resize", updatePixelRatio);
+    onCleanup(() => window.removeEventListener("resize", updatePixelRatio));
+  });
+  return (
+    <ImageLoadingEnabledContext.Provider value={imagesEnabled}>
+      <GridPixelRatioContext.Provider value={pixelRatio}>
+        <GridContent {...props} />
+      </GridPixelRatioContext.Provider>
+    </ImageLoadingEnabledContext.Provider>
+  );
+}
+
+function GridContent(props: GridProps) {
+  const imagesEnabled = useContext(ImageLoadingEnabledContext);
   let scroller!: HTMLDivElement;
   let endButton!: HTMLButtonElement;
   let frame = 0;
@@ -255,12 +283,12 @@ export function Grid(props: GridProps) {
       : undefined,
   );
   const visible = createMemo(() =>
-    // Mount the adjacent pages early so their images load before paging to them.
+    // Keep a small buffer shared with image prefetching.
     visibleRows(
       rows(),
       scrollTop(),
       viewportHeight(),
-      Math.max(360, viewportHeight()),
+      gridImageOverscan(viewportHeight()),
     ),
   );
   const storyList = createMemo(() => props.stories ?? []);
@@ -975,6 +1003,7 @@ export function Grid(props: GridProps) {
   return (
     <div
       class="grid-scroll"
+      data-grid-images={imagesEnabled ? "on" : "off"}
       onPointerMove={() => setKeyboardFocus(false)}
       onPointerDown={() => {
         setKeyboardFocus(false);
@@ -1181,6 +1210,8 @@ export function Grid(props: GridProps) {
                           sizes={cell.width}
                           alt=""
                           loading="eager"
+                          deferUntilVisible
+                          maxDimension={768}
                           width={item().media_w}
                           height={item().media_h}
                           onError={(event) =>

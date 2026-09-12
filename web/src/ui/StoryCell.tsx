@@ -200,6 +200,8 @@ export function StoryCell(props: StoryCellProps) {
                       sizes={props.cell.width}
                       alt=""
                       loading="eager"
+                      deferUntilVisible
+                      maxDimension={768}
                       width={item.media_w}
                       height={item.media_h}
                     />
@@ -309,6 +311,8 @@ export function StoryCell(props: StoryCellProps) {
                         sizes={props.cell.width}
                         alt=""
                         loading="eager"
+                        deferUntilVisible
+                        maxDimension={768}
                       />
                     </div>
                   </PrimaryAction>
