@@ -24,6 +24,7 @@ import {
   redditSummaryProvenance,
   showsReaderOriginalFallback,
 } from "../reddit-item";
+import { signalActionLabel } from "../signal-feedback";
 import type { Item } from "../types";
 import { relativeTime } from "./Grid";
 import { isEditingTarget, readerCommand } from "./keyboard";
@@ -579,7 +580,7 @@ export function Reader(props: ReaderProps) {
         props.onSignal(props.item.signal === 1 ? 0 : 1);
         break;
       case "dislike":
-        props.onSignal(props.item.signal === -1 ? 0 : -1);
+        if (!props.hearted) props.onSignal(props.item.signal === -1 ? 0 : -1);
         break;
       case "heart":
         props.onHeart();
@@ -726,6 +727,12 @@ export function Reader(props: ReaderProps) {
             type="button"
             class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
             classList={{ "chrome-btn--on": props.item.signal === 1 }}
+            aria-label={signalActionLabel(
+              props.item.signal,
+              "boost",
+              props.hearted,
+            )}
+            data-action="boost"
             aria-pressed={props.item.signal === 1}
             onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
           >
@@ -738,6 +745,13 @@ export function Reader(props: ReaderProps) {
             type="button"
             class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
             classList={{ "chrome-btn--on": props.item.signal === -1 }}
+            aria-label={signalActionLabel(
+              props.item.signal,
+              "bury",
+              props.hearted,
+            )}
+            data-action="bury"
+            disabled={props.hearted}
             aria-pressed={props.item.signal === -1}
             onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
           >
@@ -1097,7 +1111,12 @@ export function Reader(props: ReaderProps) {
           <button
             type="button"
             class="reader-toolbar-action"
-            aria-label={props.item.signal === 1 ? "Remove boost" : "Boost"}
+            aria-label={signalActionLabel(
+              props.item.signal,
+              "boost",
+              props.hearted,
+            )}
+            data-action="boost"
             aria-pressed={props.item.signal === 1}
             onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
           >
@@ -1106,7 +1125,13 @@ export function Reader(props: ReaderProps) {
           <button
             type="button"
             class="reader-toolbar-action"
-            aria-label={props.item.signal === -1 ? "Remove bury" : "Bury"}
+            aria-label={signalActionLabel(
+              props.item.signal,
+              "bury",
+              props.hearted,
+            )}
+            data-action="bury"
+            disabled={props.hearted}
             aria-pressed={props.item.signal === -1}
             onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
           >

@@ -2517,3 +2517,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .signal-hint button { margin-left: auto; min-height: 44px; }
   .signal-hint--expired { display: none; }
 }
+
+.reader :is(.chrome-btn, .reader-toolbar-action)[data-action][aria-pressed="true"] { border: 1px solid transparent; border-radius: 6px; }
+.reader :is(.chrome-btn, .reader-toolbar-action)[data-action="boost"][aria-pressed="true"] { background: var(--accent-loud); color: var(--accent-ink); }
+.reader :is(.chrome-btn, .reader-toolbar-action)[data-action="bury"][aria-pressed="true"] { background: var(--cluster-pressed-down); border-color: rgba(255,255,255,.22); color: #f4f2ee; }
+.reader :is(.chrome-btn, .reader-toolbar-action)[data-action]:disabled { opacity: .4; }
+.reader :is(.chrome-btn, .reader-toolbar-action)[data-action]:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .reader :is(.chrome-btn, .reader-toolbar-action)[data-action] { transition: none !important; }
+}
