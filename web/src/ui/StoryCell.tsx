@@ -24,6 +24,7 @@ import type { Item, Story } from "../types";
 import { CellCopy, relativeTime, UnreadDot } from "./Grid";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
+import { SignalActions } from "./SignalActions";
 import {
   createSignalFresh,
   SignalLabel,
@@ -280,29 +281,14 @@ export function StoryCell(props: StoryCellProps) {
                     dimmed={leadReadVisuals().dimmed}
                     onApplyFeed={() => props.onApplyFeed(item)}
                   />
-                  <div class="cell-actions">
-                    <button
-                      type="button"
-                      class="heart"
-                      classList={{ selected: item.hearted }}
-                      aria-label={
-                        item.hearted ? "Remove from archive" : "Keep in archive"
-                      }
-                      aria-pressed={item.hearted}
-                      onClick={() => props.onHeart(item)}
-                    >
-                      <Icon name="keep" size={14} filled={item.hearted} />
-                    </button>
-                    <button
-                      type="button"
-                      class="more"
-                      aria-label="More actions"
-                      aria-haspopup="dialog"
-                      onClick={() => props.onMore(props.story)}
-                    >
-                      <Icon name="more" size={14} />
-                    </button>
-                  </div>
+                  <SignalActions
+                    item={item}
+                    size={props.story.size}
+                    story={editorial()}
+                    onSignal={props.onSignal}
+                    onHeart={props.onHeart}
+                    onMore={() => props.onMore(props.story)}
+                  />
                 </>
               }
             >
@@ -348,35 +334,14 @@ export function StoryCell(props: StoryCellProps) {
                   </strong>
                   <em>top 10%</em>
                 </div>
-                <div class="cell-actions story-actions">
-                  <button
-                    type="button"
-                    class="heart story-heart"
-                    classList={{ selected: item.hearted }}
-                    aria-label={
-                      item.hearted ? "Remove from archive" : "Keep in archive"
-                    }
-                    aria-pressed={item.hearted}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onHeart(item);
-                    }}
-                  >
-                    <Icon name="keep" size={14} filled={item.hearted} />
-                  </button>
-                  <button
-                    type="button"
-                    class="more story-more-action"
-                    aria-label="More actions"
-                    aria-haspopup="dialog"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onMore(props.story);
-                    }}
-                  >
-                    <Icon name="more" size={14} />
-                  </button>
-                </div>
+                <SignalActions
+                  item={item}
+                  size={props.story.size}
+                  story={editorial()}
+                  onSignal={props.onSignal}
+                  onHeart={props.onHeart}
+                  onMore={() => props.onMore(props.story)}
+                />
                 <div class="story-corner cell-corner">
                   <SignalLabel value={item.signal} />
                   <UnreadDot visible={leadReadVisuals().unreadDot} />
@@ -436,8 +401,7 @@ export function StoryCell(props: StoryCellProps) {
                 <Show
                   when={
                     item.signal !== 0 &&
-                    !cellReadVisuals().dimmed &&
-                    props.story.size !== "S"
+                    !cellReadVisuals().dimmed
                   }
                 >
                   <div class="why-hint has-signal story-signal-why">
@@ -465,6 +429,11 @@ export function StoryCell(props: StoryCellProps) {
             </Show>
           );
         }}
+      </Show>
+      <Show when={editorial() && lead()?.hearted}>
+        <span class="kept-marker" aria-hidden="true">
+          <Icon name="keep" size={14} filled={true} />
+        </span>
       </Show>
       <SignalMarker value={lead()?.signal ?? 0} />
       <Show when={editorial() && showHeadlines()}>

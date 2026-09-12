@@ -2479,3 +2479,30 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .grid-cell, .grid-cell::after, .grid-cell > img, .grid-cell .story-media img, .grid-cell .cell-signal-label, .signal-why button { transition: none !important; animation: none !important; }
   .grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-wash); }
 }
+
+.grid-cell .signal-actions { display: flex; gap: 5px; opacity: 1; pointer-events: none; }
+.grid-cell .signal-actions button { width: 26px; height: 26px; margin: 0; border: 1px solid rgba(255,255,255,.13); background: rgba(6,7,9,.72); color: #c7ccd3; opacity: 0; pointer-events: none; transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, opacity 120ms ease-out; }
+.grid-cell .signal-actions button::before { content: none; }
+.grid-cell:is(:hover, :focus-within, .focused) .signal-actions button, .grid-cell .signal-actions button[aria-pressed="true"] { opacity: 1; pointer-events: auto; }
+.grid-cell .signal-actions button:hover { background: var(--surface-raised-hover); border-color: rgba(255,255,255,.22); color: var(--fg-primary); }
+.grid-cell .signal-actions button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; box-shadow: none; }
+.grid-cell .signal-actions button.boost[aria-pressed="true"] { background: var(--accent-loud); border-color: transparent; color: var(--accent-ink); }
+.grid-cell .signal-actions button.bury[aria-pressed="true"] { background: var(--cluster-pressed-down); border-color: rgba(255,255,255,.22); color: #f4f2ee; }
+.grid-cell .signal-actions button:disabled { opacity: 0; cursor: default; }
+.grid-cell:is(:hover, :focus-within, .focused) .signal-actions button:disabled { opacity: .4; background: rgba(6,7,9,.72); color: #c7ccd3; }
+.grid-cell.size-s .signal-actions button { width: 24px; height: 24px; }
+.grid-cell:has(.signal-actions button.heart) .kept-marker { display: none; }
+.grid-cell.size-s .kept-marker { top: 40px; opacity: 1; }
+.sheet-signal-on { margin-left: auto; font: 400 13px/1 "IBM Plex Mono", monospace; }
+.action-sheet button:disabled { opacity: .4; }
+@media (max-width: 619px) {
+  .grid-cell .signal-actions { display: none; }
+  .grid-cell .signal-mobile-chip { position: absolute; z-index: 5; top: 7px; left: 7px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; pointer-events: none; }
+  .signal-mobile-chip[data-action="boost"] { background: var(--accent-loud); color: var(--accent-ink); }
+  .signal-mobile-chip[data-action="bury"] { background: var(--cluster-pressed-down); border: 1px solid rgba(255,255,255,.22); color: #f4f2ee; }
+  .grid-cell:has(.signal-actions button.heart) .kept-marker { display: grid; }
+  .grid-cell:has(.signal-mobile-chip) .kept-marker { top: 42px; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid-cell .signal-actions button { transition: none !important; }
+}

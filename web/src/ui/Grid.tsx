@@ -61,6 +61,7 @@ import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
+import { SignalActions } from "./SignalActions";
 import {
   createSignalFresh,
   SignalLabel,
@@ -1392,31 +1393,14 @@ function GridContent(props: GridProps) {
                           <Icon name="discussion" size={13} />
                         </a>
                       </Show>
-                      <div class="cell-actions">
-                        <button
-                          type="button"
-                          class="heart"
-                          classList={{ selected: item().hearted }}
-                          aria-label={
-                            item().hearted
-                              ? "Remove from archive"
-                              : "Keep in archive"
-                          }
-                          aria-pressed={item().hearted}
-                          onClick={() => props.onHeart(item())}
-                        >
-                          <Icon name="keep" size={14} filled={item().hearted} />
-                        </button>
-                        <button
-                          type="button"
-                          class="more"
-                          aria-label="More actions"
-                          aria-haspopup="dialog"
-                          onClick={() => openSheet(item())}
-                        >
-                          <Icon name="more" size={14} />
-                        </button>
-                      </div>
+                      <SignalActions
+                        item={item()}
+                        size={cell.effectiveSize}
+                        archive={props.archive}
+                        onSignal={props.onSignal}
+                        onHeart={props.onHeart}
+                        onMore={() => openSheet(item())}
+                      />
                     </article>
                   );
                 }}
