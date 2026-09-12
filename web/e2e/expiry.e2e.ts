@@ -188,10 +188,6 @@ for (const theme of ["dark", "light"] as const) {
       /focused/,
     );
     await page.locator(".app-header").hover();
-    await page.screenshot({
-      animations: "disabled",
-      path: `e2e/screenshots/expiring-view-${theme}.png`,
-    });
   });
 }
 test("phone uses the short chip and rules, with a truthful empty state", async ({
@@ -287,10 +283,6 @@ for (const theme of ["dark", "light"] as const) {
       "Goes tomorrow at 14:00 unless you keep it.",
     );
     await expect(page.locator(".reader .expiry-pill")).toHaveText("19h left");
-    await page.screenshot({
-      animations: "disabled",
-      path: `e2e/screenshots/expiring-reader-${theme}.png`,
-    });
     await page.clock.fastForward(14 * 3600000);
     await expect(page.locator(".reader .expiry-pill")).toHaveText("5h left");
     await expect(page.locator(".reader-day-track")).toHaveClass(/urgent/);

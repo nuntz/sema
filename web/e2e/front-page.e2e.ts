@@ -2783,10 +2783,6 @@ for (const theme of ["dark", "light"] as const) {
     await expect(
       cell.getByRole("button", { name: /Open Near deadline.*19 hours left/ }),
     ).toBeVisible();
-    await page.screenshot({
-      animations: "disabled",
-      path: `e2e/screenshots/expiring-grid-${theme}.png`,
-    });
     await page.clock.fastForward(14 * 60 * 60 * 1000);
     await expect(cell.locator(".expiry-pill")).toHaveText("5h left");
   });
