@@ -46,7 +46,7 @@ const item: Item = {
 
 function GridHeaderFixture() {
   const phone = createMediaQuery("(max-width: 430px)");
-  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
+  const compactDisplayControls = createMediaQuery("(max-width: 1023px)");
   return (
     <AppHeader view="grid" onHome={() => undefined}>
       <div class="header-display-controls">

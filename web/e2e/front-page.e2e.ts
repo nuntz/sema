@@ -2787,3 +2787,97 @@ for (const theme of ["dark", "light"] as const) {
     await expect(cell.locator(".expiry-pill")).toHaveText("5h left");
   });
 }
+
+test("withheld stories do not drain pages and the reader pauses grid pagination", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const entries = (start: number) =>
+    Array.from({ length: 30 }, (_, index) => ({
+      ...item(
+        `page-${start + index}`,
+        "feed",
+        `Article ${start + index}`,
+        0.9 - (start + index) / 1000,
+        "M",
+      ),
+      read: false,
+    }));
+  const stories = [
+    {
+      story_id: "lead",
+      source_count: 2,
+      order_key: 1,
+      size: "L",
+      items: [
+        { ...item("lead", "feed", "Reader lead", 1, "L"), read: true },
+        { ...item("related", "other", "Related", 1, "S"), read: true },
+      ],
+    },
+    {
+      story_id: "low",
+      source_count: 2,
+      order_key: 0.01,
+      size: "L",
+      items: [
+        item("low", "feed", "Waiting story", 0.01, "L"),
+        item("low-related", "other", "Waiting coverage", 0.01, "S"),
+      ],
+    },
+  ];
+  await stubFrontPage(page, stories, entries(0), [], [], {
+    nextCursor: "page-1",
+  });
+  let pages = 0;
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/items?**", async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.searchParams.has("cursor")) return route.fallback();
+    const number = ++pages;
+    if (number === 1) await gate;
+    return route.fulfill({
+      json: { items: entries(number * 30), next_cursor: `page-${number + 1}` },
+    });
+  });
+  await page.goto("/");
+  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await expect(
+    page.getByRole("radio", { name: "All", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  const grid = page.locator(".grid-scroll");
+  await expect(page.locator('[data-story-id="lead"]')).toBeVisible();
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => pages).toBe(1);
+  await grid.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  release();
+  await expect(page.locator(".page-loader")).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(pages).toBe(1);
+  await page.locator('[data-story-id="lead"] .story-lead').click();
+  await expect(page.locator(".reader h1")).toHaveText("Reader lead");
+  await page.setViewportSize({ width: 860, height: 1200 });
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await page.waitForTimeout(300);
+  expect(pages).toBe(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".reader")).toHaveCount(0);
+  await grid.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => pages).toBeGreaterThan(1);
+});

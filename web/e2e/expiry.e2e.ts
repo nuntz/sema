@@ -436,3 +436,23 @@ for (const pages of [3, 6]) {
     }
   });
 }
+
+test("entering Expiring shares one counts request with feed counts", async ({
+  page,
+}) => {
+  const requests = await open(page, "dark");
+  await expect(page.locator(".tonight-chip")).toBeVisible();
+  const before = requests.filter(
+    (url) => url.pathname === "/api/feeds/counts",
+  ).length;
+  await page.keyboard.press("g");
+  await page.keyboard.press("e");
+  await expect(page.locator(".expiring-end")).toContainText(
+    "47 more unread items",
+  );
+  const counts = requests
+    .filter((url) => url.pathname === "/api/feeds/counts")
+    .slice(before);
+  expect(counts).toHaveLength(1);
+  expect(counts[0].searchParams.has("tonight_before")).toBe(true);
+});

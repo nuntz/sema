@@ -1633,8 +1633,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .reader-crumb__section { display: none; }
 }
 
-@media (max-width: 859px) {
+@media (max-width: 1023px) {
   .header-segments { position: absolute; width: 0; height: var(--control-h); overflow: hidden; visibility: hidden; pointer-events: none; }
+}
+
+@media (max-width: 859px) {
   .chrome-btn--collapse-2 { width: var(--control-icon-w); padding: 0; justify-content: center; }
   .chrome-btn--collapse-2 .chrome-btn__label, .reader-slot__text { display: none; }
 }

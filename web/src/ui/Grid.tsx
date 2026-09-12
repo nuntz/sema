@@ -574,6 +574,7 @@ function GridContent(props: GridProps) {
     const top = scroller.scrollTop;
     setScrollTop(top);
     props.onScrollPosition?.(top);
+    if (!props.active) return;
     const context = readContext();
     const userInitiated = userScrolling && !programmaticScrolling;
     const alreadyRead = new Set(
@@ -680,12 +681,25 @@ function GridContent(props: GridProps) {
     const viewport = viewportHeight();
     // A tall story lead must not hide an empty or incomplete grid page. The
     // justified layout can withhold a trailing run until the next page arrives.
-    if (shouldLoadToFillViewport(props.hasMore, gridEndTop(), viewport))
+    if (
+      props.active &&
+      shouldLoadToFillViewport(props.hasMore, gridEndTop(), viewport)
+    )
       props.onLoadMore();
   });
 
+  createEffect(
+    on(
+      () => props.active,
+      (active) => {
+        if (active) processScroll();
+      },
+      { defer: true },
+    ),
+  );
+
   const continueToEnd = () => {
-    if (!scroller || !endRequested) return;
+    if (!scroller || !endRequested || !props.active) return;
     programmaticScroll(() => {
       scroller.scrollTop = scroller.scrollHeight;
     });

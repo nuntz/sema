@@ -94,9 +94,9 @@ for (const width of [1440, 860, 620, 393, 320]) {
   }) => {
     await page.setViewportSize({ width, height: 900 });
     const requests = await openGrid(page);
-    if (width <= 859) await page.locator(".filter-button").click();
+    if (width <= 1023) await page.locator(".filter-button").click();
     const group =
-      width <= 859
+      width <= 1023
         ? page
             .getByRole("dialog", { name: "Feed view" })
             .getByRole("radiogroup", { name: "Items shown" })

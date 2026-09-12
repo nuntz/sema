@@ -766,3 +766,36 @@ test("phone reader exposes six native actions and clears the final line", async 
   });
   expect(clearance).toBeGreaterThanOrEqual(0);
 });
+
+for (const width of [860, 900, 1024]) {
+  test(`grid controls stay inside the header at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, "grid", "loaded");
+    const bounds = await page.locator(".app-header").evaluate((header) =>
+      [...header.querySelectorAll("button, a")]
+        .filter(
+          (element) =>
+            element.getClientRects().length &&
+            getComputedStyle(element).visibility !== "hidden",
+        )
+        .map((element) => ({
+          label: element.getAttribute("aria-label") || element.textContent,
+          left: element.getBoundingClientRect().left,
+          right: element.getBoundingClientRect().right,
+        })),
+    );
+    for (const control of bounds) {
+      expect(control.left, control.label || "control").toBeGreaterThanOrEqual(
+        20,
+      );
+      expect(control.right, control.label || "control").toBeLessThanOrEqual(
+        width - 20,
+      );
+    }
+    await expect(page.locator(".filter-button")).toBeVisible({
+      visible: width < 1024,
+    });
+  });
+}

@@ -83,7 +83,6 @@ import {
   frontPageEntriesForState,
   frontPageSequence,
   frontPageUnreadIDsAfter,
-  hasWithheldStories,
   mergeFrontPage,
 } from "./ui/front-page";
 import { Grid } from "./ui/Grid";
@@ -189,7 +188,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [readerArchive, setReaderArchive] = createSignal(false);
   const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
   const phoneHeader = createMediaQuery("(max-width: 430px)");
-  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
+  const compactDisplayControls = createMediaQuery("(max-width: 1023px)");
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
@@ -492,6 +491,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const loadMore = async () => {
+    if (!expiringView() && (readerID() || view() !== "grid" || searchActive()))
+      return;
     if (expiringView() && expiryPages() >= 5) return;
     if (loadingMore() || !hasPage() || !cursor()) return;
     setLoadingMore(true);
@@ -528,7 +529,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           ? added.map((item) => item.item_id)
           : visibleItemIDs(added, unreadOnly());
       const responseCursor = page.next_cursor ?? "";
-      const loadedItems = added.length > 0 ? [...items(), ...added] : items();
       batch(() => {
         if (added.length > 0) setItems((current) => [...current, ...added]);
         if (visible.length > 0)
@@ -539,10 +539,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         setLayoutVersion((value) => value + 1);
       });
       continueLoading =
-        responseCursor !== "" &&
-        (expiringView() ||
-          visible.length === 0 ||
-          hasWithheldStories(stories(), loadedItems, true));
+        responseCursor !== "" && (expiringView() || visible.length === 0);
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -1719,8 +1716,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   let expiryCountVersion = 0;
   let lastExpiryRefresh = -Infinity;
-  let expiryRefreshInFlight: Promise<void> | undefined;
-  const refreshExpiryCounts = (): Promise<void> => {
+  let expiryRefreshInFlight: Promise<FeedItemCounts | undefined> | undefined;
+  const refreshExpiryCounts = (): Promise<FeedItemCounts | undefined> => {
     if (expiryRefreshInFlight) return expiryRefreshInFlight;
     const version = ++expiryCountVersion;
     expiryRefreshInFlight = (async () => {
@@ -1734,6 +1731,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         if (version === expiryCountVersion) {
           setExpiryFeedCounts(near.feeds ?? {});
           lastExpiryRefresh = clockNow();
+          return near.feeds ?? {};
         }
       } catch (caught) {
         handleError(caught);
@@ -1745,7 +1743,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const refreshFeedItemCounts = async () => {
-    void refreshExpiryCounts();
+    const expiryRefresh = refreshExpiryCounts();
+    const expiring = expiringView();
     const version = ++feedItemCountVersion;
     const window = itemViewWindow(itemView());
     try {
@@ -1754,7 +1753,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       await flushRead();
       await Promise.all(readFlushes);
       if (version !== feedItemCountVersion || pendingRead.size > 0) return;
-      const latest = await api.feedItemCounts(window);
+      const latest = expiring
+        ? await expiryRefresh
+        : await api.feedItemCounts(window);
+      if (!latest) return;
       if (version === feedItemCountVersion)
         batch(() => {
           setFeedItemCounts(latest ?? {});
