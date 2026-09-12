@@ -23,6 +23,7 @@ describe("time left", () => {
       [6, "today"],
       [5.99, "imminent"],
       [0, "imminent"],
+      [-1, "imminent"],
     ] as const) {
       expect(hoursLeft(published(hours), now)).toBeCloseTo(hours);
       expect(expiryState(hours)).toBe(state);
@@ -44,6 +45,8 @@ describe("time left", () => {
       [48, "2d left", "2d"],
       [19, "19h left", "19h"],
       [3, "3h left", "3h left"],
+      [0, "goes now", "goes now"],
+      [-1, "goes now", "goes now"],
     ] as const) {
       expect(expiryLabel(hours)).toBe(full);
       expect(expiryLabel(hours, { compact: true })).toBe(compact);

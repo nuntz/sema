@@ -26,6 +26,7 @@ export function itemExpiryState(
 }
 
 export function expiryLabel(hours: number, { compact = false } = {}): string {
+  if (hours <= 0) return "goes now";
   const amount =
     hours > 24
       ? `${Math.ceil(hours / 24)}d`
