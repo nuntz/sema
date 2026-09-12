@@ -137,7 +137,10 @@ export function Reader(props: ReaderProps) {
   const mediumHeader = createMediaQuery(
     "(min-width: 620px) and (max-width: 1199px)",
   );
-  const lifetimeOverflow = () => showLifetime() && mediumHeader();
+  const showTrack = () =>
+    showLifetime() &&
+    (!mediumHeader() || hoursLeft(props.item.published_ts, now()) <= 48);
+  const lifetimeOverflow = () => showTrack() && mediumHeader();
   let trackedID = props.item.item_id;
   let dwellMS = 0;
   let activeSince = 0;
@@ -732,7 +735,7 @@ export function Reader(props: ReaderProps) {
                   ago
                 </span>
               </span>
-              <Show when={showLifetime()}>
+              <Show when={showTrack()}>
                 <ReaderLife published={props.item.published_ts} now={now()} />
               </Show>
             </span>

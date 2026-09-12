@@ -322,3 +322,15 @@ test("ordinary polls do not refresh counts within five minutes", async ({
   await page.clock.fastForward(60_000);
   expect(counts()).toHaveLength(before);
 });
+
+test("fresh items keep full tablet reader chrome", async ({ page }) => {
+  await page.setViewportSize({ width: 860, height: 900 });
+  await open(page, "dark");
+  await page.locator('[data-item-id="fresh"] .cell-main').click();
+  await expect(page.locator(".reader-life")).toHaveCount(0);
+  await expect(page.locator(".reader-deadline")).toBeVisible();
+  await expect(page.locator(".chrome-group--secondary")).toBeVisible();
+  await expect(
+    page.locator(".chrome-group--judge .chrome-btn__label").first(),
+  ).toBeVisible();
+});
