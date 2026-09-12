@@ -1,4 +1,17 @@
 :root {
+  --signal-bury-media-opacity: .62;
+  --signal-bury-saturate: 0;
+  --signal-bury-border: rgba(255,255,255,.05);
+  --signal-bury-ink: var(--fg-tertiary);
+  --signal-bury-meta: var(--fg-quaternary);
+  --signal-bury-surface: var(--surface-raised);
+  --signal-boost-wash: rgba(214,242,75,.07);
+  --signal-boost-pulse: rgba(214,242,75,.16);
+  --signal-boost-border: rgba(214,242,75,.5);
+  --signal-label-ink: var(--accent-loud);
+  --signal-focus: var(--accent-loud);
+  --cluster-pressed-down: #2a2d31;
+
   --upd-strip: #14161a;
   --accent-hover: #e6ff6f;
   --upd-button-bg: transparent;
@@ -348,6 +361,17 @@
 
 /* Light token blocks must stay in sync. */
 :root[data-theme="light"] {
+  --signal-bury-media-opacity: 1;
+  --signal-bury-saturate: .45;
+  --signal-bury-border: rgba(0,0,0,.05);
+  --signal-bury-ink: #5c6169;
+  --signal-bury-meta: #5c6169;
+  --signal-bury-surface: #f0ede7;
+  --signal-boost-wash: rgba(214,242,75,.14);
+  --signal-boost-border: #a9b95c;
+  --signal-label-ink: #5f7a0c;
+  --signal-focus: #5f7a0c;
+
   --upd-strip: #e3e0d9;
   --accent-hover: #e6ff6f;
   --upd-button-bg: var(--accent-loud);
@@ -557,6 +581,17 @@
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
+  --signal-bury-media-opacity: 1;
+  --signal-bury-saturate: .45;
+  --signal-bury-border: rgba(0,0,0,.05);
+  --signal-bury-ink: #5c6169;
+  --signal-bury-meta: #5c6169;
+  --signal-bury-surface: #f0ede7;
+  --signal-boost-wash: rgba(214,242,75,.14);
+  --signal-boost-border: #a9b95c;
+  --signal-label-ink: #5f7a0c;
+  --signal-focus: #5f7a0c;
+
     --upd-strip: #e3e0d9;
     --accent-hover: #e6ff6f;
     --upd-button-bg: var(--accent-loud);
@@ -1099,8 +1134,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .cell-actions button { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; background: var(--cell-action-bg); color: var(--cell-action-fg); }
 .cell-actions button:hover { background: var(--cell-action-hover-bg); color: var(--cell-action-hover-fg); transition: background 90ms ease, color 90ms ease; }
 .cell-actions button:focus-visible { outline: 0; box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
-.cell-actions button.thumb-up.selected, .cell-actions button.thumb-up:hover { background: var(--accent-loud); color: var(--accent-ink); }
-.cell-actions button.thumb-down.selected { background: var(--cell-action-selected-bg); color: var(--cell-action-selected-fg); }
 .cell-actions button.heart { color: var(--cell-action-fg); }
 .cell-actions button.heart .icon { transition: transform 220ms cubic-bezier(.2, .7, .3, 1); }
 .cell-actions button.heart:active .icon { transform: scale(.88); }
@@ -2417,3 +2450,32 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .update-dots i { animation: none; opacity: .6; }
 }
 @keyframes update-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Drop 23: feedback repaints cells without changing their geometry. */
+.grid-cell > img, .grid-cell .story-media img { transition: filter 120ms ease-out, opacity 120ms ease-out; }
+.grid-cell[data-signal="-1"] { border-color: var(--signal-bury-border); background: var(--signal-bury-surface); transition-duration: 140ms; }
+.grid-cell[data-signal="-1"] > img, .grid-cell[data-signal="-1"] .story-media img { filter: saturate(var(--signal-bury-saturate)); opacity: var(--signal-bury-media-opacity); transition-duration: 140ms; }
+.grid-cell.read[data-signal="-1"] > img, .grid-cell.read[data-signal="-1"] .story-media img { opacity: 1; filter: none; }
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-copy h2, .cell-copy p, .story-lead h2, .story-lead p, .story-related-title, .story-headline-title) { color: var(--signal-bury-ink); }
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-meta > span:not(.source-badge), .cell-feed-filter, .story-meta > span:not(.source-badge), .story-meta small, .story-related-source, .why-hint) { color: var(--signal-bury-meta); }
+.grid-cell[data-signal="-1"] .story-headlines { background: var(--signal-bury-surface); }
+.grid-cell[data-signal="1"] { border-color: var(--signal-boost-border); }
+.grid-cell::after { content: ""; position: absolute; inset: 0; z-index: 3; background: transparent; pointer-events: none; transition: background 120ms ease-out; }
+.grid-cell[data-signal="1"]::after { background: var(--signal-boost-wash); transition-duration: 160ms; }
+.grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-pulse); }
+.grid-cell .cell-signal-label { padding: 5px 7px; border-radius: 5px; background: rgba(6,7,9,.72); color: #8b8f96; font: 400 13px/1 "IBM Plex Mono", monospace; white-space: nowrap; animation: signal-label-in 100ms ease-out 40ms both; }
+.grid-cell[data-signal="1"] .cell-signal-label { color: var(--accent-loud); animation-delay: 160ms; }
+.grid-cell:is(.text-cell, .no-media) .cell-signal-label { background: transparent; color: var(--signal-bury-meta); }
+.grid-cell:is(.text-cell, .no-media)[data-signal="1"] .cell-signal-label { color: var(--signal-label-ink); }
+@keyframes signal-label-in { from { opacity: 0; } to { opacity: 1; } }
+.refined-grid .grid-cell[data-signal]:not([data-signal="0"]) .cell-corner { display: flex; }
+.refined-grid .grid-cell .why-hint.has-signal { display: block; opacity: 1; position: absolute; bottom: 2px; left: 14px; right: 14px; z-index: 4; margin: 0; pointer-events: auto; }
+.refined-grid .grid-cell:has(.why-hint.has-signal) :is(.cell-meta, .story-meta) { transform: translateY(-16px); }
+.grid-cell[data-signal="1"] .why-hint.has-signal { color: var(--signal-label-ink); }
+.signal-why button { padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
+.signal-why button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
+.signal-mobile-chip { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .grid-cell, .grid-cell::after, .grid-cell > img, .grid-cell .story-media img, .grid-cell .cell-signal-label, .signal-why button { transition: none !important; animation: none !important; }
+  .grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-wash); }
+}

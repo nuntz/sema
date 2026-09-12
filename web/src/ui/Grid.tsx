@@ -47,6 +47,7 @@ import {
 import { whyText } from "../ranking-display";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { ScopeCellModel } from "../scope-cell";
+import { buryDisabled } from "../signal-feedback";
 import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
@@ -60,6 +61,12 @@ import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
+import {
+  createSignalFresh,
+  SignalLabel,
+  SignalMarker,
+  SignalWhy,
+} from "./SignalState";
 import { SourceBadge } from "./SourceBadge";
 import { StoryCell } from "./StoryCell";
 import { sheetHeadlineSlice } from "./story-layout";
@@ -939,14 +946,18 @@ function GridContent(props: GridProps) {
       case "open":
         if (item) openFocused(item);
         break;
-      case "like":
-        if (item && !props.archive)
-          props.onSignal(item, item.signal === 1 ? 0 : 1);
+      case "like": {
+        const lead = focusedStory()?.items[0] ?? item;
+        if (lead && !props.archive)
+          props.onSignal(lead, lead.signal === 1 ? 0 : 1);
         break;
-      case "dislike":
-        if (item && !props.archive)
-          props.onSignal(item, item.signal === -1 ? 0 : -1);
+      }
+      case "dislike": {
+        const lead = focusedStory()?.items[0] ?? item;
+        if (lead && !props.archive && !buryDisabled(lead))
+          props.onSignal(lead, lead.signal === -1 ? 0 : -1);
         break;
+      }
       case "heart":
         if (item) props.onHeart(item);
         break;
@@ -1128,6 +1139,7 @@ function GridContent(props: GridProps) {
                         onOpen={props.onOpen}
                         onExternalOpen={props.onExternalOpen}
                         onHeart={props.onHeart}
+                        onSignal={props.onSignal}
                         onApplyFeed={props.onApplyFeed}
                         onMore={(story) => {
                           const lead = story.items[0];
@@ -1145,6 +1157,7 @@ function GridContent(props: GridProps) {
                   const item = createMemo(
                     () => liveItems().get(cell.item.item_id) ?? cell.item,
                   );
+                  const signalFresh = createSignalFresh(() => item().signal);
                   const condensedLarge = createMemo(
                     () =>
                       width() < 700 &&
@@ -1191,6 +1204,8 @@ function GridContent(props: GridProps) {
                         width: `${cell.width}px`,
                         height: `${cell.height ?? row.height}px`,
                       }}
+                      data-signal={item().signal}
+                      data-signal-fresh={signalFresh() ? "" : undefined}
                       data-item-id={item().item_id}
                       onMouseEnter={() => {
                         if (!pageFocus) props.onFocus(item().item_id);
@@ -1254,13 +1269,16 @@ function GridContent(props: GridProps) {
                         when={
                           !props.archive &&
                           props.order === "interest" &&
+                          !item().signal &&
                           whyText(item())
                         }
                       >
                         <span class="ranking-hint">{whyText(item())}</span>
                       </Show>
                       <div class="cell-scrim" />
-                      <div class="cell-corner" aria-hidden="true">
+                      <SignalMarker value={item().signal} />
+                      <div class="cell-corner">
+                        <SignalLabel value={item().signal} />
                         <UnreadDot visible={readVisuals().unreadDot} />
                         <div class="cell-corner-meta">
                           <Show
@@ -1324,6 +1342,8 @@ function GridContent(props: GridProps) {
                               effectiveSize={cell.effectiveSize}
                               condensed={condensedLarge()}
                               explanation={explanation()}
+                              dimmed={readVisuals().dimmed}
+                              onUndo={() => props.onSignal(item(), 0)}
                               onApplyFeed={() => props.onApplyFeed(item())}
                             />
                           </span>
@@ -1350,6 +1370,8 @@ function GridContent(props: GridProps) {
                             effectiveSize={cell.effectiveSize}
                             condensed={condensedLarge()}
                             explanation={explanation()}
+                            dimmed={readVisuals().dimmed}
+                            onUndo={() => props.onSignal(item(), 0)}
                             onApplyFeed={() => props.onApplyFeed(item())}
                           />
                         </span>
@@ -1714,12 +1736,19 @@ function GridContent(props: GridProps) {
                   classList={{ selected: item.signal === 1 }}
                   onClick={() =>
                     runSheetAction(() =>
-                      props.onSignal(item, item.signal === 1 ? 0 : 1),
+                      requestAnimationFrame(() =>
+                        requestAnimationFrame(() =>
+                          props.onSignal(item, item.signal === 1 ? 0 : 1),
+                        ),
+                      ),
                     )
                   }
                 >
                   <Icon name="boost" size={20} />
                   Boost
+                  <Show when={item.signal === 1}>
+                    <span class="sheet-signal-on">on</span>
+                  </Show>
                 </button>
                 <button
                   type="button"
@@ -1731,14 +1760,26 @@ function GridContent(props: GridProps) {
                 <button
                   type="button"
                   classList={{ selected: item.signal === -1 }}
+                  disabled={buryDisabled(item)}
+                  aria-label={
+                    buryDisabled(item) ? "Kept items can't be buried" : "Bury"
+                  }
                   onClick={() =>
                     runSheetAction(() =>
-                      props.onSignal(item, item.signal === -1 ? 0 : -1),
+                      requestAnimationFrame(() =>
+                        requestAnimationFrame(() => {
+                          if (!buryDisabled(item))
+                            props.onSignal(item, item.signal === -1 ? 0 : -1);
+                        }),
+                      ),
                     )
                   }
                 >
                   <Icon name="bury" size={20} />
                   Bury
+                  <Show when={item.signal === -1}>
+                    <span class="sheet-signal-on">on</span>
+                  </Show>
                 </button>
                 <button
                   type="button"
@@ -1774,6 +1815,8 @@ export function CellCopy(props: {
   explanation: string;
   dimmed?: boolean;
   onApplyFeed?(): void;
+  story?: boolean;
+  onUndo?(): void;
 }) {
   const reddit = () => isRedditItem(props.item);
   const domain = () =>
@@ -1861,18 +1904,27 @@ export function CellCopy(props: {
           </Show>
         </Show>
       </div>
-      <Show when={!props.archive && props.effectiveSize === "L"}>
-        <div class="why-hint why-l" title={whyText(props.item)}>
-          {props.explanation}
-        </div>
-      </Show>
       <Show
-        when={
-          !props.archive && props.effectiveSize === "M" && whyText(props.item)
-        }
+        when={!props.archive && props.effectiveSize !== "S" && !props.dimmed}
       >
-        <div class="why-hint why-m" title={whyText(props.item)}>
-          {whyText(props.item)}
+        <div
+          class={`why-hint why-${props.effectiveSize.toLowerCase()}`}
+          classList={{ "has-signal": props.item.signal !== 0 }}
+        >
+          <Show
+            when={props.item.signal !== 0}
+            fallback={
+              props.effectiveSize === "L"
+                ? props.explanation
+                : whyText(props.item)
+            }
+          >
+            <SignalWhy
+              value={props.item.signal}
+              story={props.story}
+              onUndo={() => props.onUndo?.()}
+            />
+          </Show>
         </div>
       </Show>
     </div>

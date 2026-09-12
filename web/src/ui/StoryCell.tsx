@@ -24,6 +24,12 @@ import type { Item, Story } from "../types";
 import { CellCopy, relativeTime, UnreadDot } from "./Grid";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
+import {
+  createSignalFresh,
+  SignalLabel,
+  SignalMarker,
+  SignalWhy,
+} from "./SignalState";
 import { SourceBadge } from "./SourceBadge";
 
 interface StoryCellProps {
@@ -41,6 +47,7 @@ interface StoryCellProps {
   onOpen(item: Item): void;
   onExternalOpen(item: Item): void;
   onHeart(item: Item): void;
+  onSignal(item: Item, value: -1 | 0 | 1): void;
   onApplyFeed(item: Item): void;
   onMore(story: Story): void;
   onLongPressStart(event: PointerEvent, story: Story): void;
@@ -50,6 +57,7 @@ interface StoryCellProps {
 
 export function StoryCell(props: StoryCellProps) {
   const lead = () => props.story.items[0];
+  const signalFresh = createSignalFresh(() => lead()?.signal ?? 0);
   const focusID = () => `story:${props.story.story_id}`;
   const headlines = createMemo(() =>
     props.story.items.slice(1, 1 + (props.cell.headlineItemCount ?? 0)),
@@ -174,6 +182,8 @@ export function StoryCell(props: StoryCellProps) {
         width: `${props.cell.width}px`,
         height: `${cellHeight()}px`,
       }}
+      data-signal={lead()?.signal ?? 0}
+      data-signal-fresh={signalFresh() ? "" : undefined}
       data-item-id={focusID()}
       data-focus-id={focusID()}
       data-story-id={props.story.story_id}
@@ -207,7 +217,8 @@ export function StoryCell(props: StoryCellProps) {
                     />
                   </Show>
                   <div class="cell-scrim" />
-                  <div class="cell-corner" aria-hidden="true">
+                  <div class="cell-corner">
+                    <SignalLabel value={item.signal} />
                     <UnreadDot visible={leadReadVisuals().unreadDot} />
                     <span class="cell-age">
                       {relativeTime(item.published_ts)}
@@ -264,6 +275,8 @@ export function StoryCell(props: StoryCellProps) {
                     effectiveSize="M"
                     condensed={false}
                     explanation={whyText(item)}
+                    story={true}
+                    onUndo={() => props.onSignal(item, 0)}
                     dimmed={leadReadVisuals().dimmed}
                     onApplyFeed={() => props.onApplyFeed(item)}
                   />
@@ -317,7 +330,7 @@ export function StoryCell(props: StoryCellProps) {
                     </div>
                   </PrimaryAction>
                 </Show>
-                <Show when={props.refined}>
+                <Show when={props.refined && !item.signal}>
                   <span class="ranking-hint">
                     {props.story.source_count} sources
                     <Show when={whyText(item)}> · {whyText(item)}</Show>
@@ -364,7 +377,8 @@ export function StoryCell(props: StoryCellProps) {
                     <Icon name="more" size={14} />
                   </button>
                 </div>
-                <div class="story-corner">
+                <div class="story-corner cell-corner">
+                  <SignalLabel value={item.signal} />
                   <UnreadDot visible={leadReadVisuals().unreadDot} />
                   <span>{relativeTime(item.published_ts)}</span>
                 </div>
@@ -413,12 +427,27 @@ export function StoryCell(props: StoryCellProps) {
                           <Icon name="check" size={13} /> read
                         </span>
                       </Show>
-                      <Show when={whyText(item)}>
+                      <Show when={!item.signal && whyText(item)}>
                         <em title={whyText(item)}>{whyText(item)}</em>
                       </Show>
                     </div>
                   </Show>
                 </PrimaryAction>
+                <Show
+                  when={
+                    item.signal !== 0 &&
+                    !cellReadVisuals().dimmed &&
+                    props.story.size !== "S"
+                  }
+                >
+                  <div class="why-hint has-signal story-signal-why">
+                    <SignalWhy
+                      value={item.signal}
+                      story={true}
+                      onUndo={() => props.onSignal(item, 0)}
+                    />
+                  </div>
+                </Show>
                 <Show when={!showHeadlines() && props.story.items.length > 1}>
                   <button
                     type="button"
@@ -437,6 +466,7 @@ export function StoryCell(props: StoryCellProps) {
           );
         }}
       </Show>
+      <SignalMarker value={lead()?.signal ?? 0} />
       <Show when={editorial() && showHeadlines()}>
         <div class="story-headlines">
           <For each={headlines()}>
