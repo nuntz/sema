@@ -271,6 +271,10 @@
   --cell-action-kept-fg: var(--media-fg-primary);
   --cell-action-kept-hover-bg: var(--keep-wash);
   --cell-action-kept-hover-fg: var(--media-fg-primary);
+  --expiry-soon-bg: rgba(6,7,9,.82);
+  --expiry-soon-fg: #f4f2ee;
+  --expiry-bone: #e8e6e1;
+  --expiry-red: #ff5f6d;
   --cell-label-bg: var(--media-overlay-label);
   --cell-label-fg: var(--media-fg-secondary);
   --kept-marker-bg: var(--media-action-bg-soft);
@@ -563,6 +567,10 @@
   --cell-action-kept-fg: var(--keep);
   --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
   --cell-action-kept-hover-fg: var(--cell-action-hover-fg);
+  --expiry-soon-bg: rgba(6,7,9,.82);
+  --expiry-soon-fg: #f4f2ee;
+  --expiry-bone: #e8e6e1;
+  --expiry-red: #ff5f6d;
   --cell-label-bg: var(--surface-raised-hover);
   --cell-label-fg: var(--fg-secondary);
   --kept-marker-bg: var(--surface-selected);
@@ -792,7 +800,11 @@
     --cell-action-kept-fg: var(--keep);
     --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
     --cell-action-kept-hover-fg: var(--cell-action-hover-fg);
-    --cell-label-bg: var(--surface-raised-hover);
+    --expiry-soon-bg: rgba(6,7,9,.82);
+  --expiry-soon-fg: #f4f2ee;
+  --expiry-bone: #e8e6e1;
+  --expiry-red: #ff5f6d;
+  --cell-label-bg: var(--surface-raised-hover);
     --cell-label-fg: var(--fg-secondary);
     --kept-marker-bg: var(--surface-selected);
     --kept-marker-fg: var(--keep);
@@ -1013,7 +1025,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-source-count { display: none; }
 .story-cell:has(.story-actions button:focus-visible) .story-badges { opacity: 0; }
 .story-corner { position: absolute; top: 8px; right: 8px; z-index: 4; display: flex; align-items: center; gap: 6px; }
-.story-corner > span:not(.unread-dot) { padding: 4px 7px; border-radius: 5px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 400 var(--type-chip)/1 "IBM Plex Mono", monospace; }
+.story-corner > span:not(.unread-dot):not(.expiry-pill) { padding: 4px 7px; border-radius: 5px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 400 var(--type-chip)/1 "IBM Plex Mono", monospace; }
 .story-lead { width: 100%; padding: 11px 14px 10px; flex: none; display: block; background: transparent; color: inherit; text-align: left; text-decoration: none; }
 .story-card.no-media .story-lead { padding-top: 43px; }
 .story-lead:focus-visible { outline: 0; }
@@ -1759,7 +1771,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .mobile-story-card .story-source-count .icon { color: currentColor; }
   .mobile-story-card .story-source-count b { font: inherit; }
   .mobile-story-card .story-corner { top: 12px; right: 12px; }
-  .mobile-story-card .story-corner > span:not(.unread-dot) { font-size: 13px; }
+  .mobile-story-card .story-corner > span:not(.unread-dot):not(.expiry-pill) { font-size: 13px; }
   .mobile-story-card .story-lead { position: absolute; inset: 0; padding: 46px 12px 12px; }
   .mobile-story-card.no-media .story-lead { padding-top: 46px; }
   .mobile-story-card .story-lead h2 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 24px; line-height: 1.16; letter-spacing: -.02em; }
@@ -2576,3 +2588,19 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .signal-why { display: flex; align-items: baseline; min-width: 0; }
 .signal-why-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signal-why-undo { flex: none; white-space: pre; }
+
+.expiry-pill { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 4px 7px; border-radius: 5px; white-space: nowrap; font: 500 11.5px/1 "IBM Plex Mono", monospace; }
+.expiry-pill svg { flex: none; }
+.expiry-pill--soon { background: var(--expiry-soon-bg); color: var(--expiry-soon-fg); --expiry-track: rgba(244,242,238,.28); }
+.expiry-pill--soon svg { color: var(--expiry-bone); }
+.expiry-pill--today { background: var(--expiry-bone); color: #14161a; --expiry-track: rgba(20,22,26,.25); box-shadow: 0 3px 0 var(--expiry-bone); }
+.expiry-pill--imminent { background: var(--expiry-red); color: #1a0c0e; --expiry-track: rgba(26,12,14,.3); box-shadow: 0 3px 0 var(--expiry-red); }
+.expiry-ring-track { stroke: var(--expiry-track); }
+.expiry-ring-track--unread { stroke: #d6f24b; }
+.cell-corner-meta.has-expiry { grid-template-columns: auto auto; align-items: center; column-gap: 6px; }
+.cell-corner-meta.has-expiry .cell-rank { grid-area: 1 / 1; }
+.cell-corner-meta.has-expiry .expiry-pill { grid-area: 1 / 2; }
+.refined-grid .cell-corner:has(.expiry-pill) { display: flex; }
+.refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 36px; }
+.grid-cell:has(.expiry-pill) .signal-actions { top: 36px; }
+.refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 66px; }

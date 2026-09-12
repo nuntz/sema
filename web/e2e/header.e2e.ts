@@ -705,8 +705,8 @@ test("phone reader exposes six native actions and clears the final line", async 
       buttons.map((button) => button.getAttribute("aria-label")),
     ),
   ).toEqual([
-    "Boost",
-    "Bury",
+    "Boost (+)",
+    "Bury (−)",
     "Keep in archive",
     "More actions",
     "Previous item",

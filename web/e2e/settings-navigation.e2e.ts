@@ -75,6 +75,7 @@ async function openApp(
   page: Page,
   options: OpenAppOptions = {},
 ): Promise<AppState> {
+  await page.clock.setFixedTime(new Date("2026-08-26T18:00:00Z"));
   const state = { itemRequests: 0, readBatchRequests: 0 };
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   await page.route("**/api/**", async (route) => {
@@ -150,7 +151,7 @@ test("desktop grid actions appear only while their cell is hovered", async ({
   }));
   await openApp(page, { initialItems: keptItems });
   const cell = page.locator(".grid-cell").first();
-  const actions = cell.locator(".cell-actions");
+  const actions = cell.locator(".cell-actions button.more");
   const marker = cell.locator(".kept-marker");
 
   await expect(cell).toHaveClass(/focused/);
@@ -179,7 +180,10 @@ test("desktop grid actions appear only while their cell is hovered", async ({
   const allCell = page.locator(".grid-cell").first();
   await expect(allCell).toHaveClass(/all-items-cell/);
   await expect(allCell.locator(".kept-marker")).toHaveCSS("opacity", "1");
-  await expect(allCell.locator(".cell-actions")).toHaveCSS("opacity", "0");
+  await expect(allCell.locator(".cell-actions button.more")).toHaveCSS(
+    "opacity",
+    "0",
+  );
 });
 
 test("Reddit grid cells omit the external-link destination glyph", async ({
@@ -234,7 +238,10 @@ test("desktop-width touch profiles do not force grid actions visible", async ({
     expect(
       await page.evaluate(() => matchMedia("(pointer: coarse)").matches),
     ).toBe(true);
-    const actions = page.locator(".grid-cell").first().locator(".cell-actions");
+    const actions = page
+      .locator(".grid-cell")
+      .first()
+      .locator(".cell-actions button.more");
     await expect(actions).toHaveCSS("opacity", "0");
     await expect(actions).toHaveCSS("pointer-events", "none");
 
@@ -244,22 +251,12 @@ test("desktop-width touch profiles do not force grid actions visible", async ({
       name: "Remove from archive",
     });
     const more = archiveCell.getByRole("button", { name: "More actions" });
-    await expect(heart).toHaveCSS("width", "44px");
-    await expect(heart).toHaveCSS("height", "44px");
-    await expect(more).toHaveCSS("width", "44px");
-    await expect(more).toHaveCSS("height", "44px");
-    await expect(heart).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(more).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    expect(
-      await heart.evaluate(
-        (element) => getComputedStyle(element, "::before").width,
-      ),
-    ).toBe("26px");
-    expect(
-      await more.evaluate(
-        (element) => getComputedStyle(element, "::before").width,
-      ),
-    ).toBe("26px");
+    await expect(heart).toHaveCSS("width", "26px");
+    await expect(heart).toHaveCSS("height", "26px");
+    await expect(more).toHaveCSS("width", "26px");
+    await expect(more).toHaveCSS("height", "26px");
+    await expect(heart).toHaveCSS("opacity", "1");
+    await expect(more).toHaveCSS("opacity", "0");
   } finally {
     await context.close();
   }
@@ -273,7 +270,7 @@ test("desktop archive actions appear only while their cell is hovered", async ({
   await page.getByRole("button", { name: "Archive", exact: true }).click();
 
   const cell = page.locator(".grid-cell").first();
-  const actions = cell.locator(".cell-actions");
+  const actions = cell.locator(".cell-actions button.more");
   const marker = cell.locator(".kept-marker");
   await expect(cell).toHaveClass(/archive-cell/);
   await expect(marker).toHaveCount(1);
@@ -522,7 +519,7 @@ for (const tab of ["Unread", "All"] as const) {
   });
 }
 
-test("grid loads the next page of images before scrolling", async ({
+test("grid loads images within its bounded prefetch margin", async ({
   page,
 }) => {
   await page.route("**/fixture-image/*", (route) =>
@@ -550,8 +547,8 @@ test("grid loads the next page of images before scrolling", async ({
         const nextPage = images.filter((image) => {
           const rect = image.getBoundingClientRect();
           return (
-            rect.top >= bounds.bottom &&
-            rect.top < bounds.bottom + element.clientHeight
+            rect.bottom >= bounds.bottom &&
+            rect.top < bounds.bottom + Math.min(240, element.clientHeight / 4)
           );
         });
         return (
@@ -561,7 +558,7 @@ test("grid loads the next page of images before scrolling", async ({
       }),
     )
     .toBe(true);
-  // The whole next viewport is mounted, but the rest of the feed stays virtualized.
+  // The prefetch margin is mounted; the rest of the feed stays virtualized.
   const mounted = await grid.locator(".grid-cell").count();
   expect(mounted).toBeLessThan(64);
   expect(await grid.evaluate((element) => element.scrollTop)).toBe(0);
@@ -570,7 +567,9 @@ test("grid loads the next page of images before scrolling", async ({
     .last()
     .evaluate((row) => row.getBoundingClientRect().bottom);
   const nextPageBottom = await grid.evaluate(
-    (element) => element.getBoundingClientRect().bottom + element.clientHeight,
+    (element) =>
+      element.getBoundingClientRect().bottom +
+      Math.min(240, element.clientHeight / 4),
   );
   expect(lastRowBottom).toBeGreaterThanOrEqual(nextPageBottom);
 });

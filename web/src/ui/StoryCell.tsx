@@ -6,7 +6,9 @@ import {
   onCleanup,
   Show,
 } from "solid-js";
+import { clockNow, useClock } from "../clock";
 import { Icon } from "../components/Icon";
+import { expirySentence, itemExpiryState } from "../expiry";
 import {
   gridSourceName,
   headlineText,
@@ -21,6 +23,7 @@ import { type ReadStateContext, readVisualState } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Story } from "../types";
+import { ExpiryPill } from "./ExpiryPill";
 import { CellCopy, relativeTime, UnreadDot } from "./Grid";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -57,6 +60,7 @@ interface StoryCellProps {
 }
 
 export function StoryCell(props: StoryCellProps) {
+  useClock();
   const lead = () => props.story.items[0];
   const signalFresh = createSignalFresh(() => lead()?.signal ?? 0);
   const focusID = () => `story:${props.story.story_id}`;
@@ -200,6 +204,15 @@ export function StoryCell(props: StoryCellProps) {
           const leadReadVisuals = createMemo(() =>
             readVisualState(props.readContext, item.read),
           );
+          const expiring = () => itemExpiryState(item, clockNow()) !== "none";
+          const marker = () => (
+            <ExpiryPill
+              published={item.published_ts}
+              now={clockNow()}
+              compact={props.cell.effectiveSize === "S"}
+              unread={leadReadVisuals().unreadDot}
+            />
+          );
           return (
             <Show
               when={editorial()}
@@ -220,10 +233,30 @@ export function StoryCell(props: StoryCellProps) {
                   <div class="cell-scrim" />
                   <div class="cell-corner">
                     <SignalLabel value={item.signal} />
-                    <UnreadDot visible={leadReadVisuals().unreadDot} />
-                    <span class="cell-age">
-                      {relativeTime(item.published_ts)}
-                    </span>
+                    <Show
+                      when={!(expiring() && props.cell.effectiveSize === "S")}
+                    >
+                      <UnreadDot visible={leadReadVisuals().unreadDot} />
+                    </Show>
+                    <Show
+                      when={expiring()}
+                      fallback={
+                        <span class="cell-age">
+                          {relativeTime(item.published_ts)}
+                        </span>
+                      }
+                    >
+                      <div class="cell-corner-meta has-expiry">
+                        <span class="cell-rank">
+                          {props.cell.effectiveSize === "L"
+                            ? "top 10%"
+                            : props.cell.effectiveSize === "M"
+                              ? "top 40%"
+                              : "rest"}
+                        </span>
+                        {marker()}
+                      </div>
+                    </Show>
                   </div>
                   <Show when={item.hearted}>
                     <span class="kept-marker" aria-hidden="true">
@@ -344,8 +377,26 @@ export function StoryCell(props: StoryCellProps) {
                 />
                 <div class="story-corner cell-corner">
                   <SignalLabel value={item.signal} />
-                  <UnreadDot visible={leadReadVisuals().unreadDot} />
-                  <span>{relativeTime(item.published_ts)}</span>
+                  <Show
+                    when={!(expiring() && props.cell.effectiveSize === "S")}
+                  >
+                    <UnreadDot visible={leadReadVisuals().unreadDot} />
+                  </Show>
+                  <Show
+                    when={expiring()}
+                    fallback={<span>{relativeTime(item.published_ts)}</span>}
+                  >
+                    <div class="cell-corner-meta has-expiry">
+                      <span class="cell-rank">
+                        {props.cell.effectiveSize === "L"
+                          ? "top 10%"
+                          : props.cell.effectiveSize === "M"
+                            ? "top 40%"
+                            : "rest"}
+                      </span>
+                      {marker()}
+                    </div>
+                  </Show>
                 </div>
                 <PrimaryAction
                   item={item}
@@ -373,7 +424,13 @@ export function StoryCell(props: StoryCellProps) {
                   <Show when={!props.cell.mobileStoryCard || props.refined}>
                     <div class="story-meta">
                       <Show when={props.refined}>
-                        <UnreadDot visible={leadReadVisuals().unreadDot} />
+                        <Show
+                          when={
+                            !(expiring() && props.cell.effectiveSize === "S")
+                          }
+                        >
+                          <UnreadDot visible={leadReadVisuals().unreadDot} />
+                        </Show>
                       </Show>
                       <SourceBadge
                         connector={item.connector}
@@ -545,7 +602,7 @@ function PrimaryAction(props: {
           onFocus={props.onFocus}
           onMouseEnter={props.onMouseEnter}
           onClick={props.onOpen}
-          aria-label={`Open ${headlineText(props.item.title)}`}
+          aria-label={`Open ${headlineText(props.item.title)}${itemExpiryState(props.item, clockNow()) !== "none" ? `, ${expirySentence(props.item.published_ts, clockNow())}` : ""}`}
         >
           {props.children}
         </button>
@@ -559,7 +616,7 @@ function PrimaryAction(props: {
         href={props.item.external_url}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open ${headlineText(props.item.title)} on ${externalHost(props.item.external_url)}`}
+        aria-label={`Open ${headlineText(props.item.title)} on ${externalHost(props.item.external_url)}${itemExpiryState(props.item, clockNow()) !== "none" ? `, ${expirySentence(props.item.published_ts, clockNow())}` : ""}`}
         onFocus={props.onFocus}
         onMouseEnter={props.onMouseEnter}
         onClick={() => props.onExternalOpen(props.item)}

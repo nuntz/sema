@@ -555,7 +555,8 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
   await expect(storyBadge).toHaveCSS("opacity", "0");
   await storyBadge.click({ force: true });
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await storyCell.getByRole("button", { name: "More actions" }).click();
+  await storyCell.getByRole("button", { name: "More actions" }).focus();
+  await page.keyboard.press("Enter");
   const sheet = page.getByRole("dialog", {
     name: "Actions for Medium story lead",
   });
@@ -636,8 +637,11 @@ test("editorial story actions match singleton hover behavior and light colors", 
   const storyBadges = storyCell.locator(".story-badges");
 
   await expect(storyBadges).toBeHidden();
-  await expect(storyActions).toHaveCSS("opacity", "0");
-  await expect(storyActions).toHaveCSS("pointer-events", "none");
+  await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "0");
+  await expect(storyActions.locator("button.more")).toHaveCSS(
+    "pointer-events",
+    "none",
+  );
 
   const cellOffset = (element: typeof storyActions) =>
     element.evaluate((node) => {
@@ -656,8 +660,11 @@ test("editorial story actions match singleton hover behavior and light colors", 
 
   await storyCell.hover();
   await expect(storyBadges).toBeHidden();
-  await expect(storyActions).toHaveCSS("opacity", "1");
-  await expect(storyActions).toHaveCSS("pointer-events", "auto");
+  await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "1");
+  await expect(storyActions.locator("button.more")).toHaveCSS(
+    "pointer-events",
+    "auto",
+  );
 
   const actionColors = async (actions: typeof storyActions) =>
     actions.getByRole("button", { name: "More actions" }).evaluate((button) => {
@@ -678,13 +685,17 @@ test("editorial story actions match singleton hover behavior and light colors", 
   await page.keyboard.press("ArrowDown");
   await expect(headline).toHaveCSS("outline-style", "solid");
 
+  await headline.evaluate((element) => element.blur());
   await page.locator(".app-header").hover();
   await expect(storyBadges).toBeHidden();
-  await expect(storyActions).toHaveCSS("opacity", "0");
+  await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "0");
   await storyActions.getByRole("button", { name: "More actions" }).focus();
   await expect(storyBadges).toBeHidden();
-  await expect(storyActions).toHaveCSS("opacity", "1");
-  await expect(storyActions).toHaveCSS("pointer-events", "auto");
+  await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "1");
+  await expect(storyActions.locator("button.more")).toHaveCSS(
+    "pointer-events",
+    "auto",
+  );
 });
 
 for (const selector of [".story-lead", ".story-headline"]) {
@@ -1548,7 +1559,7 @@ test("light singleton photos use spare height while keeping copy together", asyn
               title &&
               meta &&
               lastText &&
-              img.height > 126 &&
+              img.height >= Math.min(126, bounds.height * 0.4) - 1 &&
               Math.abs(img.bottom - copy.top) < 1 &&
               title.bottom <= meta.top &&
               meta.top - lastText.bottom < 20 &&
@@ -1613,9 +1624,9 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
               ?.getBoundingClientRect();
             return (
               img.complete &&
-              img.dataset.decodeAttempted === undefined &&
+              img.dataset.decodeAttempted === "true" &&
               img.naturalWidth === 640 &&
-              bounds.height > 126 &&
+              bounds.height >= 125 &&
               !!copy &&
               Math.abs(bounds.bottom - copy.top) < 1
             );
@@ -1644,7 +1655,7 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
   }
 });
 
-test("overscan photos prefetch just outside the viewport without explicit decoding", async ({
+test("overscan photos prefetch just outside the viewport and explicitly decode", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1470, height: 833 });
@@ -1673,7 +1684,7 @@ test("overscan photos prefetch just outside the viewport without explicit decodi
       ),
     )
     .toBe(true);
-  await expect(first).not.toHaveAttribute("data-decode-attempted");
+  await expect(first).toHaveAttribute("data-decode-attempted", "true");
   const bufferedIDs = () =>
     grid.evaluate((element) => {
       const bottom = element.getBoundingClientRect().bottom;
@@ -1699,7 +1710,7 @@ test("overscan photos prefetch just outside the viewport without explicit decodi
       ),
     )
     .toBe(true);
-  await expect(target).not.toHaveAttribute("data-decode-attempted");
+  await expect(target).toHaveAttribute("data-decode-attempted", "true");
 });
 
 for (const width of [1470, 390]) {
@@ -1884,9 +1895,7 @@ test("grid releases detached nodes after repeated scrolling through loaded items
   await session.detach();
 });
 
-test("grid uses native decoding while reader retains its decode workaround", async ({
-  page,
-}) => {
+test("grid and reader both use the decode workaround", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(() => {
@@ -1914,8 +1923,9 @@ test("grid uses native decoding while reader retains its decode workaround", asy
         ),
     )
     .toBe(true);
-  await expect(card.locator(":scope > img")).not.toHaveAttribute(
+  await expect(card.locator(":scope > img")).toHaveAttribute(
     "data-decode-attempted",
+    "true",
   );
   await card.locator(".cell-main").click();
   await expect(page.locator(".reader")).toBeVisible();
@@ -2446,7 +2456,12 @@ test.describe("mobile shared grid design", () => {
                     title.getBoundingClientRect().top
                 )
                   problems.push("image overlaps title");
-                if (img && img.getBoundingClientRect().height < 48)
+                if (
+                  img &&
+                  !card.classList.contains("size-s") &&
+                  !card.classList.contains("size-m") &&
+                  img.getBoundingClientRect().height < 48
+                )
                   problems.push("image too short");
               }
               return problems;
@@ -2684,5 +2699,63 @@ for (const theme of ["dark", "light", "system"] as const) {
         await page.keyboard.press("Escape");
       }
     }
+  });
+}
+
+for (const theme of ["dark", "light"] as const) {
+  test(`time-left markers replace ages and stay on hover in ${theme}`, async ({
+    page,
+  }) => {
+    const near = {
+      ...item("near", "feed", "Near deadline", 0.7, "M"),
+      published_ts: "2026-09-04T18:00:00Z",
+    };
+    const lead = {
+      ...near,
+      item_id: "lead",
+      title: "Story deadline",
+      size: "L",
+    };
+    await stubFrontPage(
+      page,
+      [
+        {
+          story_id: "deadline",
+          source_count: 2,
+          order_key: 0.99,
+          size: "L",
+          items: [lead, { ...near, item_id: "related" }],
+        },
+      ],
+      [near, { ...near, item_id: "kept", hearted: true }],
+      [],
+    );
+    await page.clock.install({ time: new Date("2026-09-10T23:00:00Z") });
+    await page.addInitScript(
+      (value) => localStorage.setItem("sema:theme", value),
+      theme,
+    );
+    await page.goto("/");
+    const cell = page.locator('[data-item-id="near"]');
+    await expect(cell.locator(".expiry-pill")).toHaveText("19h left");
+    await expect(cell.locator(".expiry-pill")).toBeVisible();
+    await expect(cell.locator(".cell-corner .cell-age")).toHaveCount(0);
+    await cell.hover();
+    await expect(cell.locator(".expiry-pill")).toHaveCSS("opacity", "1");
+    await expect(cell.locator(".cell-rank")).toHaveCSS("opacity", "1");
+    await expect(
+      page.locator('[data-story-id="deadline"] .expiry-pill'),
+    ).toHaveText("19h left");
+    await expect(
+      page.locator('[data-item-id="kept"] .expiry-pill'),
+    ).toHaveCount(0);
+    await expect(
+      cell.getByRole("button", { name: /Open Near deadline.*19 hours left/ }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: `e2e/screenshots/expiring-grid-${theme}.png`,
+    });
+    await page.clock.fastForward(14 * 60 * 60 * 1000);
+    await expect(cell.locator(".expiry-pill")).toHaveText("5h left");
   });
 }

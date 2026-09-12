@@ -11,7 +11,9 @@ import {
   useContext,
 } from "solid-js";
 import { Portal } from "solid-js/web";
+import { clockNow, useClock } from "../clock";
 import { Icon } from "../components/Icon";
+import { expirySentence, itemExpiryState } from "../expiry";
 import {
   gridSourceName,
   headlineText,
@@ -49,6 +51,7 @@ import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { ScopeCellModel } from "../scope-cell";
 import { buryDisabled } from "../signal-feedback";
 import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
+import { ExpiryPill } from "./ExpiryPill";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
 import {
@@ -141,6 +144,7 @@ function shortWhyText(item: Item): string {
 }
 
 export function Grid(props: GridProps) {
+  useClock();
   const imagesEnabled =
     new URLSearchParams(window.location.search).get("grid-images") !== "off";
   const [pixelRatio, setPixelRatio] = createSignal(
@@ -1168,6 +1172,13 @@ function GridContent(props: GridProps) {
                   const item = createMemo(
                     () => liveItems().get(cell.item.item_id) ?? cell.item,
                   );
+                  const expiring = () =>
+                    !props.archive &&
+                    itemExpiryState(item(), clockNow()) !== "none";
+                  const expiryName = () =>
+                    expiring()
+                      ? `, ${expirySentence(item().published_ts, clockNow())}`
+                      : "";
                   const signalFresh = createSignalFresh(() => item().signal);
                   const condensedLarge = createMemo(
                     () =>
@@ -1290,17 +1301,36 @@ function GridContent(props: GridProps) {
                       <SignalMarker value={item().signal} />
                       <div class="cell-corner">
                         <SignalLabel value={item().signal} />
-                        <UnreadDot visible={readVisuals().unreadDot} />
-                        <div class="cell-corner-meta">
+                        <Show
+                          when={!(expiring() && cell.effectiveSize === "S")}
+                        >
+                          <UnreadDot visible={readVisuals().unreadDot} />
+                        </Show>
+                        <div
+                          class="cell-corner-meta"
+                          classList={{ "has-expiry": expiring() }}
+                        >
                           <Show
                             when={props.archive}
                             fallback={
-                              <span
-                                class="cell-age"
-                                title={publishedDate(item().published_ts)}
+                              <Show
+                                when={expiring()}
+                                fallback={
+                                  <span
+                                    class="cell-age"
+                                    title={publishedDate(item().published_ts)}
+                                  >
+                                    {relativeTime(item().published_ts)}
+                                  </span>
+                                }
                               >
-                                {relativeTime(item().published_ts)}
-                              </span>
+                                <ExpiryPill
+                                  published={item().published_ts}
+                                  now={clockNow()}
+                                  compact={cell.effectiveSize === "S"}
+                                  unread={readVisuals().unreadDot}
+                                />
+                              </Show>
                             }
                           >
                             <span
@@ -1343,7 +1373,7 @@ function GridContent(props: GridProps) {
                                 }
                                 openPrimary(item());
                               }}
-                              aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}`}
+                              aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                             />
                             <CellCopy
                               item={item()}
@@ -1367,7 +1397,7 @@ function GridContent(props: GridProps) {
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={() => props.onExternalOpen(item())}
-                            aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}`}
+                            aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                           >
                             <span class="sr-only">
                               Open {headlineText(item().title)}
@@ -1955,7 +1985,7 @@ export function UnreadDot(props: { visible: boolean }) {
 }
 
 export function relativeTime(value: string): string {
-  const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
+  const seconds = Math.max(0, (clockNow() - new Date(value).getTime()) / 1000);
   if (seconds < 60) return "now";
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
