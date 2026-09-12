@@ -271,7 +271,6 @@
   --cell-action-kept-fg: var(--media-fg-primary);
   --cell-action-kept-hover-bg: var(--keep-wash);
   --cell-action-kept-hover-fg: var(--media-fg-primary);
-  --expiring-tab-ring: rgba(232,230,225,.28);
   --reader-deadline-ink: #c7ccd3;
   --reader-deadline-urgent: #ff9aa3;
   --expiry-soon-bg: rgba(6,7,9,.82);
@@ -570,7 +569,6 @@
   --cell-action-kept-fg: var(--keep);
   --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
   --cell-action-kept-hover-fg: var(--cell-action-hover-fg);
-  --expiring-tab-ring: #dcd8d0;
   --reader-deadline-ink: #5f6670;
   --reader-deadline-urgent: #b02c3b;
   --expiry-soon-bg: rgba(6,7,9,.82);
@@ -806,7 +804,6 @@
     --cell-action-kept-fg: var(--keep);
     --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
     --cell-action-kept-hover-fg: var(--cell-action-hover-fg);
-    --expiring-tab-ring: #dcd8d0;
     --reader-deadline-ink: #5f6670;
     --reader-deadline-urgent: #b02c3b;
     --expiry-soon-bg: rgba(6,7,9,.82);
@@ -2616,7 +2613,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 36px; }
 .grid-cell:has(.expiry-pill) .signal-actions { top: 36px; }
 .refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 66px; }
-.expiring-tab:not(.active) { box-shadow: inset 0 0 0 1px var(--expiring-tab-ring); }
 .expiring-count { display: inline-grid; place-items: center; min-width: 17px; height: 16px; padding: 0 4px; border-radius: 4px; background: #e8e6e1; color: #14161a; font: 600 10.5px/1 "IBM Plex Mono", monospace; }
 .active .expiring-count { background: rgba(18,22,10,.22); color: #12160a; }
 .tonight-chip { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 0 7px; height: 26px; border: 0; background: none; color: var(--fg-secondary); font: 400 11px/1 "IBM Plex Mono", monospace; white-space: nowrap; }
