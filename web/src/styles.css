@@ -2485,11 +2485,13 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-wash); }
 }
 
-.grid-cell .signal-actions { display: flex; gap: 5px; opacity: 1; pointer-events: none; }
+/* This dark overlay palette stays fixed in both page themes. */
+.grid-cell .signal-actions { --cell-action-kept-bg: var(--cluster-pressed-down); --cell-action-kept-fg: var(--media-fg-primary); --cell-action-kept-hover-bg: var(--cluster-pressed-down); --cell-action-kept-hover-fg: var(--media-fg-primary); display: flex; gap: 5px; opacity: 1; pointer-events: none; }
 .grid-cell .signal-actions button { width: 26px; height: 26px; margin: 0; border: 1px solid rgba(255,255,255,.13); background: rgba(6,7,9,.72); color: #c7ccd3; opacity: 0; pointer-events: none; transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, opacity 120ms ease-out; }
 .grid-cell .signal-actions button::before { content: none; }
+.grid-cell .signal-actions button .icon, .grid-cell .signal-mobile-chip .icon { color: inherit; }
 .grid-cell:is(:hover, :focus-within) .signal-actions button, .grid-cell .signal-actions button[aria-pressed="true"] { opacity: 1; pointer-events: auto; }
-.grid-cell .signal-actions button:hover { background: var(--surface-raised-hover); border-color: rgba(255,255,255,.22); color: var(--fg-primary); }
+.grid-cell .signal-actions button:hover { background: #1f2124; border-color: rgba(255,255,255,.22); color: var(--media-fg-primary); }
 .grid-cell .signal-actions button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; box-shadow: none; }
 .grid-cell .signal-actions button.boost[aria-pressed="true"] { background: var(--accent-loud); border-color: transparent; color: var(--accent-ink); }
 .grid-cell .signal-actions button.bury[aria-pressed="true"] { background: var(--cluster-pressed-down); border-color: rgba(255,255,255,.22); color: #f4f2ee; }

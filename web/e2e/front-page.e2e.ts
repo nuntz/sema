@@ -2580,3 +2580,67 @@ test.describe("grid thumbnail budget", () => {
       .toContain("/thumbnail-budget/large.svg");
   });
 });
+
+for (const theme of ["dark", "light", "system"] as const) {
+  test(`feedback action colors stay consistent on hover in ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.addInitScript(
+      (theme) => localStorage.setItem("sema:theme", theme),
+      theme,
+    );
+    await stubFrontPage(
+      page,
+      [],
+      [
+        { ...item("boosted", "one", "Boosted item", 0.9, "M"), signal: 1 },
+        { ...item("buried", "one", "Buried item", 0.8, "M"), signal: -1 },
+        {
+          ...item("kept", "one", "Kept boosted item", 0.7, "M"),
+          signal: 1,
+          hearted: true,
+        },
+      ],
+      [],
+    );
+    await page.goto("/");
+    for (const id of ["boosted", "buried", "kept"]) {
+      const cell = page.locator(`[data-item-id="${id}"]`);
+      await cell.hover();
+      for (const action of ["boost", "bury", "keep", "more"]) {
+        const button = cell.locator(`button[data-action="${action}"]`);
+        await button.hover();
+        const pressed = (await button.getAttribute("aria-pressed")) === "true";
+        const disabled = await button.isDisabled();
+        const background = disabled
+          ? "rgba(6, 7, 9, 0.72)"
+          : pressed
+            ? action === "boost"
+              ? "rgb(214, 242, 75)"
+              : "rgb(42, 45, 49)"
+            : "rgb(31, 33, 36)";
+        const foreground = disabled
+          ? "rgb(199, 204, 211)"
+          : pressed && action === "boost"
+            ? "rgb(18, 22, 10)"
+            : "rgb(244, 242, 238)";
+        await expect(button).toHaveCSS("background-color", background);
+        await expect(button).toHaveCSS("color", foreground);
+        await expect(button.locator(".icon")).toHaveCSS("color", foreground);
+      }
+    }
+    await page.screenshot({ path: `/tmp/sema-feedback-hover-${theme}.png` });
+    await page.setViewportSize({ width: 390, height: 844 });
+    for (const [id, background, foreground] of [
+      ["boosted", "rgb(214, 242, 75)", "rgb(18, 22, 10)"],
+      ["buried", "rgb(42, 45, 49)", "rgb(244, 242, 238)"],
+    ]) {
+      const chip = page.locator(`[data-item-id="${id}"] .signal-mobile-chip`);
+      await expect(chip).toBeVisible();
+      await expect(chip).toHaveCSS("background-color", background);
+      await expect(chip.locator(".icon")).toHaveCSS("color", foreground);
+    }
+  });
+}
