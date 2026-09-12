@@ -42,12 +42,24 @@ export function clearSessionBootstrap(): void {
   sessionBootstrap = undefined;
 }
 
+interface ConditionalCache<T> {
+  etag?: string;
+  value?: T;
+}
+
 export class APIClient {
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private storyCache = new Map<string, ConditionalCache<StoriesResponse>>();
+  private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    cache?: ConditionalCache<T>,
+  ): Promise<T> {
     const headers = new Headers(init.headers);
+    if (cache?.etag) headers.set("If-None-Match", cache.etag);
     if (init.body && !(init.body instanceof FormData))
       headers.set("Content-Type", "application/json");
     const response = await fetch(`/api${path}`, { ...init, headers });
+    if (response.status === 304 && cache?.value) return cache.value;
     if (response.status === 401)
       throw new UnauthorizedError("Your Sema session expired.");
     if (!response.ok) {
@@ -62,7 +74,12 @@ export class APIClient {
       );
     }
     if (response.status === 204) return undefined as T;
-    return response.json() as Promise<T>;
+    const value = (await response.json()) as T;
+    if (cache) {
+      cache.etag = response.headers.get("ETag") ?? undefined;
+      cache.value = value;
+    }
+    return value;
   }
 
   me(): Promise<MeResponse> {
@@ -114,6 +131,7 @@ export class APIClient {
     scope: GridScope = null,
     includeRead = false,
     window?: FetchWindow,
+    conditional = false,
   ): Promise<StoriesResponse> {
     const params = new URLSearchParams();
     if (includeRead) params.set("include_read", "true");
@@ -128,7 +146,12 @@ export class APIClient {
       );
     if (scope?.kind === "feed") params.set("feed", scope.value);
     const query = params.size > 0 ? `?${params}` : "";
-    return this.request(`/stories${query}`);
+    const path = `/stories${query}`;
+    const cache = (conditional && this.storyCache.get(path)) || {};
+    // Bound arbitrary filter combinations and revalidate reloads unconditionally.
+    if (this.storyCache.size >= 16) this.storyCache.clear();
+    this.storyCache.set(path, cache);
+    return this.request(path, {}, cache);
   }
 
   item(itemID: string) {

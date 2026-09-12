@@ -522,7 +522,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       if (gridOrder() === "interest") {
         const includeRead = includeReadForGrid(unreadOnly());
         const [storyPage, page] = await Promise.all([
-          api.stories(scope(), includeRead, fetchWindow),
+          api.stories(scope(), includeRead, fetchWindow, true),
           api.items("interest", "", includeRead, scope(), false, fetchWindow),
         ]);
         if (version !== requestVersion) return 0;
@@ -569,7 +569,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           batch(() => {
             gridScrollTop = 0;
             setPendingNew([]);
-            setStories(incomingStories);
+            if (incomingStories !== stories()) setStories(incomingStories);
             setGridStoryIDs(visibleStories.map((story) => story.story_id));
             setItems(pageItems);
             setReadAnchor(page.read_anchor);

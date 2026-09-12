@@ -198,7 +198,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case method == http.MethodGet && path == "/items":
 		result = s.getItems(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/stories":
-		result = s.getStories(ctx, claims.Subject, request.QueryStringParameters)
+		result = conditionalStories(s.getStories(ctx, claims.Subject, request.QueryStringParameters), request.Headers)
 	case method == http.MethodGet && path == "/search":
 		result = s.getSearch(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
@@ -750,7 +750,31 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 	return response(http.StatusOK, map[string]any{"stories": stories})
 }
 
-const storyCacheTTL = 60 * time.Second
+// Conditional responses save transfer/rendering; container-local caching saves reads.
+func conditionalStories(result events.APIGatewayV2HTTPResponse, headers map[string]string) events.APIGatewayV2HTTPResponse {
+	if result.StatusCode != http.StatusOK {
+		return result
+	}
+	hash := sha256.Sum256([]byte(result.Body))
+	etag := `"` + hex.EncodeToString(hash[:]) + `"`
+	result.Headers["etag"] = etag
+	for name, value := range headers {
+		if !strings.EqualFold(name, "If-None-Match") {
+			continue
+		}
+		for _, candidate := range strings.Split(value, ",") {
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
+				result.StatusCode = http.StatusNotModified
+				result.Body = ""
+				return result
+			}
+		}
+	}
+	return result
+}
+
+const storyCacheTTL = 4 * time.Minute
 
 type storyCacheKey struct {
 	userID  string

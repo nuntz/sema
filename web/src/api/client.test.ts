@@ -63,6 +63,40 @@ describe("read state client", () => {
 });
 
 describe("story client", () => {
+  it("revalidates polls and preserves story identity on 304", async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ stories: [] }), {
+          headers: { ETag: '"one"' },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 304 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ stories: [] }), {
+          headers: { ETag: '"two"' },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ stories: [] })));
+    vi.stubGlobal("fetch", request);
+    const client = new APIClient();
+    const first = await client.stories();
+    expect(await client.stories(null, false, undefined, true)).toBe(first);
+    expect(
+      new Headers(request.mock.calls[1][1].headers).get("If-None-Match"),
+    ).toBe('"one"');
+    expect(await client.stories(null, false, undefined, true)).not.toBe(first);
+    await client.stories(
+      { kind: "feed", value: "other" },
+      false,
+      undefined,
+      true,
+    );
+    expect(
+      new Headers(request.mock.calls[3][1].headers).has("If-None-Match"),
+    ).toBe(false);
+  });
+
   it("keeps calendar bounds on story requests and continuation pages", async () => {
     const request = vi.fn(
       async (_input: RequestInfo | URL) =>

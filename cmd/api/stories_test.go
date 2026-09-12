@@ -222,3 +222,26 @@ func TestStoryPruningCompletesBeforeRenderingReturns(t *testing.T) {
 		})
 	}
 }
+
+func TestConditionalStories(t *testing.T) {
+	original := response(200, map[string]any{"stories": []string{"one"}})
+	first := conditionalStories(original, nil)
+	etag := first.Headers["etag"]
+	if etag == "" || first.StatusCode != 200 || first.Body != original.Body {
+		t.Fatalf("initial response = %#v", first)
+	}
+	for _, match := range []string{etag, "W/" + etag, `"other", ` + etag, "*"} {
+		got := conditionalStories(original, map[string]string{"If-None-Match": match})
+		if got.StatusCode != 304 || got.Body != "" || got.Headers["etag"] != etag {
+			t.Fatalf("match %q: %#v", match, got)
+		}
+	}
+	changed := conditionalStories(response(200, map[string]any{"stories": []string{"two"}}), map[string]string{"if-none-match": etag})
+	if changed.StatusCode != 200 || changed.Headers["etag"] == etag {
+		t.Fatalf("changed response = %#v", changed)
+	}
+	failed := conditionalStories(response(500, nil), map[string]string{"if-none-match": "*"})
+	if failed.StatusCode != 500 || failed.Headers["etag"] != "" {
+		t.Fatalf("failure = %#v", failed)
+	}
+}
