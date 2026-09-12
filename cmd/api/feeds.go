@@ -267,6 +267,7 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		CustomTitle    *string   `json:"custom_title"`
 		Tags           *[]string `json:"tags"`
 		Muted          *bool     `json:"muted"`
+		NoBodyExpected *bool     `json:"no_body_expected"`
 		AlwaysGenerate *bool     `json:"always_generate"`
 		HideShorts     *bool     `json:"hide_shorts"`
 		FetchInterval  *int      `json:"fetch_interval_h"`
@@ -275,7 +276,7 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
 	}
-	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.HideShorts == nil && input.FetchInterval == nil && input.URL == nil {
+	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.NoBodyExpected == nil && input.HideShorts == nil && input.FetchInterval == nil && input.URL == nil {
 		return badRequest(errors.New("at least one feed field is required"))
 	}
 	feed, err := s.store.Feed(ctx, userID, feedID)
@@ -333,6 +334,9 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 	}
 	if input.Muted != nil {
 		feed.Muted = *input.Muted
+	}
+	if input.NoBodyExpected != nil {
+		feed.NoBodyExpected = *input.NoBodyExpected
 	}
 	if input.AlwaysGenerate != nil {
 		feed.AlwaysGenerate = *input.AlwaysGenerate

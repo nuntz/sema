@@ -15,6 +15,7 @@ import (
 	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
+	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 	storycluster "github.com/nuntz/sema/internal/story"
@@ -627,7 +628,7 @@ func TestFailureMetricsCarryOnlyFeedIDDimension(t *testing.T) {
 		dimensions map[string]string
 	}
 	events := []event{}
-	emitItemMetrics(map[string]float64{"ItemsWritten": 1, "BodyImageFailed": 2}, "feed", false, false, func(metrics map[string]float64, dimensions map[string]string) {
+	emitItemMetrics(map[string]float64{"ItemsWritten": 1, "BodyImageFailed": 2}, domain.Feed{FeedID: "feed"}, false, false, func(metrics map[string]float64, dimensions map[string]string) {
 		events = append(events, event{metrics: metrics, dimensions: dimensions})
 	})
 	if len(events) != 2 || events[0].dimensions != nil || events[0].metrics["ItemsWritten"] != 1 || events[0].metrics["BodyImageFailed"] != 0 {
@@ -1000,5 +1001,31 @@ func TestItemDeadlineReportsOnlyExpiredMessage(t *testing.T) {
 	}
 	if deadlineEvents.Load() != 2 {
 		t.Fatalf("deadline events = %d, want 2", deadlineEvents.Load())
+	}
+}
+
+func TestExtractionMetricsForAggregatorFeeds(t *testing.T) {
+	for _, feed := range []domain.Feed{
+		{FeedID: "reddit", Connector: domain.ConnectorReddit},
+		{FeedID: "hn", Connector: "hackernews"},
+		{FeedID: "techmeme", Connector: domain.ConnectorRSS, NoBodyExpected: true},
+	} {
+		for _, hasContent := range []bool{false, true} {
+			fields := map[string]any{}
+			emitItemMetrics(map[string]float64{"ItemsWritten": 1, "BodyImageFailed": 2}, feed, hasContent, hasContent, func(metrics map[string]float64, dimensions map[string]string) {
+				for name, value := range observability.Event(metrics, dimensions) {
+					fields[name] = value
+				}
+			})
+			if fields["ExtractionFailed"] != nil || fields["MediaFailed"] != nil || fields["ExtractionNotExpected"] != float64(1) || fields["FeedID"] != feed.FeedID || fields["BodyImageFailed"] != float64(2) {
+				t.Fatalf("aggregator %s fields = %#v", feed.FeedID, fields)
+			}
+			if hasContent && (fields["ExtractionSucceeded"] != float64(1) || fields["MediaSucceeded"] != float64(1)) {
+				t.Fatalf("successful content lost: %#v", fields)
+			}
+		}
+	}
+	if observability.ExtractedMetrics["ExtractionNotExpected"] || observability.ExtractedMetrics["ItemDeadlineExceeded"] {
+		t.Fatal("diagnostic fields must not become custom metrics")
 	}
 }

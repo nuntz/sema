@@ -1238,3 +1238,26 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestPatchFeedNoBodyExpected(t *testing.T) {
+	feed := domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: domain.ConnectorRSS}
+	db := &apiDynamo{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			row, err := attributevalue.MarshalMap(feed)
+			return &dynamodb.GetItemOutput{Item: row}, err
+		},
+		update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			var saved domain.Feed
+			out, err := captureFeedUpdate(t, &saved)(input)
+			feed = saved
+			return out, err
+		},
+	}
+	s := &server{store: store.New(db, nil, "table", "", "")}
+	for _, expected := range []bool{true, false} {
+		got := s.patchFeed(context.Background(), "user", "feed", `{"no_body_expected":`+strconv.FormatBool(expected)+`}`)
+		if got.StatusCode != 200 || feed.NoBodyExpected != expected {
+			t.Fatalf("patch %v = %#v, stored feed %#v", expected, got, feed)
+		}
+	}
+}
