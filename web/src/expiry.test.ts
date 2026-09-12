@@ -62,5 +62,7 @@ describe("time left", () => {
     expect(expirySentence(published(48), now)).toBe("2 days left");
     expect(expirySentence(published(19), now)).toBe("19 hours left");
     expect(expirySentence(published(3), now)).toBe("about three hours left");
+    expect(expirySentence(published(0), now)).toBe("goes now");
+    expect(expirySentence(published(-1), now)).toBe("goes now");
   });
 });

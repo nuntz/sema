@@ -2785,6 +2785,9 @@ for (const theme of ["dark", "light"] as const) {
     ).toBeVisible();
     await page.clock.fastForward(14 * 60 * 60 * 1000);
     await expect(cell.locator(".expiry-pill")).toHaveText("5h left");
+    await page.clock.fastForward(6 * 60 * 60 * 1000);
+    await expect(cell.locator(".expiry-pill")).toHaveText("goes now");
+    await expect(cell.locator(".expiry-pill")).toHaveClass(/imminent/);
   });
 }
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR, LIFETIME } from "./expiry";
 import {
   deadlineGroup,
+  deadlineTime,
   nextMidnight,
   readerDay,
   readerDeadlineLine,
@@ -16,6 +17,21 @@ beforeEach(() => {
   ) {
     return nativeTime.call(this, optionsLocale ?? "de-DE", options);
   });
+});
+
+it.each([
+  ["en-US", "11:00 PM"],
+  ["de-DE", "23:00"],
+])("formats deadlines using %s", (locale, expected) => {
+  vi.stubEnv("TZ", "America/Vancouver");
+  vi.mocked(Date.prototype.toLocaleTimeString).mockImplementation(function (
+    this: Date,
+    _locales,
+    options,
+  ) {
+    return nativeTime.call(this, locale, options);
+  });
+  expect(deadlineTime(published("2026-09-08T06:00:00Z"))).toBe(expected);
 });
 afterEach(() => {
   vi.unstubAllEnvs();

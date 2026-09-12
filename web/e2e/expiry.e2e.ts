@@ -119,9 +119,19 @@ for (const theme of ["dark", "light"] as const) {
       "Goes tomorrow at 14:00 unless you keep it.",
     );
     await expect(page.locator(".reader .expiry-pill")).toHaveText("19h left");
+    await expect(page.locator(".reader .expiry-pill")).toHaveRole("img");
+    await expect(page.locator(".reader .expiry-pill")).toHaveAccessibleName(
+      "19 hours left",
+    );
     await page.clock.fastForward(14 * 3600000);
     await expect(page.locator(".reader .expiry-pill")).toHaveText("5h left");
     await expect(page.locator(".reader-day-track")).toHaveClass(/urgent/);
+    await page.clock.fastForward(6 * 3600000);
+    await expect(page.locator(".reader .expiry-pill")).toHaveText("goes now");
+    await expect(page.locator(".reader-day-label")).toHaveText("goes now");
+    await expect(page.locator(".reader-deadline")).toHaveText(
+      "Goes now unless you keep it.",
+    );
     await page.keyboard.press("K");
     await expect(page.locator(".reader-life, .reader-deadline")).toHaveCount(0);
   });
@@ -141,29 +151,40 @@ for (const width of [320, 390, 620, 860]) {
       "height",
       width < 620 ? "44px" : "56px",
     );
-    await page.screenshot({
-      animations: "disabled",
-      path: `/tmp/sema-reader-track-${width}.png`,
-    });
-    const pill = await page.locator(".reader .expiry-pill").boundingBox();
-    const slot = await page.locator(".reader-slot").boundingBox();
-    expect(pill && slot && pill.x + pill.width <= slot.x + slot.width + 1).toBe(
-      true,
-    );
+    await expect
+      .poll(() =>
+        page.locator(".reader-slot").evaluate((slot) => {
+          const pill = slot.querySelector(".expiry-pill");
+          return (
+            !!pill &&
+            pill.getBoundingClientRect().right <=
+              slot.getBoundingClientRect().right + 1
+          );
+        }),
+      )
+      .toBe(true);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBe(width);
   });
 }
 
-test("fresh items keep full tablet reader chrome", async ({ page }) => {
-  await page.setViewportSize({ width: 860, height: 900 });
-  await open(page, "dark");
-  await page.locator('[data-item-id="fresh"] .cell-main').click();
-  await expect(page.locator(".reader-life")).toHaveCount(0);
-  await expect(page.locator(".reader-deadline")).toBeVisible();
-  await expect(page.locator(".chrome-group--secondary")).toBeVisible();
-  await expect(
-    page.locator(".chrome-group--judge .chrome-btn__label").first(),
-  ).toBeVisible();
-});
+for (const width of [619, 620, 860, 1199, 1200]) {
+  test(`fresh reader track respects the header breakpoint at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await open(page, "dark");
+    await page.locator('[data-item-id="fresh"] .cell-main').click();
+    await expect(page.locator(".reader-life")).toHaveCount(
+      width >= 620 && width < 1200 ? 0 : 1,
+    );
+    await expect(page.locator(".reader-deadline")).toBeVisible();
+    if (width >= 860) {
+      await expect(page.locator(".chrome-group--secondary")).toBeVisible();
+      await expect(
+        page.locator(".chrome-group--judge .chrome-btn__label").first(),
+      ).toBeVisible();
+    }
+  });
+}
