@@ -1304,12 +1304,13 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 			delete(counts, feedID)
 		}
 	}
-	within48h, tonight := 0, 0
+	within48h, tonight, unreadTotal := 0, 0, 0
 	for _, count := range counts {
 		within48h += count.Unread
 		tonight += count.Tonight
+		unreadTotal += count.UnreadTotal
 	}
-	return response(http.StatusOK, map[string]any{"feeds": counts, "within48h": within48h, "tonight": tonight})
+	return response(http.StatusOK, map[string]any{"feeds": counts, "within48h": within48h, "tonight": tonight, "unread_total": unreadTotal})
 }
 
 func (s *server) importFeeds(ctx context.Context, userID string, request events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {

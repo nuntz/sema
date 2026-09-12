@@ -85,7 +85,7 @@ func TestPublishedCountsWalkAllPagesAndExcludeReadAndKept(t *testing.T) {
 		return &dynamodb.QueryOutput{Items: rows}, nil
 	}}
 	counts, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{}, filter)
-	if err != nil || calls != 2 || counts["feed"].Unread != 2 || counts["feed"].Tonight != 1 {
+	if err != nil || calls != 2 || counts["feed"].Unread != 2 || counts["feed"].Tonight != 1 || counts["feed"].UnreadTotal != 4 {
 		t.Fatalf("counts %+v: %v", counts, err)
 	}
 }

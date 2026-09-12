@@ -75,8 +75,10 @@ async function open(page: Page, theme: string, empty = false) {
                   all: empty ? 0 : 19,
                   unread: empty ? 0 : 19,
                   tonight: empty ? 0 : 3,
+                  unread_total: 50,
                 },
               },
+              unread_total: 50,
               within48h: empty ? 0 : 19,
               tonight: empty ? 0 : 3,
             }
@@ -286,3 +288,19 @@ for (const width of [320, 390, 620, 860]) {
     ).toBe(width);
   });
 }
+
+test("ordinary polls do not refresh counts within five minutes", async ({
+  page,
+}) => {
+  const requests = await open(page, "dark");
+  await expect(page.locator(".tonight-chip")).toBeVisible();
+  const counts = () =>
+    requests.filter((url) => url.pathname === "/api/feeds/counts");
+  const before = counts().length;
+  expect(
+    counts().filter((url) => url.searchParams.has("published_from")),
+  ).toHaveLength(1);
+  await page.clock.fastForward(60_000);
+  await page.clock.fastForward(60_000);
+  expect(counts()).toHaveLength(before);
+});

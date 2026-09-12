@@ -25,6 +25,7 @@ import { ThemeToggle } from "./components/ThemeToggle";
 import { Tooltip } from "./components/Tooltip";
 import { UpdateNotice } from "./components/UpdateNotice";
 import { expiringItems, expiringWindow, nextMidnight } from "./expiring-view";
+import { shouldRefreshExpiryCounts } from "./expiry-counts";
 import { effectiveGridOrder, sameGridScope } from "./grid-scope";
 import {
   finishAndClearGrid,
@@ -158,7 +159,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [expiryFeedCounts, setExpiryFeedCounts] = createSignal<FeedItemCounts>(
     {},
   );
-  const [allFeedCounts, setAllFeedCounts] = createSignal<FeedItemCounts>({});
   let fetchWindow: FetchWindow | undefined;
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
@@ -540,7 +540,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       document.visibilityState !== "visible"
     )
       return 0;
-    void refreshExpiryCounts();
+    if (
+      shouldRefreshExpiryCounts(expiringView(), clockNow(), lastExpiryRefresh)
+    )
+      void refreshExpiryCounts();
     if (expiringView()) {
       if (readerID() || loadingMore()) return 0;
       pollInFlight = true;
@@ -1254,7 +1257,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           readTimer = window.setTimeout(() => void flushPending(), 5_000);
         }
       })
-      .finally(() => readFlushes.delete(operation));
+      .finally(() => {
+        readFlushes.delete(operation);
+        if (!disposed && !keepalive) void refreshExpiryCounts();
+      });
     readFlushes.add(operation);
     return operation;
   };
@@ -1672,7 +1678,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         .filter((feed) => feed.muted)
         .map((feed) => feed.feed_id),
     );
-    const sum = (counts: FeedItemCounts, field: "unread" | "tonight") =>
+    const sum = (
+      counts: FeedItemCounts,
+      field: "unread" | "tonight" | "unread_total",
+    ) =>
       Object.entries(counts).reduce(
         (total, [id, count]) =>
           total +
@@ -1684,31 +1693,35 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     return {
       within48h: sum(expiryFeedCounts(), "unread"),
       tonight: sum(expiryFeedCounts(), "tonight"),
-      unread: sum(allFeedCounts(), "unread"),
+      unread: sum(expiryFeedCounts(), "unread_total"),
     };
   });
 
   let expiryCountVersion = 0;
-  const refreshExpiryCounts = async () => {
+  let lastExpiryRefresh = -Infinity;
+  let expiryRefreshInFlight: Promise<void> | undefined;
+  const refreshExpiryCounts = (): Promise<void> => {
+    if (expiryRefreshInFlight) return expiryRefreshInFlight;
     const version = ++expiryCountVersion;
-    try {
-      await flushRead();
-      await Promise.all(readFlushes);
-      const [near, all] = await Promise.all([
-        api.expiryCounts(
+    expiryRefreshInFlight = (async () => {
+      try {
+        await flushRead();
+        await Promise.all(readFlushes);
+        const near = await api.expiryCounts(
           expiringWindow(clockNow()),
           nextMidnight(clockNow()).toISOString(),
-        ),
-        api.feedItemCounts(),
-      ]);
-      if (version === expiryCountVersion)
-        batch(() => {
+        );
+        if (version === expiryCountVersion) {
           setExpiryFeedCounts(near.feeds ?? {});
-          setAllFeedCounts(all ?? {});
-        });
-    } catch (caught) {
-      handleError(caught);
-    }
+          lastExpiryRefresh = clockNow();
+        }
+      } catch (caught) {
+        handleError(caught);
+      } finally {
+        expiryRefreshInFlight = undefined;
+      }
+    })();
+    return expiryRefreshInFlight;
   };
 
   const refreshFeedItemCounts = async () => {

@@ -637,11 +637,18 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 			return nil, err
 		}
 		for _, item := range page {
-			if item.FeedID == "" || seenItemIDs[item.ItemID] || !window.Contains(item.FetchedTS) || !filter.Contains(item) {
+			if item.FeedID == "" || seenItemIDs[item.ItemID] || !window.Contains(item.FetchedTS) {
 				continue
 			}
 			seenItemIDs[item.ItemID] = true
 			count := counts[item.FeedID]
+			if !readItemIDs[item.ItemID] {
+				count.UnreadTotal++
+			}
+			if !filter.Contains(item) {
+				counts[item.FeedID] = count
+				continue
+			}
 			count.All++
 			if !readItemIDs[item.ItemID] {
 				count.Unread++

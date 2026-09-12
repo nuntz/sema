@@ -291,7 +291,12 @@ export class APIClient {
   expiryCounts(
     window: FetchWindow,
     tonightBefore: string,
-  ): Promise<{ feeds: FeedItemCounts; within48h: number; tonight: number }> {
+  ): Promise<{
+    feeds: FeedItemCounts;
+    within48h: number;
+    tonight: number;
+    unread_total: number;
+  }> {
     const params = new URLSearchParams({
       published_from: window.from,
       published_before: window.before,

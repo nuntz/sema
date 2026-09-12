@@ -143,8 +143,8 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]domain.FeedItemCount{
-		"alpha": {All: 2, Unread: 1},
-		"beta":  {All: 1, Unread: 1},
+		"alpha": {All: 2, Unread: 1, UnreadTotal: 1},
+		"beta":  {All: 1, Unread: 1, UnreadTotal: 1},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("feed item counts = %#v, want %#v", got, want)
