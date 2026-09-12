@@ -47,6 +47,12 @@ interface ConditionalCache<T> {
   value?: T;
 }
 
+function appendScope(params: URLSearchParams, scope: GridScope): void {
+  if (scope?.kind === "tag")
+    params.set("tag", scope.value === "untagged" ? "__untagged" : scope.value);
+  if (scope?.kind === "feed") params.set("feed", scope.value);
+}
+
 export class APIClient {
   private storyCache = new Map<string, ConditionalCache<StoriesResponse>>();
   private async request<T>(
@@ -117,12 +123,7 @@ export class APIClient {
       params.set("fetched_from", window.from);
       params.set("fetched_before", window.before);
     }
-    if (scope?.kind === "tag")
-      params.set(
-        "tag",
-        scope.value === "untagged" ? "__untagged" : scope.value,
-      );
-    if (scope?.kind === "feed") params.set("feed", scope.value);
+    appendScope(params, scope);
     if (excludeStories) params.set("exclude_stories", "true");
     return this.request(`/items?${params}`);
   }
@@ -139,12 +140,7 @@ export class APIClient {
       params.set("fetched_from", window.from);
       params.set("fetched_before", window.before);
     }
-    if (scope?.kind === "tag")
-      params.set(
-        "tag",
-        scope.value === "untagged" ? "__untagged" : scope.value,
-      );
-    if (scope?.kind === "feed") params.set("feed", scope.value);
+    appendScope(params, scope);
     const query = params.size > 0 ? `?${params}` : "";
     const path = `/stories${query}`;
     const cache = (conditional && this.storyCache.get(path)) || {};
@@ -163,12 +159,7 @@ export class APIClient {
   archive(cursor = "", scope: GridScope = null): Promise<ItemsResponse> {
     const params = new URLSearchParams({ limit: "100" });
     if (cursor) params.set("cursor", cursor);
-    if (scope?.kind === "tag")
-      params.set(
-        "tag",
-        scope.value === "untagged" ? "__untagged" : scope.value,
-      );
-    if (scope?.kind === "feed") params.set("feed", scope.value);
+    appendScope(params, scope);
     return this.request(`/archive?${params}`);
   }
 
@@ -178,8 +169,13 @@ export class APIClient {
     );
   }
 
-  search(query: string, limit = 30): Promise<SearchResponse> {
+  search(
+    query: string,
+    scope: GridScope = null,
+    limit = 30,
+  ): Promise<SearchResponse> {
     const params = new URLSearchParams({ q: query, limit: String(limit) });
+    appendScope(params, scope);
     return this.request(`/search?${params}`);
   }
 

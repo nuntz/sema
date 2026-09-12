@@ -62,3 +62,7 @@ export function visibleSearchSections(
     },
   ].filter((section) => section.items.length > 0);
 }
+
+export function searchEmptyLabel(query: string, scopeLabel = ""): string {
+  return `No matches for “${query}”${scopeLabel ? ` in ${scopeLabel}` : ""}.`;
+}

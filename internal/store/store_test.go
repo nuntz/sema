@@ -462,7 +462,7 @@ func TestSearchItemsUsesMultiTermAndAndPageFills(t *testing.T) {
 		}
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal("one"), marshal("two")}}, nil
 	}}
-	items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", "I#", []string{"pulumi", "lambda"}, 2)
+	items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", "I#", []string{"pulumi", "lambda"}, 2, nil)
 	if err != nil || calls != 2 || len(items) != 2 {
 		t.Fatalf("SearchItems = %#v, calls %d, err %v", items, calls, err)
 	}
@@ -1738,5 +1738,29 @@ func TestTransactionConditionFailedForDeletedFeed(t *testing.T) {
 		if got := transactionConditionFailed(err); got != (code == "ConditionalCheckFailed") {
 			t.Fatalf("%s: %v", code, got)
 		}
+	}
+}
+
+func TestSearchItemsScopedPageFill(t *testing.T) {
+	for _, prefix := range []string{"I#", "A#"} {
+		t.Run(prefix, func(t *testing.T) {
+			calls := 0
+			db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+				calls++
+				feed := "outside"
+				if calls > 1 {
+					feed = "inside"
+				}
+				row, err := attributevalue.MarshalMap(domain.Item{ItemID: strconv.Itoa(calls), FeedID: feed, SK: prefix + strconv.Itoa(calls)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}, LastEvaluatedKey: key("user", prefix+strconv.Itoa(calls))}, nil
+			}}
+			items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", prefix, []string{"topic"}, 2, map[string]bool{"inside": true})
+			if err != nil || calls != 3 || len(items) != 2 || items[0].ItemID != "2" || items[1].ItemID != "3" {
+				t.Fatalf("items = %#v, calls = %d, err = %v", items, calls, err)
+			}
+		})
 	}
 }

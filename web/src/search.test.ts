@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeSearchResponse,
   SEARCH_DEBOUNCE_MS,
+  searchEmptyLabel,
   visibleSearchSections,
 } from "./search";
 import type { Item, SearchResponse } from "./types";
@@ -53,4 +54,15 @@ describe("search presentation", () => {
     });
     expect(visibleSearchSections(response)).toEqual([]);
   });
+});
+
+it("acknowledges the scope using its chip label", () => {
+  expect(searchEmptyLabel("x")).toBe("No matches for “x”.");
+  expect(searchEmptyLabel("x", "#tech")).toBe("No matches for “x” in #tech.");
+  expect(searchEmptyLabel("x", "#untagged")).toBe(
+    "No matches for “x” in #untagged.",
+  );
+  expect(searchEmptyLabel("x", "My Feed")).toBe(
+    "No matches for “x” in My Feed.",
+  );
 });

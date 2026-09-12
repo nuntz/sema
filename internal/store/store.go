@@ -1082,8 +1082,8 @@ func (s *Store) UpdateMediaVariants(ctx context.Context, item domain.Item, varia
 }
 
 // SearchItems page-fills after DynamoDB applies the multi-term contains
-// post-filter. Results retain partition order (newest publication/heart first).
-func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int) ([]domain.Item, error) {
+// post-filter and feed filtering (nil allows all feeds). Results retain partition order (newest publication/heart first).
+func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error) {
 	if prefix != "I#" && prefix != "A#" {
 		return nil, errors.New("search prefix must be I# or A#")
 	}
@@ -1123,7 +1123,7 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 			return nil, err
 		}
 		for _, item := range page {
-			if seen[item.ItemID] {
+			if seen[item.ItemID] || (allowedFeedIDs != nil && !allowedFeedIDs[item.FeedID]) {
 				continue
 			}
 			seen[item.ItemID] = true

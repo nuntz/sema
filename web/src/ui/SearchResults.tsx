@@ -6,7 +6,11 @@ import {
   isRedditLink,
   redditPrimaryRoute,
 } from "../reddit-item";
-import { type SearchSection, visibleSearchSections } from "../search";
+import {
+  type SearchSection,
+  searchEmptyLabel,
+  visibleSearchSections,
+} from "../search";
 import type { Item, SearchResponse } from "../types";
 import { relativeTime } from "./Grid";
 import { isEditingTarget } from "./keyboard";
@@ -15,6 +19,7 @@ import { SourceBadge } from "./SourceBadge";
 
 interface SearchResultsProps {
   query: string;
+  scopeLabel?: string;
   response?: SearchResponse;
   loading: boolean;
   focusedID: string;
@@ -122,6 +127,7 @@ export function SearchResults(props: SearchResultsProps) {
         fallback={
           <SearchEmpty
             query={quotedQuery()}
+            scopeLabel={props.scopeLabel}
             semantic={props.response?.semantic_available !== false}
           />
         }
@@ -385,10 +391,14 @@ function isImageMatch(item: Item): boolean {
   return item.match_source === "image" || item.match_source === "both";
 }
 
-function SearchEmpty(props: { query: string; semantic: boolean }) {
+function SearchEmpty(props: {
+  query: string;
+  scopeLabel?: string;
+  semantic: boolean;
+}) {
   return (
     <section class="search-empty">
-      <h2>No matches for “{props.query}”.</h2>
+      <h2>{searchEmptyLabel(props.query, props.scopeLabel)}</h2>
       <p>
         {props.semantic
           ? "Related works from meaning rather than spelling — try a few words about the topic."

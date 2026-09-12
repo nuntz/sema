@@ -339,3 +339,21 @@ describe("archive filters", () => {
     ]);
   });
 });
+
+describe("search scope", () => {
+  it("serializes tags, untagged, feeds, and a cleared scope", async () => {
+    const request = vi.fn(async () => new Response(JSON.stringify({})));
+    vi.stubGlobal("fetch", request);
+    const api = new APIClient();
+    await api.search("topic", { kind: "tag", value: "tech" });
+    await api.search("topic", { kind: "tag", value: "untagged" });
+    await api.search("topic", { kind: "feed", value: "feed/id" });
+    await api.search("topic", null);
+    expect(request.mock.calls).toEqual([
+      ["/api/search?q=topic&limit=30&tag=tech", expect.anything()],
+      ["/api/search?q=topic&limit=30&tag=__untagged", expect.anything()],
+      ["/api/search?q=topic&limit=30&feed=feed%2Fid", expect.anything()],
+      ["/api/search?q=topic&limit=30", expect.anything()],
+    ]);
+  });
+});

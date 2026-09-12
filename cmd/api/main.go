@@ -363,11 +363,22 @@ func (s *server) getSearch(ctx context.Context, userID string, query map[string]
 	if limit < 1 || limit > 30 {
 		limit = 30
 	}
-	window, err := s.store.SearchItems(ctx, userID, "I#", terms, limit)
+	var allowed map[string]bool
+	if strings.TrimSpace(query["tag"]) != "" || strings.TrimSpace(query["feed"]) != "" {
+		var err error
+		allowed, err = s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
+		if err != nil {
+			if errors.Is(err, errInvalidFeedTag) {
+				return badRequest(err)
+			}
+			return s.failure("load feeds for search filtering", err)
+		}
+	}
+	window, err := s.store.SearchItems(ctx, userID, "I#", terms, limit, allowed)
 	if err != nil {
 		return s.failure("search live items", err)
 	}
-	archive, err := s.store.SearchItems(ctx, userID, "A#", terms, limit)
+	archive, err := s.store.SearchItems(ctx, userID, "A#", terms, limit, allowed)
 	if err != nil {
 		return s.failure("search archive", err)
 	}
@@ -385,19 +396,24 @@ func (s *server) getSearch(ctx context.Context, userID string, query map[string]
 			exact[item.ItemID] = true
 		}
 	}
-	related, semanticAvailable := s.semanticResults(ctx, userID, value, limit, exact)
+	related, semanticAvailable := s.semanticResults(ctx, userID, value, limit, exact, allowed)
 	return response(http.StatusOK, map[string]any{
 		"matches": searchGroup{Window: window, Archive: archive},
 		"related": related, "semantic_available": semanticAvailable,
 	})
 }
 
-func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude map[string]bool) (searchGroup, bool) {
+func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude, allowed map[string]bool) (searchGroup, bool) {
 	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
 	textConfigured := s.embedder != nil && s.vectors != nil
 	imageConfigured := s.imageEmbedder != nil && s.imageVectors != nil
 	if !textConfigured && !imageConfigured {
 		return related, false
+	}
+	candidateLimit := limit
+	if allowed != nil {
+		// Leave room for out-of-scope candidates before applying the result limit.
+		candidateLimit = 100
 	}
 	type queryResult struct {
 		matches []vectorstore.Match
@@ -408,7 +424,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 		if err != nil {
 			return queryResult{err: err}
 		}
-		matches, err := vectors.Query(ctx, userID, score.Normalize(vector), limit, time.Now().Unix())
+		matches, err := vectors.Query(ctx, userID, score.Normalize(vector), candidateLimit, time.Now().Unix())
 		return queryResult{matches: matches, err: err}
 	}
 	textResults, imageResults := queryResult{}, queryResult{}
@@ -457,7 +473,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 		}
 		return filtered
 	}
-	fused := fuseMatches(filterExcluded(textResults.matches), filterExcluded(imageResults.matches), s.imageSearchFloor, limit)
+	fused := fuseMatches(filterExcluded(textResults.matches), filterExcluded(imageResults.matches), s.imageSearchFloor, candidateLimit)
 	ids := make([]string, len(fused))
 	for index := range fused {
 		ids[index] = fused[index].Key
@@ -465,6 +481,18 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
 	if err != nil {
 		return related, false
+	}
+	if allowed != nil {
+		filtered := items[:0]
+		for _, item := range items {
+			if allowed[item.FeedID] {
+				filtered = append(filtered, item)
+				if len(filtered) == limit {
+					break
+				}
+			}
+		}
+		items = filtered
 	}
 	byID := make(map[string]fusedMatch, len(fused))
 	for _, match := range fused {

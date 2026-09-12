@@ -98,7 +98,7 @@ import { RelatedPanel } from "./ui/RelatedPanel";
 import { SearchResults } from "./ui/SearchResults";
 import { SignalHint } from "./ui/SignalHint";
 import { TagFilter } from "./ui/TagFilter";
-import { displayFeedTitle } from "./ui/tag-options";
+import { displayFeedTitle, feedScopeChip } from "./ui/tag-options";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
 import { listenForWindowReturn } from "./window-activity";
 
@@ -627,8 +627,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
+  let previousSearchScope: GridScope = null;
   createEffect(() => {
     const query = searchQuery().trim();
+    const searchScope = scope();
+    const scopeChanged =
+      searchScope?.kind !== previousSearchScope?.kind ||
+      searchScope?.value !== previousSearchScope?.value;
+    previousSearchScope = searchScope;
     const version = ++searchVersion;
     if ([...query].length < 2) {
       setSearchResponse();
@@ -636,10 +642,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       setSearchLoading(false);
       return;
     }
+    if (scopeChanged) {
+      setSearchResponse();
+      setSearchFocusedID("");
+    }
     setSearchLoading(true);
     const timer = window.setTimeout(() => {
       api
-        .search(query)
+        .search(query, searchScope)
         .then((result) => {
           if (version !== searchVersion) return;
           const normalized = normalizeSearchResponse(result);
@@ -2312,6 +2322,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         </Show>
         <Show when={searchActive()}>
           <SearchResults
+            scopeLabel={
+              scope()?.kind === "tag"
+                ? `#${scope()?.value}`
+                : feedScopeChip(scope(), feedFilters())?.title
+            }
             query={searchQuery().trim()}
             response={searchResponse()}
             loading={searchLoading()}

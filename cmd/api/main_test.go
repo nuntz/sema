@@ -1322,3 +1322,134 @@ func TestPatchMeTrimsAndBoundsInterestPosition(t *testing.T) {
 		}
 	}
 }
+
+type searchEmbedder struct{}
+
+func (searchEmbedder) Embed(context.Context, string) ([]float32, error) {
+	return []float32{1}, nil
+}
+
+type searchVectors struct {
+	vectorstore.Store
+	limit int
+}
+
+func (s *searchVectors) Query(_ context.Context, _ string, _ []float32, limit int, _ int64) ([]vectorstore.Match, error) {
+	s.limit = limit
+	return []vectorstore.Match{
+		{Key: "other-live", Similarity: 99},
+		{Key: "other-archive", Similarity: 98},
+		{Key: "selected-live", Similarity: 90},
+		{Key: "selected-archive", Similarity: 89},
+		{Key: "untagged-live", Similarity: 80},
+		{Key: "untagged-archive", Similarity: 79},
+	}, nil
+}
+
+func TestGetSearchScope(t *testing.T) {
+	for _, test := range []struct {
+		name, tag, feed, wantFeed string
+		status                    int
+	}{
+		{name: "tag", tag: "tech", wantFeed: "selected", status: http.StatusOK},
+		{name: "feed", feed: "selected", wantFeed: "selected", status: http.StatusOK},
+		{name: "untagged", tag: "__untagged", wantFeed: "untagged", status: http.StatusOK},
+		{name: "empty scope", tag: "missing", status: http.StatusOK},
+		{name: "unscoped", status: http.StatusOK},
+		{name: "combined", tag: "tech", feed: "selected", status: http.StatusBadRequest},
+		{name: "invalid tag", tag: strings.Repeat("x", 33), status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			marshal := func(value any) map[string]types.AttributeValue {
+				row, err := attributevalue.MarshalMap(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return row
+			}
+			rows := map[string]map[string]types.AttributeValue{}
+			for _, feed := range []string{"other", "selected", "untagged"} {
+				for _, prefix := range []string{"I#", "A#"} {
+					kind := "live"
+					ttl := time.Now().Add(time.Hour).Unix()
+					hearted := ""
+					if prefix == "A#" {
+						kind, ttl, hearted = "archive", 0, "2026-09-01T00:00:00Z"
+					}
+					id := feed + "-" + kind
+					rows[domain.ItemIdentitySK(id)] = marshal(domain.ItemIdentity{SK: domain.ItemIdentitySK(id), ItemSK: prefix + id, TTL: ttl})
+					rows[prefix+id] = marshal(domain.Item{SK: prefix + id, ItemID: id, FeedID: feed, TTL: ttl, HeartedTS: hearted})
+				}
+			}
+			db := &apiDynamo{
+				query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
+					result := &dynamodb.QueryOutput{}
+					for _, feed := range []string{"other", "selected", "untagged"} {
+						result.Items = append(result.Items, marshal(domain.Item{SK: prefix + feed, ItemID: "keyword-" + prefix + feed, FeedID: feed}))
+					}
+					return result, nil
+				},
+				batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+					result := &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{}}
+					for _, key := range input.RequestItems["table"].Keys {
+						if row := rows[key["SK"].(*types.AttributeValueMemberS).Value]; row != nil {
+							result.Responses["table"] = append(result.Responses["table"], row)
+						}
+					}
+					return result, nil
+				},
+			}
+			vectors := &searchVectors{}
+			s := &server{store: store.New(db, nil, "table", "", ""), embedder: searchEmbedder{}, vectors: vectors,
+				feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+					{FeedID: "selected", Tags: []string{"tech"}},
+					{FeedID: "other", Tags: []string{"other"}},
+					{FeedID: "untagged"},
+				}}},
+			}
+			got := s.getSearch(context.Background(), "user", map[string]string{"q": "topic", "limit": "2", "tag": test.tag, "feed": test.feed})
+			if got.StatusCode != test.status {
+				t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+			}
+			if test.status != http.StatusOK {
+				return
+			}
+			var body struct {
+				Matches   searchGroup `json:"matches"`
+				Related   searchGroup `json:"related"`
+				Available bool        `json:"semantic_available"`
+			}
+			if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+				t.Fatal(err)
+			}
+			if !body.Available {
+				t.Fatal("semantic search unavailable")
+			}
+			for _, items := range [][]domain.Item{body.Matches.Window, body.Matches.Archive, body.Related.Window, body.Related.Archive} {
+				want := 1
+				if test.name == "empty scope" {
+					want = 0
+				}
+				if test.name == "unscoped" {
+					continue
+				}
+				if len(items) != want {
+					t.Fatalf("items = %#v, want %d; body = %s", items, want, got.Body)
+				}
+				for _, item := range items {
+					if item.FeedID != test.wantFeed {
+						t.Fatalf("out of scope item: %#v", item)
+					}
+				}
+			}
+			if test.name == "unscoped" {
+				if vectors.limit != 2 || len(body.Matches.Window) != 2 || len(body.Related.Window)+len(body.Related.Archive) != 2 {
+					t.Fatalf("unscoped search changed: limit = %d, body = %s", vectors.limit, got.Body)
+				}
+			} else if vectors.limit <= 2 {
+				t.Fatalf("scoped candidate limit = %d", vectors.limit)
+			}
+		})
+	}
+}
