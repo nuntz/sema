@@ -6,7 +6,6 @@ import {
   createMemo,
   createSignal,
   For,
-  on,
   onCleanup,
   onMount,
   Show,
@@ -18,14 +17,11 @@ import {
   linkBehaviourEvent,
   mergeBehaviourEvent,
 } from "./behaviour-events";
-import { clockNow, useClock } from "./clock";
 import { AppHeader } from "./components/AppHeader";
 import { Icon } from "./components/Icon";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Tooltip } from "./components/Tooltip";
 import { UpdateNotice } from "./components/UpdateNotice";
-import { expiringItems, expiringWindow, nextMidnight } from "./expiring-view";
-import { shouldRefreshExpiryCounts } from "./expiry-counts";
 import { effectiveGridOrder, sameGridScope } from "./grid-scope";
 import {
   finishAndClearGrid,
@@ -119,7 +115,6 @@ type HeaderMenu = "combined" | "overflow";
 const READER_EXIT_MS = 220;
 
 export function App(props: { signOut(): void; theme: ThemeController }) {
-  useClock();
   const api = new APIClient();
   const [, setProfile] = createSignal<Profile>();
   const [signalCount, setSignalCount] = createSignal(5);
@@ -153,16 +148,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [error, setError] = createSignal("");
   const [itemView, setItemView] = createSignal<ItemView>("unread");
-  const expiringView = () => mode() === "live" && itemView() === "expiring";
-  const unreadOnly = () => itemView() === "unread" || itemView() === "expiring";
-  const [expiryFeedCounts, setExpiryFeedCounts] = createSignal<FeedItemCounts>(
-    {},
-  );
+  const unreadOnly = () => itemView() === "unread";
   let fetchWindow: FetchWindow | undefined;
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
   const [readerItem, setReaderItem] = createSignal<Item>();
-  const [expiryReaderItems, setExpiryReaderItems] = createSignal<Item[]>([]);
   const [readerClosing, setReaderClosing] = createSignal(false);
   const [readerReveal, setReaderReveal] = createSignal(0);
   const [readerDragging, setReaderDragging] = createSignal(false);
@@ -188,7 +178,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [readerArchive, setReaderArchive] = createSignal(false);
   const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
   const phoneHeader = createMediaQuery("(max-width: 430px)");
-  const compactDisplayControls = createMediaQuery("(max-width: 1023px)");
+  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
   let requestVersion = 0;
@@ -228,16 +218,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const headerTooltipDisabled = createMemo(
     () => searchOpen() || tagFilterOpen() || Boolean(headerMenu()),
   );
-  const gridOrder = createMemo(() =>
-    expiringView() ? "chrono" : effectiveGridOrder(order(), scope()),
-  );
+  const gridOrder = createMemo(() => effectiveGridOrder(order(), scope()));
   const feedScoped = createMemo(() => scope()?.kind === "feed");
   const orderLabel = createMemo(() =>
-    expiringView()
-      ? "Expiring"
-      : gridOrder() === "interest"
-        ? "Front page"
-        : "Latest",
+    gridOrder() === "interest" ? "Front page" : "Latest",
   );
   const activeFeedTitle = createMemo(() => {
     const current = scope();
@@ -332,20 +316,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
-  const expiryScope = createMemo(() => {
-    const selected = scope();
-    return selected
-      ? {
-          kind: selected.kind,
-          label:
-            selected.kind === "tag" ? `#${selected.value}` : activeFeedTitle(),
-        }
-      : undefined;
-  });
-
   const scopeCell = createMemo(() => {
-    if (mode() === "archive" || searchActive() || expiringView())
-      return undefined;
+    if (mode() === "archive" || searchActive()) return undefined;
     const model = scopeCellModel(
       scope(),
       itemView(),
@@ -393,7 +365,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
-  const [expiryPages, setExpiryPages] = createSignal(0);
   const reload = async (
     nextOrder = order(),
     nextUnreadOnly = unreadOnly(),
@@ -407,7 +378,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     discardFinishUndo();
     setLoading(true);
     setHasPage(false);
-    setExpiryPages(0);
     setItems([]);
     setStories([]);
     setExpandedStoryIDs(new Set<string>());
@@ -418,9 +388,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     setCursor("");
     try {
       const includeRead = includeReadForGrid(nextUnreadOnly);
-      const requestOrder = expiringView()
-        ? "chrono"
-        : effectiveGridOrder(nextOrder, nextScope);
+      const requestOrder = effectiveGridOrder(nextOrder, nextScope);
       let page: ItemsResponse;
       let nextStories: Story[] = [];
       if (nextMode === "archive") {
@@ -475,7 +443,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         setScrollTarget(0);
         setScrollTopVersion((value) => value + 1);
         setCursor(nextCursor);
-        setExpiryPages(1);
         setHasPage(true);
         setFocusedID(nextFocusedID);
         setLayoutVersion((value) => value + 1);
@@ -485,15 +452,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     } finally {
       if (version === requestVersion) {
         setLoading(false);
-        if (expiringView() && cursor()) void loadMore();
       }
     }
   };
 
   const loadMore = async () => {
-    if (!expiringView() && (readerID() || view() !== "grid" || searchActive()))
-      return;
-    if (expiringView() && expiryPages() >= 5) return;
+    if (readerID() || view() !== "grid" || searchActive()) return;
     if (loadingMore() || !hasPage() || !cursor()) return;
     setLoadingMore(true);
     const version = requestVersion;
@@ -534,12 +498,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         if (visible.length > 0)
           setGridIDs((current) => [...current, ...visible]);
         if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
-        if (expiringView()) setExpiryPages((count) => count + 1);
         setCursor(responseCursor);
         setLayoutVersion((value) => value + 1);
       });
-      continueLoading =
-        responseCursor !== "" && (expiringView() || visible.length === 0);
+      continueLoading = responseCursor !== "" && visible.length === 0;
     } catch (caught) {
       handleError(caught);
     } finally {
@@ -557,43 +519,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       document.visibilityState !== "visible"
     )
       return 0;
-    if (
-      shouldRefreshExpiryCounts(expiringView(), clockNow(), lastExpiryRefresh)
-    )
-      void refreshExpiryCounts();
-    if (expiringView()) {
-      if (readerID() || loadingMore()) return 0;
-      pollInFlight = true;
-      const version = requestVersion;
-      const window = expiringWindow(clockNow());
-      try {
-        const page = await api.items(
-          "chrono",
-          "",
-          false,
-          scope(),
-          false,
-          window,
-        );
-        if (version !== requestVersion) return 0;
-        const known = new Map(items().map((item) => [item.item_id, item]));
-        for (const item of page.items ?? []) known.set(item.item_id, item);
-        const next = expiringItems([...known.values()], clockNow());
-        fetchWindow = window;
-        batch(() => {
-          setItems(next);
-          setGridIDs(next.map((item) => item.item_id));
-          if (!cursor()) setCursor(page.next_cursor ?? "");
-          setLayoutVersion((value) => value + 1);
-        });
-        return 0;
-      } catch (caught) {
-        handleError(caught);
-        return 0;
-      } finally {
-        pollInFlight = false;
-      }
-    }
     if (itemViewWindow(itemView())?.from !== fetchWindow?.from) {
       await reload();
       return 0;
@@ -955,25 +880,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const gridItems = createMemo(() => {
     const byID = new Map(items().map((item) => [item.item_id, item]));
-    const visible = gridIDs().flatMap((id) => {
+    return gridIDs().flatMap((id) => {
       const item = byID.get(id);
       return item ? [item] : [];
     });
-    return expiringView() ? expiringItems(visible, clockNow()) : visible;
   });
-  createEffect(
-    on(
-      () =>
-        expiringView()
-          ? gridItems()
-              .map((item) => item.item_id)
-              .join(",")
-          : "",
-      () => {
-        if (expiringView()) setLayoutVersion((value) => value + 1);
-      },
-    ),
-  );
   const gridStories = createMemo(() => {
     const visible = new Set(gridStoryIDs());
     return stories().filter((story) => visible.has(story.story_id));
@@ -988,11 +899,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     ),
   );
   const frontPageItems = createMemo(() =>
-    expiringView() && readerID()
-      ? expiryReaderItems()
-      : frontPageSequence(frontPageEntries(), expandedStoryIDs()).map(
-          ({ item }) => item,
-        ),
+    frontPageSequence(frontPageEntries(), expandedStoryIDs()).map(
+      ({ item }) => item,
+    ),
   );
   const searchItems = createMemo(() => {
     const result = searchResponse();
@@ -1040,11 +949,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     );
     setRelatedSource((current) =>
       current?.item_id === itemID ? { ...current, ...patch } : current,
-    );
-    setExpiryReaderItems((current) =>
-      current.map((item) =>
-        item.item_id === itemID ? { ...item, ...patch } : item,
-      ),
     );
     setReaderItem((current) =>
       current?.item_id === itemID ? { ...current, ...patch } : current,
@@ -1165,7 +1069,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     try {
       const result = await api.heart(item.item_id, next);
       setHeartCount(result.heart_count);
-      void refreshExpiryCounts();
       setProfile((current) =>
         current ? { ...current, heart_count: result.heart_count } : current,
       );
@@ -1276,7 +1179,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       })
       .finally(() => {
         readFlushes.delete(operation);
-        if (!disposed && !keepalive) void refreshExpiryCounts();
       });
     readFlushes.add(operation);
     return operation;
@@ -1317,7 +1219,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const markOpened = (item: Item, archive = item.archived === true) => {
-    if (expiringView() && !readerID()) setExpiryReaderItems(gridItems());
     openReaderHistory();
     setReaderItem(item);
     recordOpened(item, archive);
@@ -1608,13 +1509,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     gridOrder() === "interest" ? pollNew(true) : insertNewItems(pendingNew());
 
   const selectOrder = async (next: Order) => {
-    if (
-      mode() === "archive" ||
-      expiringView() ||
-      feedScoped() ||
-      next === order()
-    )
-      return;
+    if (mode() === "archive" || feedScoped() || next === order()) return;
     await flushRead();
     setOrder(next);
     closeReader();
@@ -1674,77 +1569,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     return scope()?.kind === "feed" ? applyFeed("") : applyTag("");
   };
 
-  const expiryCounts = createMemo(() => {
-    const selected = scope();
-    const allowed =
-      selected?.kind === "feed"
-        ? new Set([selected.value])
-        : selected?.kind === "tag"
-          ? new Set(
-              feedFilters()
-                .filter((feed) =>
-                  selected.value === "untagged"
-                    ? feed.tags.length === 0
-                    : feed.tags.includes(selected.value),
-                )
-                .map((feed) => feed.feed_id),
-            )
-          : undefined;
-    const muted = new Set(
-      feedFilters()
-        .filter((feed) => feed.muted)
-        .map((feed) => feed.feed_id),
-    );
-    const sum = (
-      counts: FeedItemCounts,
-      field: "unread" | "tonight" | "unread_total",
-    ) =>
-      Object.entries(counts).reduce(
-        (total, [id, count]) =>
-          total +
-          (!muted.has(id) && (!allowed || allowed.has(id))
-            ? (count[field] ?? 0)
-            : 0),
-        0,
-      );
-    return {
-      within48h: sum(expiryFeedCounts(), "unread"),
-      tonight: sum(expiryFeedCounts(), "tonight"),
-      unread: sum(expiryFeedCounts(), "unread_total"),
-    };
-  });
-
-  let expiryCountVersion = 0;
-  let lastExpiryRefresh = -Infinity;
-  let expiryRefreshInFlight: Promise<FeedItemCounts | undefined> | undefined;
-  const refreshExpiryCounts = (): Promise<FeedItemCounts | undefined> => {
-    if (expiryRefreshInFlight) return expiryRefreshInFlight;
-    const version = ++expiryCountVersion;
-    expiryRefreshInFlight = (async () => {
-      try {
-        await flushRead();
-        await Promise.all(readFlushes);
-        const near = await api.expiryCounts(
-          expiringWindow(clockNow()),
-          nextMidnight(clockNow()).toISOString(),
-        );
-        if (version === expiryCountVersion) {
-          setExpiryFeedCounts(near.feeds ?? {});
-          lastExpiryRefresh = clockNow();
-          return near.feeds ?? {};
-        }
-      } catch (caught) {
-        handleError(caught);
-      } finally {
-        expiryRefreshInFlight = undefined;
-      }
-    })();
-    return expiryRefreshInFlight;
-  };
-
   const refreshFeedItemCounts = async () => {
-    const expiryRefresh = refreshExpiryCounts();
-    const expiring = expiringView();
     const version = ++feedItemCountVersion;
     const window = itemViewWindow(itemView());
     try {
@@ -1753,9 +1578,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       await flushRead();
       await Promise.all(readFlushes);
       if (version !== feedItemCountVersion || pendingRead.size > 0) return;
-      const latest = expiring
-        ? await expiryRefresh
-        : await api.feedItemCounts(window);
+      const latest = await api.feedItemCounts(window);
       if (!latest) return;
       if (version === feedItemCountVersion)
         batch(() => {
@@ -1952,10 +1775,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           tooltipDisabled={headerTooltipDisabled()}
         >
           <Show when={mode() === "live"}>
-            <div
-              class="header-display-controls"
-              classList={{ "expiring-selected": expiringView() }}
-            >
+            <div class="header-display-controls">
               <div class="header-segments">
                 <div
                   class="segmented segmented-control"
@@ -2003,41 +1823,18 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                       <button
                         type="button"
                         class="segmented__item"
-                        classList={{
-                          active: itemView() === option.value,
-                          "expiring-tab": option.value === "expiring",
-                        }}
+                        classList={{ active: itemView() === option.value }}
                         role="radio"
                         aria-checked={itemView() === option.value}
                         title={`${option.label} (${scopeShortcuts[option.value]})`}
                         onClick={() => void selectItemView(option.value)}
                       >
                         <span>{option.label}</span>
-                        <Show
-                          when={
-                            option.value === "expiring" &&
-                            expiryCounts().within48h > 0
-                          }
-                        >
-                          <span class="expiring-count">
-                            {expiryCounts().within48h}
-                          </span>
-                        </Show>
                       </button>
                     )}
                   </For>
                 </div>
               </div>
-              <Show when={!expiringView() && expiryCounts().tonight > 0}>
-                <button
-                  type="button"
-                  class="tonight-chip"
-                  onClick={() => void selectItemView("expiring")}
-                >
-                  <Icon name="clock" size={13} />
-                  {expiryCounts().tonight} go tonight
-                </button>
-              </Show>
               <button
                 type="button"
                 class="chrome-btn filter-button"
@@ -2051,14 +1848,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                 }
               >
                 <span>{orderLabel()}</span>
-                <Show when={expiryCounts().within48h > 0}>
-                  <span
-                    class="expiring-count"
-                    title="Items that go in the next two days"
-                  >
-                    {expiryCounts().within48h}
-                  </span>
-                </Show>
                 <Icon name="chevron-down" size={13} />
               </button>
             </div>
@@ -2292,23 +2081,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                         role="radio"
                         aria-checked={itemView() === option.value}
                         title={`${option.label} (${scopeShortcuts[option.value]})`}
-                        classList={{
-                          active: itemView() === option.value,
-                          "expiring-tab": option.value === "expiring",
-                        }}
+                        classList={{ active: itemView() === option.value }}
                         onClick={() => void selectItemView(option.value)}
                       >
                         {option.label}
-                        <Show
-                          when={
-                            option.value === "expiring" &&
-                            expiryCounts().within48h > 0
-                          }
-                        >
-                          <span class="expiring-count">
-                            {expiryCounts().within48h}
-                          </span>
-                        </Show>
                       </button>
                     )}
                   </For>
@@ -2457,14 +2233,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             }
           >
             <Grid
-              expiryCounts={expiringView() ? expiryCounts() : undefined}
-              expiryScope={expiryScope()}
-              expiryShowing={
-                expiringView() && expiryPages() >= 5 && cursor()
-                  ? gridItems().length
-                  : undefined
-              }
-              onBackToUnread={() => void selectItemView("unread")}
               items={gridItems()}
               entries={frontPageEntries()}
               stories={gridStories()}

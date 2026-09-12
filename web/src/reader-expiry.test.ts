@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR, LIFETIME } from "./expiry";
-import { readerDay, readerDeadlineLine } from "./reader-expiry";
+import {
+  deadlineGroup,
+  nextMidnight,
+  readerDay,
+  readerDeadlineLine,
+} from "./reader-expiry";
 
 const nativeTime = Date.prototype.toLocaleTimeString;
 beforeEach(() => {
@@ -20,6 +25,22 @@ const now = Date.parse("2026-09-08T02:00:00Z");
 const published = (deadline: string) =>
   new Date(Date.parse(deadline) - LIFETIME).toISOString();
 describe("reader lifetime", () => {
+  it("uses local midnight boundaries for deadline wording", () => {
+    vi.stubEnv("TZ", "America/Vancouver");
+    expect(deadlineGroup(published("2026-09-08T06:59:59Z"), now)).toBe(
+      "tonight",
+    );
+    expect(deadlineGroup(published("2026-09-08T07:00:00Z"), now)).toBe(
+      "tomorrow",
+    );
+    expect(deadlineGroup(published("2026-09-09T07:00:00Z"), now)).toBe("later");
+  });
+  it("uses calendar midnight across daylight saving changes", () => {
+    vi.stubEnv("TZ", "America/Vancouver");
+    expect(nextMidnight(Date.parse("2026-03-08T09:00:00Z")).toISOString()).toBe(
+      "2026-03-09T07:00:00.000Z",
+    );
+  });
   it("tracks the current day of seven from publication", () => {
     for (const [hours, day] of [
       [0, 1],

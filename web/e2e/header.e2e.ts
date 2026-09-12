@@ -767,7 +767,7 @@ test("phone reader exposes six native actions and clears the final line", async 
   expect(clearance).toBeGreaterThanOrEqual(0);
 });
 
-for (const width of [860, 900, 1024]) {
+for (const width of [620, 860, 900, 1024]) {
   test(`grid controls stay inside the header at ${width}px`, async ({
     page,
   }) => {
@@ -795,7 +795,7 @@ for (const width of [860, 900, 1024]) {
       );
     }
     await expect(page.locator(".filter-button")).toBeVisible({
-      visible: width < 1024,
+      visible: width < 860,
     });
   });
 }

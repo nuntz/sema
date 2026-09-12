@@ -46,7 +46,7 @@ const item: Item = {
 
 function GridHeaderFixture() {
   const phone = createMediaQuery("(max-width: 430px)");
-  const compactDisplayControls = createMediaQuery("(max-width: 1023px)");
+  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
   return (
     <AppHeader view="grid" onHome={() => undefined}>
       <div class="header-display-controls">
@@ -76,7 +76,6 @@ function GridHeaderFixture() {
                   type="button"
                   class="segmented__item"
                   role="radio"
-                  classList={{ "expiring-tab": option.value === "expiring" }}
                   aria-checked={option.value === "unread"}
                 >
                   <span>{option.label}</span>

@@ -1206,6 +1206,23 @@ func TestGridEndpointsRejectInvalidFetchWindows(t *testing.T) {
 	}
 }
 
+func TestListEndpointsRejectRemovedParameters(t *testing.T) {
+	for _, key := range []string{"published_from", "published_before", "unkept", "ascending", "tonight_before"} {
+		for _, value := range []string{"", "true", "2026-09-07T00:00:00Z"} {
+			s := &server{}
+			query := map[string]string{key: value}
+			for _, got := range []events.APIGatewayV2HTTPResponse{
+				s.getItems(context.Background(), "user", query),
+				s.getFeedItemCounts(context.Background(), "user", query),
+			} {
+				if got.StatusCode != http.StatusBadRequest {
+					t.Fatalf("query %#v: response = %#v", query, got)
+				}
+			}
+		}
+	}
+}
+
 func TestFeedCountsRejectsInvalidFetchWindow(t *testing.T) {
 	for _, query := range []map[string]string{
 		{"fetched_from": "invalid"},

@@ -46,11 +46,3 @@ describe("item view calendar windows", () => {
     });
   });
 });
-
-it("selects the published-time 48-hour window for Expiring", () => {
-  expect(itemViewWindow("expiring", new Date("2026-09-08T12:00:00Z"))).toEqual({
-    basis: "published",
-    from: "2026-09-01T12:00:00.000Z",
-    before: "2026-09-03T12:00:00.000Z",
-  });
-});

@@ -23,7 +23,6 @@ const groups = [
     title: "Views",
     bindings: [
       ["g → u", "Show Unread"],
-      ["g → e", "Show Expiring"],
       ["g → t", "Show Today"],
       ["g → y", "Show Yesterday"],
       ["g → a", "Show All"],
