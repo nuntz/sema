@@ -34,7 +34,7 @@ export function ReaderLife(props: { published: string; now: number }) {
         </span>
       </span>
       <Show when={hoursLeft(props.published, props.now) <= 48}>
-        <ExpiryPill published={props.published} now={props.now} />
+        <ExpiryPill labelled published={props.published} now={props.now} />
       </Show>
     </span>
   );

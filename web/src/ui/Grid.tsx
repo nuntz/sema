@@ -55,6 +55,7 @@ import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
 import {
   type ExpiringCounts,
   ExpiringEnd,
+  type ExpiringScope,
   ExpiringStrip,
 } from "./ExpiringChrome";
 import { ExpiryPill } from "./ExpiryPill";
@@ -91,6 +92,8 @@ import { useSheetDrag } from "./use-sheet-drag";
 
 interface GridProps {
   expiryCounts?: ExpiringCounts;
+  expiryScope?: ExpiringScope;
+  expiryShowing?: number;
   onBackToUnread?(): void;
   scopeCell?: ScopeCellModel;
   scope?: GridScope;
@@ -1140,7 +1143,13 @@ function GridContent(props: GridProps) {
         }}
       >
         <Show when={props.expiryCounts}>
-          {(counts) => <ExpiringStrip counts={counts()} />}
+          {(counts) => (
+            <ExpiringStrip
+              counts={counts()}
+              scope={props.expiryScope}
+              showing={props.expiryShowing}
+            />
+          )}
         </Show>
         <For each={layout().headings}>
           {(group) => (

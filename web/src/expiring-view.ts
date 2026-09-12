@@ -26,7 +26,7 @@ export function deadlineGroup(
 export function deadlineTime(published: string): string {
   return new Date(Date.parse(published) + LIFETIME).toLocaleTimeString(
     undefined,
-    { hour: "2-digit", minute: "2-digit", hour12: false },
+    { hour: "numeric", minute: "2-digit" },
   );
 }
 export function expiringItems(items: Item[], now: number): Item[] {

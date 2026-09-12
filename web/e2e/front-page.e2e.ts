@@ -2763,6 +2763,13 @@ for (const theme of ["dark", "light"] as const) {
     const cell = page.locator('[data-item-id="near"]');
     await expect(cell.locator(".expiry-pill")).toHaveText("19h left");
     await expect(cell.locator(".expiry-pill")).toBeVisible();
+    await expect(cell.locator(".expiry-pill")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
+    await expect(
+      page.locator('[data-story-id="deadline"] .expiry-pill'),
+    ).toHaveAttribute("aria-hidden", "true");
     await expect(cell.locator(".cell-corner .cell-age")).toHaveCount(0);
     await cell.hover();
     await expect(cell.locator(".expiry-pill")).toHaveCSS("opacity", "1");
@@ -2777,6 +2784,7 @@ for (const theme of ["dark", "light"] as const) {
       cell.getByRole("button", { name: /Open Near deadline.*19 hours left/ }),
     ).toBeVisible();
     await page.screenshot({
+      animations: "disabled",
       path: `e2e/screenshots/expiring-grid-${theme}.png`,
     });
     await page.clock.fastForward(14 * 60 * 60 * 1000);

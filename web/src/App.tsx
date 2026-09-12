@@ -333,6 +333,17 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
+  const expiryScope = createMemo(() => {
+    const selected = scope();
+    return selected
+      ? {
+          kind: selected.kind,
+          label:
+            selected.kind === "tag" ? `#${selected.value}` : activeFeedTitle(),
+        }
+      : undefined;
+  });
+
   const scopeCell = createMemo(() => {
     if (mode() === "archive" || searchActive() || expiringView())
       return undefined;
@@ -383,6 +394,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
+  const [expiryPages, setExpiryPages] = createSignal(0);
   const reload = async (
     nextOrder = order(),
     nextUnreadOnly = unreadOnly(),
@@ -396,6 +408,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     discardFinishUndo();
     setLoading(true);
     setHasPage(false);
+    setExpiryPages(0);
     setItems([]);
     setStories([]);
     setExpandedStoryIDs(new Set<string>());
@@ -463,6 +476,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         setScrollTarget(0);
         setScrollTopVersion((value) => value + 1);
         setCursor(nextCursor);
+        setExpiryPages(1);
         setHasPage(true);
         setFocusedID(nextFocusedID);
         setLayoutVersion((value) => value + 1);
@@ -470,11 +484,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     } catch (caught) {
       handleError(caught);
     } finally {
-      if (version === requestVersion) setLoading(false);
+      if (version === requestVersion) {
+        setLoading(false);
+        if (expiringView() && cursor()) void loadMore();
+      }
     }
   };
 
   const loadMore = async () => {
+    if (expiringView() && expiryPages() >= 5) return;
     if (loadingMore() || !hasPage() || !cursor()) return;
     setLoadingMore(true);
     const version = requestVersion;
@@ -516,18 +534,20 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         if (visible.length > 0)
           setGridIDs((current) => [...current, ...visible]);
         if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
+        if (expiringView()) setExpiryPages((count) => count + 1);
         setCursor(responseCursor);
         setLayoutVersion((value) => value + 1);
       });
       continueLoading =
         responseCursor !== "" &&
-        (visible.length === 0 ||
+        (expiringView() ||
+          visible.length === 0 ||
           hasWithheldStories(stories(), loadedItems, true));
     } catch (caught) {
       handleError(caught);
     } finally {
       setLoadingMore(false);
-      if (continueLoading) void loadMore();
+      if (version === requestVersion && continueLoading) void loadMore();
     }
   };
 
@@ -2436,6 +2456,12 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           >
             <Grid
               expiryCounts={expiringView() ? expiryCounts() : undefined}
+              expiryScope={expiryScope()}
+              expiryShowing={
+                expiringView() && expiryPages() >= 5 && cursor()
+                  ? gridItems().length
+                  : undefined
+              }
               onBackToUnread={() => void selectItemView("unread")}
               items={gridItems()}
               entries={frontPageEntries()}

@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deadlineGroup,
+  deadlineTime,
   expiringItems,
   expiryGroups,
   nextMidnight,
@@ -8,7 +9,20 @@ import {
 import { LIFETIME } from "./expiry";
 import type { Item } from "./types";
 
-afterEach(() => vi.unstubAllEnvs());
+const nativeTime = Date.prototype.toLocaleTimeString;
+beforeEach(() => {
+  vi.spyOn(Date.prototype, "toLocaleTimeString").mockImplementation(function (
+    this: Date,
+    optionsLocale,
+    options,
+  ) {
+    return nativeTime.call(this, optionsLocale ?? "de-DE", options);
+  });
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 const item = (deadline: string, flags = {}) =>
   ({
     item_id: deadline,
@@ -62,4 +76,21 @@ describe("local deadline groups", () => {
       ),
     ).toEqual([first, item("2026-09-08T14:00:00Z", { read: true }), last]);
   });
+});
+
+it.each([
+  ["en-US", "11:00 PM"],
+  ["de-DE", "23:00"],
+])("formats deadlines using %s", (locale, expected) => {
+  vi.stubEnv("TZ", "America/Vancouver");
+  vi.mocked(Date.prototype.toLocaleTimeString).mockImplementation(function (
+    this: Date,
+    _locales,
+    options,
+  ) {
+    return nativeTime.call(this, locale, options);
+  });
+  expect(deadlineTime(item("2026-09-08T06:00:00Z").published_ts)).toBe(
+    expected,
+  );
 });

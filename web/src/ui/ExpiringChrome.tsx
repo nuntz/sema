@@ -6,13 +6,24 @@ export interface ExpiringCounts {
   tonight: number;
   unread: number;
 }
-export function ExpiringStrip(props: { counts: ExpiringCounts }) {
+export interface ExpiringScope {
+  label: string;
+  kind: "tag" | "feed";
+}
+export function ExpiringStrip(props: {
+  counts: ExpiringCounts;
+  scope?: ExpiringScope;
+  showing?: number;
+}) {
   return (
     <div class="expiring-strip">
       <Icon name="clock" size={16} />
       <span class="expiring-strip-desktop">
-        {props.counts.within48h} items go in the next two days —{" "}
-        {props.counts.tonight} of them tonight.
+        {props.counts.within48h} items
+        {props.scope
+          ? ` ${props.scope.kind === "tag" ? "in" : "from"} ${props.scope.label}`
+          : ""}{" "}
+        go in the next two days — {props.counts.tonight} of them tonight.
         <span class="expiring-strip-advice">
           {" "}
           · Keep the ones you want; the rest need nothing from you.
@@ -20,7 +31,11 @@ export function ExpiringStrip(props: { counts: ExpiringCounts }) {
       </span>
       <span class="expiring-strip-phone">
         {props.counts.tonight} go tonight · {props.counts.within48h} in two days
+        {props.scope ? ` · ${props.scope.label}` : ""}
       </span>
+      <Show when={props.showing !== undefined}>
+        <span class="expiring-showing">showing the first {props.showing}</span>
+      </Show>
       <span class="expiring-sort">sorted soonest first</span>
     </div>
   );

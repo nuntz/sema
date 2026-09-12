@@ -138,7 +138,7 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 		}}, nil
 	}}
 
-	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{})
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{}, domain.ItemFilter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestFeedItemCountsExcludesOutsideWindow(t *testing.T) {
 		}
 		return &dynamodb.QueryOutput{Items: items}, nil
 	}}
-	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{From: now, Before: now.Add(time.Hour)})
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{From: now, Before: now.Add(time.Hour)}, domain.ItemFilter{})
 	if err != nil || got["feed"].All != 1 || got["feed"].Unread != 1 {
 		t.Fatalf("counts = %#v, %v", got, err)
 	}
@@ -291,7 +291,7 @@ func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
 		return output, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, false, map[string]bool{"dev": true}, nil, domain.FetchWindow{})
+	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, false, map[string]bool{"dev": true}, nil, domain.FetchWindow{}, domain.ItemFilter{})
 	if err != nil || cursor != "" || calls != 2 || len(items) != 2 || items[0].FeedID != "dev" || items[1].FeedID != "dev" {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
 	}
@@ -326,7 +326,7 @@ func TestItemsForFeedsFillsFilteredIncludeReadPageBeyondDefaultBudget(t *testing
 	}}
 
 	items, cursor, _, err := New(db, nil, "table", "", "").ItemsForFeeds(
-		context.Background(), "user", domain.OrderInterest, "", 2, true, true, map[string]bool{"dev": true}, nil, domain.FetchWindow{})
+		context.Background(), "user", domain.OrderInterest, "", 2, true, true, map[string]bool{"dev": true}, nil, domain.FetchWindow{}, domain.ItemFilter{})
 	if err != nil || len(items) != 2 || items[0].ItemID != "keep-0" || items[1].ItemID != "keep-1" || cursor == "" || calls != itemsForFeedsPageBudget+1 {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
 	}
@@ -364,7 +364,7 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 		},
 	}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{})
+	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{}, domain.ItemFilter{})
 	if err != nil || cursor != "" || len(items) != 2 || items[0].ItemID != "new" || items[1].ItemID != "old" {
 		t.Fatalf("items = %#v, cursor = %q, err = %v", items, cursor, err)
 	}
@@ -423,7 +423,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 	}
 	repository := New(db, nil, "table", "", "")
 
-	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{})
+	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{}, domain.ItemFilter{})
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget || readQueryCalls != 1 || len(first) != 1 || first[0].ItemID != "unread-100" || cursor == "" {
 		t.Fatalf("budget page = %#v, cursor = %q, item queries = %d, read queries = %d, err = %v", first, cursor, itemQueryCalls, readQueryCalls, err)
 	}
@@ -431,7 +431,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 		t.Fatalf("budget page anchor = %#v", anchor)
 	}
 
-	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, false, nil, nil, domain.FetchWindow{})
+	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, false, nil, nil, domain.FetchWindow{}, domain.ItemFilter{})
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget+1 || readQueryCalls != 2 || len(second) != 1 || second[0].ItemID != "unread-101" || cursor != "" || anchor != nil {
 		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, item queries = %d, read queries = %d, err = %v", second, cursor, anchor, itemQueryCalls, readQueryCalls, err)
 	}
@@ -1718,11 +1718,11 @@ func TestItemsForFeedsFiltersFetchWindowBeforePagination(t *testing.T) {
 				},
 			}
 			repository := New(db, nil, "table", "", "")
-			items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", order, "", 1, true, false, map[string]bool{"feed": true}, nil, window)
+			items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", order, "", 1, true, false, map[string]bool{"feed": true}, nil, window, domain.ItemFilter{})
 			if err != nil || pageCalls != 7 || len(items) != 1 || items[0].ItemID != "first" || !items[0].Read || cursor == "" {
 				t.Fatalf("first page = %#v, cursor = %q, calls = %d, err = %v", items, cursor, pageCalls, err)
 			}
-			items, cursor, _, err = repository.ItemsForFeeds(context.Background(), "user", order, cursor, 2, true, false, map[string]bool{"feed": true}, nil, window)
+			items, cursor, _, err = repository.ItemsForFeeds(context.Background(), "user", order, cursor, 2, true, false, map[string]bool{"feed": true}, nil, window, domain.ItemFilter{})
 			if err != nil || len(items) != 1 || items[0].ItemID != "second" || cursor != "" {
 				t.Fatalf("second page = %#v, cursor = %q, err = %v", items, cursor, err)
 			}

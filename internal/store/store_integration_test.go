@@ -156,14 +156,14 @@ func TestDynamoAccessPatterns(t *testing.T) {
 		t.Fatalf("interest = %#v, %v", interest, err)
 	}
 	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
-		first, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, "", 1, false, false, nil, nil, domain.FetchWindow{})
+		first, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, "", 1, false, false, nil, nil, domain.FetchWindow{}, domain.ItemFilter{})
 		if err != nil || len(first) != 1 || first[0].ItemID != "new" || cursor == "" {
 			t.Fatalf("first unread page (%s) = %#v, cursor %q, %v", order, first, cursor, err)
 		}
 		if len(first[0].Vector) != 0 || first[0].SearchText != "" {
 			t.Fatalf("first unread page (%s) included excluded fields: %#v", order, first[0])
 		}
-		second, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, cursor, 1, false, false, nil, nil, domain.FetchWindow{})
+		second, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, cursor, 1, false, false, nil, nil, domain.FetchWindow{}, domain.ItemFilter{})
 		if err != nil || len(second) != 1 || second[0].ItemID != "old" || cursor != "" {
 			t.Fatalf("second unread page (%s) = %#v, cursor %q, %v", order, second, cursor, err)
 		}

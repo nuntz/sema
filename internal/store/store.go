@@ -593,18 +593,14 @@ type cursor struct {
 }
 
 func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
-	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, false, nil, nil, domain.FetchWindow{})
+	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, false, nil, nil, domain.FetchWindow{}, domain.ItemFilter{})
 	return items, next, err
 }
 
 // FeedItemCounts returns per-feed totals for the retained live-item window.
 // It deliberately does not use Feed.ItemCount, which is a lifetime ingest
 // counter and therefore includes expired and read items.
-func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, filters ...domain.ItemFilter) (map[string]domain.FeedItemCount, error) {
-	var filter domain.ItemFilter
-	if len(filters) > 0 {
-		filter = filters[0]
-	}
+func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, filter domain.ItemFilter) (map[string]domain.FeedItemCount, error) {
 	readItemIDs, err := s.readItemIDs(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -668,11 +664,7 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages until the end or page budget.
-func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, filters ...domain.ItemFilter) ([]domain.Item, string, *domain.Item, error) {
-	var filter domain.ItemFilter
-	if len(filters) > 0 {
-		filter = filters[0]
-	}
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, filter domain.ItemFilter) ([]domain.Item, string, *domain.Item, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}

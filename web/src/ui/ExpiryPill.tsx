@@ -11,14 +11,19 @@ export function ExpiryPill(props: {
   now: number;
   compact?: boolean;
   unread?: boolean;
+  labelled?: boolean;
 }) {
   const hours = () => hoursLeft(props.published, props.now);
   return (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: Only labelled reader pills have the image role and accessible name.
     <span
-      role="img"
+      role={props.labelled ? "img" : undefined}
+      aria-hidden={!props.labelled}
       class={`expiry-pill expiry-pill--${expiryState(hours())}`}
       title={expirySentence(props.published, props.now)}
-      aria-label={expirySentence(props.published, props.now)}
+      aria-label={
+        props.labelled ? expirySentence(props.published, props.now) : undefined
+      }
     >
       <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
         <circle

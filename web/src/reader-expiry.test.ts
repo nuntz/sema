@@ -1,8 +1,21 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HOUR, LIFETIME } from "./expiry";
 import { readerDay, readerDeadlineLine } from "./reader-expiry";
 
-afterEach(() => vi.unstubAllEnvs());
+const nativeTime = Date.prototype.toLocaleTimeString;
+beforeEach(() => {
+  vi.spyOn(Date.prototype, "toLocaleTimeString").mockImplementation(function (
+    this: Date,
+    optionsLocale,
+    options,
+  ) {
+    return nativeTime.call(this, optionsLocale ?? "de-DE", options);
+  });
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 const now = Date.parse("2026-09-08T02:00:00Z");
 const published = (deadline: string) =>
   new Date(Date.parse(deadline) - LIFETIME).toISOString();
@@ -26,10 +39,10 @@ describe("reader lifetime", () => {
       "Goes at 22:00 tonight — about three hours.",
     );
     expect(readerDeadlineLine(published("2026-09-08T16:14:00Z"), now)).toBe(
-      "Goes tomorrow at 09:14 unless you keep it.",
+      "Goes tomorrow at 9:14 unless you keep it.",
     );
     expect(readerDeadlineLine(published("2026-09-10T16:14:00Z"), now)).toBe(
-      "Goes Thursday at 09:14 unless you keep it.",
+      "Goes Thursday at 9:14 unless you keep it.",
     );
   });
   it("does not call an urgent deadline after midnight tonight", () => {
@@ -39,7 +52,7 @@ describe("reader lifetime", () => {
         published("2026-09-08T08:00:00Z"),
         Date.parse("2026-09-08T05:00:00Z"),
       ),
-    ).toBe("Goes at 01:00 tomorrow — about three hours.");
+    ).toBe("Goes at 1:00 tomorrow — about three hours.");
   });
   it("keeps elapsed items truthful while waiting for a refresh", () => {
     expect(readerDeadlineLine(published("2026-09-08T01:00:00Z"), now)).toBe(
