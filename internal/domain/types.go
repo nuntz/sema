@@ -44,7 +44,6 @@ type Feed struct {
 	Tags           []string `dynamodbav:"tags,stringset,omitempty" json:"tags"`
 	Muted          bool     `dynamodbav:"muted,omitempty" json:"muted"`
 	HideShorts     bool     `dynamodbav:"hide_shorts,omitempty" json:"hide_shorts"`
-	NoBodyExpected bool     `dynamodbav:"no_body_expected,omitempty" json:"no_body_expected"`
 	AlwaysGenerate bool     `dynamodbav:"always_generate,omitempty" json:"always_generate"`
 	FetchIntervalH int      `dynamodbav:"fetch_interval_h,omitempty" json:"fetch_interval_h"`
 	FaviconKey     string   `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
@@ -82,12 +81,6 @@ const (
 	ConnectorReddit  = "reddit"
 	ConnectorYouTube = "youtube"
 )
-
-// FeedBodyExpected distinguishes intentional aggregator omissions from failures.
-// RSS aggregators without their own connector opt out through NoBodyExpected.
-func FeedBodyExpected(feed Feed) bool {
-	return !feed.NoBodyExpected && feed.Connector != ConnectorReddit && feed.Connector != "hackernews"
-}
 
 // FeedConnector preserves the writers-first rollout for rows created before
 // the connector attribute existed.

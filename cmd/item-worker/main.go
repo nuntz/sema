@@ -640,8 +640,7 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 			vectorRecords = recordsForItem(stored)
 		}
 	}
-	feed.FeedID = message.FeedID
-	emitItemMetrics(metrics, feed, hasBody, mediaKey != "", h.emitMetrics)
+	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", h.emitMetrics)
 	return vectorRecords, nil
 }
 
@@ -730,7 +729,7 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 	return metrics, nil
 }
 
-func emitItemMetrics(metrics map[string]float64, feed domain.Feed, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {
+func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {
 	failures := map[string]float64{}
 	if bodyImageFailed := metrics["BodyImageFailed"]; bodyImageFailed > 0 {
 		failures["BodyImageFailed"] = bodyImageFailed
@@ -738,20 +737,17 @@ func emitItemMetrics(metrics map[string]float64, feed domain.Feed, hasBody, hasM
 	}
 	if hasBody {
 		metrics["ExtractionSucceeded"] = 1
-	} else if domain.FeedBodyExpected(feed) {
+	} else {
 		failures["ExtractionFailed"] = 1
 	}
 	if hasMedia {
 		metrics["MediaSucceeded"] = 1
-	} else if domain.FeedBodyExpected(feed) {
+	} else {
 		failures["MediaFailed"] = 1
-	}
-	if !domain.FeedBodyExpected(feed) {
-		failures["ExtractionNotExpected"] = 1
 	}
 	emit(metrics, nil)
 	if len(failures) > 0 {
-		emit(failures, map[string]string{"FeedID": feed.FeedID})
+		emit(failures, map[string]string{"FeedID": feedID})
 	}
 }
 

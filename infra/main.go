@@ -620,7 +620,7 @@ var operationalQueries = []struct {
 	{"stories", []string{"item-worker", "rescore"}, `stats sum(StoryCreated) as created, sum(StoryJoined) as joined, sum(StoryCandidates) as candidates, sum(StoryAssignmentFailed) as failed, sum(StoriesConsolidated) as consolidated, sum(StoriesDeleted) as deleted by bin(1h)`},
 	{"rescore-volume", []string{"rescore"}, `stats sum(ItemsRescored) as rescored, sum(RescoreItemsSkippedNoVector) as skipped_no_vector, avg(RescoreDurationMs) as duration_ms by bin(1h)`},
 	{"centroid-drift", []string{"rescore"}, `stats avg(CentroidDrift) as average_drift, max(CentroidDrift) as maximum_drift by User`},
-	{"feed-failures", []string{"item-worker"}, `stats sum(ExtractionFailed) as extraction_failed, sum(MediaFailed) as media_failed, sum(BodyImageFailed) as body_image_failed, sum(ExtractionNotExpected) as extraction_not_expected by FeedID`},
+	{"feed-failures", []string{"item-worker"}, `stats sum(ExtractionFailed) as extraction_failed, sum(MediaFailed) as media_failed, sum(BodyImageFailed) as body_image_failed by FeedID`},
 	{"item-deadlines", []string{"item-worker"}, `stats sum(ItemDeadlineExceeded) as deadlines by feed_id, item_id`},
 	{"api", []string{"api"}, `stats sum(APIRequests) as requests, sum(APIServerErrors) as server_errors, avg(APIRequestDurationMs) as duration_ms by Route, Status`},
 }
