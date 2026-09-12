@@ -194,7 +194,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		itemsDLQ, itemsQueue, err := queues(ctx, "items", 180)
+		itemsDLQ, itemsQueue, err := queues(ctx, "items", itemQueueVisibilitySeconds)
 		if err != nil {
 			return err
 		}
@@ -242,7 +242,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		itemWorker, err := function(ctx, "item-worker", itemRole, 1024, 120, 10, merge(common, storyEnvironment, pulumi.StringMap{
+		itemWorker, err := function(ctx, "item-worker", itemRole, 1024, itemWorkerTimeoutSeconds, 10, merge(common, storyEnvironment, pulumi.StringMap{
 			"GOMEMLIMIT": pulumi.String("800MiB"),
 		}))
 		if err != nil {
@@ -273,7 +273,7 @@ func main() {
 		if _, err := awslambda.NewEventSourceMapping(ctx, "feed-events", queueEventSourceMappingArgs(feedsQueue.Arn, feedWorker.Arn, 10)); err != nil {
 			return err
 		}
-		if _, err := awslambda.NewEventSourceMapping(ctx, "item-events", queueEventSourceMappingArgs(itemsQueue.Arn, itemWorker.Arn, 5)); err != nil {
+		if _, err := awslambda.NewEventSourceMapping(ctx, "item-events", itemQueueEventSourceMappingArgs(itemsQueue.Arn, itemWorker.Arn)); err != nil {
 			return err
 		}
 
@@ -595,6 +595,18 @@ func storyAssignmentFailedAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.
 		AlarmActions:       alarmActions,
 		AlarmDescription:   pulumi.String("story assignment failures exceeded 20 items in 15 minutes"),
 	}
+}
+
+const (
+	itemWorkerTimeoutSeconds   = 120
+	itemQueueVisibilitySeconds = 180
+	itemBatchWindowSeconds     = 15
+)
+
+func itemQueueEventSourceMappingArgs(eventSourceArn, functionName pulumi.StringInput) *awslambda.EventSourceMappingArgs {
+	args := queueEventSourceMappingArgs(eventSourceArn, functionName, 5)
+	args.MaximumBatchingWindowInSeconds = pulumi.Int(itemBatchWindowSeconds)
+	return args
 }
 
 func queueEventSourceMappingArgs(eventSourceArn, functionName pulumi.StringInput, batchSize int) *awslambda.EventSourceMappingArgs {

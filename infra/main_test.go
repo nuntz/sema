@@ -211,3 +211,20 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 	}
 	t.Logf("dashboard charts %d metrics across %d widgets", metrics, len(dashboard.Widgets))
 }
+
+func TestOnlyItemsQueueHasBatchingWindow(t *testing.T) {
+	items := itemQueueEventSourceMappingArgs(pulumi.String("items"), pulumi.String("worker"))
+	assertPulumiInt(t, "items batch size", items.BatchSize, 5)
+	assertPulumiInt(t, "items batching window", items.MaximumBatchingWindowInSeconds, 15)
+	feeds := queueEventSourceMappingArgs(pulumi.String("feeds"), pulumi.String("worker"), 10)
+	if feeds.MaximumBatchingWindowInSeconds != nil {
+		t.Fatalf("feeds batching window = %#v, want unset", feeds.MaximumBatchingWindowInSeconds)
+	}
+	if itemQueueVisibilitySeconds <= itemWorkerTimeoutSeconds+itemBatchWindowSeconds {
+		t.Fatal("items visibility must exceed Lambda timeout plus batching window")
+	}
+	responses, ok := items.FunctionResponseTypes.(pulumi.StringArray)
+	if !ok || len(responses) != 1 || responses[0] != pulumi.String("ReportBatchItemFailures") {
+		t.Fatalf("partial failure responses = %#v", items.FunctionResponseTypes)
+	}
+}
