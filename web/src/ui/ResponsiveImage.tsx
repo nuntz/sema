@@ -55,20 +55,18 @@ export function ResponsiveImage(props: ResponsiveImageProps) {
   let image: HTMLImageElement | undefined;
   let observer: IntersectionObserver | undefined;
   const decodeLoadedImage = () => {
-    // Keep the reader's Safari paint workaround. Grid images use native
-    // decoding so repeated virtual-cell mounts don't force full-size decodes.
-    if (!local.deferUntilVisible && image?.complete && image.naturalWidth > 0) {
+    // Safari can report a loaded image while retaining only a partial decode.
+    // Grid sources are already gated by visibility and sized to the card.
+    if (image?.complete && image.naturalWidth > 0) {
       void decodeImageWithin(image, 4_000);
     }
   };
 
   onMount(() => {
     if (!imagesEnabled) return;
-    if (!local.deferUntilVisible) {
-      image?.addEventListener("load", decodeLoadedImage);
-      // Cached images may have loaded before the listener was attached.
-      decodeLoadedImage();
-    }
+    image?.addEventListener("load", decodeLoadedImage);
+    // Cached images may have loaded before the listener was attached.
+    decodeLoadedImage();
     if (local.deferUntilVisible && image) {
       if (typeof IntersectionObserver === "undefined") {
         setEnabled(true);
