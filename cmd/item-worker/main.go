@@ -44,11 +44,34 @@ type httpClient interface {
 // Limit concurrent image decodes and resizes to fit the Lambda memory budget.
 const maxConcurrentRecords = 2
 
-// Five records at concurrency two take at most three processing waves.
-// Leave 30 seconds of the 120-second Lambda budget for vector writes/return.
-const itemTimeout = 30 * time.Second
+// Batches hold two records at concurrency two, so every item runs in a single
+// wave. Image-heavy pages regularly need 30-60 seconds; leave the rest of the
+// 120-second Lambda budget for vector writes/return.
+const itemTimeout = 90 * time.Second
 const batchTimeout = 110 * time.Second
 const mediaFetchTimeout = 10 * time.Second
+
+// Optional media stages get their own caps, and each is further limited to the
+// time left on the item minus a reserve, so summarization, embedding, and the
+// item write can still finish after slow publishers.
+const leadFetchTimeout = 30 * time.Second
+const embedThumbnailsTimeout = 20 * time.Second
+const bodyImagesTimeout = 40 * time.Second
+const completionReserve = 20 * time.Second
+
+// optionalBudget returns how long an optional stage may run: its own cap, or
+// less when the item deadline minus completionReserve is closer.
+func optionalBudget(ctx context.Context, want time.Duration) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return want
+	}
+	remaining := time.Until(deadline) - completionReserve
+	if remaining < want {
+		want = remaining
+	}
+	return max(want, 0)
+}
 
 type vectorBatchStore interface {
 	PutBatch(context.Context, []vectorstore.Record) error
@@ -58,7 +81,7 @@ type vectorBatchStore interface {
 type handler struct {
 	store             itemStore
 	http              httpClient
-	media             *media.Processor
+	media             mediaProcessor
 	embedder          embed.Embedder
 	imageEmbedder     embed.ImageEmbedder
 	summarizer        summarize.Summarizer
@@ -70,6 +93,13 @@ type handler struct {
 	imageVectors      vectorBatchStore
 	storyConfig       storycluster.Config
 	emit              func(map[string]float64, map[string]string)
+}
+
+type mediaProcessor interface {
+	bodyImageFetcher
+	FetchLead(context.Context, []string) (media.Lead, error)
+	FetchVideoLead(context.Context, []string) (media.Lead, error)
+	FetchEmbed(context.Context, string) (media.Image, error)
 }
 
 type processedVectors struct {
@@ -356,17 +386,29 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		mediaKey, mediaW, mediaH, mediaVariants = "", 0, 0, nil
 		var lead media.Lead
 		var mediaErr error
+		// Selection and the variant uploads share one budget so a slow upload
+		// cannot eat into the completion reserve either.
+		leadCtx, leadCancel := context.WithTimeout(ctx, optionalBudget(ctx, leadFetchTimeout))
 		if isVideo {
-			lead, mediaErr = h.media.FetchVideoLead(ctx, candidates)
+			lead, mediaErr = h.media.FetchVideoLead(leadCtx, candidates)
 		} else {
-			lead, mediaErr = h.media.FetchLead(ctx, candidates)
+			lead, mediaErr = h.media.FetchLead(leadCtx, candidates)
 		}
 		if mediaErr == nil {
 			mediaKey = store.MediaKey(message.User, message.ItemID, lead.Extension)
-			mediaVariants, err = storeLead(ctx, h.store, mediaKey, lead)
-			if err != nil {
-				return nil, fmt.Errorf("store media: %w", err)
+			mediaVariants, mediaErr = storeLead(leadCtx, h.store, mediaKey, lead)
+			if mediaErr != nil && (leadCtx.Err() == nil || ctx.Err() != nil) {
+				leadCancel()
+				return nil, fmt.Errorf("store media: %w", mediaErr)
 			}
+			if mediaErr != nil {
+				// The lead budget ran out mid-upload: continue without a lead image.
+				mediaKey, mediaVariants = "", nil
+				mediaErr = fmt.Errorf("store media: %w", mediaErr)
+			}
+		}
+		leadCancel()
+		if mediaErr == nil {
 			mediaW, mediaH = lead.Width, lead.Height
 			freshImageJPEG = selectEncodedImage(lead.Variants)
 			if cleaned, removed := extract.RemoveLeadImage(article.HTML, lead.SourceURL); removed {
@@ -382,25 +424,31 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 		}
 		var embedFailures []error
 		if !isVideo {
+			embedCtx, embedCancel := context.WithTimeout(ctx, optionalBudget(ctx, embedThumbnailsTimeout))
 			article.HTML, embedFailures = extract.ResolveMediaCards(article.HTML, func(card extract.MediaCard) (string, error) {
-				thumbnailURL, thumbnailErr := h.embedThumbnailURL(ctx, card)
+				if err := embedCtx.Err(); err != nil {
+					embedMediaFailed++
+					return "", err
+				}
+				thumbnailURL, thumbnailErr := h.embedThumbnailURL(embedCtx, card)
 				if thumbnailErr != nil {
 					embedMediaFailed++
 					return "", thumbnailErr
 				}
-				thumbnail, mediaErr := h.media.FetchEmbed(ctx, thumbnailURL)
+				thumbnail, mediaErr := h.media.FetchEmbed(embedCtx, thumbnailURL)
 				if mediaErr != nil {
 					embedMediaFailed++
 					return "", mediaErr
 				}
 				objectKey := store.EmbedMediaKey(message.User, message.ItemID, card.Index)
-				if err := h.store.PutContent(ctx, objectKey, thumbnail.ContentType, thumbnail.Bytes); err != nil {
+				if err := h.store.PutContent(embedCtx, objectKey, thumbnail.ContentType, thumbnail.Bytes); err != nil {
 					embedMediaFailed++
 					return "", fmt.Errorf("store embed thumbnail: %w", err)
 				}
 				embedMediaSucceeded++
 				return h.store.ContentURL(objectKey), nil
 			})
+			embedCancel()
 		}
 		for _, embedErr := range embedFailures {
 			slog.Warn("embed thumbnail failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", embedErr)
@@ -769,10 +817,15 @@ type bodyImageWriter interface {
 }
 
 func cacheBodyImages(ctx context.Context, fetcher bodyImageFetcher, writer bodyImageWriter, userID, itemID, raw string) (string, int, int, []error) {
-	bodyImageCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	bodyImageCtx, cancel := context.WithTimeout(ctx, optionalBudget(ctx, bodyImagesTimeout))
 	defer cancel()
 	succeeded, failed := 0, 0
 	rewritten, failures := extract.ResolveBodyImages(raw, func(image extract.BodyImage) (string, error) {
+		// Once the budget is gone, skip the fetch instead of opening a doomed request.
+		if err := bodyImageCtx.Err(); err != nil {
+			failed++
+			return "", err
+		}
 		fetchCtx, fetchCancel := context.WithTimeout(bodyImageCtx, mediaFetchTimeout)
 		defer fetchCancel()
 		fetched, err := fetcher.FetchBodyImage(fetchCtx, image.URL)

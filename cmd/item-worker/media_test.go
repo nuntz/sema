@@ -128,3 +128,49 @@ func TestBodyImageDeadlineSkipsImage(t *testing.T) {
 		t.Fatalf("failed download was stored or removed: %s", got)
 	}
 }
+
+func TestOptionalBudgetKeepsCompletionReserve(t *testing.T) {
+	if got := optionalBudget(context.Background(), leadFetchTimeout); got != leadFetchTimeout {
+		t.Fatalf("unbounded context budget = %v, want %v", got, leadFetchTimeout)
+	}
+	for _, test := range []struct {
+		name      string
+		remaining time.Duration
+		want      time.Duration
+	}{
+		{"ample", itemTimeout, leadFetchTimeout},
+		{"tight", completionReserve + 5*time.Second, 5 * time.Second},
+		{"reserve only", completionReserve / 2, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), test.remaining)
+			defer cancel()
+			got := optionalBudget(ctx, leadFetchTimeout)
+			if got > test.want || got < test.want-time.Second {
+				t.Fatalf("budget = %v, want about %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCacheBodyImagesSkipsFetchesWhenBudgetIsExhausted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), completionReserve/2)
+	defer cancel()
+	fetcher := &fakeBodyImageFetcher{}
+	writer := &recordingBodyImageWriter{objects: make(map[string][]byte)}
+	raw := `<p>Text</p><img src="https://publisher.example/one.jpg"><img src="https://publisher.example/two.jpg">`
+	started := time.Now()
+	got, succeeded, failed, failures := cacheBodyImages(ctx, fetcher, writer, "user", "item", raw)
+	if time.Since(started) > time.Second {
+		t.Fatalf("exhausted budget still waited %v", time.Since(started))
+	}
+	if len(fetcher.calls) != 0 || len(writer.objects) != 0 {
+		t.Fatalf("fetched %v and stored %d images with no budget", fetcher.calls, len(writer.objects))
+	}
+	if succeeded != 0 || failed != 2 || len(failures) != 2 || !errors.Is(failures[0], context.DeadlineExceeded) {
+		t.Fatalf("counts = %d/%d, errors = %v", succeeded, failed, failures)
+	}
+	if !strings.Contains(got, "https://publisher.example/one.jpg") || !strings.Contains(got, "https://publisher.example/two.jpg") {
+		t.Fatalf("original image sources dropped without a cached copy: %s", got)
+	}
+}

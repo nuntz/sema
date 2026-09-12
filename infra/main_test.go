@@ -216,7 +216,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 
 func TestOnlyItemsQueueHasBatchingWindow(t *testing.T) {
 	items := itemQueueEventSourceMappingArgs(pulumi.String("items"), pulumi.String("worker"))
-	assertPulumiInt(t, "items batch size", items.BatchSize, 5)
+	assertPulumiInt(t, "items batch size", items.BatchSize, 2)
 	assertPulumiInt(t, "items batching window", items.MaximumBatchingWindowInSeconds, 15)
 	feeds := queueEventSourceMappingArgs(pulumi.String("feeds"), pulumi.String("worker"), 10)
 	if feeds.MaximumBatchingWindowInSeconds != nil {

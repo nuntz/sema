@@ -650,10 +650,13 @@ const (
 	itemWorkerTimeoutSeconds   = 120
 	itemQueueVisibilitySeconds = 180
 	itemBatchWindowSeconds     = 15
+	// The worker processes two records concurrently. Keep batches to a single
+	// wave so each item can use most of the Lambda budget on image-heavy pages.
+	itemBatchSize = 2
 )
 
 func itemQueueEventSourceMappingArgs(eventSourceArn, functionName pulumi.StringInput) *awslambda.EventSourceMappingArgs {
-	args := queueEventSourceMappingArgs(eventSourceArn, functionName, 5)
+	args := queueEventSourceMappingArgs(eventSourceArn, functionName, itemBatchSize)
 	args.MaximumBatchingWindowInSeconds = pulumi.Int(itemBatchWindowSeconds)
 	return args
 }

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -451,7 +453,7 @@ func TestCompatibleReplayPreservesTextVectorWithoutEmbedding(t *testing.T) {
 	}
 	repository := &fakeItemStore{item: existing}
 	embedder := &countingTextEmbedder{}
-	h := &handler{store: repository, embedder: embedder, modelVersion: "text-v1", scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	h := &handler{store: repository, media: media.New(nil), embedder: embedder, modelVersion: "text-v1", scoringVersion: "1", vectors: &stubVectorBatchStore{}}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
 	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
 	if err != nil || len(response.BatchItemFailures) != 0 {
@@ -1010,5 +1012,132 @@ func TestProcessDropsItemFromDeletedFeed(t *testing.T) {
 	records, err := h.process(context.Background(), body)
 	if err != nil || records != nil {
 		t.Fatalf("records = %#v, err = %v", records, err)
+	}
+}
+
+// blockingMedia stands in for publishers that never answer: every fetch waits
+// for its context to expire.
+type blockingMedia struct {
+	leadCalls, bodyCalls atomic.Int32
+}
+
+func (m *blockingMedia) wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (m *blockingMedia) FetchLead(ctx context.Context, _ []string) (media.Lead, error) {
+	m.leadCalls.Add(1)
+	return media.Lead{}, m.wait(ctx)
+}
+func (m *blockingMedia) FetchVideoLead(ctx context.Context, _ []string) (media.Lead, error) {
+	return media.Lead{}, m.wait(ctx)
+}
+func (m *blockingMedia) FetchEmbed(ctx context.Context, _ string) (media.Image, error) {
+	return media.Image{}, m.wait(ctx)
+}
+func (m *blockingMedia) FetchBodyImage(ctx context.Context, _ string) (media.Image, error) {
+	m.bodyCalls.Add(1)
+	return media.Image{}, m.wait(ctx)
+}
+
+type recordingItemStore struct {
+	fakeItemStore
+	contentKeys []string
+	items       []domain.Item
+}
+
+func (s *recordingItemStore) PutContent(_ context.Context, key, _ string, _ []byte) error {
+	s.contentKeys = append(s.contentKeys, key)
+	return nil
+}
+func (s *recordingItemStore) PutItem(_ context.Context, item domain.Item) (bool, error) {
+	s.items = append(s.items, item)
+	return true, nil
+}
+
+func TestExhaustedMediaBudgetStillPersistsItem(t *testing.T) {
+	repository := &recordingItemStore{}
+	processor := &blockingMedia{}
+	h := &handler{store: repository, media: processor, embedder: stubEmbedder{}, scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	raw := `<p>A first factual paragraph about the subject that runs long enough to count as an article body.</p>` +
+		`<img src="https://publisher.example/lead.jpg"><p>A second paragraph adds more detail for the extractor.</p>`
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","content_raw":` + strconv.Quote(raw) +
+		`,"published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+	// Leave the lead stage a sliver beyond the reserve so it blocks, then
+	// expect body images to be skipped and the item to be written anyway.
+	spare := 200 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), completionReserve+spare)
+	defer cancel()
+	started := time.Now()
+	vectors, err := h.process(ctx, body)
+	elapsed := time.Since(started)
+	if err != nil || vectors == nil {
+		t.Fatalf("process = %#v, %v", vectors, err)
+	}
+	if elapsed > spare+2*time.Second {
+		t.Fatalf("media stages ran %v past their budget", elapsed)
+	}
+	if processor.leadCalls.Load() != 1 || processor.bodyCalls.Load() != 0 {
+		t.Fatalf("lead calls = %d, body image calls = %d", processor.leadCalls.Load(), processor.bodyCalls.Load())
+	}
+	if len(repository.items) != 1 || !repository.items[0].HasBody || repository.items[0].MediaKey != "" {
+		t.Fatalf("written items = %#v", repository.items)
+	}
+	if !slices.Contains(repository.contentKeys, store.BodyKey("user", "item")) {
+		t.Fatalf("body was not stored: %v", repository.contentKeys)
+	}
+}
+
+// readyMedia returns a lead immediately; uploads are where time goes.
+type readyMedia struct{ blockingMedia }
+
+func (*readyMedia) FetchLead(context.Context, []string) (media.Lead, error) {
+	image := media.Image{Bytes: []byte("jpeg"), ContentType: "image/jpeg", Extension: ".jpg", Width: 1280, Height: 720}
+	return media.Lead{Image: image, Variants: []media.Image{image}}, nil
+}
+
+// blockingUploadStore stalls media uploads until their context expires while
+// every other write succeeds.
+type blockingUploadStore struct {
+	recordingItemStore
+	mediaUploads atomic.Int32
+}
+
+func (s *blockingUploadStore) PutContent(ctx context.Context, key, contentType string, body []byte) error {
+	if strings.HasPrefix(key, "media/") {
+		s.mediaUploads.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	return s.recordingItemStore.PutContent(ctx, key, contentType, body)
+}
+
+func TestSlowLeadUploadYieldsToCompletionReserve(t *testing.T) {
+	repository := &blockingUploadStore{}
+	h := &handler{store: repository, media: &readyMedia{}, embedder: stubEmbedder{}, scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	raw := `<p>A first factual paragraph about the subject that runs long enough to count as an article body.</p>` +
+		`<img src="https://publisher.example/lead.jpg"><p>A second paragraph adds more detail for the extractor.</p>`
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","content_raw":` + strconv.Quote(raw) +
+		`,"published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+	spare := 200 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), completionReserve+spare)
+	defer cancel()
+	started := time.Now()
+	vectors, err := h.process(ctx, body)
+	elapsed := time.Since(started)
+	if err != nil || vectors == nil {
+		t.Fatalf("process = %#v, %v", vectors, err)
+	}
+	if elapsed > spare+2*time.Second {
+		t.Fatalf("lead upload ran %v past its budget", elapsed)
+	}
+	if repository.mediaUploads.Load() == 0 {
+		t.Fatal("lead upload was never attempted")
+	}
+	if len(repository.items) != 1 || !repository.items[0].HasBody || repository.items[0].MediaKey != "" || len(repository.items[0].MediaVariants) != 0 {
+		t.Fatalf("written items = %#v", repository.items)
+	}
+	if !slices.Contains(repository.contentKeys, store.BodyKey("user", "item")) {
+		t.Fatalf("body was not stored: %v", repository.contentKeys)
 	}
 }
