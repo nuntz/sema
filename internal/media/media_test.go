@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nuntz/sema/internal/httpx"
 	"golang.org/x/image/draw"
@@ -316,5 +317,25 @@ func TestAvatarIsCentreCroppedToNinetySixPixels(t *testing.T) {
 	}
 	if avatar.Width != 96 || avatar.Height != 96 || avatar.ContentType != "image/png" {
 		t.Fatalf("avatar = %#v", avatar)
+	}
+}
+
+type deadlineClient struct{ t *testing.T }
+
+func (c deadlineClient) Get(ctx context.Context, _ string, _ http.Header) (httpx.Response, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > 10*time.Second {
+		c.t.Fatal("media download has no short deadline")
+	}
+	return httpx.Response{}, context.DeadlineExceeded
+}
+
+func TestMediaDownloadDeadline(t *testing.T) {
+	p := &Processor{client: deadlineClient{t}}
+	if _, err := p.FetchLead(context.Background(), []string{"https://slow.example/image.jpg"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lead timeout = %v", err)
+	}
+	if _, err := p.FetchBodyImage(context.Background(), "https://slow.example/image.jpg"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("body timeout = %v", err)
 	}
 }

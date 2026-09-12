@@ -954,3 +954,51 @@ func TestReplayAcknowledgesMissingRowsButRetriesWriteFailures(t *testing.T) {
 		})
 	}
 }
+
+type deadlineItemStore struct {
+	fakeItemStore
+	t *testing.T
+}
+
+func (s *deadlineItemStore) ItemByIdentity(ctx context.Context, _, itemID string) (domain.Item, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > itemTimeout {
+		s.t.Error("item lookup has no bounded deadline")
+	}
+	if itemID == "slow" {
+		<-ctx.Done()
+		return domain.Item{}, ctx.Err()
+	}
+	return domain.Item{ItemID: itemID}, nil
+}
+
+func TestItemDeadlineReportsOnlyExpiredMessage(t *testing.T) {
+	var deadlineEvents atomic.Int32
+	h := &handler{store: &deadlineItemStore{t: t}, emit: func(metrics map[string]float64, fields map[string]string) {
+		if metrics["ItemDeadlineExceeded"] == 1 {
+			deadlineEvents.Add(1)
+			if fields["feed_id"] != "feed" || fields["item_id"] != "slow" {
+				t.Errorf("deadline attribution = %#v", fields)
+			}
+		}
+	}}
+	body := func(id string) string {
+		return `{"user":"user","feed_id":"feed","item_id":"` + id + `","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
+	}
+	// Exercise an actual per-item timer without waiting for the production budget.
+	if _, err := h.processWithinDeadline(context.Background(), body("slow"), time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("per-item timeout = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	response, err := h.run(ctx, events.SQSEvent{Records: []events.SQSMessage{
+		{MessageId: "slow-message", Body: body("slow")},
+		{MessageId: "healthy-message", Body: body("healthy")},
+	}})
+	if err != nil || len(response.BatchItemFailures) != 1 || response.BatchItemFailures[0].ItemIdentifier != "slow-message" {
+		t.Fatalf("batch response = %#v, error %v", response, err)
+	}
+	if deadlineEvents.Load() != 2 {
+		t.Fatalf("deadline events = %d, want 2", deadlineEvents.Load())
+	}
+}

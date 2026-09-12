@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nuntz/sema/internal/media"
 )
@@ -103,5 +104,27 @@ func TestCacheBodyImagesStoresPublisherImagesAndLeavesMediaCardsAndFailuresUntou
 	}
 	if strings.Contains(resolved, "first-large.png") {
 		t.Fatalf("cached body image retained srcset: %s", resolved)
+	}
+}
+
+type deadlineBodyImageFetcher struct{ t *testing.T }
+
+func (f deadlineBodyImageFetcher) FetchBodyImage(ctx context.Context, _ string) (media.Image, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok || time.Until(deadline) > mediaFetchTimeout {
+		f.t.Fatal("body image fetch has no short deadline")
+	}
+	return media.Image{}, context.DeadlineExceeded
+}
+
+func TestBodyImageDeadlineSkipsImage(t *testing.T) {
+	writer := &recordingBodyImageWriter{objects: make(map[string][]byte)}
+	raw := `<img src="https://slow.example/image.jpg">`
+	got, succeeded, failed, failures := cacheBodyImages(context.Background(), deadlineBodyImageFetcher{t}, writer, "user", "item", raw)
+	if succeeded != 0 || failed != 1 || len(failures) != 1 || !errors.Is(failures[0], context.DeadlineExceeded) {
+		t.Fatalf("counts = %d/%d, errors = %v", succeeded, failed, failures)
+	}
+	if len(writer.objects) != 0 || !strings.Contains(got, "https://slow.example/image.jpg") {
+		t.Fatalf("failed download was stored or removed: %s", got)
 	}
 }

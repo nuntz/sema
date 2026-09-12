@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	webpcodec "github.com/deepteams/webp"
 	"github.com/nuntz/sema/internal/domain"
@@ -206,6 +207,9 @@ func (p *Processor) FetchBodyImage(ctx context.Context, sourceURL string) (Image
 }
 
 func (p *Processor) fetchImage(ctx context.Context, sourceURL string) (image.Image, string, error) {
+	// Bound each candidate independently so a slow host can fall back to the next.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	response, err := p.client.Get(ctx, sourceURL, http.Header{"Accept": []string{imageAccept}})
 	if err != nil {
 		return nil, "", err

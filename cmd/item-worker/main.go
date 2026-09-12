@@ -44,6 +44,12 @@ type httpClient interface {
 // Limit concurrent image decodes and resizes to fit the Lambda memory budget.
 const maxConcurrentRecords = 2
 
+// Five records at concurrency two take at most three processing waves.
+// Leave 30 seconds of the 120-second Lambda budget for vector writes/return.
+const itemTimeout = 30 * time.Second
+const batchTimeout = 110 * time.Second
+const mediaFetchTimeout = 10 * time.Second
+
 type vectorBatchStore interface {
 	PutBatch(context.Context, []vectorstore.Record) error
 	Query(context.Context, string, []float32, int, int64) ([]vectorstore.Match, error)
@@ -91,6 +97,8 @@ type itemStore interface {
 }
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, batchTimeout)
+	defer cancel()
 	failures := make(chan events.SQSBatchItemFailure, len(event.Records))
 	processed := make(chan processedVectors, len(event.Records))
 	semaphore := make(chan struct{}, maxConcurrentRecords)
@@ -101,7 +109,7 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 		go func(record events.SQSMessage) {
 			defer group.Done()
 			defer func() { <-semaphore }()
-			vectors, err := h.process(ctx, record.Body)
+			vectors, err := h.processWithinDeadline(ctx, record.Body, itemTimeout)
 			if err != nil {
 				var message domain.ItemMessage
 				_ = json.Unmarshal([]byte(record.Body), &message)
@@ -155,6 +163,25 @@ func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEve
 		}
 	}
 	return response, nil
+}
+
+func (h *handler) processWithinDeadline(ctx context.Context, body string, timeout time.Duration) (*processedVectors, error) {
+	itemCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	vectors, err := h.process(itemCtx, body)
+	// Best-effort extraction/media paths may swallow cancellation. Never report
+	// such an item as successful, even if a dependency returned a nil error.
+	if itemCtx.Err() != nil {
+		if errors.Is(itemCtx.Err(), context.DeadlineExceeded) {
+			var message domain.ItemMessage
+			_ = json.Unmarshal([]byte(body), &message)
+			h.emitMetrics(map[string]float64{"ItemDeadlineExceeded": 1}, map[string]string{
+				"feed_id": message.FeedID, "item_id": message.ItemID, "FeedID": message.FeedID,
+			})
+		}
+		return nil, itemCtx.Err()
+	}
+	return vectors, err
 }
 
 func (h *handler) process(ctx context.Context, body string) (*processedVectors, error) {
@@ -742,7 +769,9 @@ func cacheBodyImages(ctx context.Context, fetcher bodyImageFetcher, writer bodyI
 	defer cancel()
 	succeeded, failed := 0, 0
 	rewritten, failures := extract.ResolveBodyImages(raw, func(image extract.BodyImage) (string, error) {
-		fetched, err := fetcher.FetchBodyImage(bodyImageCtx, image.URL)
+		fetchCtx, fetchCancel := context.WithTimeout(bodyImageCtx, mediaFetchTimeout)
+		defer fetchCancel()
+		fetched, err := fetcher.FetchBodyImage(fetchCtx, image.URL)
 		if err != nil {
 			failed++
 			return "", err
@@ -968,7 +997,7 @@ func main() {
 		panic(err)
 	}
 	articleHTTP := httpx.New(15*time.Second, 5<<20)
-	processor := media.New(httpx.New(15*time.Second, 10<<20))
+	processor := media.New(httpx.New(mediaFetchTimeout, 10<<20))
 	modelVersion := strings.TrimSpace(os.Getenv("MODEL_VERSION"))
 	if modelVersion == "" {
 		modelVersion = "amazon.titan-embed-text-v2:0"
