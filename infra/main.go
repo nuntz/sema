@@ -263,6 +263,13 @@ func main() {
 		if err != nil {
 			return err
 		}
+		if err := createOperationalQueries(ctx, map[string]pulumi.StringInput{
+			"feed-worker": feedWorker.Name, "item-worker": itemWorker.Name,
+			"api": apiLambda.Name, "rescore": rescoreLambda.Name,
+		}); err != nil {
+			return err
+		}
+
 		if _, err := iam.NewRolePolicy(ctx, "api-rescore-invoke", &iam.RolePolicyArgs{
 			Role:   apiRole.ID(),
 			Policy: pulumi.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"lambda:InvokeFunction","Resource":"%s"}]}`, rescoreLambda.Arn),
@@ -595,6 +602,48 @@ func storyAssignmentFailedAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.
 		AlarmActions:       alarmActions,
 		AlarmDescription:   pulumi.String("story assignment failures exceeded 20 items in 15 minutes"),
 	}
+}
+
+// Saved queries replace retired custom metrics without adding metric series.
+// Counter sums count records/items, not invocations (notably vector puts).
+// Summary fallbacks cover the logged reasons; healthy feed excerpts emit no counter.
+var operationalQueries = []struct {
+	name      string
+	functions []string
+	query     string
+}{
+	{"fetch-outcomes", []string{"feed-worker"}, `stats sum(FeedsFetched) as fetched, sum(FeedsNotModified) as not_modified_304, sum(FeedsFailed) as failed, sum(FeedsRateLimited) as rate_limited_429 by bin(1h)`},
+	{"items", []string{"feed-worker", "item-worker"}, `stats sum(ItemsEnqueued) as enqueued, sum(ItemsWritten) as written, sum(ItemsDeduped) as deduped by bin(1h)`},
+	{"summaries", []string{"item-worker"}, `stats sum(SummariesGenerated) as generated, sum(SummaryFallbackNoBody) as skipped_no_body, sum(SummaryFallbackLowQuality) as skipped_low_quality, sum(SummaryFallbackError) as generation_error, sum(SummaryFallbackBody) as body_fallback by bin(1h)`},
+	{"vector-puts", []string{"item-worker"}, `stats sum(VectorPutSucceeded) as text_succeeded, sum(VectorPutFailed) as text_failed, sum(ImageVectorPutSucceeded) as image_succeeded, sum(ImageVectorPutFailed) as image_failed by bin(1h)`},
+	{"image-embeds", []string{"item-worker"}, `stats sum(ImageEmbedSucceeded) as succeeded, sum(ImageEmbedFailed) as failed, sum(ImageEmbedReused) as reused, avg(ImageEmbedLatencyMs) as latency_ms by bin(1h)`},
+	{"stories", []string{"item-worker", "rescore"}, `stats sum(StoryCreated) as created, sum(StoryJoined) as joined, sum(StoryCandidates) as candidates, sum(StoryAssignmentFailed) as failed, sum(StoriesConsolidated) as consolidated, sum(StoriesDeleted) as deleted by bin(1h)`},
+	{"rescore-volume", []string{"rescore"}, `stats sum(ItemsRescored) as rescored, sum(RescoreItemsSkippedNoVector) as skipped_no_vector, avg(RescoreDurationMs) as duration_ms by bin(1h)`},
+	{"centroid-drift", []string{"rescore"}, `stats avg(CentroidDrift) as average_drift, max(CentroidDrift) as maximum_drift by User`},
+	{"feed-failures", []string{"item-worker"}, `stats sum(ExtractionFailed) as extraction_failed, sum(MediaFailed) as media_failed, sum(BodyImageFailed) as body_image_failed, sum(ExtractionNotExpected) as extraction_not_expected by FeedID`},
+	{"item-deadlines", []string{"item-worker"}, `stats sum(ItemDeadlineExceeded) as deadlines by feed_id, item_id`},
+	{"api", []string{"api"}, `stats sum(APIRequests) as requests, sum(APIServerErrors) as server_errors, avg(APIRequestDurationMs) as duration_ms by Route, Status`},
+}
+
+func createOperationalQueries(ctx *pulumi.Context, functions map[string]pulumi.StringInput) error {
+	for _, entry := range operationalQueries {
+		groups := pulumi.StringArray{}
+		for _, name := range entry.functions {
+			function, ok := functions[name]
+			if !ok {
+				return fmt.Errorf("query %s: unknown function %s", entry.name, name)
+			}
+			groups = append(groups, pulumi.Sprintf("/aws/lambda/%s", function))
+		}
+		if _, err := cloudwatch.NewQueryDefinition(ctx, "query-"+entry.name, &cloudwatch.QueryDefinitionArgs{
+			Name:          pulumi.Sprintf("sema-%s/%s", ctx.Stack(), entry.name),
+			LogGroupNames: groups,
+			QueryString:   pulumi.String(entry.query),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const (

@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
 	awslambda "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/lambda"
+	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
@@ -226,5 +228,104 @@ func TestOnlyItemsQueueHasBatchingWindow(t *testing.T) {
 	responses, ok := items.FunctionResponseTypes.(pulumi.StringArray)
 	if !ok || len(responses) != 1 || responses[0] != pulumi.String("ReportBatchItemFailures") {
 		t.Fatalf("partial failure responses = %#v", items.FunctionResponseTypes)
+	}
+}
+
+// These definitions intentionally use a small stats-only subset of Insights QL.
+// Check every expression locally; service-side validation requires AWS access.
+func TestOperationalQueriesParseNonEmpty(t *testing.T) {
+	aggregate := regexp.MustCompile(`^(sum|avg|max)\([A-Za-z][A-Za-z0-9]*\) as [a-z][a-z0-9_]*$`)
+	group := regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*|bin\(1h\))$`)
+	seen := map[string]bool{}
+	for _, entry := range operationalQueries {
+		if entry.name == "" || seen[entry.name] || len(entry.functions) == 0 {
+			t.Fatalf("invalid query entry: %#v", entry)
+		}
+		seen[entry.name] = true
+		query, ok := strings.CutPrefix(strings.TrimSpace(entry.query), "stats ")
+		if !ok {
+			t.Fatalf("%s: missing stats command", entry.name)
+		}
+		expressions, groups, ok := strings.Cut(query, " by ")
+		if !ok {
+			t.Fatalf("%s: missing grouping", entry.name)
+		}
+		for _, expression := range strings.Split(expressions, ",") {
+			if !aggregate.MatchString(strings.TrimSpace(expression)) {
+				t.Errorf("%s: invalid aggregation %q", entry.name, expression)
+			}
+		}
+		for _, field := range strings.Split(groups, ",") {
+			if !group.MatchString(strings.TrimSpace(field)) {
+				t.Errorf("%s: invalid grouping %q", entry.name, field)
+			}
+		}
+	}
+	for _, area := range []string{"fetch-outcomes", "items", "summaries", "vector-puts", "image-embeds", "stories", "rescore-volume", "centroid-drift", "feed-failures", "api"} {
+		if !seen[area] {
+			t.Errorf("missing query area %s", area)
+		}
+	}
+}
+
+type queryMocks struct{ queries chan resource.PropertyMap }
+
+func (m queryMocks) NewResource(args pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
+	if args.TypeToken != "aws:cloudwatch/queryDefinition:QueryDefinition" {
+		return "", nil, fmt.Errorf("unexpected resource: %s", args.TypeToken)
+	}
+	m.queries <- args.Inputs
+	return args.Name + "-id", args.Inputs, nil
+}
+
+func (queryMocks) Call(args pulumi.MockCallArgs) (resource.PropertyMap, error) {
+	return nil, fmt.Errorf("unexpected provider call: %s", args.Token)
+}
+
+func TestOperationalQueriesRegisterWithLogGroups(t *testing.T) {
+	queries := make(chan resource.PropertyMap, len(operationalQueries))
+	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		return createOperationalQueries(ctx, map[string]pulumi.StringInput{
+			"feed-worker": pulumi.String("sema-test-feed-worker"),
+			"item-worker": pulumi.String("sema-test-item-worker"),
+			"api":         pulumi.String("sema-test-api"),
+			"rescore":     pulumi.String("sema-test-rescore"),
+		})
+	}, pulumi.WithMocks("sema", "test", queryMocks{queries}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	close(queries)
+	seen := map[string]bool{}
+	for props := range queries {
+		var definition struct {
+			Name   string   `json:"name"`
+			Query  string   `json:"queryString"`
+			Groups []string `json:"logGroupNames"`
+		}
+		raw, err := json.Marshal(props.Mappable())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(raw, &definition); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range operationalQueries {
+			if definition.Name != "sema-test/"+entry.name {
+				continue
+			}
+			seen[entry.name] = true
+			if definition.Query != entry.query || len(definition.Groups) != len(entry.functions) {
+				t.Fatalf("unexpected definition: %#v", definition)
+			}
+			for index, function := range entry.functions {
+				if definition.Groups[index] != "/aws/lambda/sema-test-"+function {
+					t.Fatalf("wrong log group: %#v", definition)
+				}
+			}
+		}
+	}
+	if len(seen) != len(operationalQueries) {
+		t.Fatalf("registered %d queries, want %d", len(seen), len(operationalQueries))
 	}
 }
