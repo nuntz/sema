@@ -587,13 +587,24 @@ test("reader judgments preserve article scroll and do not refetch its body", asy
     });
     expect(before).toBeGreaterThan(0);
 
+    const anchorTop = await page
+      .locator("#reader-last-line")
+      .evaluate((element) => element.getBoundingClientRect().top);
     const action = actions.nth(index);
     await expect(action).toContainText(label);
     await action.click();
     await expect(action).toHaveAttribute("aria-pressed", "true");
     await expect
-      .poll(() => scroll.evaluate((element) => element.scrollTop))
-      .toBe(before);
+      .poll(() =>
+        page
+          .locator("#reader-last-line")
+          .evaluate(
+            (element, originalTop) =>
+              Math.abs(element.getBoundingClientRect().top - originalTop),
+            anchorTop,
+          ),
+      )
+      .toBeLessThan(1);
   }
 
   expect(bodyRequests).toBe(1);
@@ -673,7 +684,8 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   ).toBeHidden();
   await expect(
     page.locator(".chrome-group--judge .chrome-btn__label").first(),
-  ).toBeVisible();
+  ).toBeHidden();
+  await expect(page.locator(".chrome-overflow")).toBeVisible();
 
   await page.setViewportSize({ width: 620, height: 780 });
   await openFixture(page, "reader");
@@ -682,8 +694,8 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   ).toBeHidden();
   await expect(
     page.locator(".chrome-group--judge .chrome-btn__label").last(),
-  ).toBeVisible();
-  await expect(page.locator(".reader-slot__text")).toBeHidden();
+  ).toBeHidden();
+  await expect(page.locator(".reader-slot__text")).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 780 });
   await openFixture(page, "grid");

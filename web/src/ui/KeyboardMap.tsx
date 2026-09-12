@@ -40,6 +40,7 @@ const groups = [
       ["+ / .", "Boost / undo boost"],
       ["− / ,", "Bury / undo bury"],
       ["f", "Keep / unkeep"],
+      ["Shift+k", "Keep / unkeep in reader"],
       ["m", "Toggle read for the item or story (grid)"],
       ["Shift+F10 / Menu", "More actions for the item or story (grid)"],
       ["Shift+m", "Mark read from here on Front page; below here in Latest"],

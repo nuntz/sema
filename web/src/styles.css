@@ -272,6 +272,8 @@
   --cell-action-kept-hover-bg: var(--keep-wash);
   --cell-action-kept-hover-fg: var(--media-fg-primary);
   --expiring-tab-ring: rgba(232,230,225,.28);
+  --reader-deadline-ink: #c7ccd3;
+  --reader-deadline-urgent: #ff9aa3;
   --expiry-soon-bg: rgba(6,7,9,.82);
   --expiry-soon-fg: #f4f2ee;
   --expiry-bone: #e8e6e1;
@@ -569,6 +571,8 @@
   --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
   --cell-action-kept-hover-fg: var(--cell-action-hover-fg);
   --expiring-tab-ring: #dcd8d0;
+  --reader-deadline-ink: #5f6670;
+  --reader-deadline-urgent: #b02c3b;
   --expiry-soon-bg: rgba(6,7,9,.82);
   --expiry-soon-fg: #f4f2ee;
   --expiry-bone: #e8e6e1;
@@ -803,11 +807,13 @@
     --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
     --cell-action-kept-hover-fg: var(--cell-action-hover-fg);
     --expiring-tab-ring: #dcd8d0;
-  --expiry-soon-bg: rgba(6,7,9,.82);
-  --expiry-soon-fg: #f4f2ee;
-  --expiry-bone: #e8e6e1;
-  --expiry-red: #ff5f6d;
-  --cell-label-bg: var(--surface-raised-hover);
+    --reader-deadline-ink: #5f6670;
+    --reader-deadline-urgent: #b02c3b;
+    --expiry-soon-bg: rgba(6,7,9,.82);
+    --expiry-soon-fg: #f4f2ee;
+    --expiry-bone: #e8e6e1;
+    --expiry-red: #ff5f6d;
+    --cell-label-bg: var(--surface-raised-hover);
     --cell-label-fg: var(--fg-secondary);
     --kept-marker-bg: var(--surface-selected);
     --kept-marker-fg: var(--keep);
@@ -2639,3 +2645,34 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 .expiring-count { margin-left: 6px; }
 .header-sheet:has(.expiring-tab.active) .header-sheet-row:first-child { display: none; }
+.reader-crumb:has(.reader-life) { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.reader-crumb__identity { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.reader-life { display: flex; align-items: center; gap: 9px; font: 400 11px/1 "IBM Plex Mono", monospace; }
+.reader-day-track { display: inline-flex; align-items: center; gap: 7px; flex: none; color: #e8e6e1; font: 400 11px/1 "IBM Plex Mono", monospace; }
+.reader-day-squares { display: inline-flex; align-items: center; gap: 3px; }
+.reader-day-squares i { box-sizing: border-box; width: 9px; height: 9px; border: 1px solid rgba(232,230,225,.22); border-radius: 2px; }
+.reader-day-squares .spent { background: rgba(232,230,225,.22); border-color: transparent; }
+.reader-day-squares .current { background: #e8e6e1; border-color: transparent; }
+.reader-day-track--urgent { padding: 4px 6px; border: 1px solid rgba(255,95,109,.32); border-radius: 5px; background: #1a1013; color: #ff5f6d; }
+.reader-day-track--urgent .reader-day-squares i { border-color: rgba(255,95,109,.25); }
+.reader-day-track--urgent .reader-day-squares .spent { background: rgba(255,95,109,.25); border-color: transparent; }
+.reader-day-track--urgent .reader-day-squares .current { background: #ff5f6d; border-color: transparent; }
+.article .reader-deadline { margin: 10px 0 16px; color: var(--reader-deadline-ink); font: 400 12.5px/1.5 "IBM Plex Mono", monospace; }
+.article .reader-deadline--urgent { color: var(--reader-deadline-urgent); }
+.app-header--reader .reader-slot__text:has(.reader-life) { display: grid; }
+@media (max-width: 379px), (min-width: 620px) and (max-width: 1199px) {
+  .reader-life { gap: 6px; }
+  .reader-life:has(.expiry-pill) .reader-day-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+}
+
+@media (min-width: 620px) and (max-width: 1199px) {
+  .app-header--reader:has(.reader-life) :is(.chrome-group--secondary, .chrome-btn--original, .reader-leave-divider) { display: none; }
+  .app-header--reader:has(.reader-life) .chrome-group--judge .chrome-btn { width: var(--control-icon-w); padding: 0; justify-content: center; }
+  .app-header--reader:has(.reader-life) .chrome-group--judge .chrome-btn__label { display: none; }
+}
+@media (min-width: 620px) and (max-width: 859px) {
+  .app-header--reader:has(.reader-life) .chrome-group--page .chrome-btn { width: var(--control-icon-w); padding: 0; justify-content: center; }
+  .app-header--reader:has(.reader-life) .chrome-group--page .chrome-btn span { display: none; }
+  .app-header--reader:has(.reader-life) .chrome-group { margin-left: 4px; }
+  .app-header--reader:has(.reader-life) .chrome-btn + .chrome-btn { margin-left: 3px; }
+}

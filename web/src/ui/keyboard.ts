@@ -92,6 +92,7 @@ const readerBindings: Record<string, ReaderCommand> = {
   "-": "dislike",
   ",": "dislike",
   f: "heart",
+  K: "heart",
   c: "copy",
   v: "original",
   r: "related",

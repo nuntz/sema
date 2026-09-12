@@ -9,10 +9,13 @@ import {
 } from "solid-js";
 import { Portal, render } from "solid-js/web";
 import { isOlderThanThirtyDays } from "../archive";
+import { useClock } from "../clock";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
+import { hoursLeft } from "../expiry";
 import { decodeImageWithin } from "../image-decode";
 import { createMediaQuery } from "../media-query";
+import { readerDeadlineLine } from "../reader-expiry";
 import { stripSummaryEcho } from "../reader-item";
 import {
   externalHost,
@@ -31,6 +34,7 @@ import { isEditingTarget, readerCommand } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
+import { ReaderLife } from "./ReaderLife";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { type PreparedReaderBody, prepareReaderBody } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
@@ -79,6 +83,12 @@ interface ReaderProps {
 }
 
 export function Reader(props: ReaderProps) {
+  const now = useClock();
+  const showLifetime = () =>
+    !props.archive &&
+    !props.item.archived &&
+    !props.hearted &&
+    !props.item.hearted;
   let article!: HTMLDivElement;
   let heading!: HTMLHeadingElement;
   let readerHeader!: HTMLElement;
@@ -124,6 +134,10 @@ export function Reader(props: ReaderProps) {
     },
   );
   const narrowHeader = createMediaQuery("(max-width: 619px)");
+  const mediumHeader = createMediaQuery(
+    "(min-width: 620px) and (max-width: 1199px)",
+  );
+  const lifetimeOverflow = () => showLifetime() && mediumHeader();
   let trackedID = props.item.item_id;
   let dwellMS = 0;
   let activeSince = 0;
@@ -686,36 +700,41 @@ export function Reader(props: ReaderProps) {
           />
           <span class="reader-slot__text">
             <span class="reader-crumb" aria-hidden={headerScrolled()}>
-              <Show
-                when={!narrowHeader() && !props.archive}
-                fallback={
-                  <span class="reader-crumb__source">
-                    {props.item.feed_title || "Feed"}
-                  </span>
-                }
-              >
-                <button
-                  type="button"
-                  class="reader-crumb__source reader-feed-filter"
-                  aria-label={`Filter by feed: ${props.item.feed_title || "Feed"}`}
-                  tabIndex={headerScrolled() ? -1 : 0}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    props.onApplyFeed();
-                  }}
+              <span class="reader-crumb__identity">
+                <Show
+                  when={!narrowHeader() && !props.archive}
+                  fallback={
+                    <span class="reader-crumb__source">
+                      {props.item.feed_title || "Feed"}
+                    </span>
+                  }
                 >
-                  {props.item.feed_title || "Feed"}
-                </button>
-              </Show>
-              <span class="reader-crumb__meta">
-                {" "}
-                ·{" "}
-                {relativeTime(
-                  props.item.display_date || props.item.published_ts,
-                )}{" "}
-                ago
+                  <button
+                    type="button"
+                    class="reader-crumb__source reader-feed-filter"
+                    aria-label={`Filter by feed: ${props.item.feed_title || "Feed"}`}
+                    tabIndex={headerScrolled() ? -1 : 0}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      props.onApplyFeed();
+                    }}
+                  >
+                    {props.item.feed_title || "Feed"}
+                  </button>
+                </Show>
+                <span class="reader-crumb__meta">
+                  {" "}
+                  ·{" "}
+                  {relativeTime(
+                    props.item.display_date || props.item.published_ts,
+                  )}{" "}
+                  ago
+                </span>
               </span>
+              <Show when={showLifetime()}>
+                <ReaderLife published={props.item.published_ts} now={now()} />
+              </Show>
             </span>
             <span class="reader-title" aria-hidden={!headerScrolled()}>
               {props.item.title}
@@ -812,7 +831,7 @@ export function Reader(props: ReaderProps) {
         <button
           type="button"
           class="chrome-btn chrome-btn--icon chrome-overflow"
-          classList={{ "is-hidden": !narrowHeader() }}
+          classList={{ "is-hidden": !narrowHeader() && !lifetimeOverflow() }}
           aria-label="More actions"
           aria-haspopup="menu"
           aria-expanded={overflowOpen()}
@@ -842,7 +861,7 @@ export function Reader(props: ReaderProps) {
             <Icon name="next-item" />
           </button>
         </div>
-        <Show when={overflowOpen() && narrowHeader()}>
+        <Show when={overflowOpen() && (narrowHeader() || lifetimeOverflow())}>
           <div class="reader-overflow-menu" role="menu">
             <button
               type="button"
@@ -916,6 +935,17 @@ export function Reader(props: ReaderProps) {
             </div>
           </Show>
           <h1 ref={heading}>{props.item.title}</h1>
+          <Show when={showLifetime()}>
+            <p
+              class="reader-deadline"
+              classList={{
+                "reader-deadline--urgent":
+                  hoursLeft(props.item.published_ts, now()) < 6,
+              }}
+            >
+              {readerDeadlineLine(props.item.published_ts, now())}
+            </p>
+          </Show>
           <Show when={!isRedditItem(props.item)}>
             <Show
               when={props.item.media_type === "video"}

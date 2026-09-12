@@ -91,3 +91,8 @@ describe("keyboard map", () => {
 it("opens Expiring with g e", () => {
   expect(goCommand("e")).toBe("expiring");
 });
+
+it("keeps from the reader with Shift+K without changing previous-item k", () => {
+  expect(readerCommand("K")).toBe("heart");
+  expect(readerCommand("k")).toBe("previous");
+});
