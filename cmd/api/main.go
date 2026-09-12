@@ -1611,7 +1611,7 @@ func main() {
 		store: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
 			return auth.VerifyGoogle(ctx, credential, googleClientID)
 		}, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
-		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, 10<<20)), feedCache: make(map[string]cachedFeedList),
+		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, media.MaxDownloadBytes)), feedCache: make(map[string]cachedFeedList),
 		embedder: bedrockembed.NewWithModel(runtime, modelVersion),
 		vectors:  vectorstore.NewS3(vectorClient, vectorBucket, vectorIndex), imageSearchFloor: imageSearchFloor, storyConfig: storycluster.FromEnv(),
 	}

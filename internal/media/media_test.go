@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/httpx"
 	"golang.org/x/image/draw"
 	"golang.org/x/net/html"
@@ -267,6 +268,90 @@ func TestCandidatesFallsBackToFeedContentImage(t *testing.T) {
 	want := []string{"https://cdn.example.com/page.jpg", "https://www.reddit.com/preview.jpeg?width=640"}
 	if !slices.Equal(candidates, want) {
 		t.Fatalf("candidates = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestCandidatesPreservesPriorityAndBodyImageOrder(t *testing.T) {
+	pageURL, _ := url.Parse("https://example.com/posts/story")
+	feedURL, _ := url.Parse("https://feeds.example.com/feed")
+	got := Candidates(
+		[]domain.Enclosure{{URL: "/enclosure.jpg", Type: "image/jpeg"}},
+		[]byte(`<meta property="og:image" content="/og.jpg"><meta name="twitter:image" content="/twitter.jpg">`),
+		[]byte(`<img><img src="/lead.jpg"><p><img src="first.jpg"></p><img src="second.jpg"><img src="first.jpg">`),
+		[]byte(`<img src="first.jpg"><img src="second.jpg">`),
+		"/lead.jpg", pageURL, feedURL,
+	)
+	want := []string{
+		"https://example.com/enclosure.jpg",
+		"https://example.com/og.jpg",
+		"https://example.com/twitter.jpg",
+		"https://example.com/lead.jpg",
+		"https://example.com/posts/first.jpg",
+		"https://example.com/posts/second.jpg",
+		"https://feeds.example.com/first.jpg",
+		"https://feeds.example.com/second.jpg",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("candidates = %#v, want %#v", got, want)
+	}
+}
+
+type imageClientFunc func(context.Context, string, http.Header) (httpx.Response, error)
+
+func (f imageClientFunc) Get(ctx context.Context, rawURL string, headers http.Header) (httpx.Response, error) {
+	return f(ctx, rawURL, headers)
+}
+
+func TestFetchLeadFallsBackToLaterArticleImages(t *testing.T) {
+	var body bytes.Buffer
+	if err := jpeg.Encode(&body, image.NewRGBA(image.Rect(0, 0, 300, 200)), nil); err != nil {
+		t.Fatal(err)
+	}
+	valid := httpx.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"image/jpeg"}}, Body: body.Bytes()}
+	pageURL, _ := url.Parse("https://example.com/story")
+	candidates := Candidates(nil, nil, []byte(`<img src="/first.jpg"><img src="/second.jpg"><img src="/third.jpg">`), nil, "", pageURL, pageURL)
+	for _, test := range []struct {
+		name     string
+		response httpx.Response
+		err      error
+	}{
+		{name: "byte limit", err: errors.New("response exceeds 33554432 bytes")},
+		{name: "timeout", err: context.DeadlineExceeded},
+		{name: "non-2xx", response: httpx.Response{StatusCode: http.StatusNotFound}},
+		{name: "content type", response: httpx.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/html"}}}},
+		{name: "decode", response: httpx.Response{StatusCode: http.StatusOK, Header: valid.Header, Body: []byte("invalid image")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var requested []string
+			client := imageClientFunc(func(ctx context.Context, rawURL string, _ http.Header) (httpx.Response, error) {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 10*time.Second {
+					t.Fatal("candidate has no independent 10s deadline")
+				}
+				requested = append(requested, rawURL)
+				if rawURL == "https://example.com/second.jpg" {
+					return valid, nil
+				}
+				return test.response, test.err
+			})
+			p := &Processor{client: client}
+			lead, err := p.FetchLead(context.Background(), candidates)
+			if err != nil || lead.SourceURL != "https://example.com/second.jpg" {
+				t.Fatalf("lead source = %q, error = %v", lead.SourceURL, err)
+			}
+			if !slices.Equal(requested, candidates[:2]) {
+				t.Fatalf("requests = %v, want %v", requested, candidates[:2])
+			}
+
+			_, err = p.FetchLead(context.Background(), []string{candidates[0], candidates[2]})
+			var leadErr *LeadError
+			if !errors.As(err, &leadErr) || leadErr.URL != candidates[2] || leadErr.ContentType != test.response.Header.Get("Content-Type") {
+				t.Fatalf("final error = %v, want last candidate's LeadError", err)
+			}
+			if test.err != nil && !errors.Is(err, test.err) {
+				t.Fatalf("final error = %v, want wrapped %v", err, test.err)
+			}
+		})
 	}
 }
 

@@ -330,7 +330,7 @@ func main() {
 		panic("ITEMS_QUEUE_URL is required")
 	}
 	feedHTTP := httpx.New(15*time.Second, 5<<20)
-	mediaHTTP := httpx.New(15*time.Second, 10<<20)
+	mediaHTTP := httpx.New(15*time.Second, media.MaxDownloadBytes)
 	h := &handler{
 		store: repository,
 		connectors: map[string]connector.Connector{

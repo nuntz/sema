@@ -997,7 +997,7 @@ func main() {
 		panic(err)
 	}
 	articleHTTP := httpx.New(15*time.Second, 5<<20)
-	processor := media.New(httpx.New(mediaFetchTimeout, 10<<20))
+	processor := media.New(httpx.New(mediaFetchTimeout, media.MaxDownloadBytes))
 	modelVersion := strings.TrimSpace(os.Getenv("MODEL_VERSION"))
 	if modelVersion == "" {
 		modelVersion = "amazon.titan-embed-text-v2:0"

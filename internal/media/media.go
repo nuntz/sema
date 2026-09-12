@@ -27,6 +27,9 @@ import (
 // Keep this list limited to formats registered with the image package above.
 const imageAccept = "image/webp,image/jpeg,image/png"
 
+// MaxDownloadBytes bounds downloaded media before decoding.
+const MaxDownloadBytes = 32 << 20
+
 type Image struct {
 	Bytes       []byte
 	ContentType string
@@ -110,23 +113,27 @@ func candidates(enclosures []domain.Enclosure, pageHTML, articleHTML, feedHTML [
 		}
 	}
 	add(pageURL, articleImage)
-	add(pageURL, firstImage(articleHTML))
-	add(feedURL, firstImage(feedHTML))
+	for _, source := range imageSources(articleHTML) {
+		add(pageURL, source)
+	}
+	for _, source := range imageSources(feedHTML) {
+		add(feedURL, source)
+	}
 	return result
 }
 
-func firstImage(document []byte) string {
+func imageSources(document []byte) []string {
 	if len(document) == 0 {
-		return ""
+		return nil
 	}
 	doc, _ := html.Parse(bytes.NewReader(document))
-	var result string
+	var result []string
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
-		if result == "" && node.Type == html.ElementNode && node.Data == "img" {
-			result = attr(node, "src")
+		if node.Type == html.ElementNode && node.Data == "img" {
+			result = append(result, attr(node, "src"))
 		}
-		for child := node.FirstChild; child != nil && result == ""; child = child.NextSibling {
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
 			walk(child)
 		}
 	}

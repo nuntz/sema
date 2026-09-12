@@ -62,7 +62,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	httpClient := httpx.New(15*time.Second, 10<<20)
+	httpClient := httpx.New(15*time.Second, media.MaxDownloadBytes)
 	resolver := liveResolver{discover: youtube.NewDiscoverer(httpClient), media: media.New(httpClient)}
 	if _, _, err := run(ctx, repository, resolver, *apply); err != nil {
 		panic(err)
