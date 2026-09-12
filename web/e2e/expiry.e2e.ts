@@ -4,7 +4,7 @@ const now = new Date("2026-09-08T02:00:00Z");
 const makeItem = (id: string, hours: number, size = "M") => ({
   item_id: id,
   feed_id: "feed",
-  feed_title: "Daily",
+  feed_title: "Daily reports from a very long publication name",
   title: `Article ${id}`,
   url: `https://example.com/${id}`,
   summary: "A story to come back to.",
@@ -106,15 +106,15 @@ async function open(page: Page, theme: string) {
 }
 test.use({ timezoneId: "America/Vancouver", locale: "en-GB" });
 for (const theme of ["dark", "light"] as const) {
-  test(`reader track and actual deadline disappear immediately on keep in ${theme}`, async ({
+  test(`reader pill and actual deadline disappear immediately on keep in ${theme}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await open(page, theme);
     await page.locator('[data-item-id="tomorrow"] .cell-main').click();
-    await expect(page.locator(".reader-day-squares i")).toHaveCount(7);
-    await expect(page.locator(".reader-day-squares .spent")).toHaveCount(6);
-    await expect(page.locator(".reader-day-label")).toHaveText("day 7 of 7");
+    await expect(page.locator('.reader-life [role="img"]')).toHaveCount(1);
+    await expect(page.locator(".reader-life")).toHaveText("19h left");
+    await expect(page.locator(".reader .reader-crumb__meta")).toHaveCount(0);
     await expect(page.locator(".reader-deadline")).toHaveText(
       "Goes tomorrow at 14:00 unless you keep it.",
     );
@@ -125,24 +125,23 @@ for (const theme of ["dark", "light"] as const) {
     );
     await page.clock.fastForward(14 * 3600000);
     await expect(page.locator(".reader .expiry-pill")).toHaveText("5h left");
-    await expect(page.locator(".reader-day-track")).toHaveClass(/urgent/);
     await page.clock.fastForward(6 * 3600000);
     await expect(page.locator(".reader .expiry-pill")).toHaveText("goes now");
-    await expect(page.locator(".reader-day-label")).toHaveText("goes now");
     await expect(page.locator(".reader-deadline")).toHaveText(
       "Goes now unless you keep it.",
     );
     await page.keyboard.press("K");
     await expect(page.locator(".reader-life, .reader-deadline")).toHaveCount(0);
+    await expect(page.locator(".reader .reader-crumb__meta")).toContainText(
+      "ago",
+    );
   });
 }
-for (const width of [320, 390, 620, 860]) {
-  test(`urgent reader track fits at ${width}px`, async ({ page }) => {
+for (const width of [320, 390, 620, 860, 1440]) {
+  test(`urgent reader pill fits at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await open(page, "dark");
     await page.locator('[data-item-id="tonight"] .cell-main').click();
-    const track = page.locator(".reader-day-track");
-    await expect(track).toBeVisible();
     await expect(page.locator(".reader .expiry-pill")).toBeVisible();
     await expect(page.locator(".reader-deadline")).toHaveText(
       "Goes at 22:00 tonight — about three hours.",
@@ -155,10 +154,19 @@ for (const width of [320, 390, 620, 860]) {
       .poll(() =>
         page.locator(".reader-slot").evaluate((slot) => {
           const pill = slot.querySelector(".expiry-pill");
+          const identity = slot.querySelector(".reader-crumb__identity");
+          if (!pill || !identity) return false;
+          const pillRect = pill.getBoundingClientRect();
+          const identityRect = identity.getBoundingClientRect();
           return (
-            !!pill &&
-            pill.getBoundingClientRect().right <=
-              slot.getBoundingClientRect().right + 1
+            pillRect.right <= slot.getBoundingClientRect().right + 1 &&
+            pillRect.left >= identityRect.right &&
+            identityRect.width > 0 &&
+            Math.abs(
+              pillRect.top +
+                pillRect.height / 2 -
+                (identityRect.top + identityRect.height / 2),
+            ) <= 1
           );
         }),
       )
@@ -170,15 +178,11 @@ for (const width of [320, 390, 620, 860]) {
 }
 
 for (const width of [619, 620, 860, 1199, 1200]) {
-  test(`fresh reader track respects the header breakpoint at ${width}px`, async ({
-    page,
-  }) => {
+  test(`fresh reader keeps full chrome at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await open(page, "dark");
     await page.locator('[data-item-id="fresh"] .cell-main').click();
-    await expect(page.locator(".reader-life")).toHaveCount(
-      width >= 620 && width < 1200 ? 0 : 1,
-    );
+    await expect(page.locator(".reader-life")).toHaveCount(0);
     await expect(page.locator(".reader-deadline")).toBeVisible();
     if (width >= 860) {
       await expect(page.locator(".chrome-group--secondary")).toBeVisible();

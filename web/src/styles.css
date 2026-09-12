@@ -2610,25 +2610,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 36px; }
 .grid-cell:has(.expiry-pill) .signal-actions { top: 36px; }
 .refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 66px; }
-.reader-crumb:has(.reader-life) { display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+.reader-crumb:has(.reader-life) { display: flex; align-items: center; gap: 8px; }
 .reader-crumb__identity { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.reader-life { display: flex; align-items: center; gap: 9px; font: 400 11px/1 "IBM Plex Mono", monospace; }
-.reader-day-track { display: inline-flex; align-items: center; gap: 7px; flex: none; color: #e8e6e1; font: 400 11px/1 "IBM Plex Mono", monospace; }
-.reader-day-squares { display: inline-flex; align-items: center; gap: 3px; }
-.reader-day-squares i { box-sizing: border-box; width: 9px; height: 9px; border: 1px solid rgba(232,230,225,.22); border-radius: 2px; }
-.reader-day-squares .spent { background: rgba(232,230,225,.22); border-color: transparent; }
-.reader-day-squares .current { background: #e8e6e1; border-color: transparent; }
-.reader-day-track--urgent { padding: 4px 6px; border: 1px solid rgba(255,95,109,.32); border-radius: 5px; background: #1a1013; color: #ff5f6d; }
-.reader-day-track--urgent .reader-day-squares i { border-color: rgba(255,95,109,.25); }
-.reader-day-track--urgent .reader-day-squares .spent { background: rgba(255,95,109,.25); border-color: transparent; }
-.reader-day-track--urgent .reader-day-squares .current { background: #ff5f6d; border-color: transparent; }
+.reader-life { display: flex; align-items: center; flex: none; font: 400 11px/1 "IBM Plex Mono", monospace; }
 .article .reader-deadline { margin: 10px 0 16px; color: var(--reader-deadline-ink); font: 400 12.5px/1.5 "IBM Plex Mono", monospace; }
 .article .reader-deadline--urgent { color: var(--reader-deadline-urgent); }
 .app-header--reader .reader-slot__text:has(.reader-life) { display: grid; }
-@media (max-width: 379px), (min-width: 620px) and (max-width: 1199px) {
-  .reader-life { gap: 6px; }
-  .reader-life:has(.expiry-pill) .reader-day-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-}
 
 @media (min-width: 620px) and (max-width: 1199px) {
   .app-header--reader:has(.reader-life) :is(.chrome-group--secondary, .chrome-btn--original, .reader-leave-divider) { display: none; }

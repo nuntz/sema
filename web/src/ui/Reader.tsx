@@ -29,12 +29,12 @@ import {
 } from "../reddit-item";
 import { signalActionLabel } from "../signal-feedback";
 import type { Item } from "../types";
+import { ExpiryPill } from "./ExpiryPill";
 import { relativeTime } from "./Grid";
 import { isEditingTarget, readerCommand } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
-import { ReaderLife } from "./ReaderLife";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { type PreparedReaderBody, prepareReaderBody } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
@@ -137,10 +137,9 @@ export function Reader(props: ReaderProps) {
   const mediumHeader = createMediaQuery(
     "(min-width: 620px) and (max-width: 1199px)",
   );
-  const showTrack = () =>
-    showLifetime() &&
-    (!mediumHeader() || hoursLeft(props.item.published_ts, now()) <= 48);
-  const lifetimeOverflow = () => showTrack() && mediumHeader();
+  const showExpiryPill = () =>
+    showLifetime() && hoursLeft(props.item.published_ts, now()) <= 48;
+  const lifetimeOverflow = () => showExpiryPill() && mediumHeader();
   let trackedID = props.item.item_id;
   let dwellMS = 0;
   let activeSince = 0;
@@ -726,17 +725,25 @@ export function Reader(props: ReaderProps) {
                     {props.item.feed_title || "Feed"}
                   </button>
                 </Show>
-                <span class="reader-crumb__meta">
-                  {" "}
-                  ·{" "}
-                  {relativeTime(
-                    props.item.display_date || props.item.published_ts,
-                  )}{" "}
-                  ago
-                </span>
+                <Show when={!showExpiryPill()}>
+                  <span class="reader-crumb__meta">
+                    {" "}
+                    ·{" "}
+                    {relativeTime(
+                      props.item.display_date || props.item.published_ts,
+                    )}{" "}
+                    ago
+                  </span>
+                </Show>
               </span>
-              <Show when={showTrack()}>
-                <ReaderLife published={props.item.published_ts} now={now()} />
+              <Show when={showExpiryPill()}>
+                <span class="reader-life">
+                  <ExpiryPill
+                    labelled
+                    published={props.item.published_ts}
+                    now={now()}
+                  />
+                </span>
               </Show>
             </span>
             <span class="reader-title" aria-hidden={!headerScrolled()}>

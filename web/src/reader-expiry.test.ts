@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HOUR, LIFETIME } from "./expiry";
+import { LIFETIME } from "./expiry";
 import {
   deadlineGroup,
   deadlineTime,
   nextMidnight,
-  readerDay,
   readerDeadlineLine,
 } from "./reader-expiry";
 
@@ -56,19 +55,6 @@ describe("reader lifetime", () => {
     expect(nextMidnight(Date.parse("2026-03-08T09:00:00Z")).toISOString()).toBe(
       "2026-03-09T07:00:00.000Z",
     );
-  });
-  it("tracks the current day of seven from publication", () => {
-    for (const [hours, day] of [
-      [0, 1],
-      [23.99, 1],
-      [24, 2],
-      [120, 6],
-      [144, 7],
-      [180, 7],
-    ] as const)
-      expect(readerDay(new Date(now - hours * HOUR).toISOString(), now)).toBe(
-        day,
-      );
   });
   it("uses actual local deadlines and reader wording", () => {
     vi.stubEnv("TZ", "America/Vancouver");

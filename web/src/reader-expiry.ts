@@ -1,11 +1,4 @@
-import { expirySentence, HOUR, hoursLeft, LIFETIME } from "./expiry";
-
-export function readerDay(published: string, now: number): number {
-  return Math.max(
-    1,
-    Math.min(7, Math.floor((now - Date.parse(published)) / (24 * HOUR)) + 1),
-  );
-}
+import { expirySentence, hoursLeft, LIFETIME } from "./expiry";
 
 export function readerDeadlineLine(published: string, now: number): string {
   const hours = hoursLeft(published, now);
