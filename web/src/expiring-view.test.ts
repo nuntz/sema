@@ -43,7 +43,7 @@ describe("local deadline groups", () => {
       "2026-03-09T07:00:00.000Z",
     );
   });
-  it("orders soonest first and excludes read, kept, archived and elapsed items", () => {
+  it("orders soonest first and retains read items and excludes kept, archived and elapsed items", () => {
     const now = Date.parse("2026-09-08T12:00:00Z");
     const first = item("2026-09-08T13:00:00Z");
     const last = item("2026-09-10T12:00:00Z");
@@ -60,6 +60,6 @@ describe("local deadline groups", () => {
         ],
         now,
       ),
-    ).toEqual([first, last]);
+    ).toEqual([first, item("2026-09-08T14:00:00Z", { read: true }), last]);
   });
 });

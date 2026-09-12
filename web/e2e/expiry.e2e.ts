@@ -44,6 +44,10 @@ async function open(page: Page, theme: string, empty = false) {
     if (route.request().method() !== "GET") {
       const id = url.pathname.split("/")[3];
       if (url.pathname.endsWith("/read")) read.add(id);
+      if (url.pathname.endsWith("/read-batch")) {
+        for (const itemID of route.request().postDataJSON().ids)
+          read.add(itemID);
+      }
       if (url.pathname.endsWith("/heart")) kept.add(id);
       return route.fulfill({ json: { heart_count: kept.size } });
     }
@@ -232,6 +236,20 @@ test("reader walks the original deadline order after items become read", async (
   await expect(page.locator(".reader h1")).toHaveText("Article tomorrow");
   await page.keyboard.press("k");
   await expect(page.locator(".reader h1")).toHaveText("Article tonight");
+  await page.keyboard.press("Escape");
+  await page.clock.runFor(500);
+  await expect(page.locator(".reader")).toHaveCount(0);
+  const cell = page.locator('[data-item-id="tonight"]');
+  await expect(cell).toBeVisible();
+  await expect(cell).toHaveClass(/is-read/);
+  await page.keyboard.press("g");
+  await page.keyboard.press("u");
+  await expect(
+    page.getByRole("radio", { name: "Unread", exact: true }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("g");
+  await page.keyboard.press("e");
+  await expect(cell).toHaveCount(0);
 });
 
 for (const theme of ["dark", "light"] as const) {

@@ -33,7 +33,6 @@ export function expiringItems(items: Item[], now: number): Item[] {
   return items
     .filter(
       (item) =>
-        !item.read &&
         !item.hearted &&
         !item.archived &&
         hoursLeft(item.published_ts, now) > 0 &&

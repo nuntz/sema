@@ -685,6 +685,13 @@ test("editorial story actions match singleton hover behavior and light colors", 
   await page.keyboard.press("ArrowDown");
   await expect(headline).toHaveCSS("outline-style", "solid");
   await expect(headline).toBeFocused();
+  // Let both queued arrow-key focus moves settle before leaving the grid.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
 
   await page.locator(".app-header a").first().focus();
   await page.locator(".app-header").hover();
