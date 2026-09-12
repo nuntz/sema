@@ -81,7 +81,10 @@ export function ResponsiveImage(props: ResponsiveImageProps) {
         );
         observer = new IntersectionObserver(
           ([entry]) => {
-            if (entry.isIntersecting && entry.intersectionRatio > 0) {
+            // Edge contact counts as intersecting at the default threshold.
+            // Rejecting its zero ratio can strand the image: moving farther
+            // inside does not cross another threshold or trigger a callback.
+            if (entry.isIntersecting) {
               observer?.disconnect();
               setEnabled(true);
             }
