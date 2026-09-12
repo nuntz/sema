@@ -430,7 +430,10 @@ func resolve(base *url.URL, raw string) string {
 }
 
 func imageExtension(raw string) bool {
-	u, _ := url.Parse(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
 	ext := strings.ToLower(path.Ext(u.Path))
 	return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp"
 }

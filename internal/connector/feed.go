@@ -3,6 +3,7 @@ package connector
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -51,6 +52,7 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 		Modified: response.Header.Get("Last-Modified"),
 		Entries:  make([]domain.Entry, 0, len(parsed.Items)),
 	}
+	skipped := 0
 	for _, item := range parsed.Items {
 		published := time.Now().UTC()
 		displayDate := ""
@@ -70,13 +72,23 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 			SummaryRaw: item.Description, ContentRaw: item.Content, Author: author,
 			Published: published, DisplayDate: displayDate,
 		}
+		if !validHTTPURL(entry.URL) {
+			skipped++
+			continue
+		}
 		for _, enclosure := range item.Enclosures {
+			if !validHTTPURL(ResolveURL(baseURL, enclosure.URL)) {
+				continue
+			}
 			entry.Enclosures = append(entry.Enclosures, domain.Enclosure{
 				URL: ResolveURL(baseURL, enclosure.URL), Type: enclosure.Type, Length: enclosure.Length,
 			})
 		}
 		entry.Enclosures = append(entry.Enclosures, mediaRSSEnclosures(item, baseURL)...)
 		result.Entries = append(result.Entries, entry)
+	}
+	if skipped > 0 {
+		slog.Warn("feed entries skipped for invalid URLs", "feed_url", feed.URL, "skipped", skipped)
 	}
 	return result, nil
 }
@@ -109,7 +121,7 @@ func mediaRSSEnclosures(item *gofeed.Item, base *url.URL) []domain.Enclosure {
 		for _, kind := range []string{"thumbnail", "content"} {
 			for _, extension := range extensionsNamed(elements, kind) {
 				imageURL := ResolveURL(base, extensionAttr(extension.Attrs, "url"))
-				if imageURL == "" || seen[imageURL] {
+				if !validHTTPURL(imageURL) || seen[imageURL] {
 					continue
 				}
 				mediaType := extensionAttr(extension.Attrs, "type")
@@ -166,4 +178,9 @@ func ResolveURL(base *url.URL, raw string) string {
 		return raw
 	}
 	return base.ResolveReference(reference).String()
+}
+
+func validHTTPURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil
 }

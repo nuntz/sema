@@ -3,10 +3,11 @@ package rescore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
@@ -17,7 +18,7 @@ var ErrReplayActive = errors.New("embedding replay is still in progress")
 
 type Repository interface {
 	Model(context.Context, string) (domain.Model, error)
-	PutModel(context.Context, domain.Model) error
+	PutModelIfUnchanged(context.Context, domain.Model, string) error
 	RecomputeModel(context.Context, string, string, string) (domain.Model, error)
 	Signals(context.Context, string) ([]domain.Signal, error)
 	Feeds(context.Context, string) ([]domain.Feed, error)
@@ -39,13 +40,14 @@ type Engine struct {
 }
 
 type Result struct {
-	Model                domain.Model
-	ItemsRescored        int
-	ItemsSkippedNoVector int
-	CentroidDrift        float64
-	StoriesConsolidated  int
-	StoriesDeleted       int
-	Duration             time.Duration
+	Model                    domain.Model
+	ItemsRescored            int
+	ItemsSkippedBadTimestamp int
+	ItemsSkippedNoVector     int
+	CentroidDrift            float64
+	StoriesConsolidated      int
+	StoriesDeleted           int
+	Duration                 time.Duration
 }
 
 func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Result, error) {
@@ -61,6 +63,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	if err != nil {
 		return Result{}, err
 	}
+	computedAt := model.ComputedAt
 	signals, err := e.Repository.Signals(ctx, userID)
 	if err != nil {
 		return Result{}, err
@@ -105,10 +108,16 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	}
 	itemsWithVectors := items[:0]
 	itemsSkippedNoVector := 0
+	itemsSkippedBadTimestamp := 0
 	for _, item := range items {
 		if len(item.Vector) == 0 {
 			itemsSkippedNoVector++
 			slog.Warn("rescore skipped item without vector", "user", userID, "item_id", item.ItemID)
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339Nano, item.PublishedTS); err != nil {
+			itemsSkippedBadTimestamp++
+			slog.Warn("rescore skipped item with invalid published timestamp", "user", userID, "item_id", item.ItemID, "error", err)
 			continue
 		}
 		itemsWithVectors = append(itemsWithVectors, item)
@@ -116,10 +125,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 	items = itemsWithVectors
 	scores := make([]float64, len(items))
 	for index := range items {
-		published, parseErr := time.Parse(time.RFC3339Nano, items[index].PublishedTS)
-		if parseErr != nil {
-			return Result{}, fmt.Errorf("item %s published_ts: %w", items[index].ItemID, parseErr)
-		}
+		published, _ := time.Parse(time.RFC3339Nano, items[index].PublishedTS)
 		vector := score.DecodeVector(items[index].Vector)
 		imageVector := []float32(nil)
 		if score.CompatibleVersion(items[index].ImageModelVersion, e.ImageVersion) {
@@ -158,18 +164,35 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 		return Result{}, err
 	}
 	model.ReplayTS, model.ReplayVersion = "", ""
-	if err := e.Repository.PutModel(ctx, model); err != nil {
-		return Result{}, err
+	model.ComputedAt = domain.Timestamp(e.now())
+	if err := e.Repository.PutModelIfUnchanged(ctx, model, computedAt); err != nil {
+		var conflict *types.ConditionalCheckFailedException
+		if !errors.As(err, &conflict) {
+			return Result{}, err
+		}
+		fresh, err := e.Repository.Model(ctx, userID)
+		if err != nil {
+			return Result{}, err
+		}
+		computedAt = fresh.ComputedAt
+		fresh.SizeCutoffs, fresh.TagSizeCutoffs = model.SizeCutoffs, model.TagSizeCutoffs
+		fresh.ReplayTS, fresh.ReplayVersion = "", ""
+		fresh.ComputedAt = domain.Timestamp(e.now())
+		model = fresh
+		if err := e.Repository.PutModelIfUnchanged(ctx, model, computedAt); err != nil {
+			return Result{}, err
+		}
 	}
 	drift := centroidDrift(old.LikedCentroid, model.LikedCentroid)
 	return Result{
-		Model:                model,
-		ItemsRescored:        len(items),
-		ItemsSkippedNoVector: itemsSkippedNoVector,
-		CentroidDrift:        drift,
-		StoriesConsolidated:  storiesConsolidated,
-		StoriesDeleted:       storiesDeleted,
-		Duration:             e.now().Sub(started),
+		Model:                    model,
+		ItemsRescored:            len(items),
+		ItemsSkippedNoVector:     itemsSkippedNoVector,
+		ItemsSkippedBadTimestamp: itemsSkippedBadTimestamp,
+		CentroidDrift:            drift,
+		StoriesConsolidated:      storiesConsolidated,
+		StoriesDeleted:           storiesDeleted,
+		Duration:                 e.now().Sub(started),
 	}, nil
 }
 

@@ -623,6 +623,12 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 	if input.OrderPref != nil && *input.OrderPref != domain.OrderChrono && *input.OrderPref != domain.OrderInterest {
 		return badRequest(errors.New("order_pref must be chrono or interest"))
 	}
+	if input.InterestPosition != nil {
+		*input.InterestPosition = strings.TrimSpace(*input.InterestPosition)
+		if len([]rune(*input.InterestPosition)) > 256 {
+			return badRequest(errors.New("interest_position must be at most 256 characters"))
+		}
+	}
 	if input.TagPref != nil {
 		*input.TagPref = strings.ToLower(strings.TrimSpace(*input.TagPref))
 		if len([]rune(*input.TagPref)) > 32 {
@@ -1273,6 +1279,19 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 	counts, err := s.store.FeedItemCounts(ctx, userID, window)
 	if err != nil {
 		return s.failure("count live feed items", err)
+	}
+	feeds, err := s.cachedFeeds(ctx, userID)
+	if err != nil {
+		return s.failure("load feeds for item counts", err)
+	}
+	allowed := make(map[string]bool, len(feeds))
+	for _, feed := range feeds {
+		allowed[feed.FeedID] = true
+	}
+	for feedID := range counts {
+		if !allowed[feedID] {
+			delete(counts, feedID)
+		}
 	}
 	return response(http.StatusOK, map[string]any{"feeds": counts})
 }

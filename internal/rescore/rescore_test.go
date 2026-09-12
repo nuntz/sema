@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"math"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 )
 
 type fakeRepository struct {
+	beforeWrite    func(*fakeRepository)
+	writes         int
 	model          domain.Model
 	signals        []domain.Signal
 	feeds          []domain.Feed
@@ -31,7 +34,14 @@ func (f *fakeRepository) Model(context.Context, string) (domain.Model, error) {
 	}
 	return f.model, nil
 }
-func (f *fakeRepository) PutModel(_ context.Context, model domain.Model) error {
+func (f *fakeRepository) PutModelIfUnchanged(_ context.Context, model domain.Model, previous string) error {
+	f.writes++
+	if f.beforeWrite != nil {
+		f.beforeWrite(f)
+	}
+	if previous != f.model.ComputedAt {
+		return &types.ConditionalCheckFailedException{}
+	}
 	f.model = model
 	return nil
 }
@@ -318,5 +328,51 @@ func TestRescoreConsolidatesAndDeletesStories(t *testing.T) {
 	}
 	if len(repository.deletedStories) != 1 || repository.deletedStories[0] != "delete" || len(repository.clearedItems) != 1 || repository.clearedItems[0] != "only" {
 		t.Fatalf("deleted = %#v, cleared = %#v", repository.deletedStories, repository.clearedItems)
+	}
+}
+
+func TestRescoreSkipsBadTimestamp(t *testing.T) {
+	now := time.Now().UTC()
+	repository := &fakeRepository{items: []domain.Item{
+		{ItemID: "bad", PublishedTS: "garbage", Vector: score.EncodeVector([]float32{1})},
+		{ItemID: "good", PublishedTS: domain.Timestamp(now), Vector: score.EncodeVector([]float32{1})},
+	}}
+	result, err := (&Engine{Repository: repository, Version: "v"}).RunUser(context.Background(), "user", true)
+	if err != nil || result.ItemsSkippedBadTimestamp != 1 || result.ItemsRescored != 1 || len(repository.replacements) != 1 || repository.replacements[0].ItemID != "good" {
+		t.Fatalf("result = %#v, err = %v", result, err)
+	}
+}
+
+func TestRescorePreservesConcurrentExplicitUpdate(t *testing.T) {
+	for _, repeated := range []bool{false, true} {
+		t.Run(fmt.Sprint(repeated), func(t *testing.T) {
+			repository := &fakeRepository{feeds: []domain.Feed{{FeedID: "feed", Tags: []string{"tech"}}}}
+			for i := 0; i < 10; i++ {
+				repository.items = append(repository.items, domain.Item{ItemID: fmt.Sprint(i), FeedID: "feed", PublishedTS: domain.Timestamp(time.Now()), Vector: score.EncodeVector([]float32{1})})
+			}
+			repository.beforeWrite = func(f *fakeRepository) {
+				if f.writes == 1 || repeated {
+					f.model.ComputedAt = fmt.Sprint("concurrent-", f.writes)
+					f.model.LikedCount = 42
+					f.model.ReplayTS, f.model.ReplayVersion = "replay", "v"
+				}
+			}
+			result, err := (&Engine{Repository: repository, Version: "v"}).RunUser(context.Background(), "user", true)
+			if repository.writes != 2 {
+				t.Fatalf("writes = %d", repository.writes)
+			}
+			if repeated {
+				if err == nil {
+					t.Fatal("expected conflict")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Model.LikedCount != 42 || repository.model.SizeCutoffs == nil || repository.model.TagSizeCutoffs["tech"] == nil || repository.model.ReplayTS != "" || repository.model.ReplayVersion != "" || repository.model.ComputedAt == "concurrent-1" {
+				t.Fatalf("model = %#v", repository.model)
+			}
+		})
 	}
 }

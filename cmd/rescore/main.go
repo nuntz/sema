@@ -23,14 +23,19 @@ type response struct {
 	Users                int `json:"users"`
 	ItemsRescored        int `json:"items_rescored"`
 	ItemsSkippedNoVector int `json:"items_skipped_no_vector"`
+	Failed               int `json:"failed"`
 	Skipped              int `json:"skipped"`
 	StoriesConsolidated  int `json:"stories_consolidated"`
 	StoriesDeleted       int `json:"stories_deleted"`
 }
 
 type handler struct {
-	store  *store.Store
-	engine *rankingrescore.Engine
+	store interface {
+		UserIDs(context.Context) ([]string, error)
+	}
+	engine interface {
+		RunUser(context.Context, string, bool) (rankingrescore.Result, error)
+	}
 }
 
 func (h *handler) run(ctx context.Context, input request) (response, error) {
@@ -43,6 +48,7 @@ func (h *handler) run(ctx context.Context, input request) (response, error) {
 		}
 	}
 	output := response{}
+	var userErr error
 	for _, userID := range users {
 		result, err := h.engine.RunUser(ctx, userID, input.OnDemand)
 		if errors.Is(err, rankingrescore.ErrReplayActive) {
@@ -51,7 +57,11 @@ func (h *handler) run(ctx context.Context, input request) (response, error) {
 			continue
 		}
 		if err != nil {
-			return output, err
+			slog.Error("rescore user failed", "user", userID, "error", err)
+			observability.Emit(map[string]float64{"RescoreUserFailed": 1}, map[string]string{"User": userID})
+			output.Failed++
+			userErr = err
+			continue
 		}
 		output.Users++
 		output.ItemsRescored += result.ItemsRescored
@@ -66,6 +76,9 @@ func (h *handler) run(ctx context.Context, input request) (response, error) {
 			"StoriesConsolidated":         float64(result.StoriesConsolidated),
 			"StoriesDeleted":              float64(result.StoriesDeleted),
 		}, map[string]string{"User": userID})
+	}
+	if input.User != "" && output.Failed > 0 {
+		return output, userErr
 	}
 	return output, nil
 }

@@ -856,7 +856,7 @@ func TestItemRejectsExpiredIdentityWithoutScanning(t *testing.T) {
 	}
 }
 
-func TestItemFallsBackForLegacyLiveRow(t *testing.T) {
+func TestItemMissingIdentityDoesNotScanLegacyLiveRow(t *testing.T) {
 	live, err := attributevalue.MarshalMap(domain.Item{
 		PK: domain.UserPK("user"), SK: "I#legacy", ItemID: "legacy", TTL: time.Now().Add(time.Hour).Unix(),
 	})
@@ -877,7 +877,7 @@ func TestItemFallsBackForLegacyLiveRow(t *testing.T) {
 		},
 	}
 	got, err := New(db, nil, "table", "", "").Item(context.Background(), "user", "legacy")
-	if err != nil || got.ItemID != "legacy" || queries != 1 {
+	if !errors.Is(err, ErrNotFound) || got.ItemID != "" || queries != 0 {
 		t.Fatalf("Item = %#v, queries %d, %v", got, queries, err)
 	}
 }
@@ -1727,5 +1727,16 @@ func TestItemsForFeedsFiltersFetchWindowBeforePagination(t *testing.T) {
 				t.Fatalf("second page = %#v, cursor = %q, err = %v", items, cursor, err)
 			}
 		})
+	}
+}
+
+func TestTransactionConditionFailedForDeletedFeed(t *testing.T) {
+	for _, code := range []string{"ConditionalCheckFailed", "TransactionConflict"} {
+		err := &types.TransactionCanceledException{CancellationReasons: []types.CancellationReason{
+			{Code: aws.String("None")}, {Code: aws.String("None")}, {Code: aws.String("None")}, {Code: aws.String(code)},
+		}}
+		if got := transactionConditionFailed(err); got != (code == "ConditionalCheckFailed") {
+			t.Fatalf("%s: %v", code, got)
+		}
 	}
 }

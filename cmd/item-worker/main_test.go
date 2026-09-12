@@ -1002,3 +1002,13 @@ func TestItemDeadlineReportsOnlyExpiredMessage(t *testing.T) {
 		t.Fatalf("deadline events = %d, want 2", deadlineEvents.Load())
 	}
 }
+
+func TestProcessDropsItemFromDeletedFeed(t *testing.T) {
+	repository := &fakeItemStore{feedErr: store.ErrNotFound}
+	h := &handler{store: repository}
+	body := `{"user":"user","feed_id":"removed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
+	records, err := h.process(context.Background(), body)
+	if err != nil || records != nil {
+		t.Fatalf("records = %#v, err = %v", records, err)
+	}
+}

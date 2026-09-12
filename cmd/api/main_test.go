@@ -1090,6 +1090,7 @@ func TestPatchMeValidatesFeedPreference(t *testing.T) {
 		name string
 		body string
 	}{
+		{name: "interest position too long", body: `{"interest_position":"` + strings.Repeat("界", 257) + `"}`},
 		{name: "too long", body: `{"feed_pref":"` + strings.Repeat("x", 129) + `"}`},
 		{name: "combined preferences", body: `{"tag_pref":"tech","feed_pref":"alpha"}`},
 	} {
@@ -1111,7 +1112,16 @@ func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var updateInputs []*dynamodb.UpdateItemInput
-	db := &apiDynamo{
+	db := &apiDynamo{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+		case domain.ItemIdentitySK("item"):
+			return &dynamodb.GetItemOutput{Item: map[string]types.AttributeValue{"item_sk": item["SK"], "ttl": item["ttl"]}}, nil
+		case item["SK"].(*types.AttributeValueMemberS).Value:
+			return &dynamodb.GetItemOutput{Item: item}, nil
+		default:
+			return &dynamodb.GetItemOutput{}, nil
+		}
+	},
 		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
 		},
@@ -1144,12 +1154,21 @@ func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
 
 func TestRetryItemQueuesForcedExtractionAndSummary(t *testing.T) {
 	item, err := attributevalue.MarshalMap(domain.Item{
-		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", URL: "https://example.com/story", Title: "Title", PublishedTS: "2026-08-20T12:00:00Z",
+		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", URL: "https://example.com/story", Title: "Title", PublishedTS: "2026-08-20T12:00:00Z", TTL: time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	db := &apiDynamo{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+	db := &apiDynamo{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+		case domain.ItemIdentitySK("item"):
+			return &dynamodb.GetItemOutput{Item: map[string]types.AttributeValue{"item_sk": item["SK"], "ttl": item["ttl"]}}, nil
+		case item["SK"].(*types.AttributeValueMemberS).Value:
+			return &dynamodb.GetItemOutput{Item: item}, nil
+		default:
+			return &dynamodb.GetItemOutput{}, nil
+		}
+	}, query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
 	}}
 	queue := &apiQueue{}
@@ -1215,7 +1234,7 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 		}
 		return &dynamodb.QueryOutput{Items: items}, nil
 	}}
-	s := &server{store: store.New(db, nil, "table", "", "")}
+	s := &server{store: store.New(db, nil, "table", "", ""), feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
 	for _, test := range []struct {
 		query map[string]string
 		want  int
@@ -1235,6 +1254,54 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 		}
 		if body.Feeds["feed"].All != test.want || body.Feeds["feed"].Unread != test.want {
 			t.Fatalf("counts = %#v", body.Feeds)
+		}
+	}
+}
+
+func TestFeedCountsOmitsDeletedFeeds(t *testing.T) {
+	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value == "R#" {
+			return &dynamodb.QueryOutput{}, nil
+		}
+		var rows []map[string]types.AttributeValue
+		for _, id := range []string{"current", "deleted"} {
+			row, err := attributevalue.MarshalMap(domain.Item{ItemID: id, FeedID: id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row)
+		}
+		return &dynamodb.QueryOutput{Items: rows}, nil
+	}}
+	s := &server{store: store.New(db, nil, "table", "", ""), feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "current"}}}}}
+	got := s.getFeedItemCounts(context.Background(), "user", nil)
+	var body struct {
+		Feeds map[string]domain.FeedItemCount `json:"feeds"`
+	}
+	if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != http.StatusOK || len(body.Feeds) != 1 || body.Feeds["current"].All != 1 {
+		t.Fatalf("response = %#v", got)
+	}
+}
+
+func TestPatchMeTrimsAndBoundsInterestPosition(t *testing.T) {
+	for _, length := range []int{256, 257} {
+		var updated *dynamodb.UpdateItemInput
+		db := &apiDynamo{update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			updated = input
+			return &dynamodb.UpdateItemOutput{}, nil
+		}}
+		value := strings.Repeat("界", length)
+		body, _ := json.Marshal(map[string]string{"interest_position": "  " + value + "  "})
+		got := (&server{store: store.New(db, nil, "table", "", "")}).patchMe(context.Background(), "user", string(body))
+		if length == 257 {
+			if got.StatusCode != http.StatusBadRequest || !strings.Contains(got.Body, "interest_position must be at most 256 characters") || updated != nil {
+				t.Fatalf("response = %#v", got)
+			}
+		} else if got.StatusCode != http.StatusOK || updated == nil || updated.ExpressionAttributeValues[":position"].(*types.AttributeValueMemberS).Value != value {
+			t.Fatalf("response = %#v, update = %#v", got, updated)
 		}
 	}
 }

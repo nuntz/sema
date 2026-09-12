@@ -248,6 +248,10 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	isVideo := message.MediaType == "video" || message.VideoID != ""
 	feed, err := h.store.Feed(ctx, message.User, message.FeedID)
 	if err != nil {
+		if !message.Reprocess && errors.Is(err, store.ErrNotFound) {
+			slog.InfoContext(ctx, "feed removed before item processed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID)
+			return nil, nil
+		}
 		if !message.Reprocess || !errors.Is(err, store.ErrNotFound) {
 			return nil, err
 		}

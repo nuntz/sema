@@ -1501,17 +1501,17 @@ func itemPageKey(item map[string]types.AttributeValue, order domain.Order) map[s
 	return result
 }
 
+// Item resolves live items with point reads and returns ErrNotFound for missing identities.
 func (s *Store) Item(ctx context.Context, userID, itemID string) (domain.Item, error) {
-	return s.item(ctx, userID, itemID, true)
+	return s.item(ctx, userID, itemID)
 }
 
-// ItemByIdentity only uses point reads. A missing identity is expected during
-// ingestion and must not trigger the legacy partition query used by Item.
+// ItemByIdentity is an alias for Item; missing identities return ErrNotFound.
 func (s *Store) ItemByIdentity(ctx context.Context, userID, itemID string) (domain.Item, error) {
-	return s.item(ctx, userID, itemID, false)
+	return s.Item(ctx, userID, itemID)
 }
 
-func (s *Store) item(ctx context.Context, userID, itemID string, allowLegacy bool) (domain.Item, error) {
+func (s *Store) item(ctx context.Context, userID, itemID string) (domain.Item, error) {
 	now := time.Now().Unix()
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)), ConsistentRead: aws.Bool(true),
@@ -1520,9 +1520,6 @@ func (s *Store) item(ctx context.Context, userID, itemID string, allowLegacy boo
 		return domain.Item{}, err
 	}
 	if len(response.Item) == 0 {
-		if allowLegacy {
-			return s.legacyItem(ctx, userID, itemID, now)
-		}
 		return domain.Item{}, ErrNotFound
 	}
 	var identity domain.ItemIdentity
@@ -1667,33 +1664,6 @@ func (s *Store) SetItemImageVector(ctx context.Context, userID, itemID string, v
 	return err
 }
 
-func (s *Store) legacyItem(ctx context.Context, userID, itemID string, now int64) (domain.Item, error) {
-	var start map[string]types.AttributeValue
-	for {
-		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
-			TableName: aws.String(s.table), KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
-			FilterExpression: aws.String("item_id = :id AND #ttl > :now"), Limit: aws.Int32(100), ExclusiveStartKey: start,
-			ConsistentRead:           aws.Bool(true),
-			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
-			ExpressionAttributeValues: map[string]types.AttributeValue{
-				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"}, ":id": &types.AttributeValueMemberS{Value: itemID},
-				":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
-			},
-		})
-		if err != nil {
-			return domain.Item{}, err
-		}
-		if len(response.Items) > 0 {
-			var item domain.Item
-			return item, attributevalue.UnmarshalMap(response.Items[0], &item)
-		}
-		start = response.LastEvaluatedKey
-		if len(start) == 0 {
-			return domain.Item{}, ErrNotFound
-		}
-	}
-}
-
 // Archives lists permanent copies newest-heart-first. Archive rows deliberately
 // have no ttl attribute and do not resolve read state.
 func (s *Store) Archives(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error) {
@@ -1742,6 +1712,7 @@ func (s *Store) Archives(ctx context.Context, userID, encodedCursor string, limi
 	return items, next, err
 }
 
+// ArchiveItem resolves archive pointers using point reads; missing identities or pointers return ErrNotFound.
 func (s *Store) ArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
 	item, err := s.Item(ctx, userID, itemID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -1766,43 +1737,7 @@ func (s *Store) ArchiveItem(ctx context.Context, userID, itemID string) (domain.
 	if strings.HasPrefix(identity.ItemSK, "A#") {
 		return s.archiveItemBySK(ctx, userID, identity.ItemSK)
 	}
-	return s.scanArchiveItem(ctx, userID, itemID)
-}
-
-func (s *Store) scanArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
-	var start map[string]types.AttributeValue
-	for {
-		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
-			TableName:              aws.String(s.table),
-			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
-			FilterExpression:       aws.String("item_id = :id"),
-			ExpressionAttributeValues: map[string]types.AttributeValue{
-				":pk":     &types.AttributeValueMemberS{Value: domain.UserPK(userID)},
-				":prefix": &types.AttributeValueMemberS{Value: "A#"},
-				":id":     &types.AttributeValueMemberS{Value: itemID},
-			},
-			ExclusiveStartKey: start,
-			Limit:             aws.Int32(100),
-			ConsistentRead:    aws.Bool(true),
-		})
-		if err != nil {
-			return domain.Item{}, err
-		}
-		if len(response.Items) > 0 {
-			var item domain.Item
-			if err := attributevalue.UnmarshalMap(response.Items[0], &item); err != nil {
-				return domain.Item{}, err
-			}
-			item.ArchiveSK = item.SK
-			item.Hearted = true
-			item.Archived = true
-			return item, nil
-		}
-		start = response.LastEvaluatedKey
-		if len(start) == 0 {
-			return domain.Item{}, ErrNotFound
-		}
-	}
+	return domain.Item{}, ErrNotFound
 }
 
 func (s *Store) archiveItemBySK(ctx context.Context, userID, archiveSK string) (domain.Item, error) {
@@ -2100,7 +2035,8 @@ func transactionConditionFailed(err error) bool {
 		return false
 	}
 	for index, reason := range canceled.CancellationReasons {
-		if index < 3 && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
+		// The fourth condition drops items whose feed was deleted during ingestion.
+		if index < 4 && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
 			return true
 		}
 	}
@@ -2531,6 +2467,11 @@ func chooseVersion(preferred, fallback string) string {
 		return preferred
 	}
 	return fallback
+}
+
+// PutModelIfUnchanged writes a model only if its computation timestamp still matches.
+func (s *Store) PutModelIfUnchanged(ctx context.Context, model domain.Model, previousComputedAt string) error {
+	return s.putModelIfUnchanged(ctx, model, previousComputedAt)
 }
 
 func (s *Store) putModelIfUnchanged(ctx context.Context, model domain.Model, previousComputedAt string) error {

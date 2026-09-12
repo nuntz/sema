@@ -424,3 +424,9 @@ func TestMediaDownloadDeadline(t *testing.T) {
 		t.Fatalf("body timeout = %v", err)
 	}
 }
+
+func TestImageExtensionRejectsMalformedURL(t *testing.T) {
+	if imageExtension("http://example.com/a%zz.jpg") {
+		t.Fatal("malformed URL accepted")
+	}
+}

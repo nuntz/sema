@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 )
@@ -106,5 +108,28 @@ func TestArchiveMissingBodyRetainsMetadataOnlyBehavior(t *testing.T) {
 	copied, err := New(nil, objects, "table", "bucket", "").archiveBody(context.Background(), "user", "item", "body", "archive")
 	if copied || err != nil {
 		t.Fatalf("%v %v", copied, err)
+	}
+}
+
+func TestArchiveItemMissingIdentityDoesNotQuery(t *testing.T) {
+	for _, sk := range []string{"", "I#missing"} {
+		queries := 0
+		db := &fakeDynamoDB{
+			getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+				row := map[string]types.AttributeValue{}
+				if sk != "" {
+					row["item_sk"] = &types.AttributeValueMemberS{Value: sk}
+				}
+				return &dynamodb.GetItemOutput{Item: row}, nil
+			},
+			query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+				queries++
+				return &dynamodb.QueryOutput{}, nil
+			},
+		}
+		_, err := New(db, nil, "table", "", "").ArchiveItem(context.Background(), "user", "missing")
+		if !errors.Is(err, ErrNotFound) || queries != 0 {
+			t.Fatalf("error = %v, queries = %d", err, queries)
+		}
 	}
 }
