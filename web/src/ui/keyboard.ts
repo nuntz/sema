@@ -106,6 +106,7 @@ export const readerCommand = (key: string): ReaderCommand | undefined =>
 
 export const scopeShortcuts: Record<ItemView, string> = {
   unread: "g → u",
+  expiring: "g → e",
   today: "g → t",
   yesterday: "g → y",
   all: "g → a",
@@ -115,6 +116,7 @@ export const goCommand = (key: string): GoCommand | undefined =>
   (
     ({
       u: "unread",
+      e: "expiring",
       t: "today",
       y: "yesterday",
       a: "all",

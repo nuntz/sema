@@ -72,8 +72,9 @@ type Feed struct {
 // FeedItemCount describes the retained live window rather than the lifetime
 // ingest counters stored on Feed.
 type FeedItemCount struct {
-	All    int `json:"all"`
-	Unread int `json:"unread"`
+	Tonight int `json:"tonight,omitempty"`
+	All     int `json:"all"`
+	Unread  int `json:"unread"`
 }
 
 const (

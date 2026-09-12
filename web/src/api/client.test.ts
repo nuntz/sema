@@ -339,3 +339,36 @@ describe("archive filters", () => {
     ]);
   });
 });
+
+it("sends published bounds and ascending unkept queries separately from fetched windows", async () => {
+  const request = vi.fn(
+    async (_input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify({ items: [], feeds: {}, within48h: 19, tonight: 3 }),
+      ),
+  );
+  vi.stubGlobal("fetch", request);
+  const window = {
+    basis: "published" as const,
+    from: "2026-09-01T12:00:00Z",
+    before: "2026-09-03T12:00:00Z",
+  };
+  const client = new APIClient();
+  await client.items("chrono", "cursor", false, null, false, window);
+  const params = new URL(String(request.mock.calls[0][0]), "https://test")
+    .searchParams;
+  expect(params.get("published_from")).toBe(window.from);
+  expect(params.get("published_before")).toBe(window.before);
+  expect(params.get("ascending")).toBe("true");
+  expect(params.get("unkept")).toBe("true");
+  expect(params.has("include_read")).toBe(false);
+  expect(params.has("fetched_from")).toBe(false);
+  expect(
+    await client.expiryCounts(window, "2026-09-08T07:00:00Z"),
+  ).toMatchObject({ within48h: 19, tonight: 3 });
+  expect(
+    new URL(String(request.mock.calls[1][0]), "https://test").searchParams.get(
+      "tonight_before",
+    ),
+  ).toBe("2026-09-08T07:00:00Z");
+});

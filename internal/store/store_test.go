@@ -127,7 +127,7 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 				{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("read")}},
 			}}, nil
 		}
-		if aws.ToString(input.FilterExpression) != "#ttl > :now" || aws.ToString(input.ProjectionExpression) != "item_id, feed_id, fetched_ts" {
+		if aws.ToString(input.FilterExpression) != "#ttl > :now" || aws.ToString(input.ProjectionExpression) != "item_id, feed_id, fetched_ts, published_ts, archive_sk" {
 			t.Fatalf("item count query = %#v", input)
 		}
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{

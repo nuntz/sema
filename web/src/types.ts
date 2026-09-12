@@ -6,6 +6,7 @@ export type GridScope =
   | null;
 
 export interface FeedItemCount {
+  tonight?: number;
   all: number;
   unread: number;
 }

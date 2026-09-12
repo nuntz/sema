@@ -76,6 +76,7 @@ function GridHeaderFixture() {
                   type="button"
                   class="segmented__item"
                   role="radio"
+                  classList={{ "expiring-tab": option.value === "expiring" }}
                   aria-checked={option.value === "unread"}
                 >
                   <span>{option.label}</span>

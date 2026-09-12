@@ -600,7 +600,11 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 // FeedItemCounts returns per-feed totals for the retained live-item window.
 // It deliberately does not use Feed.ItemCount, which is a lifetime ingest
 // counter and therefore includes expired and read items.
-func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow) (map[string]domain.FeedItemCount, error) {
+func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, filters ...domain.ItemFilter) (map[string]domain.FeedItemCount, error) {
+	var filter domain.ItemFilter
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
 	readItemIDs, err := s.readItemIDs(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -613,7 +617,7 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 			TableName:              aws.String(s.table),
 			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 			FilterExpression:       aws.String("#ttl > :now"),
-			ProjectionExpression:   aws.String("item_id, feed_id, fetched_ts"),
+			ProjectionExpression:   aws.String("item_id, feed_id, fetched_ts, published_ts, archive_sk"),
 			ExpressionAttributeNames: map[string]string{
 				"#ttl": "ttl",
 			},
@@ -628,16 +632,12 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 		if err != nil {
 			return nil, err
 		}
-		var page []struct {
-			ItemID    string `dynamodbav:"item_id"`
-			FeedID    string `dynamodbav:"feed_id"`
-			FetchedTS string `dynamodbav:"fetched_ts"`
-		}
+		var page []domain.Item
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, err
 		}
 		for _, item := range page {
-			if item.FeedID == "" || seenItemIDs[item.ItemID] || !window.Contains(item.FetchedTS) {
+			if item.FeedID == "" || seenItemIDs[item.ItemID] || !window.Contains(item.FetchedTS) || !filter.Contains(item) {
 				continue
 			}
 			seenItemIDs[item.ItemID] = true
@@ -645,6 +645,9 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 			count.All++
 			if !readItemIDs[item.ItemID] {
 				count.Unread++
+				if filter.Tonight(item.PublishedTS) {
+					count.Tonight++
+				}
 			}
 			counts[item.FeedID] = count
 		}
@@ -658,7 +661,11 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages until the end or page budget.
-func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow) ([]domain.Item, string, *domain.Item, error) {
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, filters ...domain.ItemFilter) ([]domain.Item, string, *domain.Item, error) {
+	var filter domain.ItemFilter
+	if len(filters) > 0 {
+		filter = filters[0]
+	}
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
@@ -688,6 +695,16 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		input.IndexName = aws.String("by-score")
 		input.KeyConditionExpression = aws.String("PK = :pk")
 		delete(input.ExpressionAttributeValues, ":prefix")
+	}
+	if order == domain.OrderChrono {
+		input.ScanIndexForward = aws.Bool(filter.Ascending)
+		if !filter.Published.From.IsZero() {
+			input.KeyConditionExpression = aws.String("PK = :pk AND SK BETWEEN :published_from AND :published_before")
+			delete(input.ExpressionAttributeValues, ":prefix")
+			input.ExpressionAttributeValues[":published_from"] = &types.AttributeValueMemberS{Value: domain.ItemSK(filter.Published.From, "")}
+			// No item ID at the upper bound: rows at Before sort after it.
+			input.ExpressionAttributeValues[":published_before"] = &types.AttributeValueMemberS{Value: domain.ItemSK(filter.Published.Before, "")}
+		}
 	}
 	var readItemIDs map[string]bool
 	pageBudget := itemsForFeedsPageBudget
@@ -724,7 +741,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 			}
 		}
 		for i, item := range page {
-			if !window.Contains(item.FetchedTS) {
+			if !window.Contains(item.FetchedTS) || !filter.Contains(item) {
 				continue
 			}
 			if allowedFeedIDs != nil && !allowedFeedIDs[item.FeedID] {

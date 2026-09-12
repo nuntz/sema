@@ -210,7 +210,7 @@ export function StoryCell(props: StoryCellProps) {
               published={item.published_ts}
               now={clockNow()}
               compact={props.cell.effectiveSize === "S"}
-              unread={leadReadVisuals().unreadDot}
+              unread={!item.read}
             />
           );
           return (

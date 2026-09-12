@@ -13,6 +13,7 @@ import {
 import { Portal } from "solid-js/web";
 import { clockNow, useClock } from "../clock";
 import { Icon } from "../components/Icon";
+import { expiryGroups } from "../expiring-view";
 import { expirySentence, itemExpiryState } from "../expiry";
 import {
   gridSourceName,
@@ -51,6 +52,11 @@ import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { ScopeCellModel } from "../scope-cell";
 import { buryDisabled } from "../signal-feedback";
 import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
+import {
+  type ExpiringCounts,
+  ExpiringEnd,
+  ExpiringStrip,
+} from "./ExpiringChrome";
 import { ExpiryPill } from "./ExpiryPill";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
@@ -84,6 +90,8 @@ import {
 import { useSheetDrag } from "./use-sheet-drag";
 
 interface GridProps {
+  expiryCounts?: ExpiringCounts;
+  onBackToUnread?(): void;
   scopeCell?: ScopeCellModel;
   scope?: GridScope;
   itemView?: ItemView;
@@ -261,7 +269,28 @@ function GridContent(props: GridProps) {
     return rows;
   };
   const layout = createMemo(() => {
-    const { entries, hasMore } = layoutSnapshot();
+    const { entries: savedEntries, hasMore } = layoutSnapshot();
+    const entries = props.expiryCounts ? props.entries : savedEntries;
+    if (props.expiryCounts) {
+      let top = 58;
+      const groupedRows: LayoutRow[] = [];
+      const headings = expiryGroups(
+        entries.flatMap((entry) => (entry.kind === "item" ? [entry.item] : [])),
+        clockNow(),
+      ).map((group) => {
+        const heading = { ...group, top };
+        top += 36;
+        const groupRows = justify(group.items, contentWidth(), false, {
+          refinedMobile: true,
+        });
+        groupedRows.push(
+          ...groupRows.map((row) => ({ ...row, top: row.top + top })),
+        );
+        top += totalHeight(groupRows) + 24;
+        return heading;
+      });
+      return { rows: stableRows(groupedRows), height: top, headings };
+    }
     const rows = stableRows(
       justify(entries, contentWidth(), hasMore, {
         expandedStoryIDs: props.expandedStoryIDs,
@@ -271,7 +300,7 @@ function GridContent(props: GridProps) {
         refinedMobile: true,
       }),
     );
-    return { rows, height: totalHeight(rows) };
+    return { rows, height: totalHeight(rows), headings: [] };
   });
   const scopeCellHeight = createMemo(() =>
     props.scopeCell ? 44 + (mobile() ? 8 : 10) : 0,
@@ -286,7 +315,7 @@ function GridContent(props: GridProps) {
     ),
   );
   const closedEmpty = createMemo(() =>
-    !props.archive && props.entries.length === 0
+    !props.expiryCounts && !props.archive && props.entries.length === 0
       ? emptyState({
           ...props,
           scopeTitle: props.scopeCell?.title,
@@ -560,7 +589,7 @@ function GridContent(props: GridProps) {
       alreadyRead,
     );
     for (const id of ids) passedIDs.add(id);
-    if (ids.length > 0) props.onItemsPassed(ids);
+    if (ids.length > 0 && !props.expiryCounts) props.onItemsPassed(ids);
     if (
       shouldLoadNextPage(
         props.hasMore,
@@ -674,7 +703,20 @@ function GridContent(props: GridProps) {
   const move = (direction: LayoutDirection) => {
     const allRows = rows();
     if (allRows.length === 0) return;
-    const id = nearestCell(allRows, props.focusedID, direction);
+    const sequence = props.items.map((item) => item.item_id);
+    const index = sequence.indexOf(props.focusedID);
+    const id =
+      props.expiryCounts && (direction === "down" || direction === "up")
+        ? sequence[
+            Math.max(
+              0,
+              Math.min(
+                sequence.length - 1,
+                index + (direction === "down" ? 1 : -1),
+              ),
+            )
+          ]
+        : nearestCell(allRows, props.focusedID, direction);
     if (!id) return;
     const rect = cellRects(allRows).find((candidate) => candidate.id === id);
     endRequested = false;
@@ -1037,6 +1079,7 @@ function GridContent(props: GridProps) {
       }}
       classList={{
         "refined-grid": true,
+        "expiring-grid": Boolean(props.expiryCounts),
         "mobile-refined-grid": mobile(),
         "keyboard-focus": keyboardFocus(),
         "reader-underlay": props.readerOpen,
@@ -1096,6 +1139,19 @@ function GridContent(props: GridProps) {
             pullDistance() > 0 ? `translateY(${pullDistance()}px)` : undefined,
         }}
       >
+        <Show when={props.expiryCounts}>
+          {(counts) => <ExpiringStrip counts={counts()} />}
+        </Show>
+        <For each={layout().headings}>
+          {(group) => (
+            <h2 class="expiring-group" style={{ top: `${group.top + 14}px` }}>
+              <span>{group.label}</span>
+              <b>{group.items.length}</b>
+              <i />
+              <small>{group.note}</small>
+            </h2>
+          )}
+        </For>
         <Show when={props.scopeCell} keyed>
           {(model) => (
             <h2 class="scope-cell" title={model.title}>
@@ -1328,7 +1384,7 @@ function GridContent(props: GridProps) {
                                   published={item().published_ts}
                                   now={clockNow()}
                                   compact={cell.effectiveSize === "S"}
-                                  unread={readVisuals().unreadDot}
+                                  unread={!item().read}
                                 />
                               </Show>
                             }
@@ -1448,7 +1504,19 @@ function GridContent(props: GridProps) {
             </div>
           )}
         </For>
-        <Show when={shouldShowEndCard(props.hasMore)}>
+        <Show when={props.expiryCounts && !props.hasMore}>
+          <ExpiringEnd
+            empty={props.entries.length === 0}
+            remaining={Math.max(
+              0,
+              (props.expiryCounts?.unread ?? 0) -
+                (props.expiryCounts?.within48h ?? 0),
+            )}
+            top={endTop()}
+            onBack={() => props.onBackToUnread?.()}
+          />
+        </Show>
+        <Show when={!props.expiryCounts && shouldShowEndCard(props.hasMore)}>
           <section
             class="end-of-feed"
             classList={{

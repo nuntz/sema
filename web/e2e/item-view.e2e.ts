@@ -103,6 +103,7 @@ for (const width of [1440, 860, 620, 393, 320]) {
         : page.getByRole("radiogroup", { name: "Items shown" });
     await expect(group.getByRole("radio")).toHaveText([
       "Unread",
+      "Expiring",
       "Today",
       "Yesterday",
       "All",

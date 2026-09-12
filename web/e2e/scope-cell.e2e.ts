@@ -141,7 +141,9 @@ for (const width of [1440, 393]) {
       width < 620 ? "Today18 items today" : "Today18 items · 2 feeds",
     );
     const request = requests.findLast(
-      (url) => url.pathname === "/api/feeds/counts",
+      (url) =>
+        url.pathname === "/api/feeds/counts" &&
+        url.searchParams.has("fetched_from"),
     );
     expect(request?.searchParams.get("fetched_from")).toBe(
       "2026-09-07T07:00:00.000Z",

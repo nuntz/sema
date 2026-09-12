@@ -111,11 +111,19 @@ export class APIClient {
     window?: FetchWindow,
   ): Promise<ItemsResponse> {
     const params = new URLSearchParams({ order, limit: "100" });
+    if (window?.basis === "published") params.set("ascending", "true");
     if (cursor) params.set("cursor", cursor);
     if (includeRead) params.set("include_read", "true");
     if (window) {
-      params.set("fetched_from", window.from);
-      params.set("fetched_before", window.before);
+      params.set(
+        window.basis === "published" ? "published_from" : "fetched_from",
+        window.from,
+      );
+      params.set(
+        window.basis === "published" ? "published_before" : "fetched_before",
+        window.before,
+      );
+      if (window.basis === "published") params.set("unkept", "true");
     }
     if (scope?.kind === "tag")
       params.set(
@@ -136,8 +144,15 @@ export class APIClient {
     const params = new URLSearchParams();
     if (includeRead) params.set("include_read", "true");
     if (window) {
-      params.set("fetched_from", window.from);
-      params.set("fetched_before", window.before);
+      params.set(
+        window.basis === "published" ? "published_from" : "fetched_from",
+        window.from,
+      );
+      params.set(
+        window.basis === "published" ? "published_before" : "fetched_before",
+        window.before,
+      );
+      if (window.basis === "published") params.set("unkept", "true");
     }
     if (scope?.kind === "tag")
       params.set(
@@ -258,12 +273,32 @@ export class APIClient {
   feedItemCounts(window?: FetchWindow): Promise<FeedItemCounts> {
     const params = new URLSearchParams();
     if (window) {
-      params.set("fetched_from", window.from);
-      params.set("fetched_before", window.before);
+      params.set(
+        window.basis === "published" ? "published_from" : "fetched_from",
+        window.from,
+      );
+      params.set(
+        window.basis === "published" ? "published_before" : "fetched_before",
+        window.before,
+      );
+      if (window.basis === "published") params.set("unkept", "true");
     }
     return this.request<{ feeds: FeedItemCounts }>(
       `/feeds/counts${window ? `?${params}` : ""}`,
     ).then((payload) => payload.feeds);
+  }
+
+  expiryCounts(
+    window: FetchWindow,
+    tonightBefore: string,
+  ): Promise<{ feeds: FeedItemCounts; within48h: number; tonight: number }> {
+    const params = new URLSearchParams({
+      published_from: window.from,
+      published_before: window.before,
+      tonight_before: tonightBefore,
+      unkept: "true",
+    });
+    return this.request(`/feeds/counts?${params}`);
   }
 
   discoverFeed(url: string): Promise<FeedCandidate[]> {

@@ -684,8 +684,9 @@ test("editorial story actions match singleton hover behavior and light colors", 
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowDown");
   await expect(headline).toHaveCSS("outline-style", "solid");
+  await expect(headline).toBeFocused();
 
-  await headline.evaluate((element) => element.blur());
+  await page.locator(".app-header a").first().focus();
   await page.locator(".app-header").hover();
   await expect(storyBadges).toBeHidden();
   await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "0");
@@ -1871,6 +1872,22 @@ test("grid releases detached nodes after repeated scrolling through loaded items
     await expect(
       page.locator('[data-item-id="retention-0"] > img'),
     ).toBeVisible();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await Promise.all(
+        Array.from(
+          document.querySelectorAll<HTMLImageElement>(".grid-cell > img[src]"),
+        ).map((image) => image.decode().catch(() => undefined)),
+      );
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+    });
+    await session.send("HeapProfiler.collectGarbage");
+    // Image decode completion and finalizers can release nodes on the next task.
+    await page.evaluate(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+    );
     await session.send("HeapProfiler.collectGarbage");
     return {
       ...(await session.send("Memory.getDOMCounters")),

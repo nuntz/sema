@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { effectiveGridOrder } from "../grid-scope";
-import { appCommand, gridCommand, readerCommand } from "./keyboard";
+import { appCommand, goCommand, gridCommand, readerCommand } from "./keyboard";
 
 describe("keyboard map", () => {
   it.each([
@@ -86,4 +86,8 @@ describe("keyboard map", () => {
     ).toBe("chrono");
     expect(effectiveGridOrder(preference, null)).toBe("interest");
   });
+});
+
+it("opens Expiring with g e", () => {
+  expect(goCommand("e")).toBe("expiring");
 });

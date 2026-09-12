@@ -80,6 +80,7 @@ const glyphs = {
   boost: ArrowUp,
   bury: ArrowDown,
   check: Check,
+  clock: Clock,
   close: X,
   "copy-link": Link,
   "export-opml": Download,

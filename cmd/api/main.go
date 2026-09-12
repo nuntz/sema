@@ -668,6 +668,10 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	if err != nil {
 		return badRequest(err)
 	}
+	filter, err := parseItemFilter(query)
+	if err != nil {
+		return badRequest(err)
+	}
 	includeRead, err := parseIncludeRead(query["include_read"])
 	if err != nil {
 		return badRequest(err)
@@ -700,7 +704,7 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 	}
 	filtered := query["tag"] != "" || query["feed"] != ""
-	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window)
+	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, filter)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -1276,7 +1280,11 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 	if err != nil {
 		return badRequest(err)
 	}
-	counts, err := s.store.FeedItemCounts(ctx, userID, window)
+	filter, err := parseItemFilter(query)
+	if err != nil {
+		return badRequest(err)
+	}
+	counts, err := s.store.FeedItemCounts(ctx, userID, window, filter)
 	if err != nil {
 		return s.failure("count live feed items", err)
 	}
@@ -1286,6 +1294,9 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 	}
 	allowed := make(map[string]bool, len(feeds))
 	for _, feed := range feeds {
+		if !filter.Published.From.IsZero() && feed.Muted {
+			continue
+		}
 		allowed[feed.FeedID] = true
 	}
 	for feedID := range counts {
@@ -1293,7 +1304,12 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 			delete(counts, feedID)
 		}
 	}
-	return response(http.StatusOK, map[string]any{"feeds": counts})
+	within48h, tonight := 0, 0
+	for _, count := range counts {
+		within48h += count.Unread
+		tonight += count.Tonight
+	}
+	return response(http.StatusOK, map[string]any{"feeds": counts, "within48h": within48h, "tonight": tonight})
 }
 
 func (s *server) importFeeds(ctx context.Context, userID string, request events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
@@ -1639,4 +1655,28 @@ func main() {
 		s.imageVectors = vectorstore.NewS3(vectorClient, vectorBucket, imageVectorIndex)
 	}
 	lambda.Start(s.handle)
+}
+
+func parseItemFilter(query map[string]string) (domain.ItemFilter, error) {
+	var filter domain.ItemFilter
+	window, err := parseFetchWindow(map[string]string{"fetched_from": query["published_from"], "fetched_before": query["published_before"]})
+	if err != nil {
+		return filter, errors.New("published_from and published_before must be RFC3339 timestamps with published_from before published_before")
+	}
+	filter.Published = window
+	filter.Unkept, err = parseBool(query["unkept"], "unkept")
+	if err != nil {
+		return filter, err
+	}
+	filter.Ascending, err = parseBool(query["ascending"], "ascending")
+	if err != nil {
+		return filter, err
+	}
+	if query["tonight_before"] != "" {
+		filter.TonightBefore, err = time.Parse(time.RFC3339Nano, query["tonight_before"])
+		if err != nil {
+			return filter, errors.New("tonight_before must be an RFC3339 timestamp")
+		}
+	}
+	return filter, nil
 }
