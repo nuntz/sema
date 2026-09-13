@@ -357,3 +357,22 @@ describe("search scope", () => {
     ]);
   });
 });
+
+describe("item page limits", () => {
+  it("supports small poll pages and keeps full pages as the default", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL) =>
+        new Response(JSON.stringify({ items: [] })),
+    );
+    vi.stubGlobal("fetch", request);
+    const client = new APIClient();
+    await client.items("chrono", "", false, null, false, undefined, 20);
+    await client.items("interest", "", false, null, false, undefined, 100);
+    await client.items("chrono");
+    expect(
+      request.mock.calls.map(([path]) =>
+        new URL(String(path), "https://example.com").searchParams.get("limit"),
+      ),
+    ).toEqual(["20", "100", "100"]);
+  });
+});

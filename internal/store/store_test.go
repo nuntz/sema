@@ -335,6 +335,41 @@ func TestItemsForFeedsFillsFilteredIncludeReadPageBeyondDefaultBudget(t *testing
 	}
 }
 
+func TestItemsForFeedsScalesFilteredPageBudget(t *testing.T) {
+	for _, test := range []struct{ limit, pages int }{{1, 10}, {20, 20}, {100, 100}} {
+		t.Run(fmt.Sprint(test.limit), func(t *testing.T) {
+			for _, includeRead := range []bool{true, false} {
+				calls := 0
+				db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					if prefix, ok := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS); ok && prefix.Value == "R#" {
+						return &dynamodb.QueryOutput{}, nil
+					}
+					calls++
+					id := fmt.Sprint(calls)
+					feedID := "other"
+					// Return a partial page before exhausting the budget.
+					if test.limit > 1 && calls == 1 {
+						feedID = "keep"
+					}
+					row, err := attributevalue.MarshalMap(domain.Item{PK: domain.UserPK("user"), SK: "I#" + id, ItemID: id, FeedID: feedID})
+					if err != nil {
+						t.Fatal(err)
+					}
+					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}, LastEvaluatedKey: itemPageKey(row, domain.OrderChrono)}, nil
+				}}
+				items, cursor, _, err := New(db, nil, "table", "", "").ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", test.limit, includeRead, true, map[string]bool{"keep": true}, nil, domain.FetchWindow{})
+				wantItems := 0
+				if test.limit > 1 {
+					wantItems = 1
+				}
+				if err != nil || calls != test.pages || len(items) != wantItems || cursor == "" {
+					t.Fatalf("includeRead=%v calls=%d items=%v cursor=%q err=%v", includeRead, calls, items, cursor, err)
+				}
+			}
+		})
+	}
+}
+
 func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T) {
 	marshal := func(id string, published time.Time) map[string]types.AttributeValue {
 		item, err := attributevalue.MarshalMap(domain.Item{
@@ -426,7 +461,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 	}
 	repository := New(db, nil, "table", "", "")
 
-	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{})
+	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, false, false, nil, nil, domain.FetchWindow{})
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget || readQueryCalls != 1 || len(first) != 1 || first[0].ItemID != "unread-100" || cursor == "" {
 		t.Fatalf("budget page = %#v, cursor = %q, item queries = %d, read queries = %d, err = %v", first, cursor, itemQueryCalls, readQueryCalls, err)
 	}
@@ -434,7 +469,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 		t.Fatalf("budget page anchor = %#v", anchor)
 	}
 
-	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 2, false, false, nil, nil, domain.FetchWindow{})
+	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 100, false, false, nil, nil, domain.FetchWindow{})
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget+1 || readQueryCalls != 2 || len(second) != 1 || second[0].ItemID != "unread-101" || cursor != "" || anchor != nil {
 		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, item queries = %d, read queries = %d, err = %v", second, cursor, anchor, itemQueryCalls, readQueryCalls, err)
 	}

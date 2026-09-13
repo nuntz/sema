@@ -536,7 +536,15 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         const includeRead = includeReadForGrid(unreadOnly());
         const [storyPage, page] = await Promise.all([
           api.stories(scope(), includeRead, fetchWindow, true),
-          api.items("interest", "", includeRead, scope(), false, fetchWindow),
+          api.items(
+            "interest",
+            "",
+            includeRead,
+            scope(),
+            false,
+            fetchWindow,
+            insert ? 100 : 20,
+          ),
         ]);
         if (version !== requestVersion) return 0;
         const incomingStories = storyPage.stories ?? [];
@@ -608,6 +616,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         scope(),
         false,
         fetchWindow,
+        insert ? 100 : 20,
       );
       if (version !== requestVersion) return 0;
       const unseen = pollCandidates(
@@ -633,6 +642,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       return 0;
     } finally {
       pollInFlight = false;
+      if (insert) schedulePoll();
     }
   };
 

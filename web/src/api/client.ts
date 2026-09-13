@@ -115,8 +115,9 @@ export class APIClient {
     scope: GridScope = null,
     excludeStories = false,
     window?: FetchWindow,
+    limit = 100,
   ): Promise<ItemsResponse> {
-    const params = new URLSearchParams({ order, limit: "100" });
+    const params = new URLSearchParams({ order, limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
     if (includeRead) params.set("include_read", "true");
     if (window) {

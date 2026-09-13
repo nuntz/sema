@@ -697,9 +697,9 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		if err != nil {
 			return nil, "", nil, err
 		}
-		pageBudget = unreadItemsForFeedsPageBudget
+		pageBudget = max(10, unreadItemsForFeedsPageBudget*limit/100)
 	} else if fillFilteredPage || !window.From.IsZero() {
-		pageBudget = unreadItemsForFeedsPageBudget
+		pageBudget = max(10, unreadItemsForFeedsPageBudget*limit/100)
 	}
 	items := []domain.Item{}
 	seenItemIDs := make(map[string]bool)
