@@ -19,6 +19,7 @@ export type GridCommand =
   | "undo"
   | "copy"
   | "original"
+  | "image"
   | "order"
   | "related";
 export type AppCommand =
@@ -66,6 +67,7 @@ const gridBindings: Record<string, GridCommand> = {
   g: "go-prefix",
   u: "undo",
   c: "copy",
+  i: "image",
   v: "original",
   t: "order",
   r: "related",

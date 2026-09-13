@@ -48,6 +48,20 @@ class FakeBrowser implements OverlayHistoryLike, PopStateSource {
 }
 
 describe("overlay history", () => {
+  it("replaces the grid lightbox with the reader before the next Back", () => {
+    const browser = new FakeBrowser();
+    const overlays = createOverlayHistory(browser, browser);
+    const closed: string[] = [];
+    overlays.pushOverlay("lightbox", () => closed.push("lightbox"));
+    overlays.closeOverlay("lightbox");
+    overlays.pushOverlay("reader", () => closed.push("reader"));
+    expect(browser.pushes).toBe(1);
+    browser.goTo(0);
+    expect(browser.entries).toHaveLength(2);
+    expect(browser.state).toMatchObject({ sema: "reader" });
+    browser.goTo(0);
+    expect(closed).toEqual(["reader"]);
+  });
   it("pops overlays in stack order", () => {
     const browser = new FakeBrowser();
     const overlays = createOverlayHistory(browser, browser);

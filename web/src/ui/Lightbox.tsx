@@ -23,6 +23,7 @@ export function Lightbox(props: {
   images: LightboxImage[];
   initialIndex: number;
   onClose(): void;
+  onOpenReader?(): void;
 }) {
   const phone = createMediaQuery("(max-width: 619px)");
   const reduced = createMediaQuery("(prefers-reduced-motion: reduce)");
@@ -141,6 +142,11 @@ export function Lightbox(props: {
     closeOverlay("lightbox");
     closeTimer = window.setTimeout(props.onClose, duration);
   };
+  const openReader = () => {
+    if (!props.onOpenReader || closing()) return;
+    close();
+    props.onOpenReader();
+  };
   const navigate = (next: number) => {
     if (closing()) return;
     clearTimeout(swipeTimer);
@@ -223,6 +229,12 @@ export function Lightbox(props: {
         void member.element.decode().then(
           () => {
             if (!cancelled) {
+              // Detached grid images may initially have only fallback geometry.
+              if (
+                !member.element.isConnected &&
+                !(member.width && member.height)
+              )
+                setRect(fittedRect(member, innerWidth, innerHeight));
               setNative(
                 Math.max(1, member.element.naturalWidth / rect().width),
               );
@@ -253,6 +265,7 @@ export function Lightbox(props: {
     )
       return;
     event.preventDefault();
+    event.stopImmediatePropagation();
     if (closing()) return;
     wake();
     switch (lightboxCommand(event.key)) {
@@ -273,6 +286,9 @@ export function Lightbox(props: {
         break;
       case "zoom":
         toggleZoom();
+        break;
+      case "reader":
+        openReader();
         break;
       case "original":
         openOriginal();
@@ -312,7 +328,8 @@ export function Lightbox(props: {
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     pushOverlay("lightbox", () => close());
-    window.addEventListener("keydown", onKey);
+    // Own modal keys before background controls (including tag filters).
+    window.addEventListener("keydown", onKey, true);
     const keepFocus = (event: FocusEvent) => {
       if (!dialog.contains(event.target as Node)) closeButton.focus();
     };
@@ -342,7 +359,7 @@ export function Lightbox(props: {
       duration: reduced() ? 90 : 180,
     });
     onCleanup(() => {
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("focusin", keepFocus);
       closeOverlay("lightbox");
       clearTimeout(idleTimer);
@@ -659,6 +676,16 @@ export function Lightbox(props: {
             >
               <Icon name="open-original" size={20} />
             </button>
+            <Show when={props.onOpenReader}>
+              <button
+                type="button"
+                class="lb-control"
+                aria-label="Open in reader"
+                onClick={openReader}
+              >
+                <Icon name="newspaper" size={20} />
+              </button>
+            </Show>
             <button
               ref={closeButton}
               type="button"
@@ -759,7 +786,13 @@ export function Lightbox(props: {
               </button>
             </header>
             <p>Reader keys are suspended while this is open.</p>
-            <For each={lightboxBindings}>
+            <For
+              each={
+                props.onOpenReader
+                  ? [...lightboxBindings, ["o", "Open in reader"]]
+                  : lightboxBindings
+              }
+            >
               {([key, label]) => (
                 <div>
                   <kbd>{key}</kbd>

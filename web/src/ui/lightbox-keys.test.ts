@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { imageIndex, lightboxCommand } from "./lightbox-keys";
 
 it("maps image navigation and never wraps at either end", () => {
+  expect(lightboxCommand("o")).toBe("reader");
   expect(lightboxCommand("j")).toBe("next");
   expect(lightboxCommand("k")).toBe("previous");
   expect(lightboxCommand("Escape")).toBe("close");

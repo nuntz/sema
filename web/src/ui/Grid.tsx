@@ -54,12 +54,15 @@ import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
 import { ExpiryPill } from "./ExpiryPill";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
+import { gridLightboxLead, loadGridLightboxImages } from "./grid-lightbox";
 import {
   GridPixelRatioContext,
   gridImageOverscan,
   ImageLoadingEnabledContext,
 } from "./image-loading";
 import { gridCommand, isEditingTarget } from "./keyboard";
+import { Lightbox } from "./Lightbox";
+import type { LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
@@ -206,6 +209,46 @@ function GridContent(props: GridProps) {
   const [scrollTop, setScrollTop] = createSignal(
     Math.max(0, props.initialScrollTop ?? 0),
   );
+  const [lightbox, setLightbox] = createSignal<{
+    item: Item;
+    images: LightboxImage[];
+    index: number;
+  }>();
+  let imageRequest: AbortController | undefined;
+  let imageOrigin: HTMLElement | undefined;
+  const closeGridLightbox = (restoreFocus = true) => {
+    imageRequest?.abort();
+    imageRequest = undefined;
+    setLightbox();
+    if (restoreFocus) imageOrigin?.focus({ preventScroll: true });
+  };
+  onCleanup(() => imageRequest?.abort());
+  createEffect(() => {
+    if (!props.active) closeGridLightbox(false);
+  });
+  const openImages = async (item: Item) => {
+    imageRequest?.abort();
+    const request = new AbortController();
+    imageRequest = request;
+    const id = props.focusedID || item.item_id;
+    const cell = scroller.querySelector<HTMLElement>(
+      `[data-focus-id="${CSS.escape(id)}"], [data-item-id="${CSS.escape(id)}"]`,
+    );
+    imageOrigin = cell?.matches(".story-headline")
+      ? cell
+      : (cell?.querySelector<HTMLElement>(".story-lead, .cell-main") ??
+        cell ??
+        undefined);
+    const lead = gridLightboxLead(
+      item,
+      cell?.querySelector("img") ?? new Image(),
+    );
+    if (lead) setLightbox({ item, images: [lead], index: 0 });
+    const images = await loadGridLightboxImages(item, lead, request.signal);
+    if (request.signal.aborted || imageRequest !== request || !props.active)
+      return;
+    if (images.length) setLightbox({ item, images, index: 0 });
+  };
   const [sheetItem, setSheetItem] = createSignal<Item>();
   const [sheetStory, setSheetStory] = createSignal<Story>();
   const [pressedID, setPressedID] = createSignal("");
@@ -863,6 +906,8 @@ function GridContent(props: GridProps) {
       clearGo();
       return;
     }
+    if (lightbox()) return;
+    if (event.key === "Escape") imageRequest?.abort();
     setKeyboardFocus(true);
     if (sheetItem() && event.key === "Escape") {
       closeSheet();
@@ -1026,6 +1071,9 @@ function GridContent(props: GridProps) {
       case "copy":
         if (item && isRedditItem(item)) openDiscussion(item);
         else if (item) props.onCopy(item);
+        break;
+      case "image":
+        if (item) void openImages(item);
         break;
       case "original":
         if (item) props.onOriginal(item);
@@ -1623,6 +1671,24 @@ function GridContent(props: GridProps) {
           </section>
         </Show>
       </div>
+      <Show when={lightbox()}>
+        {(state) => (
+          <Lightbox
+            images={state().images}
+            initialIndex={state().index}
+            onClose={closeGridLightbox}
+            onOpenReader={
+              redditPrimaryRoute(state().item).kind === "external"
+                ? undefined
+                : () => {
+                    const item = state().item;
+                    closeGridLightbox(false);
+                    openPrimary(item);
+                  }
+            }
+          />
+        )}
+      </Show>
       <Portal>
         <Show when={sheetItem()} keyed>
           {(item) => (
@@ -1731,6 +1797,22 @@ function GridContent(props: GridProps) {
                     {sheetStory()?.items.some((member) => !member.read)
                       ? "Mark read"
                       : "Mark unread"}
+                  </button>
+                </Show>
+                <Show
+                  when={
+                    item.has_body ||
+                    (item.media_url &&
+                      item.media_type !== "video" &&
+                      item.post_type !== "video")
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() => runSheetAction(() => void openImages(item))}
+                  >
+                    <Icon name="expand" size={20} />
+                    View images
                   </button>
                 </Show>
                 <Show when={!isRedditItem(item)}>

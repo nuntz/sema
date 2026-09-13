@@ -23,6 +23,8 @@ export function lightboxCommand(key: string) {
       return "last";
     case "z":
       return "zoom";
+    case "o":
+      return "reader";
     case "Enter":
       return "original";
     case "?":

@@ -17,6 +17,7 @@ describe("keyboard map", () => {
     ["ArrowRight", "right"],
     ["Enter", "open"],
     ["o", "open"],
+    ["i", "image"],
     ["+", "like"],
     [".", "like"],
     ["-", "dislike"],
