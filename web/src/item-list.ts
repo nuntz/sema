@@ -100,3 +100,11 @@ export function unreadIDsAfter(items: Item[], focusedID: string): string[] {
     .filter((item) => !item.read)
     .map((item) => item.item_id);
 }
+
+export const INITIAL_POLL_INTERVAL = 3 * 60_000;
+
+export function nextPollInterval(current: number, foundItems: boolean): number {
+  return foundItems
+    ? INITIAL_POLL_INTERVAL
+    : Math.min(current * 2, 15 * 60_000);
+}

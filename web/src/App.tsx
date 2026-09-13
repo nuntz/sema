@@ -26,8 +26,10 @@ import { effectiveGridOrder, sameGridScope } from "./grid-scope";
 import {
   finishAndClearGrid,
   type GridClearSnapshot,
+  INITIAL_POLL_INTERVAL,
   includeReadForGrid,
   mergeNewItems,
+  nextPollInterval,
   pollCandidates,
   prependGridIDs,
   unreadIDsAfter,
@@ -190,6 +192,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const readFlushes = new Set<Promise<void>>();
   let readerCloseTimer: number | undefined;
   let pollTimer: number | undefined;
+  let pollInterval = INITIAL_POLL_INTERVAL;
+  let pollGeneration = 0;
   let pollInFlight = false;
   let markBelowInFlight = false;
   let goPending = false;
@@ -525,6 +529,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
     const version = requestVersion;
     const clearVersion = gridClearVersion;
+    const generation = pollGeneration;
     pollInFlight = true;
     try {
       if (gridOrder() === "interest") {
@@ -592,6 +597,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         } else if (unseen.length > 0) {
           setPendingNew((current) => mergeNewItems(current, unseen));
         }
+        if (generation === pollGeneration)
+          pollInterval = nextPollInterval(pollInterval, unseen.length > 0);
         return unseen.length;
       }
       const page = await api.items(
@@ -609,6 +616,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         page.items ?? [],
         unreadOnly(),
       );
+      if (generation === pollGeneration)
+        pollInterval = nextPollInterval(pollInterval, unseen.length > 0);
       if (insert && clearVersion === gridClearVersion) {
         const incoming = [...pendingNew(), ...unseen].sort((left, right) =>
           right.fetched_ts.localeCompare(left.fetched_ts),
@@ -626,6 +635,29 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       pollInFlight = false;
     }
   };
+
+  const schedulePoll = () => {
+    window.clearTimeout(pollTimer);
+    if (disposed) return;
+    pollTimer = window.setTimeout(async () => {
+      await pollNew();
+      schedulePoll();
+    }, pollInterval);
+  };
+  const resetPoll = () => {
+    pollGeneration++;
+    pollInterval = INITIAL_POLL_INTERVAL;
+    schedulePoll();
+  };
+  createEffect(() => {
+    scope();
+    view();
+    itemView();
+    mode();
+    gridOrder();
+    unreadOnly();
+    resetPoll();
+  });
 
   let previousSearchScope: GridScope = null;
   createEffect(() => {
@@ -862,7 +894,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         else closeKeys();
       }
     };
-    pollTimer = window.setInterval(() => void pollNew(), 60_000);
+    const onPollVisibility = () => {
+      if (document.visibilityState === "visible") resetPoll();
+    };
+    document.addEventListener("visibilitychange", onPollVisibility);
+    resetPoll();
     window.addEventListener("keydown", onShortcutCapture, true);
     window.addEventListener("blur", clearGoOnFocus);
     window.addEventListener("focusin", clearGoOnFocus);
@@ -879,7 +915,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       window.removeEventListener("keydown", onKeyDown);
       window.clearTimeout(readTimer);
       window.clearTimeout(readerCloseTimer);
-      window.clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", onPollVisibility);
+      window.clearTimeout(pollTimer);
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
       window.clearTimeout(undoTimer);

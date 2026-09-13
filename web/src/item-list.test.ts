@@ -3,6 +3,7 @@ import {
   finishAndClearGrid,
   includeReadForGrid,
   mergeNewItems,
+  nextPollInterval,
   pollCandidates,
   prependGridIDs,
   unreadIDsAfter,
@@ -195,5 +196,18 @@ describe("item list", () => {
       make("unread-below"),
     ];
     expect(unreadIDsAfter(items, "focused")).toEqual(["unread-below"]);
+  });
+});
+
+describe("poll backoff", () => {
+  it("doubles empty polls from three minutes up to fifteen minutes", () => {
+    let interval = 3 * 60_000;
+    for (const minutes of [6, 12, 15, 15]) {
+      interval = nextPollInterval(interval, false);
+      expect(interval).toBe(minutes * 60_000);
+    }
+  });
+  it("resets to three minutes when candidates arrive", () => {
+    expect(nextPollInterval(15 * 60_000, true)).toBe(3 * 60_000);
   });
 });
