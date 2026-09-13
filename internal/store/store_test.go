@@ -1767,3 +1767,33 @@ func TestSearchItemsScopedPageFill(t *testing.T) {
 		})
 	}
 }
+
+func TestInjectedReadMarkers(t *testing.T) {
+	calls := 0
+	row, err := attributevalue.MarshalMap(domain.Item{PK: domain.UserPK("user"), SK: "I#item", ItemID: "item", FeedID: "feed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &fakeDynamoDB{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		if prefix, ok := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS); ok && prefix.Value == "R#" {
+			t.Fatal("injected source must replace marker queries")
+		}
+		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}}, nil
+	}}
+	s := New(db, nil, "table", "", "")
+	s.ReadMarkers = func(_ context.Context, userID string) (map[string]bool, error) {
+		if userID != "user" {
+			t.Fatalf("user = %q", userID)
+		}
+		calls++
+		return map[string]bool{"item": true}, nil
+	}
+	items, _, anchor, err := s.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, false, false, nil, nil, domain.FetchWindow{})
+	if err != nil || len(items) != 0 || anchor == nil || anchor.ItemID != "item" {
+		t.Fatalf("items=%v anchor=%v err=%v", items, anchor, err)
+	}
+	counts, err := s.FeedItemCounts(context.Background(), "user", domain.FetchWindow{})
+	if err != nil || counts["feed"].All != 1 || counts["feed"].Unread != 0 || calls != 2 {
+		t.Fatalf("counts=%v calls=%d err=%v", counts, calls, err)
+	}
+}

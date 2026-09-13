@@ -56,6 +56,8 @@ type queueAPI interface {
 }
 
 type server struct {
+	readMu           sync.Mutex
+	readCache        map[string]cachedReadMarkers
 	store            *store.Store
 	sessions         *auth.Sessions
 	verifyGoogle     func(context.Context, string) (auth.Claims, error)
@@ -720,6 +722,11 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("load ranking model", err)
 		}
 	}
+	itemStore := s.store
+	if !includeRead {
+		itemStore = s.markerStore(ctx)
+		ctx = context.WithValue(ctx, readMarkerStoreKey{}, itemStore)
+	}
 	var hidden map[string]bool
 	if excludeStories {
 		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window)
@@ -728,7 +735,7 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 	}
 	filtered := query["tag"] != "" || query["feed"] != ""
-	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window)
+	items, next, readAnchor, err := itemStore.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -806,6 +813,91 @@ func conditionalStories(result events.APIGatewayV2HTTPResponse, headers map[stri
 		}
 	}
 	return result
+}
+
+const readCacheTTL = time.Minute
+
+type cachedReadMarkers struct {
+	loaded time.Time
+	ids    map[string]bool
+}
+
+type readMarkerStoreKey struct{}
+
+// A request-local store copy reuses one snapshot for items and story members.
+// The shared store remains unchanged, including for callers outside these paths.
+func (s *server) markerStore(ctx context.Context) *store.Store {
+	if requestStore, ok := ctx.Value(readMarkerStoreKey{}).(*store.Store); ok {
+		return requestStore
+	}
+	requestStore := *s.store
+	var ids map[string]bool
+	requestStore.ReadMarkers = func(ctx context.Context, userID string) (map[string]bool, error) {
+		var err error
+		if ids == nil {
+			ids, err = s.loadReadMarkers(ctx, userID)
+		}
+		return ids, err
+	}
+	return &requestStore
+}
+
+func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	now := time.Now()
+	entry, ok := s.readCache[userID]
+	if !ok || now.Sub(entry.loaded) >= readCacheTTL {
+		ids, err := s.store.LoadReadMarkers(ctx, userID)
+		if err != nil {
+			delete(s.readCache, userID)
+			return nil, err
+		}
+		if s.readCache == nil {
+			s.readCache = make(map[string]cachedReadMarkers)
+		}
+		for key, cached := range s.readCache {
+			if now.Sub(cached.loaded) >= readCacheTTL {
+				delete(s.readCache, key)
+			}
+		}
+		if len(s.readCache) >= 128 {
+			oldest, oldestTime := "", now
+			for key, cached := range s.readCache {
+				if cached.loaded.Before(oldestTime) {
+					oldest, oldestTime = key, cached.loaded
+				}
+			}
+			delete(s.readCache, oldest)
+		}
+		entry = cachedReadMarkers{now, ids}
+		s.readCache[userID] = entry
+	}
+	// Copy under the lock so mutations cannot race with request readers.
+	snapshot := make(map[string]bool, len(entry.ids))
+	for id, read := range entry.ids {
+		snapshot[id] = read
+	}
+	return snapshot, nil
+}
+
+func (s *server) setRead(ctx context.Context, userID string, ids []string, read bool) error {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if err := s.store.SetRead(ctx, userID, ids, read); err != nil {
+		delete(s.readCache, userID)
+		return err
+	}
+	if entry, ok := s.readCache[userID]; ok {
+		for _, id := range ids {
+			if read {
+				entry.ids[id] = true
+			} else {
+				delete(entry.ids, id)
+			}
+		}
+	}
+	return nil
 }
 
 const storyCacheTTL = 4 * time.Minute
@@ -889,7 +981,11 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 	for _, row := range rows {
 		ids = append(ids, row.MemberIDs...)
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
+	itemStore := s.store
+	if unreadOnly {
+		itemStore = s.markerStore(ctx)
+	}
+	items, err := itemStore.ResolveItemIDs(ctx, userID, ids)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1193,7 +1289,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 			return badRequest(err)
 		}
 		defer s.invalidateStories(userID)
-		if err := s.store.SetRead(ctx, userID, []string{itemID}, input.Read); err != nil {
+		if err := s.setRead(ctx, userID, []string{itemID}, input.Read); err != nil {
 			return s.failure("set read state", err)
 		}
 	case "events":
@@ -1290,7 +1386,7 @@ func (s *server) readBatch(ctx context.Context, userID, body string) events.APIG
 		read = *input.Read
 	}
 	defer s.invalidateStories(userID)
-	if err := s.store.SetRead(ctx, userID, input.IDs, read); err != nil {
+	if err := s.setRead(ctx, userID, input.IDs, read); err != nil {
 		return s.failure("batch read state", err)
 	}
 	return response(http.StatusOK, map[string]bool{"ok": true})
@@ -1309,7 +1405,7 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 	if err != nil {
 		return badRequest(err)
 	}
-	counts, err := s.store.FeedItemCounts(ctx, userID, window)
+	counts, err := s.markerStore(ctx).FeedItemCounts(ctx, userID, window)
 	if err != nil {
 		return s.failure("count live feed items", err)
 	}

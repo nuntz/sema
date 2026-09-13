@@ -47,12 +47,14 @@ type s3API interface {
 }
 
 type Store struct {
-	db         dynamoAPI
-	s3         s3API
-	table      string
-	bucket     string
-	contentURL string
-	sleep      func(context.Context, time.Duration) error
+	// ReadMarkers optionally supplies an immutable read-marker snapshot.
+	ReadMarkers func(context.Context, string) (map[string]bool, error)
+	db          dynamoAPI
+	s3          s3API
+	table       string
+	bucket      string
+	contentURL  string
+	sleep       func(context.Context, time.Duration) error
 }
 
 const (
@@ -601,7 +603,7 @@ func (s *Store) Items(ctx context.Context, userID string, order domain.Order, en
 // It deliberately does not use Feed.ItemCount, which is a lifetime ingest
 // counter and therefore includes expired and read items.
 func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow) (map[string]domain.FeedItemCount, error) {
-	readItemIDs, err := s.readItemIDs(ctx, userID)
+	readItemIDs, err := s.LoadReadMarkers(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -691,7 +693,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	var readItemIDs map[string]bool
 	pageBudget := itemsForFeedsPageBudget
 	if !includeRead {
-		readItemIDs, err = s.readItemIDs(ctx, userID)
+		readItemIDs, err = s.LoadReadMarkers(ctx, userID)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -764,6 +766,14 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	}
 	next, err := encodeCursor(last)
 	return items, next, newestRead, err
+}
+
+// LoadReadMarkers uses the injected source when present, otherwise querying DynamoDB.
+func (s *Store) LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
+	if s.ReadMarkers != nil {
+		return s.ReadMarkers(ctx, userID)
+	}
+	return s.readItemIDs(ctx, userID)
 }
 
 // readItemIDs loads the compact read-marker keyspace once so an unread request
@@ -2517,6 +2527,17 @@ func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.I
 	if len(items) == 0 {
 		return nil
 	}
+	if s.ReadMarkers != nil {
+		read, err := s.LoadReadMarkers(ctx, userID)
+		if err != nil {
+			return err
+		}
+		for i := range items {
+			items[i].Read = read[items[i].ItemID]
+		}
+		return nil
+	}
+
 	keys := make([]map[string]types.AttributeValue, 0, len(items))
 	seen := make(map[string]bool, len(items))
 	for _, item := range items {
