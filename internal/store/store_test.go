@@ -127,6 +127,9 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 				{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("read")}},
 			}}, nil
 		}
+		if aws.ToBool(input.ConsistentRead) {
+			t.Fatal("badge counts must use eventually consistent reads")
+		}
 		if aws.ToString(input.FilterExpression) != "#ttl > :now" || aws.ToString(input.ProjectionExpression) != "item_id, feed_id, fetched_ts" {
 			t.Fatalf("item count query = %#v", input)
 		}

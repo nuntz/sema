@@ -623,7 +623,6 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 				":now":    &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
 			},
 			ExclusiveStartKey: start,
-			ConsistentRead:    aws.Bool(true),
 		})
 		if err != nil {
 			return nil, err
