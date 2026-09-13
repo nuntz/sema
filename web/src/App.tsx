@@ -1871,7 +1871,11 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               unreadOnly={unreadOnly()}
               value={scope()}
               active={
-                !readerID() && !keysOpen() && !confirmRemove() && !headerMenu()
+                !readerID() &&
+                !relatedSource() &&
+                !keysOpen() &&
+                !confirmRemove() &&
+                !headerMenu()
               }
               openRequest={tagOpenRequest()}
               tooltipDisabled={headerTooltipDisabled()}

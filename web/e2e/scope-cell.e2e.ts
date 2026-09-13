@@ -118,6 +118,23 @@ async function openGrid(page: Page, empty = false, tag = false) {
 }
 
 test.use({ timezoneId: "America/Vancouver" });
+test("Escape closes related items before clearing the tag filter", async ({
+  page,
+}) => {
+  await openGrid(page, false, true);
+  const title = page.locator(".scope-cell__title");
+  await expect(title).toHaveText("#design");
+  await page.locator('[data-item-id="Today unread"]').hover();
+  await page.keyboard.press("r");
+  const panel = page.getByRole("dialog", { name: "Similar to Today unread" });
+  await expect(panel).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await expect(title).toHaveText("#design");
+  await page.keyboard.press("Escape");
+  await expect(title).toHaveText("Unread");
+});
+
 for (const width of [1440, 393]) {
   test(`scope counts and geometry at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
