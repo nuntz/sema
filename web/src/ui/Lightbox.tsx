@@ -1,4 +1,5 @@
 import {
+  batch,
   createEffect,
   createSignal,
   For,
@@ -47,6 +48,8 @@ export function Lightbox(props: {
   const [failed, setFailed] = createSignal(false);
   const [closing, setClosing] = createSignal(false);
   const [dragging, setDragging] = createSignal(false);
+  const [rebasing, setRebasing] = createSignal(false);
+  let swipeTarget: number | undefined;
   let dialog!: HTMLDivElement;
   let frame!: HTMLDivElement;
   let scrim!: HTMLDivElement;
@@ -150,6 +153,7 @@ export function Lightbox(props: {
   const navigate = (next: number) => {
     if (closing()) return;
     clearTimeout(swipeTimer);
+    swipeTarget = undefined;
     const target = imageIndex(next, 0, props.images.length);
     if (target === index()) {
       if (!reduced() && props.images.length > 1)
@@ -168,13 +172,30 @@ export function Lightbox(props: {
     captionTimer = window.setTimeout(() => setPreviousCaption(""), 120);
     gesture = undefined;
     pointers.clear();
-    setDragging(false);
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    setTravel(0);
-    setDown(0);
-    setRect(fittedRect(props.images[target], innerWidth, innerHeight));
-    setIndex(target);
+    // The neighbour has already slid into place. Reuse the main frame there
+    // without animating it back from the outgoing image's position.
+    batch(() => {
+      setRebasing(true);
+      setDragging(false);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setTravel(0);
+      setDown(0);
+      setRect(fittedRect(props.images[target], innerWidth, innerHeight));
+      setIndex(target);
+    });
+    frame.getBoundingClientRect();
+    setRebasing(false);
+    wake();
+  };
+  const finishSwipe = () => {
+    if (swipeTarget === undefined) return;
+    const target = swipeTarget;
+    swipeTarget = undefined;
+    clearTimeout(swipeTimer);
+    // A cancelled swipe simply settles; it is not an attempt to navigate
+    // beyond the gallery boundary and must not trigger the edge bounce.
+    if (target !== index()) navigate(target);
     wake();
   };
   createEffect(() => {
@@ -375,7 +396,11 @@ export function Lightbox(props: {
     });
   });
   const pointerDown = (event: PointerEvent) => {
-    if ((event.target as HTMLElement).closest("button, .lb-help") || closing())
+    if (
+      (event.target as HTMLElement).closest("button, .lb-help") ||
+      closing() ||
+      swipeTarget !== undefined
+    )
       return;
     pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     dialog.setPointerCapture(event.pointerId);
@@ -469,15 +494,11 @@ export function Lightbox(props: {
           : 0,
         props.images.length,
       );
+      swipeTarget = next;
       setTravel((index() - next) * (innerWidth + 24));
-      swipeTimer = window.setTimeout(
-        () => {
-          navigate(next);
-          setTravel(0);
-          wake();
-        },
-        reduced() ? 0 : 180,
-      );
+      // transitionend owns the handoff; the timer covers absent transitions
+      // (including reduced motion or releasing at the exact destination).
+      swipeTimer = window.setTimeout(finishSwipe, reduced() ? 0 : 280);
     } else if (
       Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 8 &&
       phone()
@@ -518,6 +539,7 @@ export function Lightbox(props: {
         data-zoom={zoom() > 1 ? "" : undefined}
         data-closing={closing() ? "" : undefined}
         data-dragging={dragging() ? "" : undefined}
+        data-rebasing={rebasing() ? "" : undefined}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
         onPointerUp={pointerEnd}
@@ -565,7 +587,15 @@ export function Lightbox(props: {
             }}
           </For>
         </Show>
-        <div ref={frame} class="lb-frame" style={frameStyle()}>
+        <div
+          ref={frame}
+          class="lb-frame"
+          style={frameStyle()}
+          onTransitionEnd={(event) => {
+            if (event.target === frame && event.propertyName === "transform")
+              finishSwipe();
+          }}
+        >
           <Show
             when={!failed()}
             fallback={

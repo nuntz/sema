@@ -1356,6 +1356,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .lb-overlay[data-zoom] .lb-frame { cursor: grab; }
 .lb-overlay[data-zoom][data-dragging] .lb-frame { cursor: grabbing; }
 .lb-overlay[data-dragging] :is(.lb-frame, .lb-neighbour, .lb-scrim) { transition: none; }
+.lb-overlay[data-rebasing] :is(.lb-frame, .lb-neighbour) { transition: none; }
 .lb-top { position: absolute; top: 20px; left: 20px; right: 20px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
 .lb-identity, .lb-actions { display: flex; gap: 8px; align-items: center; }
 .lb-actions { pointer-events: auto; }

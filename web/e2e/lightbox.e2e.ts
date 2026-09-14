@@ -145,6 +145,45 @@ test("phone paging flips the counter mid-swipe and downward drag dismisses", asy
   await expect(page.locator(".reader")).toBeVisible();
 });
 
+test("phone swipe handoff keeps the incoming image centred in both directions", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+  await page.locator(".lb-openable").first().click();
+  const frame = page.locator(".lb-frame");
+  await frame.evaluate(async (element) => {
+    await Promise.all(
+      element.getAnimations().map((animation) => animation.finished),
+    );
+  });
+  for (const [start, end, image] of [
+    [310, 60, "2.svg"],
+    [60, 310, "1.svg"],
+  ] as const) {
+    await page.mouse.move(start, 420);
+    await page.mouse.down();
+    await page.mouse.move(end, 420, { steps: 8 });
+    const [samples] = await Promise.all([
+      frame.evaluate(async (element, target) => {
+        const positions: number[] = [];
+        const until = performance.now() + 650;
+        while (performance.now() < until) {
+          await new Promise(requestAnimationFrame);
+          if (element.querySelector("img")?.src.endsWith(target)) {
+            const rect = element.getBoundingClientRect();
+            positions.push(rect.left + rect.width / 2 - innerWidth / 2);
+          }
+        }
+        return positions;
+      }, image),
+      page.mouse.up(),
+    ]);
+    expect(samples.length).toBeGreaterThan(5);
+    expect(Math.max(...samples.map(Math.abs))).toBeLessThan(1);
+  }
+});
+
 test("lead quality swap preserves geometry and failures retain the soft image", async ({
   page,
 }) => {
