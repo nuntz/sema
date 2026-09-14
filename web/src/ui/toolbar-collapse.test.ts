@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   expandToolbar,
   initialToolbarCollapseState,
+  scopeChipVisible,
   updateToolbarCollapse,
 } from "./toolbar-collapse";
 
@@ -53,4 +54,19 @@ describe("reader toolbar collapse", () => {
       lastScrollTop: 0,
     });
   });
+});
+
+it("shows the scope chip only beyond the bar while expanded", () => {
+  const initial = initialToolbarCollapseState();
+  expect(scopeChipVisible(0, 114, initial)).toBe(false);
+  expect(scopeChipVisible(114, 114, initial)).toBe(false);
+  expect(scopeChipVisible(115, 114, initial)).toBe(true);
+  const down = updateToolbarCollapse(initial, 250, false);
+  expect(scopeChipVisible(250, 114, down)).toBe(false);
+  const up = updateToolbarCollapse(down, 249, false);
+  expect(scopeChipVisible(249, 114, up)).toBe(true);
+  expect(scopeChipVisible(0, 114, updateToolbarCollapse(up, 0, false))).toBe(
+    false,
+  );
+  expect(scopeChipVisible(250, 0, initial)).toBe(false);
 });
