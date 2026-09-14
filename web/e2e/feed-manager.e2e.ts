@@ -124,7 +124,13 @@ async function openManager(
       if (!failing)
         feeds = feeds.map((feed) =>
           feed.feed_id === id
-            ? { ...feed, status: "ok", error_count: 0 }
+            ? {
+                ...feed,
+                status: "ok",
+                error_count: 0,
+                last_status: "queued",
+                next_fetch_at: now.toISOString(),
+              }
             : feed,
         );
       await route.fulfill({
@@ -338,8 +344,8 @@ for (const failRetry of [false, true]) {
     await expect(
       page.getByText(
         failRetry
-          ? "1 feed still failing · Couldn’t retry 1"
-          : "All feeds recovered",
+          ? "Retry queued for 2 feeds · couldn't queue 1"
+          : "Retry queued for 3 feeds",
         { exact: true },
       ),
     ).toBeVisible();

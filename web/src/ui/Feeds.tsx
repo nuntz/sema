@@ -232,21 +232,13 @@ export function Feeds(props: {
         ]);
         if (result.status === "rejected") rejected++;
       }
-      const latest = await refetch();
+      // Retry resets errors to queued/ok, so the banner clears before worker results exist.
+      await refetch();
       props.onFeedsChanged?.();
-      const ids = new Set(targets.map((feed) => feed.feed_id));
-      const failing = (latest ?? []).filter(
-        (feed) =>
-          ids.has(feed.feed_id) &&
-          (feed.status === "broken" || feed.status === "slowed"),
-      ).length;
+      const queued = targets.length - rejected;
       props.onToast(
-        failing || rejected ? "error" : "success",
-        rejected
-          ? `${failing} ${failing === 1 ? "feed" : "feeds"} still failing · Couldn’t retry ${rejected}`
-          : failing
-            ? `${failing} ${failing === 1 ? "feed" : "feeds"} still failing`
-            : "All feeds recovered",
+        rejected ? "error" : "success",
+        `Retry queued for ${queued} ${queued === 1 ? "feed" : "feeds"}${rejected ? ` · couldn't queue ${rejected}` : ""}`,
       );
     } catch {
       props.onToast("error", "Couldn’t refresh feeds after retrying");
@@ -532,65 +524,69 @@ export function Feeds(props: {
                 </div>
               }
             >
-              {(feed) => (
-                <button
-                  type="button"
-                  class="feed-manage-row"
-                  classList={{ muted: feed.muted }}
-                  aria-label={`${displayTitle(feed)}, ${feed.status} feed`}
-                  onClick={() => setSelectedID(feed.feed_id)}
-                >
-                  <FeedIcon feed={feed} />
-                  <div class="feed-row-copy">
-                    <div>
-                      <strong>{displayTitle(feed)}</strong>
-                      <For each={(feed.tags ?? []).slice(0, 3)}>
-                        {(tag) => <span class="tag-chip">{tag}</span>}
-                      </For>
+              {(feed) => {
+                const since = createMemo(() => brokenSince(feed));
+                return (
+                  <button
+                    type="button"
+                    class="feed-manage-row"
+                    classList={{ muted: feed.muted }}
+                    aria-label={`${displayTitle(feed)}, ${feed.status} feed`}
+                    onClick={() => setSelectedID(feed.feed_id)}
+                  >
+                    <FeedIcon feed={feed} />
+                    <div class="feed-row-copy">
+                      <div>
+                        <strong>{displayTitle(feed)}</strong>
+                        <For each={(feed.tags ?? []).slice(0, 3)}>
+                          {(tag) => <span class="tag-chip">{tag}</span>}
+                        </For>
+                      </div>
+                      <small>
+                        {feedDescriptor(feed)}
+                        {!feed.muted &&
+                        feedCount(props.itemCounts, feed.feed_id)?.all === 0
+                          ? " · nothing this week"
+                          : ""}
+                      </small>
                     </div>
-                    <small>
-                      {feedDescriptor(feed)}
-                      {!feed.muted &&
-                      feedCount(props.itemCounts, feed.feed_id)?.all === 0
-                        ? " · nothing this week"
-                        : ""}
-                    </small>
-                  </div>
-                  <span
-                    class="feed-unread"
-                    classList={{
-                      zero:
-                        feedCount(props.itemCounts, feed.feed_id)?.unread === 0,
-                    }}
-                    title="Unread items"
-                  >
-                    {feedCount(props.itemCounts, feed.feed_id)?.unread}
-                  </span>
-                  <span class="feed-row-status">
-                    <StatusBadge feed={feed} />
-                  </span>
-                  <span class="feed-row-prior">
-                    <Show when={!feed.muted}>
-                      <PriorBadge feed={feed} />
-                    </Show>
-                  </span>
-                  <time
-                    title={
-                      brokenSince(feed)
-                        ? `${new Date(brokenSince(feed) ?? "").toLocaleString()}${feed.last_error ? ` · ${feed.last_error}` : ""}`
-                        : undefined
-                    }
-                  >
-                    {brokenSince(feed)
-                      ? `failing ${relativeTime(brokenSince(feed) ?? "")}`
-                      : feed.muted
-                        ? "paused"
-                        : feed.last_fetch_at
-                          ? `${relativeTime(feed.last_fetch_at)} ago`
-                          : "never"}
-                  </time>
-                </button>
-              )}
+                    <span
+                      class="feed-unread"
+                      classList={{
+                        zero:
+                          feedCount(props.itemCounts, feed.feed_id)?.unread ===
+                          0,
+                      }}
+                      title="Unread items"
+                    >
+                      {feedCount(props.itemCounts, feed.feed_id)?.unread}
+                    </span>
+                    <span class="feed-row-status">
+                      <StatusBadge feed={feed} since={since()} />
+                    </span>
+                    <span class="feed-row-prior">
+                      <Show when={!feed.muted}>
+                        <PriorBadge feed={feed} />
+                      </Show>
+                    </span>
+                    <time
+                      title={
+                        since()
+                          ? `${new Date(since() ?? "").toLocaleString()}${feed.last_error ? ` · ${feed.last_error}` : ""}`
+                          : undefined
+                      }
+                    >
+                      {since()
+                        ? `failing ${relativeTime(since() ?? "")}`
+                        : feed.muted
+                          ? "paused"
+                          : feed.last_fetch_at
+                            ? `${relativeTime(feed.last_fetch_at)} ago`
+                            : "never"}
+                    </time>
+                  </button>
+                );
+              }}
             </For>
           </Show>
         </div>
@@ -1546,9 +1542,9 @@ function DrawerStatus(props: { feed: Feed }) {
   );
 }
 
-function StatusBadge(props: { feed: Feed }) {
+function StatusBadge(props: { feed: Feed; since?: string }) {
   const description = () => {
-    const since = brokenSince(props.feed);
+    const since = props.since;
     const days = since
       ? Math.floor((Date.now() - Date.parse(since)) / 86400000)
       : 0;
