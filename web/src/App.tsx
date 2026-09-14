@@ -1629,7 +1629,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const refreshFeedItemCounts = async () => {
     const version = ++feedItemCountVersion;
     const window = view() === "feeds" ? undefined : itemViewWindow(itemView());
-    setScopeCountsWindowKey(undefined);
+    if (scopeCountsWindowKey() !== (window?.from ?? ""))
+      setScopeCountsWindowKey(undefined);
     try {
       // Counts must include queued and already-in-flight read writes before
       // they replace the optimistic adjustment (including finish-and-clear).

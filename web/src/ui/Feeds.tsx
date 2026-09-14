@@ -238,7 +238,7 @@ export function Feeds(props: {
       const queued = targets.length - rejected;
       props.onToast(
         rejected ? "error" : "success",
-        `Retry queued for ${queued} ${queued === 1 ? "feed" : "feeds"}${rejected ? ` · couldn't queue ${rejected}` : ""}`,
+        `Retry queued for ${queued} ${queued === 1 ? "feed" : "feeds"}${rejected ? ` · couldn’t queue ${rejected}` : ""}`,
       );
     } catch {
       props.onToast("error", "Couldn’t refresh feeds after retrying");

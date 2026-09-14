@@ -344,7 +344,7 @@ for (const failRetry of [false, true]) {
     await expect(
       page.getByText(
         failRetry
-          ? "Retry queued for 2 feeds · couldn't queue 1"
+          ? "Retry queued for 2 feeds · couldn’t queue 1"
           : "Retry queued for 3 feeds",
         { exact: true },
       ),

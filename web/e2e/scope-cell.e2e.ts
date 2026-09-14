@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { INITIAL_POLL_INTERVAL } from "../src/item-list";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
   item_id: id,
@@ -242,7 +243,7 @@ test("arrival pill aligns with the scope title", async ({ page }) => {
       },
     }),
   );
-  await page.clock.fastForward(60_000);
+  await page.clock.fastForward(INITIAL_POLL_INTERVAL);
   const pill = page.getByRole("button", { name: "1 new", exact: true });
   await expect(pill).toBeVisible();
   const pillRect = await pill.boundingBox();
@@ -359,7 +360,7 @@ for (const grouped of [false, true]) {
     }
     await expect(count).toHaveText("2");
     arrivals = true;
-    await page.clock.fastForward(60_000);
+    await page.clock.fastForward(INITIAL_POLL_INTERVAL);
     await expect(
       page.getByRole("button", { name: "1 new", exact: true }),
     ).toBeVisible();
@@ -414,3 +415,64 @@ for (const [width, height, theme] of [
     });
   });
 }
+
+test("same-window counts stay numeric while a new window shows counting", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const count = page.locator(".scope-cell__count");
+  await expect(count).toHaveText("30");
+  let started!: () => void;
+  const refreshing = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  // openGrid supplied the first response; every subsequent counts response waits.
+  await page.route("**/api/feeds/counts*", async (route) => {
+    const today = new URL(route.request().url()).searchParams.has(
+      "fetched_from",
+    );
+    started();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await route.fulfill({
+      json: {
+        feeds: {
+          daily: { all: today ? 10 : 1200, unread: today ? 9 : 23 },
+          other: { all: today ? 8 : 6, unread: 6 },
+        },
+      },
+    });
+  });
+  await page.locator('[data-item-id="Today unread"]').hover();
+  await page.keyboard.press("m");
+  await expect(count).toHaveText("29");
+  // Opening the tag picker flushes the read batch and refreshes the same window.
+  await page.keyboard.press("#");
+  await refreshing;
+  const samples: (string | null)[] = [];
+  for (let elapsed = 0; elapsed <= 400; elapsed += 50) {
+    // Read synchronously: locator.textContent() would wait through a missing count.
+    samples.push(
+      await page.evaluate(
+        () => document.querySelector(".scope-cell__count")?.textContent ?? null,
+      ),
+    );
+    if (elapsed < 400) await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  expect(samples).toHaveLength(9);
+  for (const sample of samples) expect(sample ?? "").toMatch(/^\d[\d,]*$/);
+  await expect(count).toHaveText("29");
+  await page.keyboard.press("Escape");
+  const changedWindow = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === "/api/feeds/counts" &&
+      url.searchParams.has("fetched_from")
+    );
+  });
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await changedWindow;
+  await expect(page.locator(".scope-cell__meta")).toContainText("counting");
+  await expect(count).toHaveCount(0);
+  await expect(count).toHaveText("18");
+});
