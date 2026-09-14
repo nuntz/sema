@@ -1,4 +1,4 @@
-import { ITEM_VIEWS, type ItemView } from "./item-view";
+import { ITEM_WINDOWS, type ItemWindow } from "./item-view";
 import type { Feed, FeedItemCounts, GridScope } from "./types";
 import { displayFeedTitle } from "./ui/tag-options";
 
@@ -31,7 +31,8 @@ export function formatScopeMeta(
 
 export function scopeCellModel(
   scope: GridScope,
-  itemView: ItemView,
+  itemWindow: ItemWindow,
+  unreadOnly: boolean,
   feeds: Feed[],
   counts: FeedItemCounts | undefined,
   readAdjust: number,
@@ -58,32 +59,30 @@ export function scopeCellModel(
         ? faviconFeed
           ? displayFeedTitle(faviconFeed)
           : scope.value
-        : (ITEM_VIEWS.find((view) => view.value === itemView)?.label ??
-          itemView);
+        : (ITEM_WINDOWS.find((view) => view.value === itemWindow)?.label ??
+          itemWindow);
   const contributions =
     counts &&
     selected.map(
-      (feed) =>
-        counts[feed.feed_id]?.[itemView === "unread" ? "unread" : "all"] ?? 0,
+      (feed) => counts[feed.feed_id]?.[unreadOnly ? "unread" : "all"] ?? 0,
     );
   const count = contributions
     ? Math.max(
         0,
         contributions.reduce((sum, value) => sum + value, 0) -
-          (itemView === "unread" ? readAdjust : 0),
+          (unreadOnly ? readAdjust : 0),
       )
     : undefined;
   const contributingFeeds =
     scope?.kind === "feed" || (!scope && count === 0)
       ? undefined
       : contributions?.filter((value) => value > 0).length;
-  const qualifier =
-    itemView === "unread"
-      ? "unread"
-      : (itemView === "today" || itemView === "yesterday") &&
-          (scope || phone || count === 0)
-        ? itemView
-        : "";
+  const qualifier = unreadOnly
+    ? "unread"
+    : (itemWindow === "today" || itemWindow === "yesterday") &&
+        (scope || phone || count === 0)
+      ? itemWindow
+      : "";
   return {
     title,
     faviconFeed,
@@ -92,4 +91,19 @@ export function scopeCellModel(
     qualifier,
     text: formatScopeMeta(count, qualifier, contributingFeeds, phone),
   };
+}
+
+export function windowScopeCounts(
+  scope: GridScope,
+  unreadOnly: boolean,
+  feeds: Feed[],
+  counts: Partial<Record<ItemWindow, FeedItemCounts>>,
+): Partial<Record<ItemWindow, number>> {
+  return Object.fromEntries(
+    ITEM_WINDOWS.map(({ value }) => [
+      value,
+      scopeCellModel(scope, value, unreadOnly, feeds, counts[value], 0, false)
+        .count,
+    ]),
+  );
 }

@@ -668,7 +668,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
 
   await page.setViewportSize({ width: 1544, height: 780 });
   await openFixture(page, "grid");
-  await expect(page.locator(".filter-button")).toBeHidden();
+  await expect(page.locator(".scope-header-chip")).toBeHidden();
   await openFixture(page, "reader");
   await expect(page.locator(".chrome-overflow")).toBeHidden();
 
@@ -699,7 +699,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
 
   await page.setViewportSize({ width: 390, height: 780 });
   await openFixture(page, "grid");
-  await expect(page.locator(".filter-button")).toBeVisible();
+  await expect(page.locator(".scope-header-chip")).toBeVisible();
   await expect(page.locator(".header-segments")).toBeHidden();
 });
 
@@ -794,7 +794,7 @@ for (const width of [620, 860, 900, 1024]) {
         width - 20,
       );
     }
-    await expect(page.locator(".filter-button")).toBeVisible({
+    await expect(page.locator(".scope-header-chip")).toBeVisible({
       visible: width < 860,
     });
   });

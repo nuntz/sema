@@ -176,7 +176,7 @@ test("desktop grid actions appear only while their cell is hovered", async ({
   await expect(actions).toHaveCSS("opacity", "1");
   await expect(actions).toHaveCSS("pointer-events", "auto");
 
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   const allCell = page.locator(".grid-cell").first();
   await expect(allCell).toHaveClass(/all-items-cell/);
   await expect(allCell.locator(".kept-marker")).toHaveCSS("opacity", "1");
@@ -483,7 +483,7 @@ for (const tab of ["Unread", "All"] as const) {
   }) => {
     const state = await openApp(page);
     if (tab === "All") {
-      await page.getByRole("radio", { name: "All" }).click();
+      await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
       await expect(page.getByRole("radio", { name: "All" })).toHaveAttribute(
         "aria-checked",
         "true",
@@ -503,10 +503,12 @@ for (const tab of ["Unread", "All"] as const) {
     await page.keyboard.press("Escape");
 
     await expect(page.locator(".grid-scroll")).toBeVisible();
-    await expect(page.getByRole("radio", { name: tab })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    await expect(
+      page.getByRole(tab === "Unread" ? "switch" : "radio", {
+        name: tab,
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-checked", "true");
     await expect(
       page.getByRole("button", { name: "Clear tag filter: #tech" }),
     ).toBeVisible();

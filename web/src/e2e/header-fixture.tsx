@@ -3,7 +3,7 @@ import { createSignal, For, Show } from "solid-js";
 import { render } from "solid-js/web";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
-import { ITEM_VIEWS } from "../item-view";
+import { ITEM_WINDOWS } from "../item-view";
 import { createMediaQuery } from "../media-query";
 import type { Item } from "../types";
 import { pushOverlay } from "../ui/overlay-history";
@@ -70,26 +70,34 @@ function GridHeaderFixture() {
             </button>
           </div>
           <div class="segmented" role="radiogroup" aria-label="Items shown">
-            <For each={ITEM_VIEWS}>
+            <For each={ITEM_WINDOWS}>
               {(option) => (
                 <button
                   type="button"
                   class="segmented__item"
                   role="radio"
-                  aria-checked={option.value === "unread"}
+                  aria-checked={option.value === "all"}
                 >
                   <span>{option.label}</span>
                 </button>
               )}
             </For>
           </div>
+          <button
+            type="button"
+            class="chrome-btn chrome-btn--on"
+            role="switch"
+            aria-checked="true"
+          >
+            Unread
+          </button>
         </div>
         <button
           type="button"
-          class="chrome-btn filter-button"
+          class="chrome-btn scope-header-chip scope-header-chip--visible"
           classList={{ "is-hidden": !compactDisplayControls() }}
         >
-          <span>Front page</span>
+          <span>All · Unread</span>
           <Icon name="chevron-down" />
         </button>
       </div>

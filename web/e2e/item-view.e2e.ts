@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { INITIAL_POLL_INTERVAL } from "../src/item-list";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
   item_id: id,
@@ -98,19 +99,23 @@ for (const width of [1440, 860, 620, 393, 320]) {
     const group =
       width <= 859
         ? page
-            .getByRole("dialog", { name: "Feed view" })
+            .getByRole("dialog", { name: "Filter" })
             .getByRole("radiogroup", { name: "Items shown" })
         : page.getByRole("radiogroup", { name: "Items shown" });
-    await expect(group.getByRole("radio")).toHaveText([
-      "Unread",
-      "Today",
-      "Yesterday",
-      "All",
-    ]);
+    await expect(group.getByRole("radio")).toHaveCount(3);
+    await page
+      .getByRole("switch", {
+        name: width <= 859 ? "Unread only" : "Unread",
+        exact: true,
+      })
+      .uncheck();
     await group.getByRole("radio", { name: "Today", exact: true }).click();
+    if (width <= 859) await page.locator(".filter-button").click();
     await expect(
       group.getByRole("radio", { name: "Today", exact: true }),
     ).toBeChecked();
+    if (width <= 859)
+      await page.getByRole("button", { name: "Close filter" }).click();
     await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
     await expect(page.locator('[data-item-id="Yesterday read"]')).toHaveCount(
       0,
@@ -126,14 +131,17 @@ for (const width of [1440, 860, 620, 393, 320]) {
       );
       expect(request?.searchParams.get("include_read")).toBe("true");
     }
+    if (width <= 859) await page.locator(".filter-button").click();
     await group.getByRole("radio", { name: "Yesterday", exact: true }).click();
     await expect(page.locator('[data-item-id="Yesterday read"]')).toBeVisible();
     await expect(page.locator('[data-item-id="Today unread"]')).toHaveCount(0);
+    if (width <= 859) await page.locator(".filter-button").click();
     await group.getByRole("radio", { name: "All", exact: true }).click();
     await expect(page.locator('[data-item-id="Older unread"]')).toBeVisible();
     await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
     expect(requests.at(-1)?.searchParams.has("fetched_from")).toBe(false);
     expect(requests.at(-1)?.searchParams.has("fetched_before")).toBe(false);
+    if (width <= 859) await page.locator(".filter-button").click();
     const bounds = await group.boundingBox();
     if (!bounds) throw new Error("Items shown control is missing");
     expect(bounds.x).toBeGreaterThanOrEqual(0);
@@ -153,10 +161,12 @@ test("calendar views advance at local midnight on the next poll", async ({
   page,
 }) => {
   const requests = await openGrid(page);
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   await page.getByRole("radio", { name: "Today", exact: true }).click();
   await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
+  await expect(page.locator('[data-item-id="Older unread"]')).toHaveCount(0);
   await page.clock.setSystemTime(new Date("2026-09-08T07:00:01Z"));
-  await page.clock.fastForward(60_000);
+  await page.clock.fastForward(INITIAL_POLL_INTERVAL);
   await expect
     .poll(() => requests.at(-1)?.searchParams.get("fetched_from"))
     .toBe("2026-09-08T07:00:00.000Z");
@@ -171,7 +181,6 @@ test("go sequences select scopes directly and preserve legacy bindings", async (
     ["t", "Today"],
     ["y", "Yesterday"],
     ["a", "All"],
-    ["u", "Unread"],
   ]) {
     await page.keyboard.press("g");
     await page.keyboard.press(key);
@@ -216,7 +225,7 @@ test("go sequences select scopes directly and preserve legacy bindings", async (
   await expect(page.locator(".loading-screen")).toHaveCount(0);
   await page.keyboard.press("a");
   await expect(
-    page.getByRole("radio", { name: "Unread", exact: true }),
+    page.getByRole("switch", { name: "Unread", exact: true }),
   ).toBeChecked();
   await expect(page.locator(".loading-screen")).toHaveCount(0);
   await page.keyboard.press("Shift+A");
@@ -226,7 +235,7 @@ test("go sequences select scopes directly and preserve legacy bindings", async (
   await expect(page.locator(".loading-screen")).toHaveCount(0);
   await page.keyboard.press("Shift+A");
   await expect(
-    page.getByRole("radio", { name: "Unread", exact: true }),
+    page.getByRole("switch", { name: "Unread", exact: true }),
   ).toBeChecked();
   await expect(page.locator(".grid-scroll")).toBeVisible();
   await page.keyboard.press("t");
@@ -244,7 +253,7 @@ test("go prefixes expire and pause in inputs and dialogs", async ({ page }) => {
     page.getByRole("radio", { name: "Latest", exact: true }),
   ).toBeChecked();
   await expect(
-    page.getByRole("radio", { name: "Unread", exact: true }),
+    page.getByRole("switch", { name: "Unread", exact: true }),
   ).toBeChecked();
   await page.keyboard.press("g");
   await page.keyboard.press("s");
@@ -296,7 +305,7 @@ test("disabling character shortcuts persists and keeps native navigation availab
   for (const key of ["g", "t", "a", "Shift+A", "?", "/", "#", "m", "f"])
     await page.keyboard.press(key);
   await expect(
-    page.getByRole("radio", { name: "Unread", exact: true }),
+    page.getByRole("switch", { name: "Unread", exact: true }),
   ).toBeChecked();
   await expect(
     page.getByRole("radio", { name: "Front page", exact: true }),
@@ -310,7 +319,7 @@ test("disabling character shortcuts persists and keeps native navigation availab
   await expect(page.locator(".grid-scroll")).toBeVisible();
   await page.keyboard.press("a");
   await expect(
-    page.getByRole("radio", { name: "Unread", exact: true }),
+    page.getByRole("switch", { name: "Unread", exact: true }),
   ).toBeChecked();
   await page
     .getByRole("button", { name: "Feeds & settings", exact: true })
@@ -405,4 +414,95 @@ test("archive preserves tag filtering and allows clearing and changing scopes", 
     page.getByRole("button", { name: "Archive", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({ path: "/tmp/sema-archive-filter-cleared.png" });
+});
+
+test("dates and unread are independent, session-only settings", async ({
+  page,
+}) => {
+  await openGrid(page);
+  const unread = page.getByRole("switch", { name: "Unread", exact: true });
+  await expect(unread).toBeChecked();
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await expect(
+    page.getByRole("radio", { name: "Today", exact: true }),
+  ).toBeChecked();
+  await expect(unread).toBeChecked();
+  await expect(page.locator('[data-item-id="Today read"]')).toHaveCount(0);
+  await page.keyboard.press("g");
+  await page.keyboard.press("u");
+  await expect(unread).not.toBeChecked();
+  await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
+  await page.keyboard.press("g");
+  await page.keyboard.press("u");
+  await expect(unread).toBeChecked();
+  await expect(
+    page.getByRole("radio", { name: "Today", exact: true }),
+  ).toBeChecked();
+  await page.reload();
+  await expect(
+    page.getByRole("radio", { name: "All", exact: true }),
+  ).toBeChecked();
+  await expect(unread).toBeChecked();
+});
+
+test("compact scope chip appears on scroll-up and opens the filter", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await openGrid(page);
+  const chip = page.locator(".scope-header-chip");
+  const scroller = page.locator(".grid-scroll");
+  await expect(chip).toBeHidden();
+  await scroller.evaluate((element) => {
+    element.scrollTop = 300;
+  });
+  await page.clock.runFor(50);
+  await expect(chip).toBeHidden();
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(300);
+  await scroller.evaluate((element) => {
+    element.scrollTop = 299;
+  });
+  await page.clock.runFor(50);
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveText("All · Unread");
+  await chip.click();
+  await expect(
+    page.getByRole("dialog", { name: "Filter", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close filter" }).click();
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect(chip).toBeHidden();
+  await expect(page.locator(".filter-button")).toBeVisible();
+});
+
+test("compact sheet combines dates and unread and supports dismissal", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGrid(page);
+  await page.locator(".filter-button").click();
+  const sheet = page.getByRole("dialog", { name: "Filter", exact: true });
+  await expect(
+    sheet.getByRole("switch", { name: "Unread only" }),
+  ).toBeChecked();
+  await sheet.getByRole("radio", { name: "Today", exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator(".filter-button")).toHaveAccessibleName(
+    "Today · Unread",
+  );
+  await page.locator(".filter-button").click();
+  await sheet.getByRole("switch", { name: "Unread only" }).uncheck();
+  await expect(sheet).toBeVisible();
+  await expect(
+    sheet.getByRole("radio", { name: "Today", exact: true }),
+  ).toBeChecked();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator(".filter-button")).toHaveAccessibleName("Today");
+  await page.locator(".filter-button").click();
+  await page.locator(".action-sheet-layer").click({ position: { x: 5, y: 5 } });
+  await expect(sheet).toHaveCount(0);
 });

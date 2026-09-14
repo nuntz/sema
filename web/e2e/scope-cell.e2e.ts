@@ -133,16 +133,21 @@ test("Escape closes related items before clearing the tag filter", async ({
   await expect(panel).toBeHidden();
   await expect(title).toHaveText("#design");
   await page.keyboard.press("Escape");
-  await expect(title).toHaveText("Unread");
+  await expect(title).toHaveText("All");
 });
 
 for (const width of [1440, 393]) {
   test(`scope counts and geometry at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const requests = await openGrid(page);
-    const cell = page.locator(".scope-cell");
+    const cell = page.locator(width < 860 ? ".scope-bar" : ".scope-cell");
+    const count = page.locator(
+      width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
+    );
     await expect(cell).toHaveText(
-      width < 620 ? "Unread30 unread" : "Unread30 unread items · 2 feeds",
+      width < 860
+        ? "Front pageLatestAll · Unread30"
+        : "All30 unread items · 2 feeds",
     );
     const heading = await cell.boundingBox();
     const first = await page
@@ -152,11 +157,12 @@ for (const width of [1440, 393]) {
       throw new Error("Scope cell or first card is missing");
     expect(first.y).toBeGreaterThanOrEqual(heading.y + heading.height);
     await page.keyboard.press("m");
-    await expect(cell.locator(".scope-cell__count")).toHaveText("29");
+    await expect(count).toHaveText("29");
+    await page.keyboard.press("a");
     await page.keyboard.press("g");
     await page.keyboard.press("t");
     await expect(cell).toHaveText(
-      width < 620 ? "Today18 items today" : "Today18 items · 2 feeds",
+      width < 860 ? "Front pageLatestToday18" : "Today18 items · 2 feeds",
     );
     const request = requests.findLast(
       (url) => url.pathname === "/api/feeds/counts",
@@ -170,15 +176,32 @@ for (const width of [1440, 393]) {
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^design/ }).click();
     await expect(cell).toHaveText(
-      width < 620 ? "#design18 items today" : "#design18 items today · 2 feeds",
+      width < 860
+        ? "#designFront pageLatestToday18"
+        : "#design18 items today · 2 feeds",
     );
     await page.keyboard.press("Escape");
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^Daily/ }).click();
-    await expect(cell.locator(".scope-cell__title")).toHaveText("Daily");
-    await expect(cell.locator(".scope-cell__meta")).toHaveText(
-      "10 items today",
-    );
+    await expect(
+      cell.locator(
+        width < 860
+          ? ".scope-bar-chip > span:not(.source-badge)"
+          : ".scope-cell__title",
+      ),
+    ).toHaveText("Daily");
+    if (width < 860) {
+      await expect(count).toHaveText("10");
+      await expect(
+        cell.getByRole("radio", { name: "Front page" }),
+      ).toBeDisabled();
+      await expect(cell.locator(".scope-order-lock")).toHaveText(
+        "Newest first while filtering by feed. Clear the feed to use Front page.",
+      );
+    } else
+      await expect(cell.locator(".scope-cell__meta")).toHaveText(
+        "10 items today",
+      );
     await expect(cell.locator(".source-badge")).toBeVisible();
     await page.keyboard.press("g");
     await page.keyboard.press("r");
@@ -193,13 +216,22 @@ for (const width of [1440, 393]) {
     ).toBeVisible();
     await page.keyboard.press("g");
     await page.keyboard.press("t");
-    await expect(page.locator(".scope-cell")).toHaveText("Today0 items today");
+    if (width >= 860)
+      await expect(page.locator(".scope-cell")).toHaveText(
+        "Today0 unread items",
+      );
+    else
+      await expect(page.locator(".filter-button")).toHaveAccessibleName(
+        "Today · Unread",
+      );
     await expect(
-      page.getByRole("heading", { name: "Nothing new today" }),
+      page.getByRole("heading", { name: "Nothing unread today" }),
     ).toBeVisible();
     if (width < 620) {
       await page.getByRole("button", { name: "Show all", exact: true }).click();
-      await expect(page.locator(".scope-cell__title")).toHaveText("All");
+      await expect(page.locator(".filter-button")).toHaveAccessibleName(
+        "All · Unread",
+      );
     }
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^design/ }).click();
@@ -208,13 +240,19 @@ for (const width of [1440, 393]) {
     ).toBeVisible();
     if (width < 620)
       await page
+        .locator(".end-of-feed")
         .getByRole("button", { name: "Clear tag", exact: true })
         .click();
     else await page.keyboard.press("Escape");
-    await expect(page.locator(".scope-cell__title")).not.toHaveText("#design");
+    if (width < 860)
+      await expect(page.locator(".scope-bar-chip")).toHaveCount(0);
+    else
+      await expect(page.locator(".scope-cell__title")).not.toHaveText(
+        "#design",
+      );
   });
 }
-for (const width of [1280, 390])
+for (const width of [1280, 768, 390])
   for (const theme of ["dark", "light"] as const) {
     test(`tag screenshot ${width} ${theme}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
@@ -222,8 +260,15 @@ for (const width of [1280, 390])
       await openGrid(page, false, true);
       await page.keyboard.press("g");
       await page.keyboard.press("a");
-      await expect(page.locator(".scope-cell__count")).toHaveText("1,204");
-      const meta = page.locator(".scope-cell__meta");
+      await page.keyboard.press("a");
+      await expect(
+        page.locator(
+          width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
+        ),
+      ).toHaveText("1,204");
+      const meta = page.locator(
+        width < 860 ? ".filter-button .scope-count" : ".scope-cell__meta",
+      );
       expect(await meta.evaluate((el) => el.scrollHeight)).toBeLessThan(25);
       await page.screenshot({
         path: `/tmp/sema-scope-cell-${width}-${theme}.png`,
@@ -396,14 +441,19 @@ for (const [width, height, theme] of [
     await expect(section.getByRole("button").first()).toHaveText(
       width < 620 ? "Clear tagEsc" : "Show read itemsA",
     );
-    await expect(page.locator(".scope-cell__count")).toHaveAttribute(
-      "data-zero",
-      "true",
-    );
-    const cell = await page.locator(".scope-cell").boundingBox();
+    if (width >= 860)
+      await expect(page.locator(".scope-cell__count")).toHaveAttribute(
+        "data-zero",
+        "true",
+      );
+    else
+      await expect(page.locator(".filter-button .scope-count")).toHaveText("0");
+    const cell = await page
+      .locator(width < 860 ? ".scope-bar" : ".scope-cell")
+      .boundingBox();
     const rect = await section.boundingBox();
     if (!cell || !rect) throw new Error("Missing section or scope cell");
-    expect(rect.y - cell.y - cell.height).toBe(26);
+    expect(rect.y - cell.y - cell.height).toBe(width < 860 ? 16 : 26);
     const copy = await section.locator(":scope > div").boundingBox();
     expect(copy?.x).toBe(width < 620 ? 12 : 16);
     expect(
@@ -474,5 +524,82 @@ test("same-window counts stay numeric while a new window shows counting", async 
   await changedWindow;
   await expect(page.locator(".scope-cell__meta")).toContainText("counting");
   await expect(count).toHaveCount(0);
-  await expect(count).toHaveText("18");
+  await expect(count).toHaveText("15");
 });
+
+test("filter sheet fetches missing windows in parallel and caches until refresh", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGrid(page, false, true);
+  await expect(page.locator(".filter-button .scope-count")).toHaveText("30");
+  const requests: string[] = [];
+  const releases: Array<() => void> = [];
+  await page.route("**/api/feeds/counts?*", async (route) => {
+    requests.push(route.request().url());
+    await new Promise<void>((resolve) => releases.push(resolve));
+    await route.fulfill({
+      json: {
+        feeds: { daily: { all: 10, unread: 3 }, other: { all: 8, unread: 2 } },
+      },
+    });
+  });
+  await page.locator(".filter-button").click();
+  const sheet = page.getByRole("dialog", { name: "Filter", exact: true });
+  await expect.poll(() => requests.length).toBe(2);
+  await expect(sheet.locator(".filter-date .scope-count")).toHaveText([
+    "–",
+    "–",
+    "30",
+  ]);
+  for (const release of releases) release();
+  await expect(sheet.locator(".filter-date .scope-count")).toHaveText([
+    "5",
+    "5",
+    "30",
+  ]);
+  await page.getByRole("button", { name: "Close filter" }).click();
+  await page.locator(".filter-button").click();
+  await expect(sheet.locator(".filter-date .scope-count")).toHaveText([
+    "5",
+    "5",
+    "30",
+  ]);
+  expect(requests).toHaveLength(2);
+  await sheet.getByRole("switch", { name: "Unread only" }).uncheck();
+  await expect.poll(() => requests.length).toBe(4);
+  for (const release of releases) release();
+  await expect(sheet.locator(".filter-date .scope-count")).toHaveText([
+    "18",
+    "18",
+    "1,204",
+  ]);
+  await page.keyboard.press("Escape");
+});
+
+for (const width of [390, 768, 1280])
+  for (const theme of ["dark", "light"] as const)
+    test(`Drop 25 capture ${width} ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: theme });
+      await openGrid(page);
+      await expect(
+        page.locator(
+          width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
+        ),
+      ).toHaveText("30");
+      await page.screenshot({
+        path: `/tmp/sema-drop25-${width}-${theme}.png`,
+        animations: "disabled",
+      });
+      if (width < 860) {
+        await page.locator(".filter-button").click();
+        await expect(
+          page.getByRole("dialog", { name: "Filter", exact: true }),
+        ).toBeVisible();
+        await page.screenshot({
+          path: `/tmp/sema-drop25-${width}-${theme}-sheet.png`,
+          animations: "disabled",
+        });
+      }
+    });

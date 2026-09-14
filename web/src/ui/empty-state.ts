@@ -1,4 +1,4 @@
-import type { ItemView } from "../item-view";
+import type { ItemWindow } from "../item-view";
 import type { GridScope, Order } from "../types";
 
 export interface EmptyStateAction {
@@ -10,7 +10,8 @@ export interface EmptyStateAction {
 export interface EmptyStateInputs {
   scope?: GridScope;
   scopeTitle?: string;
-  itemView?: ItemView;
+  itemWindow?: ItemWindow;
+  unreadOnly?: boolean;
   order: Order;
   phone: boolean;
   clearedCount?: number;
@@ -54,8 +55,21 @@ export function emptyState(input: EmptyStateInputs) {
         key: "T",
         run: () => input.onToggleOrder?.(),
       });
-  } else if (input.itemView === "today" || input.itemView === "yesterday") {
-    const today = input.itemView === "today";
+  } else if (input.itemWindow === "today" || input.itemWindow === "yesterday") {
+    const today = input.itemWindow === "today";
+    if (input.unreadOnly) {
+      return {
+        heading: today
+          ? "Nothing unread today"
+          : "Nothing unread from yesterday",
+        body,
+        centered: false,
+        actions: [
+          { label: "Show all", key: "G A", run: () => input.onShowAll?.() },
+          showRead,
+        ],
+      };
+    }
     heading = today ? "Nothing new today" : "Nothing from yesterday";
     actions = [
       { label: "Show all", key: "G A", run: () => input.onShowAll?.() },

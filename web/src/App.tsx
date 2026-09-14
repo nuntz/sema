@@ -38,9 +38,10 @@ import {
 } from "./item-list";
 import {
   type FetchWindow,
-  ITEM_VIEWS,
-  type ItemView,
-  itemViewWindow,
+  ITEM_WINDOWS,
+  type ItemWindow,
+  scopeSummary,
+  windowRange,
 } from "./item-view";
 import {
   copyOriginalLink,
@@ -50,7 +51,7 @@ import {
 import { createMediaQuery } from "./media-query";
 import { PendingReads } from "./pending-reads";
 import { resolveReaderItem } from "./reader-item";
-import { scopeCellModel } from "./scope-cell";
+import { scopeCellModel, windowScopeCounts } from "./scope-cell";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import {
   buryDisabled,
@@ -77,6 +78,7 @@ import type {
 } from "./types";
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
+import { FilterSheet } from "./ui/FilterSheet";
 import {
   frontPageEntriesForState,
   frontPageSequence,
@@ -97,10 +99,17 @@ import {
 import { closeOverlay, pushOverlay } from "./ui/overlay-history";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
+import { ScopeBar } from "./ui/ScopeBar";
 import { SearchResults } from "./ui/SearchResults";
 import { SignalHint } from "./ui/SignalHint";
 import { TagFilter } from "./ui/TagFilter";
 import { displayFeedTitle, feedScopeChip } from "./ui/tag-options";
+import {
+  expandToolbar,
+  initialToolbarCollapseState,
+  scopeChipVisible,
+  updateToolbarCollapse,
+} from "./ui/toolbar-collapse";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
 import { listenForWindowReturn } from "./window-activity";
 
@@ -113,7 +122,7 @@ type Toast = {
   kind: "success" | "info" | "error";
   message: string;
 };
-type HeaderMenu = "combined" | "overflow";
+type HeaderMenu = "overflow";
 const READER_EXIT_MS = 220;
 
 export function App(props: { signOut(): void; theme: ThemeController }) {
@@ -149,8 +158,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [loading, setLoading] = createSignal(true);
   const [loadingMore, setLoadingMore] = createSignal(false);
   const [error, setError] = createSignal("");
-  const [itemView, setItemView] = createSignal<ItemView>("unread");
-  const unreadOnly = () => itemView() === "unread";
+  const [itemWindow, setItemWindow] = createSignal<ItemWindow>("all");
+  const [unreadOnly, setUnreadOnly] = createSignal(true);
   let fetchWindow: FetchWindow | undefined;
   const [focusedID, setFocusedID] = createSignal("");
   const [readerID, setReaderID] = createSignal("");
@@ -178,6 +187,14 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const [relatedItems, setRelatedItems] = createSignal<Item[]>([]);
   const [relatedLoading, setRelatedLoading] = createSignal(false);
   const [readerArchive, setReaderArchive] = createSignal(false);
+  const [filterOpen, setFilterOpen] = createSignal(false);
+  const [windowCounts, setWindowCounts] = createSignal<
+    Partial<Record<ItemWindow, FeedItemCounts>>
+  >({});
+  const [barHeight, setBarHeight] = createSignal(0);
+  const [scopeCollapse, setScopeCollapse] = createSignal(
+    initialToolbarCollapseState(),
+  );
   const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
   const phoneHeader = createMediaQuery("(max-width: 430px)");
   const compactDisplayControls = createMediaQuery("(max-width: 859px)");
@@ -224,9 +241,6 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   );
   const gridOrder = createMemo(() => effectiveGridOrder(order(), scope()));
   const feedScoped = createMemo(() => scope()?.kind === "feed");
-  const orderLabel = createMemo(() =>
-    gridOrder() === "interest" ? "Front page" : "Latest",
-  );
   const activeFeedTitle = createMemo(() => {
     const current = scope();
     if (current?.kind !== "feed") return "";
@@ -324,18 +338,63 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     if (mode() === "archive" || searchActive()) return undefined;
     const model = scopeCellModel(
       scope(),
-      itemView(),
+      itemWindow(),
+      unreadOnly(),
       feedFilters(),
-      scopeCountsWindowKey() === (itemViewWindow(itemView())?.from ?? "")
+      scopeCountsWindowKey() === (windowRange(itemWindow())?.from ?? "")
         ? feedItemCounts()
         : undefined,
       readAdjust(),
       scopePhone(),
     );
-    return !scope() && itemView() === "unread" && model.count === 0
-      ? undefined
-      : model;
+    return model;
   });
+
+  const visibleScopeCell = createMemo(() =>
+    !scope() &&
+    unreadOnly() &&
+    itemWindow() === "all" &&
+    scopeCell()?.count === 0
+      ? undefined
+      : scopeCell(),
+  );
+  const showScopeChip = createMemo(() =>
+    scopeChipVisible(
+      scopeCollapse().lastScrollTop,
+      barHeight(),
+      scopeCollapse(),
+    ),
+  );
+  const pendingWindowCounts = new Map<ItemWindow, number>();
+  createEffect(() => {
+    if (!filterOpen()) return;
+    const cached = windowCounts();
+    const version = feedItemCountVersion;
+    for (const { value } of ITEM_WINDOWS) {
+      if (
+        value === itemWindow() ||
+        cached[value] ||
+        pendingWindowCounts.get(value) === version
+      )
+        continue;
+      pendingWindowCounts.set(value, version);
+      void api
+        .feedItemCounts(windowRange(value))
+        .then((counts) => {
+          if (version === feedItemCountVersion && counts)
+            setWindowCounts((current) => ({ ...current, [value]: counts }));
+        })
+        .catch(handleError)
+        .finally(() => {
+          if (pendingWindowCounts.get(value) === version)
+            pendingWindowCounts.delete(value);
+        });
+    }
+  });
+  const openFilter = () => {
+    setScopeCollapse(expandToolbar);
+    setFilterOpen(true);
+  };
 
   const bootstrap = async () => {
     setLoading(true);
@@ -375,7 +434,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     nextMode = mode(),
     nextScope = scope(),
   ) => {
-    fetchWindow = itemViewWindow(itemView());
+    fetchWindow = windowRange(itemWindow());
     void refreshFeedItemCounts();
     const version = ++requestVersion;
     gridClearVersion++;
@@ -523,7 +582,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       document.visibilityState !== "visible"
     )
       return 0;
-    if (itemViewWindow(itemView())?.from !== fetchWindow?.from) {
+    if (windowRange(itemWindow())?.from !== fetchWindow?.from) {
       await reload();
       return 0;
     }
@@ -662,7 +721,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   createEffect(() => {
     scope();
     view();
-    itemView();
+    itemWindow();
     mode();
     gridOrder();
     unreadOnly();
@@ -829,6 +888,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     };
     const clearGoOnFocus = () => clearGo();
     const onKeyDown = (event: KeyboardEvent) => {
+      if (filterOpen()) return;
       // A reader lightbox owns its key card and suspends global view shortcuts.
       if (document.querySelector(".lb-overlay")) return;
       if (event.defaultPrevented || event.isComposing) return;
@@ -1093,7 +1153,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     scope();
     readerID();
     searchActive();
-    itemView();
+    itemWindow();
+    unreadOnly();
     order();
     setSignalNotice(undefined);
   });
@@ -1534,14 +1595,20 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
   };
 
-  const selectItemView = async (next: ItemView) => {
-    if (mode() === "archive" || next === itemView()) return;
+  const selectWindow = async (next: ItemWindow) => {
+    if (mode() === "archive" || next === itemWindow()) return;
     await flushRead();
-    setItemView(next);
+    setItemWindow(next);
     void reload();
   };
 
-  const toggleUnread = () => selectItemView(unreadOnly() ? "all" : "unread");
+  const setUnreadOnlyState = async (next: boolean) => {
+    if (mode() === "archive" || next === unreadOnly()) return;
+    await flushRead();
+    setUnreadOnly(next);
+    void reload();
+  };
+  const toggleUnread = () => setUnreadOnlyState(!unreadOnly());
 
   const insertNewItems = (incoming: Item[]): number => {
     if (incoming.length === 0) return 0;
@@ -1628,7 +1695,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const refreshFeedItemCounts = async () => {
     const version = ++feedItemCountVersion;
-    const window = view() === "feeds" ? undefined : itemViewWindow(itemView());
+    setWindowCounts({});
+    const window = view() === "feeds" ? undefined : windowRange(itemWindow());
     if (scopeCountsWindowKey() !== (window?.from ?? ""))
       setScopeCountsWindowKey(undefined);
     try {
@@ -1642,6 +1710,10 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
       if (version === feedItemCountVersion)
         batch(() => {
           setFeedItemCounts(latest ?? {});
+          setWindowCounts((current) => ({
+            ...current,
+            [view() === "feeds" ? "all" : itemWindow()]: latest,
+          }));
           setScopeCountsWindowKey(window?.from ?? "");
           setReadAdjust(0);
         });
@@ -1730,7 +1802,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     clearGo();
     closeKeys();
     setView("grid");
-    if (scopeCountsWindowKey() !== (itemViewWindow(itemView())?.from ?? ""))
+    if (scopeCountsWindowKey() !== (windowRange(itemWindow())?.from ?? ""))
       void refreshFeedItemCounts();
     if (!feedsGridDirty) return;
     feedsGridDirty = false;
@@ -1766,11 +1838,13 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     }
     if (mode() === "archive") {
       await flushRead();
-      setItemView(command);
+      if (command === "unread") setUnreadOnly(!unreadOnly());
+      else setItemWindow(command);
       setMode("live");
       await reload();
     } else {
-      await selectItemView(command);
+      if (command === "unread") await toggleUnread();
+      else await selectWindow(command);
     }
   };
 
@@ -1841,6 +1915,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           tooltipDisabled={headerTooltipDisabled()}
         >
           <Show when={mode() === "live"}>
+            <span class="sr-only" aria-live="polite">
+              {scopeSummary(itemWindow(), unreadOnly())}
+            </span>
             <div class="header-display-controls">
               <div class="header-segments">
                 <div
@@ -1884,38 +1961,47 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
                   role="radiogroup"
                   aria-label="Items shown"
                 >
-                  <For each={ITEM_VIEWS}>
+                  <For each={ITEM_WINDOWS}>
                     {(option) => (
                       <button
                         type="button"
                         class="segmented__item"
-                        classList={{ active: itemView() === option.value }}
+                        classList={{ active: itemWindow() === option.value }}
                         role="radio"
-                        aria-checked={itemView() === option.value}
+                        aria-checked={itemWindow() === option.value}
                         title={`${option.label} (${scopeShortcuts[option.value]})`}
-                        onClick={() => void selectItemView(option.value)}
+                        onClick={() => void selectWindow(option.value)}
                       >
                         <span>{option.label}</span>
                       </button>
                     )}
                   </For>
                 </div>
+                <button
+                  type="button"
+                  class="chrome-btn"
+                  classList={{ "chrome-btn--on": unreadOnly() }}
+                  role="switch"
+                  aria-checked={unreadOnly()}
+                  onClick={() => void toggleUnread()}
+                >
+                  Unread
+                </button>
               </div>
-              <button
-                type="button"
-                class="chrome-btn filter-button"
-                classList={{ "is-hidden": !compactDisplayControls() }}
-                aria-haspopup="dialog"
-                aria-expanded={headerMenu() === "combined"}
-                onClick={() =>
-                  setHeaderMenu((current) =>
-                    current === "combined" ? undefined : "combined",
-                  )
-                }
-              >
-                <span>{orderLabel()}</span>
-                <Icon name="chevron-down" size={13} />
-              </button>
+              <Show when={compactDisplayControls() && !searchActive()}>
+                <button
+                  type="button"
+                  class="chrome-btn scope-header-chip"
+                  classList={{ "scope-header-chip--visible": showScopeChip() }}
+                  aria-hidden={!showScopeChip()}
+                  tabIndex={showScopeChip() ? 0 : -1}
+                  aria-haspopup="dialog"
+                  onClick={openFilter}
+                >
+                  {scopeSummary(itemWindow(), unreadOnly())}
+                  <Icon name="chevron-down" size={13} />
+                </button>
+              </Show>
             </div>
           </Show>
 
@@ -2091,88 +2177,34 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             onDismiss={() => updateNotice?.dismiss()}
           />
         </Show>
-        <Show when={headerMenu() === "combined"}>
-          <div class="header-sheet-layer">
-            <button
-              type="button"
-              class="header-sheet-backdrop"
-              aria-label="Close feed view menu"
-              onClick={() => setHeaderMenu()}
-            />
-            <section
-              class="header-sheet"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Feed view"
-            >
-              <div class="header-sheet-row">
-                <span>Order</span>
-                <div
-                  role="radiogroup"
-                  aria-label="Item order"
-                  aria-disabled={feedScoped()}
-                  title={
-                    feedScoped()
-                      ? "Newest first while filtering by feed"
-                      : undefined
-                  }
-                >
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={gridOrder() === "interest"}
-                    classList={{ active: gridOrder() === "interest" }}
-                    disabled={feedScoped()}
-                    title="Toggle order (t)"
-                    onClick={() => void selectOrder("interest")}
-                  >
-                    Front page
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={gridOrder() === "chrono"}
-                    classList={{ active: gridOrder() === "chrono" }}
-                    disabled={feedScoped()}
-                    title="Toggle order (t)"
-                    onClick={() => void selectOrder("chrono")}
-                  >
-                    Latest
-                  </button>
-                </div>
-              </div>
-              <div class="header-sheet-row">
-                <span>Items</span>
-                <div role="radiogroup" aria-label="Items shown">
-                  <For each={ITEM_VIEWS}>
-                    {(option) => (
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={itemView() === option.value}
-                        title={`${option.label} (${scopeShortcuts[option.value]})`}
-                        classList={{ active: itemView() === option.value }}
-                        onClick={() => void selectItemView(option.value)}
-                      >
-                        {option.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </div>
-            </section>
-          </div>
+        <Show when={filterOpen()}>
+          <FilterSheet
+            window={itemWindow()}
+            unreadOnly={unreadOnly()}
+            counts={{
+              ...windowScopeCounts(
+                scope(),
+                unreadOnly(),
+                feedFilters(),
+                windowCounts(),
+              ),
+              [itemWindow()]: scopeCell()?.count,
+            }}
+            onWindow={(next) => void selectWindow(next)}
+            onUnreadOnly={(next) => void setUnreadOnlyState(next)}
+            onClose={() => setFilterOpen(false)}
+          />
         </Show>
         <Show when={headerMenu() === "overflow"}>
-          <div class="header-sheet-layer">
+          <div class="overflow-sheet-layer">
             <button
               type="button"
-              class="header-sheet-backdrop"
+              class="overflow-sheet-backdrop"
               aria-label="Close more options"
               onClick={() => setHeaderMenu()}
             />
             <section
-              class="header-sheet header-overflow-sheet"
+              class="overflow-sheet header-overflow-sheet"
               role="dialog"
               aria-modal="true"
               aria-label="More options"
@@ -2246,7 +2278,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
           <button
             type="button"
             class="new-items-pill"
-            classList={{ "new-items-pill--scope": Boolean(scopeCell()) }}
+            classList={{ "new-items-pill--scope": Boolean(visibleScopeCell()) }}
             onClick={insertPendingNew}
           >
             {pendingNew().length} new
@@ -2285,7 +2317,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               (mode() === "live" &&
                 (feedFilters().length > 0 ||
                   Boolean(scope()) ||
-                  itemView() !== "unread"))
+                  !unreadOnly() ||
+                  itemWindow() !== "all"))
             }
             fallback={
               scope() ? (
@@ -2324,18 +2357,38 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               readerReveal={readerReveal()}
               readerDragging={readerDragging()}
               hasMore={cursor() !== ""}
-              scopeCell={scopeCell()}
+              scopeCell={
+                !compactDisplayControls() ? visibleScopeCell() : undefined
+              }
+              topSlot={
+                compactDisplayControls() &&
+                mode() === "live" &&
+                !searchActive() ? (
+                  <ScopeBar
+                    scope={scope()}
+                    model={scopeCell()}
+                    window={itemWindow()}
+                    unreadOnly={unreadOnly()}
+                    order={gridOrder()}
+                    onClearScope={() => void applyScope(null)}
+                    onOrder={(next) => void selectOrder(next)}
+                    onFilter={openFilter}
+                  />
+                ) : undefined
+              }
+              onTopSlotHeight={setBarHeight}
               scope={scope()}
-              itemView={itemView()}
+              itemWindow={itemWindow()}
+              scopeTitle={scopeCell()?.title}
               onClearScope={() =>
                 scope()?.kind === "feed"
                   ? void applyFeed("")
                   : void applyTag("")
               }
-              onShowAll={() => void selectItemView("all")}
-              onShowRead={() => void selectItemView("all")}
+              onShowAll={() => void selectWindow("all")}
+              onShowRead={() => void setUnreadOnlyState(false)}
               onOpenArchive={() => void navigateByKey("archive")}
-              onSelectView={(view) => void selectItemView(view)}
+              onSelectView={(view) => void selectWindow(view)}
               clearedCount={finishUndo()?.count}
               archive={mode() === "archive"}
               unreadOnly={unreadOnly()}
@@ -2373,6 +2426,9 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
               onRefresh={() => pollNew(true)}
               onScrollPosition={(top) => {
                 gridScrollTop = top;
+                setScopeCollapse((current) =>
+                  updateToolbarCollapse(current, top, false),
+                );
               }}
             />
           </Show>

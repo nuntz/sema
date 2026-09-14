@@ -16,19 +16,19 @@ const states: [Partial<EmptyStateInputs>, string, string[], string][] = [
     "Clear feed",
   ],
   [
-    { itemView: "today" },
+    { itemWindow: "today" },
     "Nothing new today",
     ["Show all", "Yesterday"],
     "Show all",
   ],
   [
-    { itemView: "yesterday" },
+    { itemWindow: "yesterday" },
     "Nothing from yesterday",
     ["Show all", "Today"],
     "Show all",
   ],
   [
-    { itemView: "unread" },
+    { itemWindow: "all", unreadOnly: true },
     "You're all caught up",
     ["Show read items", "Archive"],
     "Show read items",
@@ -87,3 +87,31 @@ it("dispatches actions to their matching callbacks and exposes existing shortcut
     "G R",
   ]);
 });
+
+it.each([
+  ["today", "Nothing unread today"],
+  ["yesterday", "Nothing unread from yesterday"],
+] as const)(
+  "combines %s and unread without changing the date when showing read",
+  (itemWindow, heading) => {
+    const onShowAll = vi.fn(),
+      onShowRead = vi.fn();
+    const state = emptyState({
+      ...base,
+      itemWindow,
+      unreadOnly: true,
+      onShowAll,
+      onShowRead,
+    });
+    expect(state.heading).toBe(heading);
+    expect(state.centered).toBe(false);
+    expect(state.actions.map(({ label, key }) => [label, key])).toEqual([
+      ["Show all", "G A"],
+      ["Show read items", "A"],
+    ]);
+    state.actions[0].run();
+    state.actions[1].run();
+    expect(onShowAll).toHaveBeenCalledOnce();
+    expect(onShowRead).toHaveBeenCalledOnce();
+  },
+);

@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  type JSX,
   on,
   onCleanup,
   onMount,
@@ -20,7 +21,7 @@ import {
   relatedCoverageHeight,
   repeatsLeadHeadline,
 } from "../grid-display";
-import type { ItemView } from "../item-view";
+import type { ItemWindow } from "../item-view";
 import {
   justify,
   type LayoutRow,
@@ -88,8 +89,11 @@ import { useSheetDrag } from "./use-sheet-drag";
 
 interface GridProps {
   scopeCell?: ScopeCellModel;
+  topSlot?: JSX.Element;
+  onTopSlotHeight?(height: number): void;
   scope?: GridScope;
-  itemView?: ItemView;
+  scopeTitle?: string;
+  itemWindow?: ItemWindow;
   onClearScope?(): void;
   onShowAll?(): void;
   onShowRead?(): void;
@@ -316,15 +320,24 @@ function GridContent(props: GridProps) {
     );
     return { rows, height: totalHeight(rows) };
   });
-  const scopeCellHeight = createMemo(() =>
-    props.scopeCell ? 44 + (mobile() ? 8 : 10) : 0,
-  );
+  const [topSlotHeight, setTopSlotHeight] = createSignal(0);
+  const observeTopSlot = (element: HTMLDivElement) => {
+    const measure = () => {
+      const height = element.getBoundingClientRect().height;
+      setTopSlotHeight(height);
+      props.onTopSlotHeight?.(height);
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    onMount(measure);
+    onCleanup(() => observer.disconnect());
+  };
   const rows = createMemo<LayoutRow[]>((previous) =>
     reuseLayoutRows(
       previous ?? [],
       layout().rows.map((row) => ({
         ...row,
-        top: row.top + scopeCellHeight(),
+        top: row.top + topSlotHeight(),
       })),
     ),
   );
@@ -332,7 +345,7 @@ function GridContent(props: GridProps) {
     !props.archive && props.entries.length === 0
       ? emptyState({
           ...props,
-          scopeTitle: props.scopeCell?.title,
+          scopeTitle: props.scopeCell?.title ?? props.scopeTitle,
           phone: mobile(),
         })
       : undefined,
@@ -368,10 +381,10 @@ function GridContent(props: GridProps) {
     () => showEndAction() && unreadIDs().length > 0,
   );
   const gridEndTop = createMemo(() => {
-    if (closedEmpty()?.centered) return scopeCellHeight();
-    if (closedEmpty()) return (props.scopeCell ? 44 : 0) + 26;
+    if (closedEmpty()?.centered) return topSlotHeight();
+    if (closedEmpty()) return topSlotHeight() + 16;
     return (
-      scopeCellHeight() +
+      topSlotHeight() +
       layout().height +
       (!props.archive && props.unreadOnly ? 22 : 28)
     );
@@ -1158,33 +1171,39 @@ function GridContent(props: GridProps) {
             pullDistance() > 0 ? `translateY(${pullDistance()}px)` : undefined,
         }}
       >
-        <Show when={props.scopeCell} keyed>
-          {(model) => (
-            <h2 class="scope-cell" title={model.title}>
-              <Show when={model.faviconFeed} keyed>
-                {(feed) => (
-                  <SourceBadge
-                    connector={feed.connector}
-                    imageURL={feed.favicon_url}
-                    title={model.title}
-                    size={mobile() ? 20 : 22}
-                  />
-                )}
-              </Show>
-              <span class="scope-cell__title">{model.title}</span>
-              <span class="scope-cell__meta">
-                <Show when={model.count !== undefined} fallback={model.text}>
-                  <span class="scope-cell__count" data-zero={model.count === 0}>
-                    {model.count?.toLocaleString("en-US")}
-                  </span>
-                  {model.text.slice(
-                    model.count?.toLocaleString("en-US").length,
+        <div class="grid-top-slot" ref={observeTopSlot}>
+          {props.topSlot}
+          <Show when={props.scopeCell} keyed>
+            {(model) => (
+              <h2 class="scope-cell" title={model.title}>
+                <Show when={model.faviconFeed} keyed>
+                  {(feed) => (
+                    <SourceBadge
+                      connector={feed.connector}
+                      imageURL={feed.favicon_url}
+                      title={model.title}
+                      size={mobile() ? 20 : 22}
+                    />
                   )}
                 </Show>
-              </span>
-            </h2>
-          )}
-        </Show>
+                <span class="scope-cell__title">{model.title}</span>
+                <span class="scope-cell__meta">
+                  <Show when={model.count !== undefined} fallback={model.text}>
+                    <span
+                      class="scope-cell__count"
+                      data-zero={model.count === 0}
+                    >
+                      {model.count?.toLocaleString("en-US")}
+                    </span>
+                    {model.text.slice(
+                      model.count?.toLocaleString("en-US").length,
+                    )}
+                  </Show>
+                </span>
+              </h2>
+            )}
+          </Show>
+        </div>
         <For each={visible()}>
           {(row) => (
             <div

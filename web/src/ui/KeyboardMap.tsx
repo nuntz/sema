@@ -22,13 +22,13 @@ const groups = [
   {
     title: "Views",
     bindings: [
-      ["g → u", "Show Unread"],
-      ["g → t", "Show Today"],
-      ["g → y", "Show Yesterday"],
-      ["g → a", "Show All"],
+      ["g → u", "Toggle unread only"],
+      ["g → t", "Set date to Today"],
+      ["g → y", "Set date to Yesterday"],
+      ["g → a", "Show all dates"],
       ["g → r", "Open Archive"],
       ["g → s", "Open / close Feeds & settings"],
-      ["a", "Toggle Unread / All"],
+      ["a", "Toggle unread only"],
       ["Shift+a", "Toggle Archive"],
       ["t", "Toggle Front page / Latest"],
     ],

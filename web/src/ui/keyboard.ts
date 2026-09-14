@@ -1,4 +1,4 @@
-import type { ItemView } from "../item-view";
+import type { ItemWindow } from "../item-view";
 
 export type GridCommand =
   | "page-down"
@@ -107,13 +107,13 @@ export const appCommand = (key: string): AppCommand | undefined =>
 export const readerCommand = (key: string): ReaderCommand | undefined =>
   readerBindings[key];
 
-export const scopeShortcuts: Record<ItemView, string> = {
+export const scopeShortcuts: Record<"unread" | ItemWindow, string> = {
   unread: "g → u",
   today: "g → t",
   yesterday: "g → y",
   all: "g → a",
 };
-export type GoCommand = ItemView | "archive" | "settings";
+export type GoCommand = "unread" | ItemWindow | "archive" | "settings";
 export const goCommand = (key: string): GoCommand | undefined =>
   (
     ({

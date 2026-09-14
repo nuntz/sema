@@ -17,6 +17,7 @@ import Heart from "lucide-solid/icons/heart";
 import ImageIcon from "lucide-solid/icons/image";
 import Layers from "lucide-solid/icons/layers";
 import Link from "lucide-solid/icons/link";
+import Lock from "lucide-solid/icons/lock";
 import Menu from "lucide-solid/icons/menu";
 import MessageSquare from "lucide-solid/icons/message-square";
 import Monitor from "lucide-solid/icons/monitor";
@@ -28,6 +29,7 @@ import Plus from "lucide-solid/icons/plus";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import Search from "lucide-solid/icons/search";
 import Settings from "lucide-solid/icons/settings";
+import SlidersHorizontal from "lucide-solid/icons/sliders-horizontal";
 import Sun from "lucide-solid/icons/sun";
 import Tag from "lucide-solid/icons/tag";
 import Trash2 from "lucide-solid/icons/trash-2";
@@ -90,6 +92,8 @@ const glyphs = {
   "chevron-down": ChevronDown,
   "chevron-up": ChevronUp,
   menu: Menu,
+  lock: Lock,
+  filter: SlidersHorizontal,
   discussion: MessageSquare,
   more: Ellipsis,
   mute: Pause,

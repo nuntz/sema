@@ -1009,13 +1009,13 @@ test("scroll-reading a story cell uses all of its unread members", async ({
       .toBeGreaterThanOrEqual(delta);
   };
 
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   await scrollPastStoryRow();
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await page.waitForTimeout(100);
   expect(readBatches).toEqual([]);
 
-  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).check();
   await expect
     .poll(() =>
       page.locator(".grid-scroll").evaluate((element) => element.scrollTop),
@@ -1071,7 +1071,7 @@ test("dark story read visuals follow the grid's All and Unread contexts", async 
   await stubFrontPage(page, [story], companions, []);
   await page.goto("/");
 
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   const storyCell = page.locator('[data-story-id="read-story"]');
   const leadTitle = storyCell.locator(".story-lead h2");
   const headlines = storyCell.locator(".story-headline");
@@ -1082,7 +1082,7 @@ test("dark story read visuals follow the grid's All and Unread contexts", async 
   await expect(headlines.first()).not.toHaveClass(/\bread\b/);
   await expect(storyCell.locator(".unread-dot")).toHaveCount(0);
 
-  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).check();
   await expect(headlines.first()).toHaveClass(/\bread\b/);
   await expect(headlines.first().locator(".unread-dot")).toHaveCount(0);
 });
@@ -1331,7 +1331,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
   );
   await stubFrontPage(page, stories, [], []);
   await page.goto("/");
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   const grid = page.locator(".grid-scroll");
   const first = page.locator('[data-story-id="light-0"]');
   const related = first.locator(".story-headline");
@@ -1396,7 +1396,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
     }
   }
   await page.setViewportSize({ width: 1513, height: 1071 });
-  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).check();
   await expect(grid.locator(".unread-dot")).toHaveCount(0);
   await expect(readStory).toHaveCSS("background-color", "rgb(247, 245, 241)");
   await expect(readStory.locator(".story-lead h2")).toHaveCSS(
@@ -1450,7 +1450,7 @@ test("Direction A fits singleton headlines and metadata in compact cards", async
   }));
   await stubFrontPage(page, [], items, []);
   await page.goto("/");
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   for (const width of [1513, 1024, 768]) {
     await page.setViewportSize({ width, height: 1071 });
     const first = page.locator('[data-item-id="compact-light-0"]');
@@ -1488,7 +1488,7 @@ test("Direction A fits singleton headlines and metadata in compact cards", async
   }
   await page.screenshot({ path: "/tmp/sema-direction-a-compact.png" });
   await page.locator(".filter-button").click();
-  await page.getByRole("radio", { name: "Unread", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread only", exact: true }).check();
   await page.keyboard.press("Escape");
   await expect(page.locator(".grid-scroll .unread-dot")).toHaveCount(0);
   const sessionRead = page.locator('[data-item-id="compact-light-1"]');
@@ -1537,7 +1537,7 @@ test("light singleton photos use spare height while keeping copy together", asyn
   await page.goto("/");
   await expect(page.locator(".grid-cell")).toHaveCount(items.length);
   await expect(page.locator(".grid-scroll .unread-dot")).toHaveCount(0);
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   for (const width of [1513, 1024, 768]) {
     await page.setViewportSize({ width, height: 1071 });
     await expect(
@@ -2179,7 +2179,7 @@ for (const preference of ["dark", "system"] as const) {
     );
     await stubFrontPage(page, [story, readStory], items, []);
     await page.goto("/");
-    await page.getByRole("radio", { name: "All", exact: true }).click();
+    await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
     const grid = page.locator(".grid-scroll");
     const card = page.locator('[data-story-id="dark-story"]');
     const readCard = page.locator('[data-story-id="dark-read-story"]');
@@ -2260,7 +2260,7 @@ for (const preference of ["dark", "system"] as const) {
         .toBeGreaterThan(126);
     }
     await page.setViewportSize({ width: 1513, height: 1071 });
-    await page.getByRole("radio", { name: "Unread", exact: true }).click();
+    await page.getByRole("switch", { name: "Unread", exact: true }).check();
     await expect(grid.locator(".unread-dot")).toHaveCount(0);
     await expect(readCard).toHaveCSS("background-color", "rgb(16, 17, 19)");
     await expect(readCard.locator(".story-headlines")).toHaveCSS(
@@ -2519,11 +2519,11 @@ test.describe("mobile shared grid design", () => {
           )
           .toBe(true);
         await card.getByRole("button", { name: "Show less" }).tap();
+        await page.locator(".filter-button").tap();
         await page
-          .getByRole("button", { name: "Front page", exact: true })
-          .tap();
-        await page.getByRole("radio", { name: "All", exact: true }).tap();
-        await page.getByRole("button", { name: "Close feed view menu" }).tap();
+          .getByRole("switch", { name: "Unread only", exact: true })
+          .uncheck();
+        await page.getByRole("button", { name: "Close filter" }).tap();
         await expect(readCard).not.toHaveClass(/is-read/);
         await expect(readCard.locator(":scope > img")).toHaveCSS(
           "filter",
@@ -2846,7 +2846,7 @@ test("withheld stories do not drain pages and the reader pauses grid pagination"
     });
   });
   await page.goto("/");
-  await page.getByRole("radio", { name: "All", exact: true }).click();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   await expect(
     page.getByRole("radio", { name: "All", exact: true }),
   ).toHaveAttribute("aria-checked", "true");

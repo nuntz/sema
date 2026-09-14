@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { effectiveGridOrder } from "../grid-scope";
-import { appCommand, gridCommand, readerCommand } from "./keyboard";
+import {
+  appCommand,
+  goCommand,
+  gridCommand,
+  readerCommand,
+  scopeShortcuts,
+} from "./keyboard";
 
 describe("keyboard map", () => {
   it.each([
@@ -92,4 +98,19 @@ describe("keyboard map", () => {
 it("keeps from the reader with Shift+K without changing previous-item k", () => {
   expect(readerCommand("K")).toBe("heart");
   expect(readerCommand("k")).toBe("previous");
+});
+
+it("keeps date navigation separate from the unread toggle command", () => {
+  expect(["u", "t", "y", "a"].map(goCommand)).toEqual([
+    "unread",
+    "today",
+    "yesterday",
+    "all",
+  ]);
+  expect(scopeShortcuts).toEqual({
+    unread: "g → u",
+    today: "g → t",
+    yesterday: "g → y",
+    all: "g → a",
+  });
 });
