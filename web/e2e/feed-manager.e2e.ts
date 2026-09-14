@@ -31,7 +31,7 @@ const fixtures: Feed[] = Array.from({ length: 320 }, (_, index) => ({
         : index === 4
           ? "muted"
           : "ok",
-  item_count: 50,
+  item_count: 400,
   extraction_sample: 0,
 }));
 
@@ -41,6 +41,7 @@ async function openManager(
     failDelete?: boolean;
     failRetry?: boolean;
     emptyCounts?: boolean;
+    failCounts?: boolean;
   } = {},
 ) {
   let feeds = fixtures.map((feed) => ({ ...feed }));
@@ -76,20 +77,36 @@ async function openManager(
       });
     if (path === "/api/feeds/counts") {
       state.counts.push(url.search);
-      const recent = url.searchParams.has("fetched_from");
-      const empty = options.emptyCounts && state.counts.length === 1;
+      if (options.failCounts)
+        return route.fulfill({
+          status: 500,
+          json: { error: "Counts unavailable" },
+        });
+      const empty = options.emptyCounts;
       return route.fulfill({
         json: {
           feeds: empty
             ? {}
             : Object.fromEntries(
                 feeds
-                  .filter((feed) => feed.feed_id !== "feed-319")
-                  .map((feed, index) => [
+                  .filter(
+                    (feed) =>
+                      ![
+                        "feed-0",
+                        "feed-1",
+                        "feed-2",
+                        "feed-4",
+                        "feed-319",
+                      ].includes(feed.feed_id),
+                  )
+                  .map((feed) => [
                     feed.feed_id,
                     {
-                      all: recent && index < 5 ? 0 : 50,
-                      unread: index === 6 ? 0 : index + 1,
+                      all: 400,
+                      unread:
+                        feed.feed_id === "feed-6"
+                          ? 0
+                          : Number(feed.feed_id.slice(5)) + 1,
                     },
                   ]),
               ),
@@ -154,7 +171,10 @@ async function openManager(
   await page.keyboard.press("g");
   await page.keyboard.press("s");
   await expect(page.locator(".feed-manage-row")).toHaveCount(320);
-  await expect(page.locator(".feed-filters")).toContainText("Quiet 4");
+  if (!options.failCounts)
+    await expect(page.locator(".feed-filters")).toContainText(
+      options.emptyCounts ? "Quiet this week 319" : "Quiet this week 4",
+    );
   return state;
 }
 
@@ -162,19 +182,26 @@ for (const width of [1280, 400]) {
   test(`large feed manager at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await openManager(page);
-    expect(state.counts).toHaveLength(2);
-    const recent = new URLSearchParams(state.counts[1]);
-    expect(recent.get("fetched_from")).toBe("2026-08-14T12:00:00.000Z");
-    expect(recent.get("fetched_before")).toBe(now.toISOString());
+    expect(state.counts).toEqual([""]);
     const first = page.locator(".feed-manage-row").first();
-    await expect(first.locator(".feed-unread")).toHaveText("1");
+    await expect(first.locator(".feed-unread")).toHaveText("0");
+    await expect(first.locator(".feed-unread")).toHaveClass(/zero/);
+    const chips = page.locator(".feed-filters");
+    expect(
+      await chips.evaluate((el) =>
+        [...el.querySelectorAll("button")].every(
+          (button) =>
+            button.offsetTop === el.querySelector("button")?.offsetTop,
+        ),
+      ),
+    ).toBe(true);
     await expect(first.locator("time")).toHaveText("failing 9d");
     await expect(first.locator("time")).toHaveAttribute("title", /HTTP 503/);
     await expect(first.locator(".feed-status")).toHaveAttribute(
       "aria-label",
       "broken: 10 consecutive fetch failures, failing for 9 days",
     );
-    await expect(first.locator("small")).toContainText("0 in 30 days");
+    await expect(first.locator("small")).toContainText("nothing this week");
     await expect(page.locator(".feed-triage")).toContainText(
       "3 feeds have been failing for over a week.",
     );
@@ -238,12 +265,14 @@ for (const width of [1280, 400]) {
     );
     await expect(
       page.locator(".feed-manage-row").last().locator(".feed-unread"),
-    ).toBeEmpty();
+    ).toHaveText("0");
     await sort.selectOption("quietest");
     await expect(page.locator(".feed-manage-row").first()).toContainText(
       "A List Apart",
     );
-    await page.getByRole("button", { name: "Quiet 4", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Quiet this week 4", exact: true })
+      .click();
     await expect(page.locator(".feed-manage-row")).toHaveCount(4);
     await page.locator(".feed-manager-title button").click();
     await expect(attention).toHaveAttribute("aria-pressed", "true");
@@ -314,13 +343,15 @@ for (const failRetry of [false, true]) {
   });
 }
 
-test("empty all-time counts refresh through App", async ({ page }) => {
+test("empty loaded counts are zero without another request", async ({
+  page,
+}) => {
   const state = await openManager(page, { emptyCounts: true });
   await expect(
     page.locator(".feed-manage-row").first().locator(".feed-unread"),
-  ).toHaveText("1");
-  expect(state.counts.filter((query) => !query)).toHaveLength(2);
-  expect(state.counts.filter((query) => query)).toHaveLength(1);
+  ).toHaveText("0");
+  expect(state.counts.filter((query) => !query)).toHaveLength(1);
+  expect(state.counts.filter((query) => query)).toHaveLength(0);
 });
 
 test("single-feed removal uses the same undo restoration", async ({ page }) => {
@@ -367,7 +398,7 @@ test("switching from Today requests all-time counts and restores window counts o
   await page.keyboard.press("s");
   await expect(
     page.locator(".feed-manage-row").first().locator(".feed-unread"),
-  ).toHaveText("1");
+  ).toHaveText("0");
   expect(state.counts.slice(before).filter((query) => !query)).toHaveLength(1);
   const after = state.counts.length;
   await page.getByRole("searchbox", { name: "Search feeds" }).press("Escape");
@@ -383,4 +414,20 @@ test("switching from Today requests all-time counts and restores window counts o
         ),
     )
     .toBe(true);
+});
+
+test("failed counts stay unavailable instead of making every feed quiet", async ({
+  page,
+}) => {
+  await openManager(page, { failCounts: true });
+  await expect(page.locator(".feed-unread").first()).toBeEmpty();
+  await expect(
+    page.getByRole("button", { name: /Quiet this week/ }),
+  ).toHaveCount(0);
+  const rows = page.locator(".feed-manage-row strong");
+  const titles = await rows.allTextContents();
+  for (const sort of ["unread", "quietest"]) {
+    await page.getByRole("combobox", { name: "Sort feeds" }).selectOption(sort);
+    await expect(rows).toHaveText(titles);
+  }
 });

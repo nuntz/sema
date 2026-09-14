@@ -16,6 +16,7 @@ import {
   compareFeeds,
   type FeedFilter,
   type FeedSort,
+  feedCount,
   feedFilterCounts,
   filterFeeds,
 } from "../feed-manager";
@@ -39,7 +40,7 @@ import { displayFeedTitle as displayTitle } from "./tag-options";
 
 export function Feeds(props: {
   api: APIClient;
-  itemCounts: FeedItemCounts;
+  itemCounts: FeedItemCounts | undefined;
   onRefreshCounts(): Promise<void>;
   focusSearch?: boolean;
   heartCount: number;
@@ -56,21 +57,9 @@ export function Feeds(props: {
   );
   const [account, { refetch: refetchAccount, mutate: setAccount }] =
     createResource(() => props.api.me());
-  const [recentCounts] = createResource(async () => {
-    const now = Date.now();
-    try {
-      return await props.api.feedItemCounts({
-        from: new Date(now - 30 * 86400000).toISOString(),
-        before: new Date(now).toISOString(),
-      });
-    } catch {
-      props.onToast("error", "Couldn’t load recent feed counts");
-      return {};
-    }
-  });
   const [filter, setFilter] = createSignal<FeedFilter>("all");
   const counts = createMemo(() =>
-    feedFilterCounts(feeds() ?? [], recentCounts()),
+    feedFilterCounts(feeds() ?? [], props.itemCounts),
   );
   const toggleFilter = (next: FeedFilter) =>
     setFilter(filter() === next ? "all" : next);
@@ -96,8 +85,7 @@ export function Feeds(props: {
   let searchInput!: HTMLInputElement;
 
   onMount(() => {
-    if (Object.keys(props.itemCounts).length === 0)
-      void props.onRefreshCounts();
+    if (props.itemCounts === undefined) void props.onRefreshCounts();
     if (props.focusSearch) searchInput.focus();
   });
 
@@ -114,8 +102,8 @@ export function Feeds(props: {
       ).length ?? 0,
   );
   const visibleFeeds = createMemo(() =>
-    filterFeeds(feeds() ?? [], filter(), query(), recentCounts()).sort(
-      compareFeeds(sort(), props.itemCounts, recentCounts()),
+    filterFeeds(feeds() ?? [], filter(), query(), props.itemCounts).sort(
+      compareFeeds(sort(), props.itemCounts),
     ),
   );
 
@@ -389,7 +377,7 @@ export function Feeds(props: {
             >
               <option value="title">Title (A–Z)</option>
               <option value="unread">Unread</option>
-              <option value="quietest">Quietest</option>
+              <option value="quietest">Quietest this week</option>
               <option value="updated">Last update</option>
               <option value="errors">Errors first</option>
               <option value="prior">Prior</option>
@@ -477,7 +465,7 @@ export function Feeds(props: {
                 ["attention", "Needs attention"],
                 ["muted", "Muted"],
                 ["never", "Never fetched"],
-                ["quiet", "Quiet"],
+                ["quiet", "Quiet this week"],
               ] as const
             }
           >
@@ -562,19 +550,21 @@ export function Feeds(props: {
                     </div>
                     <small>
                       {feedDescriptor(feed)}
-                      {!feed.muted && recentCounts()?.[feed.feed_id]?.all === 0
-                        ? " · 0 in 30 days"
+                      {!feed.muted &&
+                      feedCount(props.itemCounts, feed.feed_id)?.all === 0
+                        ? " · nothing this week"
                         : ""}
                     </small>
                   </div>
                   <span
                     class="feed-unread"
                     classList={{
-                      zero: props.itemCounts[feed.feed_id]?.unread === 0,
+                      zero:
+                        feedCount(props.itemCounts, feed.feed_id)?.unread === 0,
                     }}
                     title="Unread items"
                   >
-                    {props.itemCounts[feed.feed_id]?.unread}
+                    {feedCount(props.itemCounts, feed.feed_id)?.unread}
                   </span>
                   <span class="feed-row-status">
                     <StatusBadge feed={feed} />

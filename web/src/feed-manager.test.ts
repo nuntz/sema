@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   brokenSince,
   compareFeeds,
+  feedCount,
   feedFilterCounts,
   filterFeeds,
 } from "./feed-manager";
@@ -71,15 +72,30 @@ it("counts independently of searches, counting each tag once per feed", () => {
   });
 });
 
-it("quiet requires a recent zero entry and excludes muted feeds", () => {
-  const recent = {
-    Alpha: { all: 0, unread: 0 },
-    Beta: { all: 3, unread: 2 },
-    Gamma: { all: 0, unread: 0 },
-  };
-  expect(filterFeeds(feeds, "quiet", "", recent)).toEqual([feeds[0]]);
-  expect(feedFilterCounts(feeds, recent).quiet).toBe(1);
+it("distinguishes unavailable counts from a loaded sparse or empty map", () => {
+  expect(feedCount(undefined, "Alpha")).toBeUndefined();
+  expect(feedCount({}, "Alpha")).toEqual({ all: 0, unread: 0 });
+  expect(feedCount({ Beta: { all: 3, unread: 2 } }, "Alpha")).toEqual({
+    all: 0,
+    unread: 0,
+  });
+  expect(feedCount({ Beta: { all: 3, unread: 2 } }, "Beta")).toEqual({
+    all: 3,
+    unread: 2,
+  });
+});
+it("quiet treats omissions as zero only after loading and excludes muted feeds", () => {
+  const counts = { Beta: { all: 3, unread: 2 } };
+  expect(filterFeeds(feeds, "quiet", "", counts)).toEqual([feeds[0], feeds[3]]);
+  expect(feedFilterCounts(feeds, counts).quiet).toBe(2);
+  expect(filterFeeds(feeds, "quiet", "", {})).toEqual([
+    feeds[0],
+    feeds[1],
+    feeds[3],
+  ]);
+  expect(feedFilterCounts(feeds, {}).quiet).toBe(3);
   expect(filterFeeds(feeds, "quiet")).toEqual([]);
+  expect(feedFilterCounts(feeds).quiet).toBe(0);
 });
 describe("compareFeeds", () => {
   const entries = [
@@ -90,18 +106,27 @@ describe("compareFeeds", () => {
     feed("Absent"),
   ];
   const counts = {
-    Zulu: { all: 0, unread: 9 },
-    Beta: { all: 2, unread: 3 },
-    Alpha: { all: 2, unread: 3 },
+    Zulu: { all: 9, unread: 9 },
+    Beta: { all: 3, unread: 3 },
+    Alpha: { all: 3, unread: 3 },
   };
+  it("sorts unread descending with omitted feeds at zero and title ties", () => {
+    expect(
+      [...entries].sort(compareFeeds("unread", counts)).map((f) => f.feed_id),
+    ).toEqual(["Zulu", "Alpha", "Beta", "Absent", "Missing"]);
+  });
+  it("sorts quietest ascending with omitted feeds first and title ties", () => {
+    expect(
+      [...entries].sort(compareFeeds("quietest", counts)).map((f) => f.feed_id),
+    ).toEqual(["Absent", "Missing", "Alpha", "Beta", "Zulu"]);
+  });
   it.each(["unread", "quietest"] as const)(
-    "sorts %s with title ties and missing entries last",
+    "uses title order for %s when unavailable or empty-but-loaded",
     (sort) => {
-      expect(
-        [...entries]
-          .sort(compareFeeds(sort, counts, counts))
-          .map((f) => f.feed_id),
-      ).toEqual(["Zulu", "Alpha", "Beta", "Absent", "Missing"]);
+      for (const map of [undefined, {}])
+        expect(
+          [...entries].sort(compareFeeds(sort, map)).map((f) => f.feed_id),
+        ).toEqual(["Absent", "Alpha", "Beta", "Missing", "Zulu"]);
     },
   );
   it.each(["title", "updated", "errors", "prior", "quality"] as const)(

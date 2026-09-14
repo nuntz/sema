@@ -1,5 +1,15 @@
-import type { Feed, FeedItemCounts } from "./types";
+import type { Feed, FeedItemCount, FeedItemCounts } from "./types";
 import { displayFeedTitle } from "./ui/tag-options";
+// Undefined means unavailable; a resolved sparse map (including {}) means loaded.
+export function feedCount(
+  counts: FeedItemCounts | undefined,
+  feedID: string,
+): FeedItemCount | undefined {
+  return counts === undefined
+    ? undefined
+    : (counts[feedID] ?? { all: 0, unread: 0 });
+}
+
 export type FeedFilter =
   | "all"
   | "attention"
@@ -11,7 +21,7 @@ export function filterFeeds(
   feeds: readonly Feed[],
   filter: FeedFilter,
   query = "",
-  recent: FeedItemCounts = {},
+  counts?: FeedItemCounts,
 ): Feed[] {
   const needle = query.trim().toLowerCase();
   return feeds.filter((feed) => {
@@ -21,7 +31,9 @@ export function filterFeeds(
         (feed.status === "broken" || feed.status === "slowed")) ||
       (filter === "muted" && feed.muted) ||
       (filter === "never" && !feed.last_fetch_at) ||
-      (filter === "quiet" && !feed.muted && recent[feed.feed_id]?.all === 0) ||
+      (filter === "quiet" &&
+        !feed.muted &&
+        feedCount(counts, feed.feed_id)?.all === 0) ||
       (filter.startsWith("tag:") &&
         (feed.tags ?? []).includes(filter.slice(4)));
     return (
@@ -36,7 +48,7 @@ export function filterFeeds(
 }
 export function feedFilterCounts(
   feeds: readonly Feed[],
-  recent: FeedItemCounts = {},
+  itemCounts?: FeedItemCounts,
 ) {
   const counts = {
     all: feeds.length,
@@ -51,7 +63,8 @@ export function feedFilterCounts(
       counts.attention++;
     if (feed.muted) counts.muted++;
     if (!feed.last_fetch_at) counts.never++;
-    if (!feed.muted && recent[feed.feed_id]?.all === 0) counts.quiet++;
+    if (!feed.muted && feedCount(itemCounts, feed.feed_id)?.all === 0)
+      counts.quiet++;
     for (const tag of new Set(feed.tags ?? []))
       counts.tags[tag] = (counts.tags[tag] ?? 0) + 1;
   }
@@ -68,17 +81,15 @@ export type FeedSort =
   | "quietest";
 export function compareFeeds(
   sort: FeedSort,
-  counts: FeedItemCounts = {},
-  recent: FeedItemCounts = {},
+  counts?: FeedItemCounts,
 ): (first: Feed, second: Feed) => number {
   return (first, second) => {
     const title = () =>
       displayFeedTitle(first).localeCompare(displayFeedTitle(second));
     if (sort === "unread" || sort === "quietest") {
-      const map = sort === "unread" ? counts : recent;
-      const a = map[first.feed_id];
-      const b = map[second.feed_id];
-      if (!a || !b) return a ? -1 : b ? 1 : title();
+      const a = feedCount(counts, first.feed_id);
+      const b = feedCount(counts, second.feed_id);
+      if (!a || !b) return title();
       return (
         (sort === "unread" ? b.unread - a.unread : a.all - b.all) || title()
       );
