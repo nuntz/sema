@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { compareFeeds, feedFilterCounts, filterFeeds } from "./feed-manager";
+import {
+  brokenSince,
+  compareFeeds,
+  feedFilterCounts,
+  filterFeeds,
+} from "./feed-manager";
 import type { Feed } from "./types";
 
 const feed = (id: string, extra: Partial<Feed> = {}): Feed => ({
@@ -138,5 +143,38 @@ describe("compareFeeds", () => {
         .sort(compareFeeds("errors"))
         .map((f) => f.title),
     ).toEqual(["slowed", "muted", "ok"]);
+  });
+});
+
+describe("brokenSince", () => {
+  const now = Date.parse("2026-09-13T00:00:00Z");
+  it("estimates the first failure using attempts and cadence", () => {
+    expect(
+      brokenSince(
+        feed("x", {
+          status: "broken",
+          error_count: 5,
+          fetch_interval_h: 24,
+          last_fetch_at: "2026-09-08T00:00:00Z",
+        }),
+        now,
+      ),
+    ).toBe("2026-09-04T00:00:00.000Z");
+  });
+  it.each([1, 0, -1])("clamps %s errors to the last attempt", (error_count) => {
+    expect(brokenSince(feed("x", { status: "broken", error_count }), now)).toBe(
+      "2026-09-01T00:00:00.000Z",
+    );
+  });
+  it.each(["ok", "slowed", "muted"] as const)("omits %s feeds", (status) => {
+    expect(
+      brokenSince(feed("x", { status, error_count: 5 }), now),
+    ).toBeUndefined();
+  });
+  it("does not invent dates for missing, invalid or future attempts", () => {
+    for (const last_fetch_at of [undefined, "invalid", "2027-01-01T00:00:00Z"])
+      expect(
+        brokenSince(feed("x", { status: "broken", last_fetch_at }), now),
+      ).toBeUndefined();
   });
 });

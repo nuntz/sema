@@ -12,6 +12,7 @@ import { archiveSize } from "../archive";
 import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
 import {
+  brokenSince,
   compareFeeds,
   type FeedFilter,
   type FeedSort,
@@ -57,10 +58,15 @@ export function Feeds(props: {
     createResource(() => props.api.me());
   const [recentCounts] = createResource(async () => {
     const now = Date.now();
-    return props.api.feedItemCounts({
-      from: new Date(now - 30 * 86400000).toISOString(),
-      before: new Date(now).toISOString(),
-    });
+    try {
+      return await props.api.feedItemCounts({
+        from: new Date(now - 30 * 86400000).toISOString(),
+        before: new Date(now).toISOString(),
+      });
+    } catch {
+      props.onToast("error", "Couldn’t load recent feed counts");
+      return {};
+    }
   });
   const [filter, setFilter] = createSignal<FeedFilter>("all");
   const counts = createMemo(() =>
@@ -75,7 +81,16 @@ export function Feeds(props: {
   const [message, setMessage] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [recomputing, setRecomputing] = createSignal(false);
-  const [undoFeed, setUndoFeed] = createSignal<Feed>();
+  const [undoFeeds, setUndoFeeds] = createSignal<Feed[]>([]);
+  const [triageBusy, setTriageBusy] = createSignal(false);
+  const [confirmRemoval, setConfirmRemoval] = createSignal<Feed[]>([]);
+  const longBroken = createMemo(() => {
+    const now = Date.now();
+    return (feeds() ?? []).filter((feed) => {
+      const since = brokenSince(feed, now);
+      return since !== undefined && now - Date.parse(since) >= 7 * 86400000;
+    });
+  });
   let undoTimer: number | undefined;
   let input!: HTMLInputElement;
   let searchInput!: HTMLInputElement;
@@ -145,50 +160,141 @@ export function Feeds(props: {
     }
   };
 
+  const offerUndo = (removed: Feed[]) => {
+    if (!removed.length) return;
+    setUndoFeeds((current) => [...current, ...removed]);
+    window.clearTimeout(undoTimer);
+    undoTimer = window.setTimeout(() => setUndoFeeds([]), 8_000);
+  };
+
   const remove = async (feed: Feed) => {
     await props.api.deleteFeed(feed.feed_id);
     setSelectedID("");
-    setUndoFeed(feed);
-    window.clearTimeout(undoTimer);
-    undoTimer = window.setTimeout(() => setUndoFeed(), 8_000);
+    offerUndo([feed]);
     await refresh();
   };
 
-  const undoRemove = async () => {
-    const feed = undoFeed();
-    if (!feed) return;
-    setUndoFeed();
+  const undoRemove = async (removed: Feed[]) => {
+    if (!removed.length) return;
+    setUndoFeeds([]);
     window.clearTimeout(undoTimer);
-    try {
-      const restored = await props.api.addFeed({
-        feed_url: feed.url,
-        tags: feed.tags,
-        custom_title: feed.custom_title,
-        connector: feed.connector,
-        title: feed.title,
-        site_url: feed.site_url,
-        badge_url: feed.connector === "reddit" ? feed.favicon_url : undefined,
-        avatar_url: feed.connector === "youtube" ? feed.favicon_url : undefined,
-      });
-      if (
-        feed.muted ||
-        feed.hide_shorts ||
-        feed.always_generate ||
-        (feed.connector !== "reddit" && feed.fetch_interval_h !== 1)
-      ) {
-        await props.api.patchFeed(restored.feed.feed_id, {
-          muted: feed.muted,
-          hide_shorts:
-            feed.connector === "youtube" ? feed.hide_shorts : undefined,
-          always_generate: feed.always_generate,
-          fetch_interval_h:
-            feed.connector === "reddit" ? undefined : feed.fetch_interval_h,
+    const results = await Promise.allSettled(
+      removed.map(async (feed) => {
+        const restored = await props.api.addFeed({
+          feed_url: feed.url,
+          tags: feed.tags,
+          custom_title: feed.custom_title,
+          connector: feed.connector,
+          title: feed.title,
+          site_url: feed.site_url,
+          badge_url: feed.connector === "reddit" ? feed.favicon_url : undefined,
+          avatar_url:
+            feed.connector === "youtube" ? feed.favicon_url : undefined,
         });
-      }
+        if (
+          feed.muted ||
+          feed.hide_shorts ||
+          feed.always_generate ||
+          (feed.connector !== "reddit" && feed.fetch_interval_h !== 1)
+        ) {
+          await props.api.patchFeed(restored.feed.feed_id, {
+            muted: feed.muted,
+            hide_shorts:
+              feed.connector === "youtube" ? feed.hide_shorts : undefined,
+            always_generate: feed.always_generate,
+            fetch_interval_h:
+              feed.connector === "reddit" ? undefined : feed.fetch_interval_h,
+          });
+        }
+      }),
+    );
+    const failed = results.filter(
+      (result) => result.status === "rejected",
+    ).length;
+    try {
       await refresh();
-      props.onToast("success", "Feed restored");
+      props.onToast(
+        failed ? "error" : "success",
+        failed
+          ? `Couldn’t fully restore ${failed} ${failed === 1 ? "feed" : "feeds"}`
+          : removed.length === 1
+            ? "Feed restored"
+            : `${removed.length} feeds restored`,
+      );
     } catch {
-      props.onToast("error", "Couldn’t restore feed");
+      props.onToast("error", "Couldn’t refresh feeds after restoring");
+    }
+  };
+
+  const retryLongBroken = async () => {
+    if (triageBusy()) return;
+    const targets = [...longBroken()];
+    setTriageBusy(true);
+    setConfirmRemoval([]);
+    props.onToast(
+      "success",
+      `Retrying ${targets.length} ${targets.length === 1 ? "feed" : "feeds"}`,
+    );
+    try {
+      let rejected = 0;
+      // Settle each request before starting the next, continuing after failures.
+      for (const feed of targets) {
+        const [result] = await Promise.allSettled([
+          props.api.retryFeed(feed.feed_id),
+        ]);
+        if (result.status === "rejected") rejected++;
+      }
+      const latest = await refetch();
+      props.onFeedsChanged?.();
+      const ids = new Set(targets.map((feed) => feed.feed_id));
+      const failing = (latest ?? []).filter(
+        (feed) =>
+          ids.has(feed.feed_id) &&
+          (feed.status === "broken" || feed.status === "slowed"),
+      ).length;
+      props.onToast(
+        failing || rejected ? "error" : "success",
+        rejected
+          ? `${failing} ${failing === 1 ? "feed" : "feeds"} still failing · Couldn’t retry ${rejected}`
+          : failing
+            ? `${failing} ${failing === 1 ? "feed" : "feeds"} still failing`
+            : "All feeds recovered",
+      );
+    } catch {
+      props.onToast("error", "Couldn’t refresh feeds after retrying");
+    } finally {
+      setTriageBusy(false);
+    }
+  };
+
+  const removeLongBroken = async () => {
+    if (triageBusy()) return;
+    const targets = [...confirmRemoval()];
+    setTriageBusy(true);
+    const removed: Feed[] = [];
+    try {
+      for (const feed of targets) {
+        const [result] = await Promise.allSettled([
+          props.api.deleteFeed(feed.feed_id),
+        ]);
+        if (result.status === "fulfilled") removed.push(feed);
+      }
+      offerUndo(removed);
+      const ids = new Set(removed.map((feed) => feed.feed_id));
+      setFeeds((current) => current?.filter((feed) => !ids.has(feed.feed_id)));
+      if (ids.has(selectedID())) setSelectedID("");
+      const failed = targets.length - removed.length;
+      if (failed)
+        props.onToast(
+          "error",
+          `Couldn’t remove ${failed} ${failed === 1 ? "feed" : "feeds"}`,
+        );
+      await refresh();
+    } catch {
+      props.onToast("error", "Couldn’t refresh feeds after removing");
+    } finally {
+      setConfirmRemoval([]);
+      setTriageBusy(false);
     }
   };
 
@@ -301,6 +407,68 @@ export function Feeds(props: {
           </button>
         </div>
 
+        <Show when={longBroken().length > 0}>
+          <section
+            class="feed-triage"
+            aria-label="Long-broken feeds"
+            aria-busy={triageBusy()}
+          >
+            <p>
+              {longBroken().length}{" "}
+              {longBroken().length === 1 ? "feed has" : "feeds have"} been
+              failing for over a week.
+            </p>
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilter("attention");
+                  setSort("errors");
+                }}
+              >
+                Show
+              </button>
+              <button
+                type="button"
+                disabled={triageBusy()}
+                onClick={retryLongBroken}
+              >
+                Retry all
+              </button>
+              <Show
+                when={confirmRemoval().length > 0}
+                fallback={
+                  <button
+                    type="button"
+                    disabled={triageBusy()}
+                    onClick={() => setConfirmRemoval([...longBroken()])}
+                  >
+                    Remove all
+                  </button>
+                }
+              >
+                <span>
+                  Remove {confirmRemoval().length}{" "}
+                  {confirmRemoval().length === 1 ? "feed" : "feeds"}?
+                </span>
+                <button
+                  type="button"
+                  disabled={triageBusy()}
+                  onClick={removeLongBroken}
+                >
+                  Confirm removal
+                </button>
+                <button
+                  type="button"
+                  disabled={triageBusy()}
+                  onClick={() => setConfirmRemoval([])}
+                >
+                  Cancel
+                </button>
+              </Show>
+            </div>
+          </section>
+        </Show>
         <section class="feed-filters" aria-label="Filter feeds">
           <For
             each={
@@ -416,12 +584,20 @@ export function Feeds(props: {
                       <PriorBadge feed={feed} />
                     </Show>
                   </span>
-                  <time>
-                    {feed.muted
-                      ? "paused"
-                      : feed.last_fetch_at
-                        ? `${relativeTime(feed.last_fetch_at)} ago`
-                        : "never"}
+                  <time
+                    title={
+                      brokenSince(feed)
+                        ? `${new Date(brokenSince(feed) ?? "").toLocaleString()}${feed.last_error ? ` · ${feed.last_error}` : ""}`
+                        : undefined
+                    }
+                  >
+                    {brokenSince(feed)
+                      ? `failing ${relativeTime(brokenSince(feed) ?? "")}`
+                      : feed.muted
+                        ? "paused"
+                        : feed.last_fetch_at
+                          ? `${relativeTime(feed.last_fetch_at)} ago`
+                          : "never"}
                   </time>
                 </button>
               )}
@@ -498,10 +674,14 @@ export function Feeds(props: {
         </details>
       </section>
 
-      <Show when={undoFeed()}>
+      <Show when={undoFeeds().length > 0}>
         <div class="feed-undo" role="status">
-          <span>Feed removed</span>
-          <button type="button" onClick={undoRemove}>
+          <span>
+            {undoFeeds().length === 1
+              ? "Feed removed"
+              : `${undoFeeds().length} feeds removed`}
+          </span>
+          <button type="button" onClick={() => void undoRemove(undoFeeds())}>
             Undo
           </button>
         </div>
@@ -1377,8 +1557,16 @@ function DrawerStatus(props: { feed: Feed }) {
 }
 
 function StatusBadge(props: { feed: Feed }) {
-  const description = () =>
-    `${props.feed.status}: ${props.feed.error_count} consecutive fetch failures`;
+  const description = () => {
+    const since = brokenSince(props.feed);
+    const days = since
+      ? Math.floor((Date.now() - Date.parse(since)) / 86400000)
+      : 0;
+    const duration = since
+      ? `, failing for ${days === 0 ? "less than a day" : `${days} ${days === 1 ? "day" : "days"}`}`
+      : "";
+    return `${props.feed.status}: ${props.feed.error_count} consecutive fetch failures${duration}`;
+  };
   return (
     <Show when={props.feed.status !== "ok"}>
       <span

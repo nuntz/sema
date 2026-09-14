@@ -116,3 +116,15 @@ function statusWeight(feed: Feed): number {
         ? 1
         : 0;
 }
+
+export function brokenSince(feed: Feed, now = Date.now()): string | undefined {
+  if (feed.status !== "broken" || !feed.last_fetch_at) return undefined;
+  const attempt = Date.parse(feed.last_fetch_at);
+  if (!Number.isFinite(attempt) || attempt > now) return undefined;
+  // Estimate the first failure from the last attempt, not a last-success timestamp.
+  // Actual retry intervals and worker scheduling may differ from this cadence.
+  return new Date(
+    attempt -
+      Math.max(0, feed.error_count - 1) * feed.fetch_interval_h * 3600000,
+  ).toISOString();
+}

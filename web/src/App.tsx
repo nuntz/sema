@@ -1629,6 +1629,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   const refreshFeedItemCounts = async () => {
     const version = ++feedItemCountVersion;
     const window = view() === "feeds" ? undefined : itemViewWindow(itemView());
+    if (scopeCountsWindowKey() !== (window?.from ?? ""))
+      setScopeCountsWindowKey(undefined);
     try {
       // Counts must include queued and already-in-flight read writes before
       // they replace the optimistic adjustment (including finish-and-clear).
@@ -1728,6 +1730,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
     clearGo();
     closeKeys();
     setView("grid");
+    if (scopeCountsWindowKey() !== (itemViewWindow(itemView())?.from ?? ""))
+      void refreshFeedItemCounts();
     if (!feedsGridDirty) return;
     feedsGridDirty = false;
     await feedFilterRefresh;
@@ -1797,7 +1801,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         <>
           <Feeds
             api={api}
-            itemCounts={scopeCountsWindowKey() ? {} : feedItemCounts()}
+            itemCounts={scopeCountsWindowKey() === "" ? feedItemCounts() : {}}
             onRefreshCounts={refreshFeedItemCounts}
             focusSearch={focusFeedSearch()}
             heartCount={heartCount()}
@@ -1809,6 +1813,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             onFeedsChanged={noteFeedsChanged}
             onToast={showToast}
           />
+          <ToastNotice notice={toast()} />
           <Show when={keysOpen()}>
             <KeyboardMap
               onClose={closeKeys}
@@ -2524,28 +2529,34 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
             </div>
           )}
         </Show>
-        <Show when={toast()} keyed>
-          {(notice) => (
-            <div
-              class="link-toast"
-              classList={{
-                error: notice.kind === "error",
-                info: notice.kind === "info",
-              }}
-              role={notice.kind === "error" ? "alert" : "status"}
-              aria-live={notice.kind === "error" ? "assertive" : "polite"}
-            >
-              <Show when={notice.kind !== "info"}>
-                <Icon
-                  name={notice.kind === "error" ? "close" : "check"}
-                  class="toast-icon"
-                />
-              </Show>
-              <span>{notice.message}</span>
-            </div>
-          )}
-        </Show>
+        <ToastNotice notice={toast()} />
       </main>
+    </Show>
+  );
+}
+
+function ToastNotice(props: { notice?: Toast }) {
+  return (
+    <Show when={props.notice} keyed>
+      {(notice) => (
+        <div
+          class="link-toast"
+          classList={{
+            error: notice.kind === "error",
+            info: notice.kind === "info",
+          }}
+          role={notice.kind === "error" ? "alert" : "status"}
+          aria-live={notice.kind === "error" ? "assertive" : "polite"}
+        >
+          <Show when={notice.kind !== "info"}>
+            <Icon
+              name={notice.kind === "error" ? "close" : "check"}
+              class="toast-icon"
+            />
+          </Show>
+          <span>{notice.message}</span>
+        </div>
+      )}
     </Show>
   );
 }
