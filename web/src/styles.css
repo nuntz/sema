@@ -2220,7 +2220,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reddit-source-line + .article-summary { margin: 0 0 28px; }
 
 @media (max-width: 700px) {
-  .feed-manager { width: calc(100% - 28px); padding-top: 18px; }
+  .feed-manager { width: calc(100% - 32px); padding-top: 18px; }
   .feed-sort select { width: 42px; padding: 0; appearance: none; color: transparent; }
   .feed-sort > .sort-icon { left: 13px; }
   .feed-sort > .sort-menu-icon { display: none; }
@@ -2628,3 +2628,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .app-header--reader:has(.reader-life) .chrome-group { margin-left: 4px; }
   .app-header--reader:has(.reader-life) .chrome-btn + .chrome-btn { margin-left: 3px; }
 }
+
+.feed-manager-title p button { padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.feed-filters { min-width: 0; max-width: 100%; display: flex; align-items: center; gap: 7px; overflow-x: auto; scrollbar-width: none; padding: 3px 0 14px; }
+.feed-filters::-webkit-scrollbar { display: none; }
+.feed-filters .tag-chip { flex: none; height: 32px; background: transparent; }
+.feed-filters .tag-chip[aria-pressed="true"] { background: var(--control-wash-medium); color: var(--fg-primary); }
+.feed-filters .tag-chip span { font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
+.feed-filter-tags { display: flex; gap: 7px; padding-left: 8px; border-left: 1px solid var(--line); }
+@media (max-width: 620px) { .feed-filters .tag-chip { min-height: 44px; } }

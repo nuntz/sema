@@ -11,6 +11,11 @@ import { type APIClient, APIError } from "../api/client";
 import { archiveSize } from "../archive";
 import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
+import {
+  type FeedFilter,
+  feedFilterCounts,
+  filterFeeds,
+} from "../feed-manager";
 import { formatPrior } from "../ranking-display";
 import {
   type RedditCollection,
@@ -48,6 +53,10 @@ export function Feeds(props: {
   );
   const [account, { refetch: refetchAccount, mutate: setAccount }] =
     createResource(() => props.api.me());
+  const [filter, setFilter] = createSignal<FeedFilter>("all");
+  const counts = createMemo(() => feedFilterCounts(feeds() ?? []));
+  const toggleFilter = (next: FeedFilter) =>
+    setFilter(filter() === next ? "all" : next);
   const [query, setQuery] = createSignal("");
   const [sort, setSort] = createSignal<FeedSort>("title");
   const [selectedID, setSelectedID] = createSignal("");
@@ -77,14 +86,7 @@ export function Feeds(props: {
       ).length ?? 0,
   );
   const visibleFeeds = createMemo(() => {
-    const needle = query().trim().toLowerCase();
-    const matches = (feeds() ?? []).filter((feed) => {
-      if (!needle) return true;
-      return [displayTitle(feed), feed.url, ...(feed.tags ?? [])]
-        .join(" ")
-        .toLowerCase()
-        .includes(needle);
-    });
+    const matches = filterFeeds(feeds() ?? [], filter(), query());
     return [...matches].sort((first, second) => {
       switch (sort()) {
         case "updated":
@@ -255,7 +257,10 @@ export function Feeds(props: {
         <div class="feed-manager-title">
           <h1>Feeds</h1>
           <p>
-            {feeds()?.length ?? 0} feeds · {attention()} need attention
+            {feeds()?.length ?? 0} feeds ·{" "}
+            <button type="button" onClick={() => setFilter("attention")}>
+              {attention()} need attention
+            </button>
           </p>
         </div>
         <div class="feed-toolbar">
@@ -307,6 +312,48 @@ export function Feeds(props: {
           </button>
         </div>
 
+        <section class="feed-filters" aria-label="Filter feeds">
+          <For
+            each={
+              [
+                ["all", "All"],
+                ["attention", "Needs attention"],
+                ["muted", "Muted"],
+                ["never", "Never fetched"],
+              ] as const
+            }
+          >
+            {([value, label]) => (
+              <Show when={value === "all" || counts()[value] > 0}>
+                <button
+                  type="button"
+                  class="tag-chip"
+                  aria-pressed={filter() === value}
+                  onClick={() => toggleFilter(value)}
+                >
+                  {label} <span>{counts()[value]}</span>
+                </button>
+              </Show>
+            )}
+          </For>
+          <Show when={allTags().length}>
+            <section class="feed-filter-tags" aria-label="Tags">
+              <For each={allTags()}>
+                {(tag) => (
+                  <button
+                    type="button"
+                    class="tag-chip"
+                    aria-pressed={filter() === `tag:${tag}`}
+                    onClick={() => toggleFilter(`tag:${tag}`)}
+                  >
+                    {tag} <span>{counts().tags[tag]}</span>
+                  </button>
+                )}
+              </For>
+            </section>
+          </Show>
+        </section>
+
         <div class="feed-manage-list" aria-busy={feeds.loading}>
           <Show
             when={!feeds.loading}
@@ -316,11 +363,26 @@ export function Feeds(props: {
               each={visibleFeeds()}
               fallback={
                 <div class="feed-empty">
-                  <p>{query() ? "No feeds match." : "No feeds yet."}</p>
-                  <button type="button" onClick={() => setAdding(true)}>
-                    <Icon name="add-feed" />
-                    {query() ? "Add it as a feed?" : "Add your first feed"}
-                  </button>
+                  <p>
+                    {filter() !== "all"
+                      ? "No feeds match this filter."
+                      : query()
+                        ? "No feeds match."
+                        : "No feeds yet."}
+                  </p>
+                  <Show
+                    when={filter() !== "all"}
+                    fallback={
+                      <button type="button" onClick={() => setAdding(true)}>
+                        <Icon name="add-feed" />
+                        {query() ? "Add it as a feed?" : "Add your first feed"}
+                      </button>
+                    }
+                  >
+                    <button type="button" onClick={() => setFilter("all")}>
+                      Clear filter
+                    </button>
+                  </Show>
                 </div>
               }
             >
