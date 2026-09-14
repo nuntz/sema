@@ -1628,7 +1628,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
 
   const refreshFeedItemCounts = async () => {
     const version = ++feedItemCountVersion;
-    const window = itemViewWindow(itemView());
+    const window = view() === "feeds" ? undefined : itemViewWindow(itemView());
     try {
       // Counts must include queued and already-in-flight read writes before
       // they replace the optimistic adjustment (including finish-and-clear).
@@ -1797,6 +1797,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
         <>
           <Feeds
             api={api}
+            itemCounts={scopeCountsWindowKey() ? {} : feedItemCounts()}
+            onRefreshCounts={refreshFeedItemCounts}
             focusSearch={focusFeedSearch()}
             heartCount={heartCount()}
             onBack={() => void closeFeedsAndSettings()}

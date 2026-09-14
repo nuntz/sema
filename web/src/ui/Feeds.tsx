@@ -12,7 +12,9 @@ import { archiveSize } from "../archive";
 import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
 import {
+  compareFeeds,
   type FeedFilter,
+  type FeedSort,
   feedFilterCounts,
   filterFeeds,
 } from "../feed-manager";
@@ -24,7 +26,7 @@ import {
   redditCollectionLabel,
   redditSubreddit,
 } from "../reddit-feed";
-import type { Feed, FeedCandidate } from "../types";
+import type { Feed, FeedCandidate, FeedItemCounts } from "../types";
 import {
   type DiscoveryState,
   discoveredCandidateState,
@@ -34,10 +36,10 @@ import { relativeTime } from "./Grid";
 import { type BadgeSize, SourceBadge } from "./SourceBadge";
 import { displayFeedTitle as displayTitle } from "./tag-options";
 
-type FeedSort = "title" | "updated" | "errors" | "prior" | "quality";
-
 export function Feeds(props: {
   api: APIClient;
+  itemCounts: FeedItemCounts;
+  onRefreshCounts(): Promise<void>;
   focusSearch?: boolean;
   heartCount: number;
   onBack(): void;
@@ -53,8 +55,17 @@ export function Feeds(props: {
   );
   const [account, { refetch: refetchAccount, mutate: setAccount }] =
     createResource(() => props.api.me());
+  const [recentCounts] = createResource(async () => {
+    const now = Date.now();
+    return props.api.feedItemCounts({
+      from: new Date(now - 30 * 86400000).toISOString(),
+      before: new Date(now).toISOString(),
+    });
+  });
   const [filter, setFilter] = createSignal<FeedFilter>("all");
-  const counts = createMemo(() => feedFilterCounts(feeds() ?? []));
+  const counts = createMemo(() =>
+    feedFilterCounts(feeds() ?? [], recentCounts()),
+  );
   const toggleFilter = (next: FeedFilter) =>
     setFilter(filter() === next ? "all" : next);
   const [query, setQuery] = createSignal("");
@@ -70,6 +81,8 @@ export function Feeds(props: {
   let searchInput!: HTMLInputElement;
 
   onMount(() => {
+    if (Object.keys(props.itemCounts).length === 0)
+      void props.onRefreshCounts();
     if (props.focusSearch) searchInput.focus();
   });
 
@@ -85,37 +98,11 @@ export function Feeds(props: {
         (feed) => feed.status === "broken" || feed.status === "slowed",
       ).length ?? 0,
   );
-  const visibleFeeds = createMemo(() => {
-    const matches = filterFeeds(feeds() ?? [], filter(), query());
-    return [...matches].sort((first, second) => {
-      switch (sort()) {
-        case "updated":
-          return (second.last_fetch_at ?? "").localeCompare(
-            first.last_fetch_at ?? "",
-          );
-        case "errors":
-          return (
-            statusWeight(second) - statusWeight(first) ||
-            displayTitle(first).localeCompare(displayTitle(second))
-          );
-        case "prior":
-          return (
-            second.prior - first.prior ||
-            displayTitle(first).localeCompare(displayTitle(second))
-          );
-        case "quality":
-          return (
-            (first.extraction_success_rate ?? 2) -
-              (second.extraction_success_rate ?? 2) ||
-            (first.average_extract_quality ?? 2) -
-              (second.average_extract_quality ?? 2) ||
-            displayTitle(first).localeCompare(displayTitle(second))
-          );
-        default:
-          return displayTitle(first).localeCompare(displayTitle(second));
-      }
-    });
-  });
+  const visibleFeeds = createMemo(() =>
+    filterFeeds(feeds() ?? [], filter(), query(), recentCounts()).sort(
+      compareFeeds(sort(), props.itemCounts, recentCounts()),
+    ),
+  );
 
   const refresh = async () => {
     await refetch();
@@ -295,6 +282,8 @@ export function Feeds(props: {
               }
             >
               <option value="title">Title (A–Z)</option>
+              <option value="unread">Unread</option>
+              <option value="quietest">Quietest</option>
               <option value="updated">Last update</option>
               <option value="errors">Errors first</option>
               <option value="prior">Prior</option>
@@ -320,6 +309,7 @@ export function Feeds(props: {
                 ["attention", "Needs attention"],
                 ["muted", "Muted"],
                 ["never", "Never fetched"],
+                ["quiet", "Quiet"],
               ] as const
             }
           >
@@ -402,12 +392,30 @@ export function Feeds(props: {
                         {(tag) => <span class="tag-chip">{tag}</span>}
                       </For>
                     </div>
-                    <small>{feedDescriptor(feed)}</small>
+                    <small>
+                      {feedDescriptor(feed)}
+                      {!feed.muted && recentCounts()?.[feed.feed_id]?.all === 0
+                        ? " · 0 in 30 days"
+                        : ""}
+                    </small>
                   </div>
-                  <StatusBadge feed={feed} />
-                  <Show when={!feed.muted}>
-                    <PriorBadge feed={feed} />
-                  </Show>
+                  <span
+                    class="feed-unread"
+                    classList={{
+                      zero: props.itemCounts[feed.feed_id]?.unread === 0,
+                    }}
+                    title="Unread items"
+                  >
+                    {props.itemCounts[feed.feed_id]?.unread}
+                  </span>
+                  <span class="feed-row-status">
+                    <StatusBadge feed={feed} />
+                  </span>
+                  <span class="feed-row-prior">
+                    <Show when={!feed.muted}>
+                      <PriorBadge feed={feed} />
+                    </Show>
+                  </span>
                   <time>
                     {feed.muted
                       ? "paused"
@@ -1480,16 +1488,6 @@ function domainName(rawURL: string): string {
 function absoluteAddress(raw: string): string {
   const value = raw.trim();
   return value.includes("://") ? value : `https://${value}`;
-}
-
-function statusWeight(feed: Feed): number {
-  return feed.status === "broken"
-    ? 3
-    : feed.status === "slowed"
-      ? 2
-      : feed.status === "muted"
-        ? 1
-        : 0;
 }
 
 function formatCount(value: number): string {

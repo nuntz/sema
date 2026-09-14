@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { feedFilterCounts, filterFeeds } from "./feed-manager";
+import { compareFeeds, feedFilterCounts, filterFeeds } from "./feed-manager";
 import type { Feed } from "./types";
 
 const feed = (id: string, extra: Partial<Feed> = {}): Feed => ({
@@ -53,6 +53,7 @@ it("counts independently of searches, counting each tag once per feed", () => {
     attention: 2,
     muted: 1,
     never: 1,
+    quiet: 0,
     tags: { tech: 2, news: 1 },
   });
   expect(feedFilterCounts([])).toEqual({
@@ -60,6 +61,82 @@ it("counts independently of searches, counting each tag once per feed", () => {
     attention: 0,
     muted: 0,
     never: 0,
+    quiet: 0,
     tags: {},
+  });
+});
+
+it("quiet requires a recent zero entry and excludes muted feeds", () => {
+  const recent = {
+    Alpha: { all: 0, unread: 0 },
+    Beta: { all: 3, unread: 2 },
+    Gamma: { all: 0, unread: 0 },
+  };
+  expect(filterFeeds(feeds, "quiet", "", recent)).toEqual([feeds[0]]);
+  expect(feedFilterCounts(feeds, recent).quiet).toBe(1);
+  expect(filterFeeds(feeds, "quiet")).toEqual([]);
+});
+describe("compareFeeds", () => {
+  const entries = [
+    feed("Zulu"),
+    feed("Beta"),
+    feed("Alpha"),
+    feed("Missing"),
+    feed("Absent"),
+  ];
+  const counts = {
+    Zulu: { all: 0, unread: 9 },
+    Beta: { all: 2, unread: 3 },
+    Alpha: { all: 2, unread: 3 },
+  };
+  it.each(["unread", "quietest"] as const)(
+    "sorts %s with title ties and missing entries last",
+    (sort) => {
+      expect(
+        [...entries]
+          .sort(compareFeeds(sort, counts, counts))
+          .map((f) => f.feed_id),
+      ).toEqual(["Zulu", "Alpha", "Beta", "Absent", "Missing"]);
+    },
+  );
+  it.each(["title", "updated", "errors", "prior", "quality"] as const)(
+    "breaks %s ties by title",
+    (sort) => {
+      expect(
+        [...entries].sort(compareFeeds(sort)).map((f) => f.feed_id),
+      ).toEqual(["Absent", "Alpha", "Beta", "Missing", "Zulu"]);
+    },
+  );
+  it("preserves update, error, prior and extraction ordering", () => {
+    const a = feed("Alpha"),
+      b = feed("Beta", {
+        status: "broken",
+        prior: 1,
+        last_fetch_at: "2026-09-02T00:00:00Z",
+        extraction_success_rate: 0.1,
+      });
+    for (const sort of ["updated", "errors", "prior", "quality"] as const)
+      expect([a, b].sort(compareFeeds(sort))).toEqual([b, a]);
+    expect(
+      [
+        feed("Alpha", {
+          extraction_success_rate: 0.5,
+          average_extract_quality: 0.8,
+        }),
+        feed("Beta", {
+          extraction_success_rate: 0.5,
+          average_extract_quality: 0.2,
+        }),
+      ].sort(compareFeeds("quality"))[0].title,
+    ).toBe("Beta");
+    expect(
+      [
+        feed("ok"),
+        feed("muted", { status: "muted" }),
+        feed("slowed", { status: "slowed" }),
+      ]
+        .sort(compareFeeds("errors"))
+        .map((f) => f.title),
+    ).toEqual(["slowed", "muted", "ok"]);
   });
 });
