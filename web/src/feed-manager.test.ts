@@ -173,19 +173,31 @@ describe("compareFeeds", () => {
 
 describe("brokenSince", () => {
   const now = Date.parse("2026-09-13T00:00:00Z");
-  it("estimates the first failure using attempts and cadence", () => {
-    expect(
-      brokenSince(
-        feed("x", {
-          status: "broken",
-          error_count: 5,
-          fetch_interval_h: 24,
-          last_fetch_at: "2026-09-08T00:00:00Z",
-        }),
-        now,
-      ),
-    ).toBe("2026-09-04T00:00:00.000Z");
-  });
+  it.each([
+    [1, 10, 150],
+    // The worker caps delays at 24h; it does not impose a 24h minimum.
+    [24, 3, 6],
+    [1, 1, 0],
+    [1, 11, 174],
+    [1, 12, 198],
+    [24, 8, 102],
+    [24, 12, 198],
+  ] as const)(
+    "estimates interval %sh with %s errors as %sh before the attempt",
+    (fetch_interval_h, error_count, hours) => {
+      expect(
+        brokenSince(
+          feed("x", {
+            status: "broken",
+            error_count,
+            fetch_interval_h,
+            last_fetch_at: new Date(now).toISOString(),
+          }),
+          now,
+        ),
+      ).toBe(new Date(now - hours * 3600000).toISOString());
+    },
+  );
   it.each([1, 0, -1])("clamps %s errors to the last attempt", (error_count) => {
     expect(brokenSince(feed("x", { status: "broken", error_count }), now)).toBe(
       "2026-09-01T00:00:00.000Z",

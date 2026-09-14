@@ -132,10 +132,16 @@ export function brokenSince(feed: Feed, now = Date.now()): string | undefined {
   if (feed.status !== "broken" || !feed.last_fetch_at) return undefined;
   const attempt = Date.parse(feed.last_fetch_at);
   if (!Number.isFinite(attempt) || attempt > now) return undefined;
-  // Estimate the first failure from the last attempt, not a last-success timestamp.
-  // Actual retry intervals and worker scheduling may differ from this cadence.
-  return new Date(
-    attempt -
-      Math.max(0, feed.error_count - 1) * feed.fetch_interval_h * 3600000,
-  ).toISOString();
+  // Estimate the first failure using worker backoff; ignores rate-limit delays
+  // and scheduling jitter. last_fetch_at is the latest attempt, not a success.
+  const cap = Math.max(24, feed.fetch_interval_h);
+  let hours = 0;
+  for (
+    let attemptNumber = feed.error_count;
+    attemptNumber >= 2;
+    attemptNumber--
+  ) {
+    hours += Math.min(2 ** Math.min(attemptNumber - 1, 5), cap);
+  }
+  return new Date(attempt - hours * 3600000).toISOString();
 }

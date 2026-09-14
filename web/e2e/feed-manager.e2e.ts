@@ -16,15 +16,15 @@ const fixtures: Feed[] = Array.from({ length: 320 }, (_, index) => ({
   muted: index === 4,
   hide_shorts: false,
   always_generate: index === 0,
-  fetch_interval_h: 24,
+  fetch_interval_h: index === 1 ? 1 : 24,
   last_fetch_at: index === 5 ? undefined : now.toISOString(),
   last_error: index < 3 ? "HTTP 503 Service Unavailable" : undefined,
-  error_count: index < 3 ? 10 : index === 3 ? 1 : 0,
+  error_count: index < 3 ? 12 : index === 6 ? 3 : index === 3 ? 1 : 0,
   next_fetch_at: "",
   prior: 0,
   prior_signals: 0,
   status:
-    index < 3
+    index < 3 || index === 6
       ? "broken"
       : index === 3
         ? "slowed"
@@ -195,16 +195,21 @@ for (const width of [1280, 400]) {
         ),
       ),
     ).toBe(true);
-    await expect(first.locator("time")).toHaveText("failing 9d");
+    await expect(first.locator("time")).toHaveText("failing 8d");
     await expect(first.locator("time")).toHaveAttribute("title", /HTTP 503/);
     await expect(first.locator(".feed-status")).toHaveAttribute(
       "aria-label",
-      "broken: 10 consecutive fetch failures, failing for 9 days",
+      "broken: 12 consecutive fetch failures, failing for 8 days",
     );
     await expect(first.locator("small")).toContainText("nothing this week");
     await expect(page.locator(".feed-triage")).toContainText(
       "3 feeds have been failing for over a week.",
     );
+    const underThreshold = page
+      .locator(".feed-manage-row")
+      .filter({ hasText: "Journal 006" });
+    await expect(underThreshold.locator(".feed-status")).toHaveText("broken");
+    await expect(underThreshold.locator("time")).toHaveText("failing 6h");
     expect(
       await page
         .locator(".feeds-view")
@@ -233,19 +238,19 @@ for (const width of [1280, 400]) {
       }),
     ).toBe(true);
     const attention = page.getByRole("button", {
-      name: "Needs attention 4",
+      name: "Needs attention 5",
       exact: true,
     });
     await attention.click();
     await expect(attention).toBeFocused();
     await expect(attention).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator(".feed-manage-row")).toHaveCount(4);
+    await expect(page.locator(".feed-manage-row")).toHaveCount(5);
     const search = page.getByRole("searchbox", { name: "Search feeds" });
     await search.fill("No matching title");
     await expect(page.locator(".feed-empty")).toContainText(
       "No feeds match this filter.",
     );
-    await expect(attention).toHaveText("Needs attention 4");
+    await expect(attention).toHaveText("Needs attention 5");
     await page
       .getByRole("button", { name: "Clear filter", exact: true })
       .click();
