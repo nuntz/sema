@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/score"
 )
 
 type fakeDynamoDB struct {
@@ -1476,14 +1477,16 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		fallback bool
+		value    int
 	}{
 		{name: "creates heart signal"},
-		{name: "keeps existing signal", fallback: true},
+		{name: "keeps existing signal", fallback: true, value: 1},
+		{name: "overwrites bury signal", fallback: true, value: -1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			item := domain.Item{
 				PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "TITLE", Summary: "Summary", TTL: time.Now().Add(time.Hour).Unix(),
-				Vector: []byte("text"), ModelVersion: "text-v1", ImageVector: []byte("image"), ImageModelVersion: "image-v1",
+				Vector: score.EncodeVector([]float32{1, 0}), ModelVersion: "text-v1", ImageVector: score.EncodeVector([]float32{1, 0}), ImageModelVersion: "image-v1",
 			}
 			encodedItem, err := attributevalue.MarshalMap(item)
 			if err != nil {
@@ -1501,10 +1504,27 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			old := domain.Signal{PK: item.PK, SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: test.value, FeedID: "old-feed", CreatedAt: domain.Timestamp(time.Now()), Vector: score.EncodeVector([]float32{0, 1}), ModelVersion: "text-v1", ImageVector: score.EncodeVector([]float32{0, 1}), ImageModelVersion: "image-v1"}
+			var seeded []domain.Signal
+			var storedSignal map[string]types.AttributeValue
+			if test.value != 0 {
+				seeded = append(seeded, old)
+				storedSignal, _ = attributevalue.MarshalMap(old)
+			}
+			model := score.BuildModel("user", seeded, nil, time.Now(), "text-v1", "image-v1")
+			encodedModel, _ := attributevalue.MarshalMap(model)
+			var updatedModel *domain.Model
+
 			var transactions []*dynamodb.TransactWriteItemsInput
 			db := &fakeDynamoDB{
 				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 					switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
+					case domain.SignalSK(item.ItemID):
+						return &dynamodb.GetItemOutput{Item: storedSignal}, nil
+					case "MODEL":
+						return &dynamodb.GetItemOutput{Item: encodedModel}, nil
+					case domain.BehaviourSK(item.ItemID):
+						return &dynamodb.GetItemOutput{}, nil
 					case domain.ItemIdentitySK(item.ItemID):
 						return &dynamodb.GetItemOutput{Item: identity}, nil
 					case item.SK:
@@ -1515,10 +1535,23 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 						return &dynamodb.GetItemOutput{Item: profile}, nil
 					}
 				},
+				putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+					var saved domain.Model
+					if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
+						t.Fatal(err)
+					}
+					updatedModel = &saved
+					return &dynamodb.PutItemOutput{}, nil
+				},
 				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 					transactions = append(transactions, input)
 					if test.fallback && len(transactions) == 1 {
 						return nil, &types.TransactionCanceledException{}
+					}
+					for _, write := range input.TransactItems {
+						if write.Put != nil && write.Put.Item["SK"].(*types.AttributeValueMemberS).Value == old.SK {
+							storedSignal = write.Put.Item
+						}
 					}
 					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
@@ -1526,6 +1559,26 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			if _, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", true); err != nil {
 				t.Fatal(err)
 			}
+			var saved domain.Signal
+			if err := attributevalue.UnmarshalMap(storedSignal, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if saved.Value != 1 {
+				t.Fatalf("signal = %#v", saved)
+			}
+			if test.value == 1 {
+				if !reflect.DeepEqual(saved, old) || updatedModel != nil {
+					t.Fatalf("existing boost changed: %#v, model %#v", saved, updatedModel)
+				}
+			} else {
+				if saved.Source != "heart" || updatedModel == nil {
+					t.Fatalf("heart signal/model = %#v, %#v", saved, updatedModel)
+				}
+				if updatedModel.ExplicitCount != 1 || updatedModel.LikedCount != 1 || updatedModel.DislikedCount != 0 || updatedModel.DislikedImageCount != 0 || updatedModel.FeedDislikes[old.FeedID] != 0 {
+					t.Fatalf("old bury contribution was not removed: %#v", updatedModel)
+				}
+			}
+
 			if len(transactions) != 1+boolInt(test.fallback) {
 				t.Fatalf("transactions = %d", len(transactions))
 			}
@@ -1569,7 +1622,7 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			if archiveSearch != "title summary" {
 				t.Fatalf("archive search_text = %q", archiveSearch)
 			}
-			if !test.fallback && string(signalImage) != "image" {
+			if !test.fallback && !reflect.DeepEqual(signalImage, item.ImageVector) {
 				t.Fatalf("heart signal image vector = %q", signalImage)
 			}
 			if test.fallback {

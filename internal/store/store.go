@@ -1899,11 +1899,48 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		TableName: aws.String(s.table), Item: heartSignal, ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
 	err = s.transact(ctx, withSignal)
-	signalCreated := err == nil
-	if isTransactionCanceled(err) {
-		// An existing explicit signal wins. The other conditions remain in the
-		// retry so the archive state still changes as one atomic unit.
-		err = s.transact(ctx, baseWrites)
+	signalChanged := err == nil
+	var oldSignal *domain.Signal
+	for attempt := 0; isTransactionCanceled(err) && attempt < 4; attempt++ {
+		// Read the full signal so replacing a bury can undo its model contribution.
+		previous, readErr := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)), ConsistentRead: aws.Bool(true),
+		})
+		if readErr != nil {
+			return "", 0, readErr
+		}
+		if len(previous.Item) == 0 {
+			err = s.transact(ctx, withSignal)
+			signalChanged = err == nil
+			continue
+		}
+		var old domain.Signal
+		if decodeErr := attributevalue.UnmarshalMap(previous.Item, &old); decodeErr != nil {
+			return "", 0, decodeErr
+		}
+		retry := append([]types.TransactWriteItem{}, baseWrites...)
+		if old.Value < 0 {
+			retry = append(retry, types.TransactWriteItem{Put: &types.Put{
+				TableName: aws.String(s.table), Item: heartSignal,
+				ConditionExpression:       aws.String("#value < :zero"),
+				ExpressionAttributeNames:  map[string]string{"#value": "value"},
+				ExpressionAttributeValues: map[string]types.AttributeValue{":zero": &types.AttributeValueMemberN{Value: "0"}},
+			}})
+		} else {
+			// Preserve boosts only while they still exist; a concurrent bury or
+			// removal must retry with the appropriate signal and count update.
+			retry = append(retry, types.TransactWriteItem{ConditionCheck: &types.ConditionCheck{
+				TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
+				ConditionExpression:       aws.String("#value >= :zero"),
+				ExpressionAttributeNames:  map[string]string{"#value": "value"},
+				ExpressionAttributeValues: map[string]types.AttributeValue{":zero": &types.AttributeValueMemberN{Value: "0"}},
+			}})
+		}
+		err = s.transact(ctx, retry)
+		if err == nil && old.Value < 0 {
+			oldSignal = &old
+			signalChanged = true
+		}
 	}
 	if err != nil {
 		// A concurrent identical heart may have won between the read and the
@@ -1915,13 +1952,13 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		}
 		return "", 0, err
 	}
-	if signalCreated {
+	if signalChanged {
 		signal := domain.Signal{
 			PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
 			Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
 			ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
 		}
-		if modelErr := s.applyExplicitModelUpdate(ctx, userID, nil, &signal, item.ModelVersion); modelErr != nil {
+		if modelErr := s.applyExplicitModelUpdate(ctx, userID, oldSignal, &signal, item.ModelVersion); modelErr != nil {
 			slog.ErrorContext(ctx, "increment heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
 		}
 	}

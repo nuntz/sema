@@ -236,6 +236,11 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 		t.Fatalf("put item = %v, %v", written, err)
 	}
 
+	if err := repository.SetSignal(ctx, "keeper", item, -1); err != nil {
+		t.Fatal(err)
+	}
+	assertUserCounts(t, repository, "keeper", 0, 1)
+
 	archiveSK, count, err := repository.SetHeart(ctx, "keeper", item.ItemID, true)
 	if err != nil || archiveSK == "" || count != 1 {
 		t.Fatalf("heart = %q, %d, %v", archiveSK, count, err)
