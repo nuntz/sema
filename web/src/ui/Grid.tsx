@@ -1219,6 +1219,7 @@ function GridContent(props: GridProps) {
                     const storyID = cell.story.story_id;
                     return (
                       <StoryCell
+                        archive={props.archive}
                         story={liveStories().get(storyID) ?? cell.story}
                         cell={cell}
                         row={row}
@@ -1260,7 +1261,8 @@ function GridContent(props: GridProps) {
                     expiring()
                       ? `, ${expirySentence(item().published_ts, clockNow())}`
                       : "";
-                  const signalFresh = createSignalFresh(() => item().signal);
+                  const cellSignal = () => (props.archive ? 0 : item().signal);
+                  const signalFresh = createSignalFresh(cellSignal);
                   const condensedLarge = createMemo(
                     () =>
                       width() < 700 &&
@@ -1307,8 +1309,10 @@ function GridContent(props: GridProps) {
                         width: `${cell.width}px`,
                         height: `${cell.height ?? row.height}px`,
                       }}
-                      data-signal={item().signal}
-                      data-signal-fresh={signalFresh() ? "" : undefined}
+                      data-signal={cellSignal()}
+                      data-signal-fresh={
+                        !props.archive && signalFresh() ? "" : undefined
+                      }
                       data-item-id={item().item_id}
                       onMouseEnter={() => {
                         if (!pageFocus) props.onFocus(item().item_id);
@@ -1379,9 +1383,9 @@ function GridContent(props: GridProps) {
                         <span class="ranking-hint">{whyText(item())}</span>
                       </Show>
                       <div class="cell-scrim" />
-                      <SignalMarker value={item().signal} />
+                      <SignalMarker value={cellSignal()} />
                       <div class="cell-corner">
-                        <SignalLabel value={item().signal} />
+                        <SignalLabel value={cellSignal()} />
                         <Show
                           when={!(expiring() && cell.effectiveSize === "S")}
                         >

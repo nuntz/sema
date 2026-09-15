@@ -43,6 +43,7 @@ interface StoryCellProps {
   focusedID: string;
   readContext: ReadStateContext;
   refined?: boolean;
+  archive?: boolean;
   pressed: boolean;
   onExpand(storyID: string): void;
   onLeadHeight(storyID: string, height: number): void;
@@ -62,7 +63,9 @@ interface StoryCellProps {
 export function StoryCell(props: StoryCellProps) {
   useClock();
   const lead = () => props.story.items[0];
-  const signalFresh = createSignalFresh(() => lead()?.signal ?? 0);
+  const cellSignal = (item = lead()) =>
+    props.archive ? 0 : (item?.signal ?? 0);
+  const signalFresh = createSignalFresh(cellSignal);
   const focusID = () => `story:${props.story.story_id}`;
   const headlines = createMemo(() =>
     props.story.items.slice(1, 1 + (props.cell.headlineItemCount ?? 0)),
@@ -187,8 +190,8 @@ export function StoryCell(props: StoryCellProps) {
         width: `${props.cell.width}px`,
         height: `${cellHeight()}px`,
       }}
-      data-signal={lead()?.signal ?? 0}
-      data-signal-fresh={signalFresh() ? "" : undefined}
+      data-signal={cellSignal()}
+      data-signal-fresh={!props.archive && signalFresh() ? "" : undefined}
       data-item-id={focusID()}
       data-focus-id={focusID()}
       data-story-id={props.story.story_id}
@@ -232,7 +235,7 @@ export function StoryCell(props: StoryCellProps) {
                   </Show>
                   <div class="cell-scrim" />
                   <div class="cell-corner">
-                    <SignalLabel value={item.signal} />
+                    <SignalLabel value={cellSignal(item)} />
                     <Show
                       when={!(expiring() && props.cell.effectiveSize === "S")}
                     >
@@ -305,7 +308,7 @@ export function StoryCell(props: StoryCellProps) {
                     item={item}
                     refined={props.refined}
                     unreadDot={leadReadVisuals().unreadDot}
-                    archive={false}
+                    archive={props.archive ?? false}
                     effectiveSize="M"
                     condensed={false}
                     explanation={whyText(item)}
@@ -349,7 +352,7 @@ export function StoryCell(props: StoryCellProps) {
                     </div>
                   </PrimaryAction>
                 </Show>
-                <Show when={props.refined && !item.signal}>
+                <Show when={props.refined && !cellSignal(item)}>
                   <span class="ranking-hint">
                     {props.story.source_count} sources
                     <Show when={whyText(item)}> · {whyText(item)}</Show>
@@ -376,7 +379,7 @@ export function StoryCell(props: StoryCellProps) {
                   onMore={() => props.onMore(props.story)}
                 />
                 <div class="story-corner cell-corner">
-                  <SignalLabel value={item.signal} />
+                  <SignalLabel value={cellSignal(item)} />
                   <Show
                     when={!(expiring() && props.cell.effectiveSize === "S")}
                   >
@@ -449,16 +452,18 @@ export function StoryCell(props: StoryCellProps) {
                           <Icon name="check" size={13} /> read
                         </span>
                       </Show>
-                      <Show when={!item.signal && whyText(item)}>
+                      <Show when={!cellSignal(item) && whyText(item)}>
                         <em title={whyText(item)}>{whyText(item)}</em>
                       </Show>
                     </div>
                   </Show>
                 </PrimaryAction>
-                <Show when={item.signal !== 0 && !cellReadVisuals().dimmed}>
+                <Show
+                  when={cellSignal(item) !== 0 && !cellReadVisuals().dimmed}
+                >
                   <div class="why-hint has-signal story-signal-why">
                     <SignalWhy
-                      value={item.signal}
+                      value={cellSignal(item)}
                       story={true}
                       onUndo={() => props.onSignal(item, 0)}
                     />
@@ -487,7 +492,7 @@ export function StoryCell(props: StoryCellProps) {
           <Icon name="keep" size={14} filled={true} />
         </span>
       </Show>
-      <SignalMarker value={lead()?.signal ?? 0} />
+      <SignalMarker value={cellSignal()} />
       <Show when={editorial() && showHeadlines()}>
         <div class="story-headlines">
           <For each={headlines()}>
