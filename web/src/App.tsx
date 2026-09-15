@@ -1160,6 +1160,7 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   });
 
   const setSignal = (item: Item, value: -1 | 0 | 1) => {
+    if (mode() === "archive" || item.archived === true) return;
     if (value === -1 && buryDisabled(item)) return;
     const previous = item.signal;
     const effective = item.hearted && value === 0 ? 1 : value;
