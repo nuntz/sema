@@ -265,7 +265,11 @@ test("desktop-width touch profiles do not force grid actions visible", async ({
 test("desktop archive actions appear only while their cell is hovered", async ({
   page,
 }) => {
-  const archiveItems = items.map((item) => ({ ...item, hearted: true }));
+  const archiveItems = items.map((item) => ({
+    ...item,
+    hearted: true,
+    signal: 1,
+  }));
   await openApp(page, { archiveItems });
   await page.getByRole("button", { name: "Archive", exact: true }).click();
 
@@ -273,6 +277,12 @@ test("desktop archive actions appear only while their cell is hovered", async ({
   const actions = cell.locator(".cell-actions button.more");
   const marker = cell.locator(".kept-marker");
   await expect(cell).toHaveClass(/archive-cell/);
+  await expect(cell).toHaveAttribute("data-signal", "0");
+  await expect(cell).not.toHaveAttribute("data-signal-fresh");
+  await expect(
+    cell.locator(".signal-mobile-chip, .cell-signal-label"),
+  ).toHaveCount(0);
+
   await expect(marker).toHaveCount(1);
   await expect(marker).toHaveCSS("opacity", "1");
   await expect(actions).toHaveCSS("opacity", "0");
@@ -288,6 +298,59 @@ test("desktop archive actions appear only while their cell is hovered", async ({
   await expect(actions).toHaveCSS("opacity", "0");
   await expect(actions).toHaveCSS("pointer-events", "none");
 });
+
+for (const width of [390, 1280]) {
+  test(`archive reader hides ranking actions at ${width}px`, async ({
+    page,
+  }) => {
+    const archiveItems = items.map((item) => ({
+      ...item,
+      hearted: true,
+      archived: true,
+      signal: -1,
+    }));
+    await openApp(page, { archiveItems });
+    let signalRequests = 0;
+    page.on("request", (request) => {
+      if (request.url().includes("/signal") && request.method() !== "GET")
+        signalRequests++;
+    });
+    await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await page.setViewportSize({ width, height: 800 });
+    const cell = page.locator(".grid-cell").first();
+    await expect(cell).toHaveAttribute("data-signal", "0");
+    await expect(
+      cell.locator(".signal-mobile-chip, .cell-signal-label, .signal-why"),
+    ).toHaveCount(0);
+    await cell.locator("button.cell-main").click();
+    await expect(page.locator(".app-header--reader")).toBeVisible();
+    await expect(
+      page.locator(
+        '.app-header--reader [data-action="boost"], .app-header--reader [data-action="bury"], .reader-bottom-actions [data-action="boost"], .reader-bottom-actions [data-action="bury"]',
+      ),
+    ).toHaveCount(0);
+    const keep =
+      width < 620
+        ? page.getByRole("button", { name: "Remove from archive", exact: true })
+        : page.locator(".chrome-group--judge button");
+    await expect(keep).toBeVisible();
+    await page.keyboard.press("+");
+    await page.keyboard.press("-");
+    await expect(
+      page.getByText("Boosted. Sizes settle overnight."),
+    ).toHaveCount(0);
+    expect(signalRequests).toBe(0);
+    await expect(page.locator(".reader")).toHaveCSS(
+      "transform",
+      "matrix(1, 0, 0, 1, 0, 0)",
+    );
+    await expect(page.locator(".app-header--reader")).toHaveCSS(
+      "height",
+      width < 620 ? "44px" : "56px",
+    );
+    await page.screenshot({ path: `/tmp/sema-archive-reader-${width}.png` });
+  });
+}
 
 test("empty unread grid omits the end divider and zero-item action", async ({
   page,

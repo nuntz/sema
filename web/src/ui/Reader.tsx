@@ -593,10 +593,11 @@ export function Reader(props: ReaderProps) {
         break;
       }
       case "like":
-        props.onSignal(props.item.signal === 1 ? 0 : 1);
+        if (!props.archive) props.onSignal(props.item.signal === 1 ? 0 : 1);
         break;
       case "dislike":
-        if (!props.hearted) props.onSignal(props.item.signal === -1 ? 0 : -1);
+        if (!props.archive && !props.hearted)
+          props.onSignal(props.item.signal === -1 ? 0 : -1);
         break;
       case "heart":
         props.onHeart();
@@ -752,43 +753,45 @@ export function Reader(props: ReaderProps) {
           </span>
         </div>
         <div class="chrome-group chrome-group--judge">
-          <button
-            type="button"
-            class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
-            classList={{ "chrome-btn--on": props.item.signal === 1 }}
-            aria-label={signalActionLabel(
-              props.item.signal,
-              "boost",
-              props.hearted,
-            )}
-            data-action="boost"
-            aria-pressed={props.item.signal === 1}
-            onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
-          >
-            <Icon name="boost" />
-            <span class="chrome-btn__label">
-              {props.item.signal === 1 ? "boosted" : "boost"}
-            </span>
-          </button>
-          <button
-            type="button"
-            class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
-            classList={{ "chrome-btn--on": props.item.signal === -1 }}
-            aria-label={signalActionLabel(
-              props.item.signal,
-              "bury",
-              props.hearted,
-            )}
-            data-action="bury"
-            disabled={props.hearted}
-            aria-pressed={props.item.signal === -1}
-            onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
-          >
-            <Icon name="bury" />
-            <span class="chrome-btn__label">
-              {props.item.signal === -1 ? "buried" : "bury"}
-            </span>
-          </button>
+          <Show when={!props.archive}>
+            <button
+              type="button"
+              class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
+              classList={{ "chrome-btn--on": props.item.signal === 1 }}
+              aria-label={signalActionLabel(
+                props.item.signal,
+                "boost",
+                props.hearted,
+              )}
+              data-action="boost"
+              aria-pressed={props.item.signal === 1}
+              onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
+            >
+              <Icon name="boost" />
+              <span class="chrome-btn__label">
+                {props.item.signal === 1 ? "boosted" : "boost"}
+              </span>
+            </button>
+            <button
+              type="button"
+              class="chrome-btn chrome-btn--quiet chrome-btn--collapse-2"
+              classList={{ "chrome-btn--on": props.item.signal === -1 }}
+              aria-label={signalActionLabel(
+                props.item.signal,
+                "bury",
+                props.hearted,
+              )}
+              data-action="bury"
+              disabled={props.hearted}
+              aria-pressed={props.item.signal === -1}
+              onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
+            >
+              <Icon name="bury" />
+              <span class="chrome-btn__label">
+                {props.item.signal === -1 ? "buried" : "bury"}
+              </span>
+            </button>
+          </Show>
           <button
             type="button"
             class="chrome-btn chrome-btn--hold"
@@ -1148,35 +1151,37 @@ export function Reader(props: ReaderProps) {
         onFocusIn={revealToolbar}
       >
         <div class="reader-bottom-actions__row">
-          <button
-            type="button"
-            class="reader-toolbar-action"
-            aria-label={signalActionLabel(
-              props.item.signal,
-              "boost",
-              props.hearted,
-            )}
-            data-action="boost"
-            aria-pressed={props.item.signal === 1}
-            onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
-          >
-            <Icon name="boost" />
-          </button>
-          <button
-            type="button"
-            class="reader-toolbar-action"
-            aria-label={signalActionLabel(
-              props.item.signal,
-              "bury",
-              props.hearted,
-            )}
-            data-action="bury"
-            disabled={props.hearted}
-            aria-pressed={props.item.signal === -1}
-            onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
-          >
-            <Icon name="bury" />
-          </button>
+          <Show when={!props.archive}>
+            <button
+              type="button"
+              class="reader-toolbar-action"
+              aria-label={signalActionLabel(
+                props.item.signal,
+                "boost",
+                props.hearted,
+              )}
+              data-action="boost"
+              aria-pressed={props.item.signal === 1}
+              onClick={() => props.onSignal(props.item.signal === 1 ? 0 : 1)}
+            >
+              <Icon name="boost" />
+            </button>
+            <button
+              type="button"
+              class="reader-toolbar-action"
+              aria-label={signalActionLabel(
+                props.item.signal,
+                "bury",
+                props.hearted,
+              )}
+              data-action="bury"
+              disabled={props.hearted}
+              aria-pressed={props.item.signal === -1}
+              onClick={() => props.onSignal(props.item.signal === -1 ? 0 : -1)}
+            >
+              <Icon name="bury" />
+            </button>
+          </Show>
           <button
             type="button"
             class="reader-toolbar-action"
