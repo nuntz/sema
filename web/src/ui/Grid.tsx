@@ -65,6 +65,7 @@ import { gridCommand, isEditingTarget } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import type { LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
+import { animatePageScroll } from "./page-scroll";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -175,6 +176,11 @@ export function Grid(props: GridProps) {
 function GridContent(props: GridProps) {
   const imagesEnabled = useContext(ImageLoadingEnabledContext);
   let scroller!: HTMLDivElement;
+  let cancelPageScroll = () => {};
+  const stopPageScroll = () => {
+    cancelPageScroll();
+    pageFocus = undefined;
+  };
   let endButton!: HTMLButtonElement;
   let frame = 0;
   let programmaticFrame = 0;
@@ -406,7 +412,7 @@ function GridContent(props: GridProps) {
   };
 
   const noteUserScroll = () => {
-    pageFocus = undefined;
+    stopPageScroll();
     cancelLongPress();
     userScrollIntentVersion++;
     cancelScrollRestore();
@@ -655,6 +661,8 @@ function GridContent(props: GridProps) {
     updateViewport();
     scroller.addEventListener("scroll", onScroll, { passive: true });
     scroller.addEventListener("wheel", noteUserScroll, { passive: true });
+    scroller.addEventListener("pointerdown", stopPageScroll, { passive: true });
+    scroller.addEventListener("touchstart", stopPageScroll, { passive: true });
     scroller.addEventListener("touchmove", noteUserScroll, { passive: true });
     scroller.addEventListener("touchstart", onPullStart, { passive: true });
     scroller.addEventListener("touchmove", onPullMove, { passive: false });
@@ -670,7 +678,10 @@ function GridContent(props: GridProps) {
     }
     onCleanup(() => {
       props.onScrollPosition?.(scroller.scrollTop);
+      stopPageScroll();
       observer.disconnect();
+      scroller.removeEventListener("pointerdown", stopPageScroll);
+      scroller.removeEventListener("touchstart", stopPageScroll);
       scroller.removeEventListener("scroll", onScroll);
       scroller.removeEventListener("wheel", noteUserScroll);
       scroller.removeEventListener("touchmove", noteUserScroll);
@@ -694,6 +705,7 @@ function GridContent(props: GridProps) {
   createEffect(() => {
     const nextKey = props.scrollToTopKey;
     if (!scroller || nextKey === currentScrollToTopKey) return;
+    stopPageScroll();
     currentScrollToTopKey = nextKey;
     endRequested = false;
     const target = Math.max(0, props.scrollTarget);
@@ -717,6 +729,7 @@ function GridContent(props: GridProps) {
       () => props.active,
       (active) => {
         if (active) processScroll();
+        else stopPageScroll();
       },
       { defer: true },
     ),
@@ -960,7 +973,11 @@ function GridContent(props: GridProps) {
       return;
     }
     const command = gridCommand(event.key);
-    if (command !== "page-down" && command !== "page-up") pageFocus = undefined;
+    if (event.repeat && (command === "page-down" || command === "page-up")) {
+      event.preventDefault();
+      return;
+    }
+    stopPageScroll();
     if (!command) {
       clearGo();
       return;
@@ -1009,13 +1026,11 @@ function GridContent(props: GridProps) {
               )
             : viewport.height / 2,
         };
-        scroller.scrollTo({
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
-            .matches
-            ? "instant"
-            : "smooth",
-          top,
-        });
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          scroller.scrollTo({ behavior: "instant", top });
+        } else {
+          cancelPageScroll = animatePageScroll(scroller, top);
+        }
         break;
       }
       case "down":

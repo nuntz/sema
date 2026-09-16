@@ -35,6 +35,7 @@ import { isEditingTarget, readerCommand } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
+import { animatePageScroll } from "./page-scroll";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { type PreparedReaderBody, prepareReaderBody } from "./reader-content";
 import { SourceBadge } from "./SourceBadge";
@@ -90,6 +91,8 @@ export function Reader(props: ReaderProps) {
     !props.hearted &&
     !props.item.hearted;
   let article!: HTMLDivElement;
+  let cancelPageScroll = () => {};
+  const stopPageScroll = () => cancelPageScroll();
   let heading!: HTMLHeadingElement;
   let readerHeader!: HTMLElement;
   let toolbar!: HTMLElement;
@@ -133,6 +136,9 @@ export function Reader(props: ReaderProps) {
         previous?.hasBody === next.hasBody,
     },
   );
+  createEffect(() => {
+    if (!props.active || props.closing) stopPageScroll();
+  });
   const narrowHeader = createMediaQuery("(max-width: 619px)");
   const mediumHeader = createMediaQuery(
     "(min-width: 620px) and (max-width: 1199px)",
@@ -191,6 +197,7 @@ export function Reader(props: ReaderProps) {
   createEffect(() => {
     const itemID = props.item.item_id;
     if (itemID === trackedID) return;
+    stopPageScroll();
     pauseDwell();
     reportDwell();
     trackedID = itemID;
@@ -551,6 +558,11 @@ export function Reader(props: ReaderProps) {
     }
     if (sheetOpen() || event.metaKey || event.ctrlKey || event.altKey) return;
     const command = readerCommand(event.key);
+    if (event.repeat && (command === "page-down" || command === "page-up")) {
+      event.preventDefault();
+      return;
+    }
+    stopPageScroll();
     const target = event.target;
     if (
       command === "page-down" &&
@@ -573,23 +585,45 @@ export function Reader(props: ReaderProps) {
       case "page-down":
       case "page-up": {
         const direction = command === "page-up" || event.shiftKey ? -1 : 1;
+        const viewport = article.getBoundingClientRect();
+        const header = article.parentElement
+          ?.querySelector(".app-header")
+          ?.getBoundingClientRect();
+        const toolbarRect = toolbar.getBoundingClientRect();
+        const visibleTop = Math.max(
+          viewport.top,
+          header?.bottom ?? viewport.top,
+        );
+        const visibleBottom =
+          toolbarRect.height > 0
+            ? Math.min(viewport.bottom, toolbarRect.top)
+            : viewport.bottom;
+        const text = article.querySelector(
+          ".article-body, .article-fallback > p, .video-description",
+        );
+        const lineHeight = text
+          ? Number.parseFloat(getComputedStyle(text).lineHeight)
+          : 0;
+        // Keep the last two lines near the top, clear of the phone's overlay bars.
+        const visibleHeight = Math.max(1, visibleBottom - visibleTop);
+        const overlap =
+          2 * (Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 32);
+        const pageHeight = Math.max(
+          1,
+          visibleHeight - Math.min(overlap, visibleHeight / 2),
+        );
         const maxTop = Math.max(0, article.scrollHeight - article.clientHeight);
         const top = Math.max(
           0,
-          Math.min(
-            maxTop,
-            article.scrollTop + article.clientHeight * direction,
-          ),
+          Math.min(maxTop, article.scrollTop + pageHeight * direction),
         );
         // Do not restart an animation against a boundary (including subpixel rounding).
         if (Math.abs(top - article.scrollTop) < 1) break;
-        article.scrollTo({
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
-            .matches
-            ? "instant"
-            : "smooth",
-          top,
-        });
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          article.scrollTo({ behavior: "instant", top });
+        } else {
+          cancelPageScroll = animatePageScroll(article, top);
+        }
         break;
       }
       case "like":
@@ -641,6 +675,9 @@ export function Reader(props: ReaderProps) {
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibility);
     article.addEventListener("scroll", updateProgress, { passive: true });
+    article.addEventListener("wheel", stopPageScroll, { passive: true });
+    article.addEventListener("pointerdown", stopPageScroll, { passive: true });
+    article.addEventListener("touchstart", stopPageScroll, { passive: true });
     article.addEventListener("touchstart", onTouchStart, { passive: true });
     article.addEventListener("touchmove", onTouchMove, { passive: false });
     article.addEventListener("touchend", finishSwipe, { passive: true });
@@ -652,6 +689,10 @@ export function Reader(props: ReaderProps) {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibility);
+      stopPageScroll();
+      article.removeEventListener("wheel", stopPageScroll);
+      article.removeEventListener("pointerdown", stopPageScroll);
+      article.removeEventListener("touchstart", stopPageScroll);
       article.removeEventListener("scroll", updateProgress);
       article.removeEventListener("touchstart", onTouchStart);
       article.removeEventListener("touchmove", onTouchMove);

@@ -846,9 +846,13 @@ for (const width of [1280, 390]) {
       "data-scroll-destination",
       String(maxTop),
     );
+    const downRequests = await grid.getAttribute("data-scroll-requests");
     for (const key of ["Space", "Space", "PageDown"])
       await page.keyboard.press(key);
-    await expect(grid).toHaveAttribute("data-scroll-requests", "1");
+    await expect(grid).toHaveAttribute(
+      "data-scroll-requests",
+      downRequests as string,
+    );
     expect(await grid.evaluate((element) => element.scrollTop)).toBe(maxTop);
     await expect(page.locator(".end-of-feed")).toBeInViewport();
     await expect(grid).toHaveCSS("overscroll-behavior-y", "none");
@@ -861,8 +865,12 @@ for (const width of [1280, 390]) {
       .poll(() => grid.evaluate((element) => element.scrollTop))
       .toBe(0);
     await expect(grid).toHaveAttribute("data-scroll-destination", "0");
+    const upRequests = await grid.getAttribute("data-scroll-requests");
     for (const key of ["Shift+Space", "PageUp"]) await page.keyboard.press(key);
-    await expect(grid).toHaveAttribute("data-scroll-requests", "2");
+    await expect(grid).toHaveAttribute(
+      "data-scroll-requests",
+      upRequests as string,
+    );
   });
 }
 

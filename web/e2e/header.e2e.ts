@@ -469,8 +469,12 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
     const scroll = page.locator(".reader-scroll");
     const scrollTop = () => scroll.evaluate((element) => element.scrollTop);
     const { height, maxTop } = await scroll.evaluate((element) => {
-      const height = element.clientHeight;
-      const maxTop = element.scrollHeight - height;
+      const lineHeight = Number.parseFloat(
+        getComputedStyle(element.querySelector(".article-body") as Element)
+          .lineHeight,
+      );
+      const height = Math.round(element.clientHeight - 2 * lineHeight);
+      const maxTop = element.scrollHeight - element.clientHeight;
       element.addEventListener("scroll", () => {
         if (
           element.scrollTop > 0 &&
@@ -499,6 +503,65 @@ for (const reducedMotion of ["no-preference", "reduce"] as const) {
 
     await page.keyboard.press("Shift+Space");
     await expect.poll(scrollTop).toBe(Math.max(0, afterPageUp - height));
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`reader paging preserves the last visible lines at ${width}px`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width, height: 720 });
+    await openFixture(page, "reader");
+    await page.locator("#reader-last-line").waitFor();
+    const scroll = page.locator(".reader-scroll");
+    await scroll.evaluate((element) => {
+      element.scrollTop = 400;
+    });
+    // Let the phone toolbar finish collapsing before measuring the reading area.
+    await expect(page.locator(".app-header")).toHaveAttribute(
+      "data-scrolled",
+      "",
+    );
+    const before = await scroll.evaluate((element) => {
+      const viewport = element.getBoundingClientRect();
+      const toolbar = document
+        .querySelector(".reader-bottom-actions")
+        ?.getBoundingClientRect();
+      const bottom = toolbar?.height ? toolbar.top : viewport.bottom;
+      const body = element.querySelector(".article-body") as Element;
+      const range = document.createRange();
+      range.selectNodeContents(body);
+      const lines = Array.from(range.getClientRects()).filter(
+        (rect) =>
+          rect.height > 0 &&
+          rect.height < 50 &&
+          rect.bottom <= bottom &&
+          rect.top >= viewport.top,
+      );
+      const last = lines.at(-1);
+      if (!last) throw new Error("Expected visible article text");
+      return {
+        scrollTop: element.scrollTop,
+        lineTop: last.top,
+        lineBottom: last.bottom,
+      };
+    });
+    await page.keyboard.press("Space");
+    const after = await scroll.evaluate((element) => {
+      const viewport = element.getBoundingClientRect();
+      const header = document
+        .querySelector(".app-header")
+        ?.getBoundingClientRect();
+      return {
+        scrollTop: element.scrollTop,
+        top: Math.max(viewport.top, header?.bottom ?? viewport.top),
+      };
+    });
+    const delta = after.scrollTop - before.scrollTop;
+    expect(delta).toBeGreaterThan(0);
+    expect(before.lineTop - delta).toBeGreaterThanOrEqual(after.top);
+    expect(before.lineBottom - delta).toBeLessThan(after.top + 110);
   });
 }
 
@@ -542,9 +605,13 @@ for (const width of [1280, 390]) {
       "data-scroll-destination",
       String(maxTop),
     );
+    const downRequests = await scroll.getAttribute("data-scroll-requests");
     for (const key of ["Space", "Space", "PageDown"])
       await page.keyboard.press(key);
-    await expect(scroll).toHaveAttribute("data-scroll-requests", "1");
+    await expect(scroll).toHaveAttribute(
+      "data-scroll-requests",
+      downRequests as string,
+    );
     expect(await scroll.evaluate((element) => element.scrollTop)).toBe(maxTop);
     await expect(page.locator("#reader-last-line")).toBeInViewport();
     await expect(scroll).toHaveCSS("overscroll-behavior-y", "none");
@@ -557,8 +624,12 @@ for (const width of [1280, 390]) {
       .poll(() => scroll.evaluate((element) => element.scrollTop))
       .toBe(0);
     await expect(scroll).toHaveAttribute("data-scroll-destination", "0");
+    const upRequests = await scroll.getAttribute("data-scroll-requests");
     for (const key of ["Shift+Space", "PageUp"]) await page.keyboard.press(key);
-    await expect(scroll).toHaveAttribute("data-scroll-requests", "2");
+    await expect(scroll).toHaveAttribute(
+      "data-scroll-requests",
+      upRequests as string,
+    );
   });
 }
 
