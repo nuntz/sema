@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
@@ -10,6 +11,47 @@ import (
 )
 
 type policyMocks struct{ policies chan string }
+
+func TestAPIConditionCheckPermissions(t *testing.T) {
+	policies := make(chan string, 1)
+	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		output := func(value string) pulumi.StringOutput { return pulumi.String(value).ToStringOutput() }
+		_, err := lambdaRole(ctx, "api", output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
+		return err
+	}, pulumi.WithMocks("sema", "test", policyMocks{policies: policies}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw string
+	select {
+	case raw = <-policies:
+	default:
+		t.Fatal("API role policy was not created")
+	}
+	var policy struct {
+		Statements []struct {
+			Effect   string `json:"Effect"`
+			Action   any    `json:"Action"`
+			Resource any    `json:"Resource"`
+		} `json:"Statement"`
+	}
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		t.Fatal(err)
+	}
+	contains := func(value any, wanted string) bool {
+		if single, ok := value.(string); ok {
+			return single == wanted
+		}
+		entries, ok := value.([]any)
+		return ok && slices.Contains(entries, any(wanted))
+	}
+	for _, statement := range policy.Statements {
+		if statement.Effect == "Allow" && contains(statement.Resource, "table") && contains(statement.Action, "dynamodb:ConditionCheckItem") {
+			return
+		}
+	}
+	t.Fatal("API table policy lacks dynamodb:ConditionCheckItem")
+}
 
 func (m policyMocks) NewResource(args pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
 	if args.TypeToken == "aws:iam/rolePolicy:RolePolicy" {

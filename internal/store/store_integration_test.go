@@ -207,6 +207,41 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	assertUserCounts(t, repository, "user", 0, 1)
 }
 
+func TestHeartPreservesBoost(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	putIntegrationFeed(t, ctx, repository, "keeper", "feed")
+	now := time.Now().UTC()
+	item := domain.Item{
+		PK: domain.UserPK("keeper"), SK: domain.ItemSK(now, "boosted"), FeedPK: "F#feed", ItemID: "boosted", FeedID: "feed",
+		URL: "https://example.com/boosted", Title: "Boosted", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+		TTL: now.Add(domain.Retention).Unix(),
+	}
+	if written, err := repository.PutItem(ctx, item); err != nil || !written {
+		t.Fatalf("put item = %v, %v", written, err)
+	}
+	if err := repository.SetSignal(ctx, "keeper", item, 1); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Signals(ctx, "keeper")
+	if err != nil || len(before) != 1 || before[0].Value != 1 {
+		t.Fatalf("boost signals = %#v, %v", before, err)
+	}
+	assertUserCounts(t, repository, "keeper", 0, 1)
+
+	archiveSK, count, err := repository.SetHeart(ctx, "keeper", item.ItemID, true)
+	if err != nil || archiveSK == "" || count != 1 {
+		t.Fatalf("heart = %q, %d, %v", archiveSK, count, err)
+	}
+	after, err := repository.Signals(ctx, "keeper")
+	if err != nil || len(after) != 1 || after[0].Value != 1 || after[0].CreatedAt != before[0].CreatedAt || after[0].Source != before[0].Source {
+		t.Fatalf("heart changed boost: before = %#v, after = %#v, err = %v", before, after, err)
+	}
+	assertUserCounts(t, repository, "keeper", 1, 1)
+}
+
 func TestHeartArchiveLifecycle(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
