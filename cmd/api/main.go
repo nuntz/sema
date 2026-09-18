@@ -270,7 +270,7 @@ func apiRouteTemplate(method, path string) string {
 		return method + " /items/{item_id}"
 	} else if len(parts) == 2 {
 		switch parts[1] {
-		case "similar", "retry", "heart", "signal", "read", "events":
+		case "similar", "retry", "heart", "signal", "read", "behaviour", "events":
 			return method + " /items/{item_id}/" + parts[1]
 		default:
 			return method + " /items/{item_id}/{action}"
@@ -1295,7 +1295,8 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if err := s.setRead(ctx, userID, []string{itemID}, input.Read); err != nil {
 			return s.failure("set read state", err)
 		}
-	case "events":
+	// Keep the legacy path for installed PWAs until they refresh.
+	case "behaviour", "events":
 		item, err := s.store.Item(ctx, userID, itemID)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {

@@ -683,6 +683,7 @@ func TestAPIRouteTemplateBoundsDynamicPaths(t *testing.T) {
 		{http.MethodGet, "/items/first", "GET /items/{item_id}"},
 		{http.MethodGet, "/stories", "GET /stories"},
 		{http.MethodGet, "/items/second/similar", "GET /items/{item_id}/similar"},
+		{http.MethodPost, "/items/secret/behaviour", "POST /items/{item_id}/behaviour"},
 		{http.MethodPost, "/items/secret/events", "POST /items/{item_id}/events"},
 		{http.MethodGet, "/feeds/counts", "GET /feeds/counts"},
 		{http.MethodPatch, "/feeds/private-feed", "PATCH /feeds/{feed_id}"},
@@ -1104,7 +1105,7 @@ func TestPatchMeValidatesFeedPreference(t *testing.T) {
 	}
 }
 
-func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
+func TestBehaviourValidatesAndWritesMonotonicRow(t *testing.T) {
 	item, err := attributevalue.MarshalMap(domain.Item{
 		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "Title",
 		Vector: []byte{1, 2, 3}, TTL: time.Now().Add(time.Hour).Unix(),
@@ -1132,11 +1133,11 @@ func TestBehaviourEventsValidateAndWriteMonotonicRow(t *testing.T) {
 		},
 	}
 	server := &server{store: store.New(db, nil, "table", "", "")}
-	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
+	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
 	if response.StatusCode != http.StatusOK || len(updateInputs) != 2 {
 		t.Fatalf("events response = %d %s, updates %d", response.StatusCode, response.Body, len(updateInputs))
 	}
-	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{}`)
+	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{}`)
 	if response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("empty event status = %d, body %s", response.StatusCode, response.Body)
 	}

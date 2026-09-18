@@ -23,12 +23,12 @@ describe("behaviour event client", () => {
     );
     vi.stubGlobal("fetch", request);
 
-    await new APIClient().events("item/with slash", linkBehaviourEvent());
+    await new APIClient().behaviour("item/with slash", linkBehaviourEvent());
 
     expect(request).toHaveBeenCalledOnce();
     const [path, init] = request.mock.calls[0];
     expect(init).toBeDefined();
-    expect(path).toBe("/api/items/item%2Fwith%20slash/events");
+    expect(path).toBe("/api/items/item%2Fwith%20slash/behaviour");
     expect(init?.method).toBe("POST");
     expect(new Headers(init?.headers).has("Authorization")).toBe(false);
     expect(init?.body).toBe(

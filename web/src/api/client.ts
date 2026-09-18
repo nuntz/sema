@@ -216,7 +216,7 @@ export class APIClient {
     });
   }
 
-  events(
+  behaviour(
     itemID: string,
     event: {
       opened?: true;
@@ -226,7 +226,7 @@ export class APIClient {
     },
     keepalive = false,
   ): Promise<void> {
-    return this.request(`/items/${encodeURIComponent(itemID)}/events`, {
+    return this.request(`/items/${encodeURIComponent(itemID)}/behaviour`, {
       method: "POST",
       body: JSON.stringify(event),
       keepalive,
