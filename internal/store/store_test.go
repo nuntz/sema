@@ -1637,13 +1637,16 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 
 func TestUnkeepRemovesAnySignal(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		fallback bool
-		source   string
+		name       string
+		missing    bool
+		concurrent string
+		source     string
 	}{
 		{name: "deletes keep signal", source: "heart"},
 		{name: "deletes prior boost"},
-		{name: "missing signal", fallback: true},
+		{name: "missing signal", missing: true},
+		{name: "concurrently removed signal", concurrent: "removed"},
+		{name: "concurrently replaced signal", concurrent: "replaced"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			item := domain.Item{PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", ArchiveSK: "A#item", TTL: time.Now().Add(time.Hour).Unix()}
@@ -1653,6 +1656,14 @@ func TestUnkeepRemovesAnySignal(t *testing.T) {
 			encodedArchive, _ := attributevalue.MarshalMap(archive)
 			identity, _ := attributevalue.MarshalMap(domain.ItemIdentity{PK: item.PK, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL})
 			profile, _ := attributevalue.MarshalMap(domain.User{PK: "U#user", SK: "PROFILE"})
+
+			old := domain.Signal{PK: item.PK, SK: domain.SignalSK("item"), ItemID: "item", Value: 1,
+				Source: test.source, FeedID: "feed", CreatedAt: domain.Timestamp(time.Now().Add(-time.Hour)),
+				Vector: score.EncodeVector([]float32{1, 0}), ModelVersion: "text-v1"}
+			storedSignal, _ := attributevalue.MarshalMap(old)
+			model := score.BuildModel("user", []domain.Signal{old}, nil, time.Now(), "text-v1", "")
+			encodedModel, _ := attributevalue.MarshalMap(model)
+			var updatedModel *domain.Model
 			var transactions []*dynamodb.TransactWriteItemsInput
 			db := &fakeDynamoDB{
 				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
@@ -1662,37 +1673,74 @@ func TestUnkeepRemovesAnySignal(t *testing.T) {
 					case item.SK:
 						return &dynamodb.GetItemOutput{Item: encodedItem}, nil
 					case domain.SignalSK("item"):
-						if test.fallback {
+						if test.missing {
 							return &dynamodb.GetItemOutput{}, nil
 						}
-						row, _ := attributevalue.MarshalMap(domain.Signal{ItemID: "item", Value: 1, Source: test.source})
-						return &dynamodb.GetItemOutput{Item: row}, nil
+						return &dynamodb.GetItemOutput{Item: storedSignal}, nil
+					case "MODEL":
+						return &dynamodb.GetItemOutput{Item: encodedModel}, nil
+					case domain.BehaviourSK("item"):
+						return &dynamodb.GetItemOutput{}, nil
 					case "PROFILE":
 						return &dynamodb.GetItemOutput{Item: profile}, nil
 					default:
 						return &dynamodb.GetItemOutput{Item: encodedArchive}, nil
 					}
 				},
+				putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+					var saved domain.Model
+					if err := attributevalue.UnmarshalMap(input.Item, &saved); err != nil {
+						t.Fatal(err)
+					}
+					updatedModel = &saved
+					return &dynamodb.PutItemOutput{}, nil
+				},
 				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 					transactions = append(transactions, input)
+
 					for _, write := range input.TransactItems {
-						if write.Delete != nil && write.Delete.Key["SK"].(*types.AttributeValueMemberS).Value == domain.SignalSK("item") && strings.Contains(aws.ToString(write.Delete.ConditionExpression), "#source = :heart") && test.source != "heart" {
-							t.Fatal("unkeep preserved a prior boost")
+						if write.ConditionCheck != nil && write.ConditionCheck.Key["SK"].(*types.AttributeValueMemberS).Value == old.SK {
+							if aws.ToString(write.ConditionCheck.ConditionExpression) != "attribute_not_exists(SK)" {
+								t.Fatal("fallback could preserve a signal")
+							}
+							if test.concurrent == "replaced" {
+								return nil, &types.TransactionCanceledException{}
+							}
 						}
+						if write.Delete != nil && write.Delete.Key["SK"].(*types.AttributeValueMemberS).Value == old.SK {
+							values := write.Delete.ExpressionAttributeValues
+							if strings.Contains(aws.ToString(write.Delete.ConditionExpression), "#source = :heart") && test.source != "heart" {
+								t.Fatal("unkeep preserved a prior boost")
+							}
+							if values[":created_at"] == nil || values[":created_at"].(*types.AttributeValueMemberS).Value != old.CreatedAt {
+								t.Fatal("signal deletion did not match the model snapshot")
+							}
+						}
+					}
+					if test.concurrent != "" && len(transactions) == 1 {
+						return nil, &types.TransactionCanceledException{}
 					}
 
 					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
 			}
-			if _, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", false); err != nil {
-				t.Fatal(err)
+			_, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", false)
+			if (err != nil) != (test.concurrent == "replaced") {
+				t.Fatalf("unkeep error = %v", err)
 			}
-			if len(transactions) != 1 {
+			if !test.missing && test.concurrent == "" {
+				if updatedModel == nil || updatedModel.ExplicitCount != 0 || updatedModel.LikedCount != 0 || updatedModel.FeedLikes["feed"] != 0 {
+					t.Fatalf("prior boost remains in model: %#v", updatedModel)
+				}
+			} else if updatedModel != nil {
+				t.Fatal("model changed without deleting a signal")
+			}
+			if len(transactions) != 1+boolInt(test.concurrent != "") {
 				t.Fatalf("transactions = %d", len(transactions))
 			}
 
 			want := "ADD heart_count :minus_one, signal_count :minus_one"
-			if test.fallback {
+			if test.missing {
 				want = "ADD heart_count :minus_one"
 			}
 			if got := profileUpdateExpression(transactions[0]); got != want {
