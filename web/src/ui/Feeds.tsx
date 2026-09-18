@@ -35,6 +35,7 @@ import {
 } from "./feed-discovery";
 import { feedFetchLabel, upsertFeed } from "./feed-list";
 import { relativeTime } from "./Grid";
+import { closeOverlay, pushOverlay } from "./overlay-history";
 import { type BadgeSize, SourceBadge } from "./SourceBadge";
 import { displayFeedTitle as displayTitle } from "./tag-options";
 
@@ -719,6 +720,8 @@ function FeedDrawer(props: {
   let name: HTMLInputElement | undefined;
 
   onMount(() => {
+    pushOverlay("feeds-dialog", props.onClose, false);
+    onCleanup(() => closeOverlay("feeds-dialog"));
     (name ?? panel.querySelector<HTMLElement>(focusSelector))?.focus();
     const dismiss = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -1072,7 +1075,11 @@ function AddFeedDialog(props: {
   let input!: HTMLInputElement;
   let errorPanel: HTMLDivElement | undefined;
 
-  onMount(() => input.focus());
+  onMount(() => {
+    pushOverlay("feeds-dialog", props.onClose, false);
+    onCleanup(() => closeOverlay("feeds-dialog"));
+    input.focus();
+  });
   onCleanup(() => window.clearTimeout(timer));
 
   const resolve = async () => {

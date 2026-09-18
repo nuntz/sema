@@ -1,3 +1,5 @@
+import { createSignal } from "solid-js";
+
 export type OverlayKind =
   | "reader"
   | "lightbox"
@@ -6,7 +8,15 @@ export type OverlayKind =
   | "feeds"
   | "keyboard-help"
   | "confirm-remove"
-  | "search";
+  | "search"
+  | "filter-sheet"
+  | "feeds-dialog";
+
+export type KeyOwner = OverlayKind | "grid" | "transient";
+export interface KeyOwnership {
+  owner: KeyOwner;
+  overlays: readonly OverlayKind[];
+}
 
 interface HistoryState {
   sema?: unknown;
@@ -37,10 +47,12 @@ interface OverlayEntry {
   kind: OverlayKind;
   onPop: () => void;
   pushed: boolean;
+  history: boolean;
 }
 
 export interface OverlayHistory {
-  pushOverlay(kind: OverlayKind, onPop: () => void): void;
+  pushOverlay(kind: OverlayKind, onPop: () => void, history?: boolean): void;
+  keyboard(transient?: boolean, base?: "grid" | "reader"): KeyOwnership;
   closeOverlay(kind: OverlayKind): void;
   destroy(): void;
 }
@@ -55,6 +67,8 @@ export function createOverlayHistory(
   let nextID = 0;
   let programmaticPops = 0;
   const entries: OverlayEntry[] = [];
+  const [stack, setStack] = createSignal<OverlayKind[]>([]);
+  const publish = () => setStack(entries.map((entry) => entry.kind));
 
   const stateFor = (entry: OverlayEntry): HistoryState => {
     const current = history.state;
@@ -78,7 +92,7 @@ export function createOverlayHistory(
   const flushDeferredPushes = () => {
     if (programmaticPops > 0) return;
     for (const entry of entries) {
-      if (!entry.pushed) pushEntry(entry);
+      if (entry.history && !entry.pushed) pushEntry(entry);
     }
   };
 
@@ -97,6 +111,7 @@ export function createOverlayHistory(
           )
         : -1;
     const popped = entries.splice(targetIndex + 1);
+    publish();
     for (let index = popped.length - 1; index >= 0; index--)
       popped[index].onPop();
   };
@@ -104,7 +119,19 @@ export function createOverlayHistory(
   events.addEventListener("popstate", onPopState);
 
   return {
-    pushOverlay(kind, onPop) {
+    keyboard(transient = false, base = "grid") {
+      // Reader remains mounted during its exit animation after its history pop.
+      const overlays =
+        base === "reader" && !stack().includes("reader")
+          ? ["reader" as const, ...stack()]
+          : stack();
+      return {
+        owner: transient ? "transient" : (overlays.at(-1) ?? "grid"),
+        overlays,
+      };
+    },
+
+    pushOverlay(kind, onPop, history = true) {
       const existing = entries.find((entry) => entry.kind === kind);
       if (existing) {
         existing.onPop = onPop;
@@ -115,15 +142,18 @@ export function createOverlayHistory(
         kind,
         onPop,
         pushed: false,
+        history,
       };
       entries.push(entry);
-      if (programmaticPops === 0) pushEntry(entry);
+      publish();
+      if (history && programmaticPops === 0) pushEntry(entry);
     },
 
     closeOverlay(kind) {
       const index = entries.findIndex((entry) => entry.kind === kind);
       if (index < 0) return;
       const [entry] = entries.splice(index, 1);
+      publish();
       if (!entry.pushed) return;
       programmaticPops++;
       history.back();
@@ -132,6 +162,7 @@ export function createOverlayHistory(
     destroy() {
       events.removeEventListener("popstate", onPopState);
       entries.length = 0;
+      publish();
     },
   };
 }
@@ -144,10 +175,21 @@ function browserHistory(): OverlayHistory {
   return browserOverlayHistory;
 }
 
-export function pushOverlay(kind: OverlayKind, onPop: () => void): void {
-  browserHistory().pushOverlay(kind, onPop);
+export function pushOverlay(
+  kind: OverlayKind,
+  onPop: () => void,
+  history = true,
+): void {
+  browserHistory().pushOverlay(kind, onPop, history);
 }
 
 export function closeOverlay(kind: OverlayKind): void {
   browserHistory().closeOverlay(kind);
+}
+
+export function keyOwnership(
+  transient = false,
+  base: "grid" | "reader" = "grid",
+): KeyOwnership {
+  return browserHistory().keyboard(transient, base);
 }

@@ -102,6 +102,16 @@ _Avoid_: Sibling, related, secondary
 A distinct feed among a Cluster's Members. Source count decides whether a Cluster is a Story and lifts a Story's rank.
 _Avoid_: Feed (in this sense), outlet, publisher
 
+**Cursor**:
+The Item or Story the grid's keys act on. Hovering a cell moves the Cursor there.
+_Avoid_: Focus, selection, highlight, active cell
+
+### Overlays
+
+**Overlay**:
+A surface opened over the grid or reader that owns the keyboard and the back button while it is on top. An Overlay closes with Escape and with the key that opened it, except an Overlay holding a text input, which closes with Escape only.
+_Avoid_: Modal, dialog, sheet, popup, panel
+
 ### Feedback
 
 **Feedback**:

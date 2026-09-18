@@ -62,7 +62,7 @@ import {
 import { gridCommand, isEditingTarget } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import type { LightboxImage } from "./lightbox-set";
-import { closeOverlay, pushOverlay } from "./overlay-history";
+import { closeOverlay, keyOwnership, pushOverlay } from "./overlay-history";
 import { animatePageScroll } from "./page-scroll";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
@@ -108,6 +108,7 @@ interface GridProps {
   topSlot?: JSX.Element;
   onTopSlotHeight?(height: number): void;
   active: boolean;
+  onHomeReady?(action: (() => void) | undefined): void;
   onRefresh(): Promise<number>;
   onScrollPosition?(top: number): void;
 }
@@ -153,7 +154,6 @@ function GridContent(props: GridProps) {
   let programmaticFrame = 0;
   let restoreFrame = 0;
   let scrollIdle: number | undefined;
-  let goTimer: number | undefined;
   let longPressTimer: number | undefined;
   let pressTimer: number | undefined;
   let longPress: LongPressGesture | undefined;
@@ -171,7 +171,6 @@ function GridContent(props: GridProps) {
   let userScrollIntentVersion = 0;
   let endRequested = false;
   let pageFocus: { top: number; x: number; y: number } | undefined;
-  let goPending = false;
   const [storyLeadHeights, setStoryLeadHeights] = createSignal(
     new Map<string, number>(),
   );
@@ -640,7 +639,6 @@ function GridContent(props: GridProps) {
       cancelAnimationFrame(programmaticFrame);
       cancelScrollRestore();
       window.clearTimeout(scrollIdle);
-      window.clearTimeout(goTimer);
       window.clearTimeout(longPressTimer);
       window.clearTimeout(pressTimer);
       window.clearTimeout(refreshNoticeTimer);
@@ -798,11 +796,6 @@ function GridContent(props: GridProps) {
       : undefined;
   };
 
-  const clearGo = () => {
-    goPending = false;
-    window.clearTimeout(goTimer);
-  };
-
   const goHome = () => {
     endRequested = false;
     const first = frontSequence()[0]?.id ?? rows()[0]?.cells[0]?.item.item_id;
@@ -819,6 +812,15 @@ function GridContent(props: GridProps) {
       scroller.focus({ preventScroll: true });
     });
   };
+
+  onMount(() => {
+    props.onHomeReady?.(() => {
+      setKeyboardFocus(true);
+      stopPageScroll();
+      goHome();
+    });
+    onCleanup(() => props.onHomeReady?.(undefined));
+  });
 
   const goEnd = () => {
     endRequested = true;
@@ -872,10 +874,13 @@ function GridContent(props: GridProps) {
       event.isComposing ||
       isEditingTarget(event.target)
     ) {
-      clearGo();
       return;
     }
-    if (lightbox()) return;
+    if (
+      !props.active &&
+      !(sheetItem() && keyOwnership().owner === "action-sheet")
+    )
+      return;
     if (event.key === "Escape") imageRequest?.abort();
     setKeyboardFocus(true);
     if (sheetItem() && event.key === "Escape") {
@@ -886,8 +891,6 @@ function GridContent(props: GridProps) {
     if (sheetItem()) return;
     if (!props.active || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
-    if (target.isContentEditable || target.matches("input, textarea, select"))
-      return;
     const control = target.closest("button, a, summary");
     if (
       event.key === " " &&
@@ -922,10 +925,8 @@ function GridContent(props: GridProps) {
     }
     stopPageScroll();
     if (!command) {
-      clearGo();
       return;
     }
-    if (command !== "go-prefix") clearGo();
     switch (command) {
       case "page-down":
       case "page-up": {
@@ -1030,15 +1031,6 @@ function GridContent(props: GridProps) {
         break;
       case "home":
         goHome();
-        break;
-      case "go-prefix":
-        if (goPending) {
-          clearGo();
-          goHome();
-        } else {
-          goPending = true;
-          goTimer = window.setTimeout(clearGo, 600);
-        }
         break;
       case "undo":
         if (!props.model.archive) props.actions.onUndo();

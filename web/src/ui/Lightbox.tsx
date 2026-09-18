@@ -11,8 +11,9 @@ import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import { createMediaQuery } from "../media-query";
 import { imageIndex, lightboxBindings, lightboxCommand } from "./lightbox-keys";
+import { lightboxTap } from "./lightbox-pointer";
 import { fittedRect, type LightboxImage, originalSource } from "./lightbox-set";
-import { closeOverlay, pushOverlay } from "./overlay-history";
+import { closeOverlay, keyOwnership, pushOverlay } from "./overlay-history";
 import {
   beginSheetDrag,
   lightboxDragOffset,
@@ -68,6 +69,8 @@ export function Lightbox(props: {
         pan: { x: number; y: number };
         axis?: "x" | "y";
         pinched?: boolean;
+        moved: boolean;
+        scrim: boolean;
       }
     | undefined;
   const pointers = new Map<number, { x: number; y: number }>();
@@ -278,6 +281,7 @@ export function Lightbox(props: {
   });
   const onKey = (event: KeyboardEvent) => {
     if (
+      keyOwnership().owner !== "lightbox" ||
       event.defaultPrevented ||
       event.isComposing ||
       event.metaKey ||
@@ -417,6 +421,8 @@ export function Lightbox(props: {
         y: event.clientY,
         time: performance.now(),
         pan: pan(),
+        moved: false,
+        scrim: event.target === scrim,
       };
     setDragging(true);
   };
@@ -437,6 +443,7 @@ export function Lightbox(props: {
     if (gesture.pinched) return;
     const x = event.clientX - gesture.x;
     const y = event.clientY - gesture.y;
+    if (Math.hypot(x, y) >= 8) gesture.moved = true;
     if (zoom() > 1) {
       constrainPan(gesture.pan.x + x, gesture.pan.y + y);
       return;
@@ -470,6 +477,11 @@ export function Lightbox(props: {
       return;
     }
     if (previous.pinched) return;
+    const tap = lightboxTap(previous, event.clientX, event.clientY);
+    if (tap === "scrim") {
+      close();
+      return;
+    }
     if (zoom() === 1 && previous.axis === "y") {
       const drag = beginSheetDrag("touch", previous.y, previous.time, 0);
       if (
@@ -499,10 +511,7 @@ export function Lightbox(props: {
       // transitionend owns the handoff; the timer covers absent transitions
       // (including reduced motion or releasing at the exact destination).
       swipeTimer = window.setTimeout(finishSwipe, reduced() ? 0 : 280);
-    } else if (
-      Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 8 &&
-      phone()
-    ) {
+    } else if (tap && phone()) {
       const now = performance.now();
       if (now - lastTap < 300)
         setScale(zoom() > 1 ? 1 : 2, event.clientX, event.clientY);

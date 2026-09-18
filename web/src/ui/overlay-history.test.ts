@@ -123,3 +123,53 @@ describe("overlay history", () => {
     expect(browser.pushes).toBe(2);
   });
 });
+
+it("transfers keyboard ownership immediately, including deferred pushes and browser Back", () => {
+  const browser = new FakeBrowser();
+  const overlays = createOverlayHistory(browser, browser);
+  expect(overlays.keyboard().owner).toBe("grid");
+  overlays.pushOverlay("reader", () => undefined);
+  overlays.pushOverlay("lightbox", () => undefined);
+  expect(overlays.keyboard()).toEqual({
+    owner: "lightbox",
+    overlays: ["reader", "lightbox"],
+  });
+  overlays.closeOverlay("lightbox");
+  expect(overlays.keyboard().owner).toBe("reader");
+  overlays.pushOverlay("related", () => undefined);
+  expect(overlays.keyboard().owner).toBe("related");
+  browser.goTo(1);
+  expect(overlays.keyboard().owner).toBe("related");
+  browser.goTo(1);
+  expect(overlays.keyboard().owner).toBe("reader");
+  browser.goTo(0);
+  expect(overlays.keyboard().owner).toBe("grid");
+});
+
+it("lets transient menus and non-history dialogs own keys without adding history", () => {
+  const browser = new FakeBrowser();
+  const overlays = createOverlayHistory(browser, browser);
+  overlays.pushOverlay("feeds", () => undefined);
+  expect(overlays.keyboard(true).owner).toBe("transient");
+  expect(overlays.keyboard().owner).toBe("feeds");
+  overlays.pushOverlay("feeds-dialog", () => undefined, false);
+  expect(overlays.keyboard().owner).toBe("feeds-dialog");
+  expect(browser.pushes).toBe(1);
+  overlays.closeOverlay("feeds-dialog");
+  expect(browser.backs).toBe(0);
+  expect(overlays.keyboard().owner).toBe("feeds");
+  overlays.destroy();
+  expect(overlays.keyboard().owner).toBe("grid");
+});
+
+it("keeps the Reader as the base owner while its closing animation finishes", () => {
+  const browser = new FakeBrowser();
+  const overlays = createOverlayHistory(browser, browser);
+  overlays.pushOverlay("reader", () => undefined);
+  overlays.closeOverlay("reader");
+  expect(overlays.keyboard(false, "reader")).toEqual({
+    owner: "reader",
+    overlays: ["reader"],
+  });
+  expect(overlays.keyboard(false, "grid").owner).toBe("grid");
+});

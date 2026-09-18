@@ -61,15 +61,16 @@ import { frontPageEntriesForState, frontPageSequence } from "./ui/front-page";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
 import {
+  allowsAppShortcut,
   appCommand,
   characterShortcut,
+  createGoSequence,
   type GoCommand,
-  goCommand,
   isEditingTarget,
   readCharacterShortcuts,
   scopeShortcuts,
 } from "./ui/keyboard";
-import { closeOverlay, pushOverlay } from "./ui/overlay-history";
+import { closeOverlay, keyOwnership, pushOverlay } from "./ui/overlay-history";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
 import { ScopeBar } from "./ui/ScopeBar";
@@ -151,8 +152,13 @@ export function App(props: {
   let searchVersion = 0;
   let relatedVersion = 0;
   let readerCloseTimer: number | undefined;
-  let goPending = false;
-  let goTimer: number | undefined;
+  const goSequence = createGoSequence();
+  let gridHome: (() => void) | undefined;
+  const keyboard = () =>
+    keyOwnership(
+      Boolean(headerMenu()) || tagFilterOpen(),
+      readerID() && view() === "grid" ? "reader" : "grid",
+    );
   let feedsGridDirty = false;
   let feedFilterRefresh: Promise<void> | undefined;
   let linkActionTimer: number | undefined;
@@ -352,6 +358,12 @@ export function App(props: {
         });
     }
   });
+  createEffect(() => {
+    if (filterOpen()) {
+      pushOverlay("filter-sheet", () => setFilterOpen(false), false);
+      onCleanup(() => closeOverlay("filter-sheet"));
+    }
+  });
   const openFilter = () => {
     setScopeCollapse(expandToolbar);
     setFilterOpen(true);
@@ -488,23 +500,8 @@ export function App(props: {
     });
   };
 
-  const clearGo = () => {
-    goPending = false;
-    window.clearTimeout(goTimer);
-    goTimer = undefined;
-  };
-
-  const goSequenceAvailable = () =>
-    !keysOpen() &&
-    !headerMenu() &&
-    !tagFilterOpen() &&
-    !document.querySelector("[role=dialog]") &&
-    (view() === "feeds" ||
-      (view() === "grid" &&
-        !readerID() &&
-        !confirmRemove() &&
-        !searchActive() &&
-        !relatedSource()));
+  const clearGo = () => goSequence.clear();
+  const goSequenceAvailable = () => allowsAppShortcut("go-prefix", keyboard());
 
   const announcedUpdateBuilds = new Set<string>();
   const [updateState, setUpdateState] = createSignal<UpdateState>();
@@ -545,28 +542,21 @@ export function App(props: {
         clearGo();
         return;
       }
-      if (goPending) {
-        const command = goCommand(event.key);
+      if (!goSequenceAvailable()) {
         clearGo();
-        if (command && goSequenceAvailable()) {
-          event.preventDefault();
-          void navigateByKey(command);
-        }
-      } else if (event.key === "g" && goSequenceAvailable()) {
-        goPending = true;
-        goTimer = window.setTimeout(clearGo, 600);
+        return;
+      }
+      const command = goSequence.key(event.key, performance.now());
+      if (command) {
+        event.preventDefault();
+        if (command === "home") gridHome?.();
+        else if (command !== "prefix") void navigateByKey(command);
       }
     };
     const clearGoOnFocus = () => clearGo();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (filterOpen()) return;
-      // A reader lightbox owns its key card and suspends global view shortcuts.
-      if (document.querySelector(".lb-overlay")) return;
       if (event.defaultPrevented || event.isComposing) return;
-      const target = event.target;
-      const editing =
-        target instanceof HTMLElement &&
-        (target.isContentEditable || target.matches("input, textarea, select"));
+      const editing = isEditingTarget(event.target);
       if (
         !editing &&
         !event.shiftKey &&
@@ -577,17 +567,17 @@ export function App(props: {
         view() === "grid" &&
         mode() === "live" &&
         unreadOnly() &&
-        !readerID() &&
-        !keysOpen() &&
-        !confirmRemove() &&
-        !searchActive() &&
-        !relatedSource()
+        allowsAppShortcut("undo", keyboard())
       ) {
         event.preventDefault();
         undoLast();
         return;
       }
-      if (event.key === "/" && !readerID() && !relatedSource() && !editing) {
+      if (
+        event.key === "/" &&
+        allowsAppShortcut("search", keyboard()) &&
+        !editing
+      ) {
         event.preventDefault();
         focusSearch();
         return;
@@ -605,23 +595,21 @@ export function App(props: {
         clearGo();
         return;
       }
-      if (event.key === "Escape" && view() === "feeds" && !keysOpen()) {
+      if (event.key === "Escape" && keyboard().owner === "feeds") {
         event.preventDefault();
         void closeFeedsAndSettings();
         return;
       }
       const command = appCommand(event.key);
-      if (!command || (command === "close-help" && !keysOpen())) return;
+      if (
+        !command ||
+        !allowsAppShortcut(command, keyboard()) ||
+        (command === "close-help" && !keysOpen())
+      )
+        return;
       if (
         command === "toggle-unread" &&
-        (view() !== "grid" ||
-          mode() !== "live" ||
-          loading() ||
-          !!readerID() ||
-          keysOpen() ||
-          !!confirmRemove() ||
-          searchActive() ||
-          !!relatedSource())
+        (view() !== "grid" || mode() !== "live" || loading())
       )
         return;
       event.preventDefault();
@@ -660,7 +648,6 @@ export function App(props: {
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
       readState.dispose();
-      window.clearTimeout(goTimer);
       void flushPending(true);
     });
   });
@@ -1149,6 +1136,7 @@ export function App(props: {
     await flushRead();
     const next = mode() === "live" ? "archive" : "live";
     setMode(next);
+    if (view() === "feeds") closeOverlay("feeds");
     setView("grid");
     closeReader();
     closeConfirmRemove();
@@ -1361,11 +1349,8 @@ export function App(props: {
               unreadOnly={unreadOnly()}
               value={scope()}
               active={
-                !readerID() &&
-                !relatedSource() &&
-                !keysOpen() &&
-                !confirmRemove() &&
-                !headerMenu()
+                !headerMenu() &&
+                ["grid", "search", "transient"].includes(keyboard().owner)
               }
               openRequest={tagOpenRequest()}
               tooltipDisabled={headerTooltipDisabled()}
@@ -1735,14 +1720,10 @@ export function App(props: {
               onPassed={readState.onPassed}
               onFinishAndClear={() => finishAndClear()}
               onReachedEnd={loadMore}
-              active={
-                view() === "grid" &&
-                !readerID() &&
-                !keysOpen() &&
-                !confirmRemove() &&
-                !searchActive() &&
-                !relatedSource()
-              }
+              active={keyboard().owner === "grid"}
+              onHomeReady={(action) => {
+                gridHome = action;
+              }}
               topSlot={
                 compactDisplayControls() &&
                 mode() === "live" &&
@@ -1784,9 +1765,7 @@ export function App(props: {
             response={searchResponse()}
             loading={searchLoading()}
             focusedID={searchFocusedID()}
-            active={
-              !readerID() && !relatedSource() && !keysOpen() && !confirmRemove()
-            }
+            active={keyboard().owner === "search"}
             linkActionID={linkActionID()}
             onFocus={setSearchFocusedID}
             onOpen={(item, archive) => markOpened(item, archive)}
@@ -1804,7 +1783,11 @@ export function App(props: {
             <Reader
               loadBody={(url, signal) => api.body(url, signal)}
               item={item()}
-              active={!keysOpen() && !confirmRemove() && !relatedSource()}
+              active={
+                keyboard().owner === "reader" ||
+                (keyboard().owner === "action-sheet" &&
+                  keyboard().overlays.includes("reader"))
+              }
               archive={readerArchive()}
               hearted={item().hearted}
               linkActionActive={linkActionID() === item().item_id}
@@ -1849,7 +1832,7 @@ export function App(props: {
               source={source()}
               items={relatedItems()}
               loading={relatedLoading()}
-              active={!keysOpen() && !confirmRemove()}
+              active={keyboard().owner === "related"}
               linkActionID={linkActionID()}
               onClose={closeRelated}
               onWalk={openRelated}

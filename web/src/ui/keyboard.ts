@@ -1,4 +1,5 @@
 import type { ItemWindow } from "../item-view";
+import type { KeyOwner, KeyOwnership, OverlayKind } from "./overlay-history";
 
 export type GridCommand =
   | "page-down"
@@ -15,7 +16,6 @@ export type GridCommand =
   | "mark-below"
   | "end"
   | "home"
-  | "go-prefix"
   | "undo"
   | "copy"
   | "original"
@@ -64,7 +64,6 @@ const gridBindings: Record<string, GridCommand> = {
   End: "end",
   G: "end",
   Home: "home",
-  g: "go-prefix",
   u: "undo",
   c: "copy",
   i: "image",
@@ -133,7 +132,9 @@ export function isEditingTarget(target: EventTarget | null): boolean {
   );
 }
 
-export const characterShortcut = (event: KeyboardEvent): boolean =>
+export const characterShortcut = (
+  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey">,
+): boolean =>
   event.key.length === 1 &&
   event.key !== " " &&
   !event.ctrlKey &&
@@ -146,4 +147,92 @@ export function readCharacterShortcuts(): boolean {
   } catch {
     return true;
   }
+}
+
+// Keep the historical permissions explicit, including overlays underneath help.
+// Transient menus suppress sequences, but still permit global view shortcuts.
+const globalOwners: readonly KeyOwner[] = [
+  "grid",
+  "reader",
+  "action-sheet",
+  "related",
+  "feeds",
+  "keyboard-help",
+  "confirm-remove",
+  "search",
+  "transient",
+  "feeds-dialog",
+];
+const gridBlockers: readonly OverlayKind[] = [
+  "reader",
+  "keyboard-help",
+  "confirm-remove",
+  "search",
+  "related",
+  "feeds",
+];
+export const appShortcutPermissions = {
+  "toggle-help": { owners: globalOwners, blocked: [] },
+  "close-help": { owners: globalOwners, blocked: [] },
+  search: { owners: globalOwners, blocked: ["reader", "related"] },
+  "go-prefix": {
+    owners: ["grid", "feeds"],
+    blocked: [
+      "reader",
+      "keyboard-help",
+      "confirm-remove",
+      "search",
+      "related",
+      "action-sheet",
+      "feeds-dialog",
+    ],
+  },
+  "toggle-unread": {
+    owners: ["grid", "action-sheet", "transient"],
+    blocked: gridBlockers,
+  },
+  "toggle-archive": { owners: globalOwners, blocked: [] },
+  undo: {
+    owners: ["grid", "action-sheet", "transient"],
+    blocked: gridBlockers,
+  },
+} satisfies Record<
+  string,
+  { owners: readonly KeyOwner[]; blocked: readonly OverlayKind[] }
+>;
+
+export function allowsAppShortcut(
+  command: keyof typeof appShortcutPermissions,
+  ownership: KeyOwnership,
+): boolean {
+  const rule: { owners: readonly KeyOwner[]; blocked: readonly OverlayKind[] } =
+    appShortcutPermissions[command];
+  return (
+    rule.owners.includes(ownership.owner) &&
+    !ownership.overlays.some(
+      (kind) =>
+        kind === "lightbox" ||
+        kind === "filter-sheet" ||
+        rule.blocked.includes(kind),
+    )
+  );
+}
+
+// The App owns the single sequence; Grid only supplies the home action.
+export function createGoSequence() {
+  let deadline = 0;
+  return {
+    clear() {
+      deadline = 0;
+    },
+    key(key: string, now: number): GoCommand | "home" | "prefix" | undefined {
+      const pending = deadline > now;
+      deadline = 0;
+      if (pending) return key === "g" ? "home" : goCommand(key);
+      if (key === "g") {
+        deadline = now + 600;
+        return "prefix";
+      }
+    },
+  };
 }

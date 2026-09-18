@@ -1,6 +1,6 @@
 export const lightboxBindings = [
   ["← / k · → / j", "Previous / next image"],
-  ["Escape", "Close lightbox"],
+  ["Escape / i", "Close lightbox"],
   ["z", "Toggle fit / 1:1"],
   ["Home / End", "First / last image"],
   ["Enter", "Open image original"],
@@ -15,6 +15,7 @@ export function lightboxCommand(key: string) {
     case "ArrowRight":
     case "j":
       return "next";
+    case "i":
     case "Escape":
       return "close";
     case "Home":
