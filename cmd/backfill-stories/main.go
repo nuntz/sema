@@ -20,9 +20,9 @@ type storyStore interface {
 	UserIDs(context.Context) ([]string, error)
 	LiveItems(context.Context, string) ([]domain.Item, error)
 	LoadItemVectors(context.Context, string, []domain.Item) error
-	Story(context.Context, string, string) (domain.Story, error)
-	PutStory(context.Context, domain.Story) error
-	SetItemStory(context.Context, domain.Item, string) error
+	Cluster(context.Context, string, string) (domain.Cluster, error)
+	PutCluster(context.Context, domain.Cluster) error
+	SetItemCluster(context.Context, domain.Item, string) error
 }
 
 type cluster struct {
@@ -67,7 +67,7 @@ func run(ctx context.Context, repository storyStore, config storycluster.Config,
 				continue
 			}
 			createdAt := domain.Timestamp(time.Now())
-			if existing, storyErr := repository.Story(ctx, userID, group.StoryID); storyErr == nil {
+			if existing, storyErr := repository.Cluster(ctx, userID, group.StoryID); storyErr == nil {
 				if existing.CreatedAt != "" {
 					createdAt = existing.CreatedAt
 				}
@@ -81,18 +81,18 @@ func run(ctx context.Context, repository storyStore, config storycluster.Config,
 				ttl = max(ttl, item.TTL)
 			}
 			now := domain.Timestamp(time.Now())
-			row := domain.Story{
-				PK: domain.UserPK(userID), SK: domain.StorySK(group.StoryID), StoryID: group.StoryID,
+			row := domain.Cluster{
+				PK: domain.UserPK(userID), SK: domain.ClusterSK(group.StoryID), StoryID: group.StoryID,
 				MemberIDs: memberIDs, CreatedAt: createdAt, UpdatedAt: now, TTL: ttl,
 			}
-			if err := repository.PutStory(ctx, row); err != nil {
+			if err := repository.PutCluster(ctx, row); err != nil {
 				return fmt.Errorf("put story %s/%s: %w", userID, group.StoryID, err)
 			}
 			for _, item := range group.Members {
 				if item.StoryID == group.StoryID {
 					continue
 				}
-				if err := repository.SetItemStory(ctx, item, group.StoryID); err != nil {
+				if err := repository.SetItemCluster(ctx, item, group.StoryID); err != nil {
 					return fmt.Errorf("set story for %s/%s: %w", userID, item.ItemID, err)
 				}
 			}

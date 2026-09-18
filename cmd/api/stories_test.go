@@ -155,8 +155,8 @@ func TestStoryPruningCompletesBeforeRenderingReturns(t *testing.T) {
 							return &dynamodb.QueryOutput{}, nil
 						}
 						return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
-							marshal(domain.Story{StoryID: "first", MemberIDs: []string{"dead", "outside", "archive", "lead", "member"}}),
-							marshal(domain.Story{StoryID: "second", MemberIDs: []string{"also-dead"}}),
+							marshal(domain.Cluster{StoryID: "first", MemberIDs: []string{"dead", "outside", "archive", "lead", "member"}}),
+							marshal(domain.Cluster{StoryID: "second", MemberIDs: []string{"also-dead"}}),
 						}}, nil
 					},
 					batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {

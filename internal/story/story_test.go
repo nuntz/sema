@@ -83,7 +83,7 @@ func TestLeadTieBreaks(t *testing.T) {
 
 func TestRenderDemotionUnreadOrderingAndHiddenIDs(t *testing.T) {
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	rows := []domain.Story{{StoryID: "broad"}, {StoryID: "same-feed"}, {StoryID: "tagged-down"}, {StoryID: "read"}}
+	rows := []domain.Cluster{{StoryID: "broad"}, {StoryID: "same-feed"}, {StoryID: "tagged-down"}, {StoryID: "read"}}
 	members := map[string][]domain.Item{
 		"broad": {
 			{ItemID: "b1", FeedID: "a", Score: 1, PublishedTS: domain.Timestamp(now.Add(-time.Hour))},
@@ -111,7 +111,7 @@ func TestOrderKeyStoryOrderingAndSize(t *testing.T) {
 		t.Fatalf("OrderKey = %v", got)
 	}
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
-	rows := []domain.Story{{StoryID: "narrow"}, {StoryID: "broad"}, {StoryID: "newer"}}
+	rows := []domain.Cluster{{StoryID: "narrow"}, {StoryID: "broad"}, {StoryID: "newer"}}
 	members := map[string][]domain.Item{
 		"narrow": {{ItemID: "n1", FeedID: "a", Score: 1.2, Size: "S", PublishedTS: domain.Timestamp(now)}, {ItemID: "n2", FeedID: "b"}},
 		"broad":  {{ItemID: "b1", FeedID: "a", Score: 1, Size: "M", PublishedTS: domain.Timestamp(now)}, {ItemID: "b2", FeedID: "b"}, {ItemID: "b3", FeedID: "c"}, {ItemID: "b4", FeedID: "d"}},

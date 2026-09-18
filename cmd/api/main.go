@@ -973,7 +973,7 @@ func (s *server) invalidateStories(userID string) {
 }
 
 func (s *server) renderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
-	rows, err := s.store.Stories(ctx, userID)
+	rows, err := s.store.Clusters(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -993,7 +993,7 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 	for _, item := range items {
 		resolvedIDs[item.ItemID] = true
 	}
-	var pruneStory domain.Story
+	var pruneStory domain.Cluster
 	var missing []string
 	for _, row := range rows {
 		for _, id := range row.MemberIDs {
@@ -1038,7 +1038,7 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 		// bounded best-effort prune while this invocation is still running.
 		pruneCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		defer cancel()
-		if err := s.store.PruneStoryMembers(pruneCtx, userID, pruneStory, missing); err != nil {
+		if err := s.store.PruneClusterMembers(pruneCtx, userID, pruneStory, missing); err != nil {
 			slog.Warn("prune story members", "story_id", pruneStory.StoryID, "error", err)
 		}
 	}

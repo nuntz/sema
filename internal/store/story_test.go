@@ -14,7 +14,7 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 )
 
-func TestCreateStoryDoesNotReplaceExistingMembers(t *testing.T) {
+func TestCreateClusterDoesNotReplaceExistingMembers(t *testing.T) {
 	var stored map[string]types.AttributeValue
 	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
 		if aws.ToString(input.ConditionExpression) != "attribute_not_exists(PK)" {
@@ -27,15 +27,15 @@ func TestCreateStoryDoesNotReplaceExistingMembers(t *testing.T) {
 		return &dynamodb.PutItemOutput{}, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	row := domain.Story{PK: "U#user", SK: "T#founder", StoryID: "founder", MemberIDs: []string{"founder", "first"}, TTL: 100}
-	if created, err := repository.CreateStory(context.Background(), row); err != nil || !created {
+	row := domain.Cluster{PK: "U#user", SK: "T#founder", StoryID: "founder", MemberIDs: []string{"founder", "first"}, TTL: 100}
+	if created, err := repository.CreateCluster(context.Background(), row); err != nil || !created {
 		t.Fatalf("first creation = %v, %v", created, err)
 	}
 	row.MemberIDs, row.TTL = []string{"founder", "second"}, 50
-	if created, err := repository.CreateStory(context.Background(), row); err != nil || created {
+	if created, err := repository.CreateCluster(context.Background(), row); err != nil || created {
 		t.Fatalf("second creation = %v, %v", created, err)
 	}
-	var got domain.Story
+	var got domain.Cluster
 	if err := attributevalue.UnmarshalMap(stored, &got); err != nil {
 		t.Fatal(err)
 	}
@@ -44,10 +44,10 @@ func TestCreateStoryDoesNotReplaceExistingMembers(t *testing.T) {
 	}
 }
 
-func TestCreateStoryPropagatesStorageFailure(t *testing.T) {
+func TestCreateClusterPropagatesStorageFailure(t *testing.T) {
 	want := errors.New("unavailable")
 	db := &fakeDynamoDB{putItem: func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) { return nil, want }}
-	created, err := New(db, nil, "table", "", "").CreateStory(context.Background(), domain.Story{
+	created, err := New(db, nil, "table", "", "").CreateCluster(context.Background(), domain.Cluster{
 		PK: "U#user", SK: "T#story", StoryID: "story", MemberIDs: []string{"a", "b"},
 	})
 	if created || !errors.Is(err, want) {
@@ -57,8 +57,8 @@ func TestCreateStoryPropagatesStorageFailure(t *testing.T) {
 
 func TestStoryLifecycle(t *testing.T) {
 	now := time.Now().UTC()
-	want := domain.Story{
-		PK: domain.UserPK("user"), SK: domain.StorySK("founder"), StoryID: "founder",
+	want := domain.Cluster{
+		PK: domain.UserPK("user"), SK: domain.ClusterSK("founder"), StoryID: "founder",
 		MemberIDs: []string{"founder", "second"}, CreatedAt: domain.Timestamp(now), UpdatedAt: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix(),
 	}
 	var stored map[string]types.AttributeValue
@@ -80,25 +80,25 @@ func TestStoryLifecycle(t *testing.T) {
 		},
 	}
 	repository := New(db, nil, "table", "", "")
-	if err := repository.PutStory(context.Background(), want); err != nil {
+	if err := repository.PutCluster(context.Background(), want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repository.Story(context.Background(), "user", "founder")
+	got, err := repository.Cluster(context.Background(), "user", "founder")
 	if err != nil || got.StoryID != want.StoryID || len(got.MemberIDs) != 2 || got.TTL != want.TTL {
 		t.Fatalf("Story = %#v, %v", got, err)
 	}
-	if err := repository.DeleteStory(context.Background(), "user", "founder"); err != nil {
+	if err := repository.DeleteCluster(context.Background(), "user", "founder"); err != nil {
 		t.Fatal(err)
 	}
-	if deleted["SK"].(*types.AttributeValueMemberS).Value != domain.StorySK("founder") {
+	if deleted["SK"].(*types.AttributeValueMemberS).Value != domain.ClusterSK("founder") {
 		t.Fatalf("deleted key = %#v", deleted)
 	}
 }
 
 func TestStoriesQueriesLivePrefix(t *testing.T) {
 	now := time.Now().UTC()
-	encoded, err := attributevalue.MarshalMap(domain.Story{
-		PK: domain.UserPK("user"), SK: domain.StorySK("story"), StoryID: "story", MemberIDs: []string{"a", "b"}, TTL: now.Add(time.Hour).Unix(),
+	encoded, err := attributevalue.MarshalMap(domain.Cluster{
+		PK: domain.UserPK("user"), SK: domain.ClusterSK("story"), StoryID: "story", MemberIDs: []string{"a", "b"}, TTL: now.Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -115,13 +115,13 @@ func TestStoriesQueriesLivePrefix(t *testing.T) {
 		}
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{encoded}}, nil
 	}}
-	stories, err := New(db, nil, "table", "", "").Stories(context.Background(), "user")
+	stories, err := New(db, nil, "table", "", "").Clusters(context.Background(), "user")
 	if err != nil || len(stories) != 1 || stories[0].StoryID != "story" {
 		t.Fatalf("Stories = %#v, %v", stories, err)
 	}
 }
 
-func TestAddStoryMemberKeepsLargestTTL(t *testing.T) {
+func TestAddClusterMemberKeepsLargestTTL(t *testing.T) {
 	calls := 0
 	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 		calls++
@@ -136,12 +136,12 @@ func TestAddStoryMemberKeepsLargestTTL(t *testing.T) {
 		}
 		return &dynamodb.UpdateItemOutput{}, nil
 	}}
-	if err := New(db, nil, "table", "", "").AddStoryMember(context.Background(), "user", "story", "item", 42); err != nil || calls != 2 {
-		t.Fatalf("AddStoryMember calls = %d, err = %v", calls, err)
+	if err := New(db, nil, "table", "", "").AddClusterMember(context.Background(), "user", "story", "item", 42); err != nil || calls != 2 {
+		t.Fatalf("AddClusterMember calls = %d, err = %v", calls, err)
 	}
 }
 
-func TestSetItemStorySetsAndClearsAttribute(t *testing.T) {
+func TestSetItemClusterSetsAndClearsAttribute(t *testing.T) {
 	var updates []*dynamodb.UpdateItemInput
 	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
 		updates = append(updates, input)
@@ -149,10 +149,10 @@ func TestSetItemStorySetsAndClearsAttribute(t *testing.T) {
 	}}
 	repository := New(db, nil, "table", "", "")
 	item := domain.Item{PK: domain.UserPK("user"), SK: "I#row", ItemID: "item"}
-	if err := repository.SetItemStory(context.Background(), item, "story"); err != nil {
+	if err := repository.SetItemCluster(context.Background(), item, "story"); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetItemStory(context.Background(), item, ""); err != nil {
+	if err := repository.SetItemCluster(context.Background(), item, ""); err != nil {
 		t.Fatal(err)
 	}
 	if aws.ToString(updates[0].UpdateExpression) != "SET story_id = :story" || aws.ToString(updates[1].UpdateExpression) != "REMOVE story_id" {
@@ -181,7 +181,7 @@ func TestItemsForFeedsExcludesStoryMembers(t *testing.T) {
 
 func TestStoryNotFound(t *testing.T) {
 	db := &fakeDynamoDB{getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) { return &dynamodb.GetItemOutput{}, nil }}
-	_, err := New(db, nil, "table", "", "").Story(context.Background(), "user", "missing")
+	_, err := New(db, nil, "table", "", "").Cluster(context.Background(), "user", "missing")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Story error = %v", err)
 	}
@@ -217,7 +217,7 @@ func TestIngestResolutionKeepsStrongReads(t *testing.T) {
 	}
 }
 
-func TestPruneStoryMembersConditionalAndConfirmed(t *testing.T) {
+func TestPruneClusterMembersConditionalAndConfirmed(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		reappeared bool
@@ -268,8 +268,8 @@ func TestPruneStoryMembersConditionalAndConfirmed(t *testing.T) {
 					return &dynamodb.UpdateItemOutput{}, test.updateErr
 				},
 			}
-			err := New(db, nil, "table", "", "").PruneStoryMembers(context.Background(), "user",
-				domain.Story{StoryID: "story", MemberIDs: []string{"live", "dead"}}, []string{"dead", "dead", "unrelated"})
+			err := New(db, nil, "table", "", "").PruneClusterMembers(context.Background(), "user",
+				domain.Cluster{StoryID: "story", MemberIDs: []string{"live", "dead"}}, []string{"dead", "dead", "unrelated"})
 			if test.name == "storage failure" {
 				if !errors.Is(err, test.updateErr) {
 					t.Fatalf("error = %v", err)
@@ -285,5 +285,25 @@ func TestPruneStoryMembersConditionalAndConfirmed(t *testing.T) {
 				t.Fatalf("updates = %d, want %d", calls, want)
 			}
 		})
+	}
+}
+
+func TestClusterPreservesStoredSchema(t *testing.T) {
+	row := domain.Cluster{
+		PK: "U#user", SK: domain.ClusterSK("one"), StoryID: "one",
+		MemberIDs: []string{"member"}, CreatedAt: "created", UpdatedAt: "updated", TTL: 42,
+	}
+	var encoded map[string]types.AttributeValue
+	db := &fakeDynamoDB{putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+		encoded = input.Item
+		return &dynamodb.PutItemOutput{}, nil
+	}}
+	if err := New(db, nil, "table", "", "").PutCluster(context.Background(), row); err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) != 7 || encoded["SK"].(*types.AttributeValueMemberS).Value != "T#one" ||
+		encoded["story_id"].(*types.AttributeValueMemberS).Value != "one" ||
+		encoded["member_ids"].(*types.AttributeValueMemberSS).Value[0] != "member" {
+		t.Fatalf("cluster changed stored schema: %#v", encoded)
 	}
 }

@@ -814,12 +814,12 @@ func (s *Store) readItemIDs(ctx context.Context, userID string) (map[string]bool
 	}
 }
 
-// CreateStory leaves an existing story and its members untouched.
-func (s *Store) CreateStory(ctx context.Context, story domain.Story) (bool, error) {
-	if story.PK == "" || story.SK == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
-		return false, errors.New("story key, ID, and members are required")
+// CreateCluster leaves an existing cluster and its members untouched.
+func (s *Store) CreateCluster(ctx context.Context, cluster domain.Cluster) (bool, error) {
+	if cluster.PK == "" || cluster.SK == "" || cluster.StoryID == "" || len(cluster.MemberIDs) == 0 {
+		return false, errors.New("cluster key, ID, and members are required")
 	}
-	encoded, err := attributevalue.MarshalMap(story)
+	encoded, err := attributevalue.MarshalMap(cluster)
 	if err != nil {
 		return false, err
 	}
@@ -833,11 +833,11 @@ func (s *Store) CreateStory(ctx context.Context, story domain.Story) (bool, erro
 	return err == nil, err
 }
 
-func (s *Store) PutStory(ctx context.Context, story domain.Story) error {
-	if story.PK == "" || story.SK == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
-		return errors.New("story key, ID, and members are required")
+func (s *Store) PutCluster(ctx context.Context, cluster domain.Cluster) error {
+	if cluster.PK == "" || cluster.SK == "" || cluster.StoryID == "" || len(cluster.MemberIDs) == 0 {
+		return errors.New("cluster key, ID, and members are required")
 	}
-	encoded, err := attributevalue.MarshalMap(story)
+	encoded, err := attributevalue.MarshalMap(cluster)
 	if err != nil {
 		return err
 	}
@@ -845,22 +845,22 @@ func (s *Store) PutStory(ctx context.Context, story domain.Story) error {
 	return err
 }
 
-func (s *Store) Story(ctx context.Context, userID, storyID string) (domain.Story, error) {
+func (s *Store) Cluster(ctx context.Context, userID, clusterID string) (domain.Cluster, error) {
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)), ConsistentRead: aws.Bool(true),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ClusterSK(clusterID)), ConsistentRead: aws.Bool(true),
 	})
 	if err != nil {
-		return domain.Story{}, err
+		return domain.Cluster{}, err
 	}
 	if len(response.Item) == 0 {
-		return domain.Story{}, ErrNotFound
+		return domain.Cluster{}, ErrNotFound
 	}
-	var row domain.Story
+	var row domain.Cluster
 	return row, attributevalue.UnmarshalMap(response.Item, &row)
 }
 
-func (s *Store) Stories(ctx context.Context, userID string) ([]domain.Story, error) {
-	rows := []domain.Story{}
+func (s *Store) Clusters(ctx context.Context, userID string) ([]domain.Cluster, error) {
+	rows := []domain.Cluster{}
 	var start map[string]types.AttributeValue
 	for {
 		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
@@ -875,7 +875,7 @@ func (s *Store) Stories(ctx context.Context, userID string) ([]domain.Story, err
 		if err != nil {
 			return nil, err
 		}
-		var page []domain.Story
+		var page []domain.Cluster
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, err
 		}
@@ -887,9 +887,9 @@ func (s *Store) Stories(ctx context.Context, userID string) ([]domain.Story, err
 	}
 }
 
-func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID string, ttl int64) error {
-	if userID == "" || storyID == "" || itemID == "" || ttl == 0 {
-		return errors.New("story member identity and ttl are required")
+func (s *Store) AddClusterMember(ctx context.Context, userID, clusterID, itemID string, ttl int64) error {
+	if userID == "" || clusterID == "" || itemID == "" || ttl == 0 {
+		return errors.New("cluster member identity and ttl are required")
 	}
 	now := domain.Timestamp(time.Now())
 	values := map[string]types.AttributeValue{
@@ -898,7 +898,7 @@ func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID stri
 		":ttl":     &types.AttributeValueMemberN{Value: strconv.FormatInt(ttl, 10)},
 	}
 	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ClusterSK(clusterID)),
 		UpdateExpression:         aws.String("ADD member_ids :member SET updated_at = :updated, #ttl = :ttl"),
 		ConditionExpression:      aws.String("attribute_exists(PK) AND #ttl <= :ttl"),
 		ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: values,
@@ -908,7 +908,7 @@ func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID stri
 		return err
 	}
 	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ClusterSK(clusterID)),
 		UpdateExpression:          aws.String("ADD member_ids :member SET updated_at = :updated"),
 		ConditionExpression:       aws.String("attribute_exists(PK)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":member": values[":member"], ":updated": values[":updated"]},
@@ -916,15 +916,15 @@ func (s *Store) AddStoryMember(ctx context.Context, userID, storyID, itemID stri
 	return err
 }
 
-// PruneStoryMembers removes confirmed absent IDs only if membership has not
+// PruneClusterMembers removes confirmed absent IDs only if membership has not
 // changed since rendering. Strong confirmation prevents eventual read lag from
 // pruning a newly ingested item. Callers should bound this best-effort work.
-func (s *Store) PruneStoryMembers(ctx context.Context, userID string, story domain.Story, missing []string) error {
-	if userID == "" || story.StoryID == "" || len(story.MemberIDs) == 0 {
-		return errors.New("story identity and observed members are required")
+func (s *Store) PruneClusterMembers(ctx context.Context, userID string, cluster domain.Cluster, missing []string) error {
+	if userID == "" || cluster.StoryID == "" || len(cluster.MemberIDs) == 0 {
+		return errors.New("cluster identity and observed members are required")
 	}
-	observed := make(map[string]bool, len(story.MemberIDs))
-	for _, id := range story.MemberIDs {
+	observed := make(map[string]bool, len(cluster.MemberIDs))
+	for _, id := range cluster.MemberIDs {
 		observed[id] = true
 	}
 	ids := make([]string, 0, len(missing))
@@ -954,12 +954,12 @@ func (s *Store) PruneStoryMembers(ctx context.Context, userID string, story doma
 		return nil
 	}
 	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(story.StoryID)),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ClusterSK(cluster.StoryID)),
 		UpdateExpression:    aws.String("DELETE member_ids :dead"),
 		ConditionExpression: aws.String("attribute_exists(PK) AND member_ids = :observed"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":dead":     &types.AttributeValueMemberSS{Value: dead},
-			":observed": &types.AttributeValueMemberSS{Value: story.MemberIDs},
+			":observed": &types.AttributeValueMemberSS{Value: cluster.MemberIDs},
 		},
 	})
 	var conditional *types.ConditionalCheckFailedException
@@ -969,7 +969,7 @@ func (s *Store) PruneStoryMembers(ctx context.Context, userID string, story doma
 	return err
 }
 
-func (s *Store) SetItemStory(ctx context.Context, item domain.Item, storyID string) error {
+func (s *Store) SetItemCluster(ctx context.Context, item domain.Item, clusterID string) error {
 	if item.PK == "" || item.SK == "" || item.ItemID == "" {
 		return errors.New("item key and ID are required")
 	}
@@ -978,19 +978,19 @@ func (s *Store) SetItemStory(ctx context.Context, item domain.Item, storyID stri
 		ConditionExpression:       aws.String("attribute_exists(PK) AND item_id = :item"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":item": &types.AttributeValueMemberS{Value: item.ItemID}},
 	}
-	if storyID == "" {
+	if clusterID == "" {
 		input.UpdateExpression = aws.String("REMOVE story_id")
 	} else {
 		input.UpdateExpression = aws.String("SET story_id = :story")
-		input.ExpressionAttributeValues[":story"] = &types.AttributeValueMemberS{Value: storyID}
+		input.ExpressionAttributeValues[":story"] = &types.AttributeValueMemberS{Value: clusterID}
 	}
 	_, err := s.db.UpdateItem(ctx, input)
 	return err
 }
 
-func (s *Store) DeleteStory(ctx context.Context, userID, storyID string) error {
+func (s *Store) DeleteCluster(ctx context.Context, userID, clusterID string) error {
 	_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.StorySK(storyID)),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ClusterSK(clusterID)),
 	})
 	return err
 }

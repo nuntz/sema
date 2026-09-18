@@ -424,7 +424,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		identity := domain.ItemIdentity{PK: pk, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL}
 		rowsBySK[identity.SK] = marshal(identity)
 	}
-	storyRow := domain.Story{PK: pk, SK: domain.StorySK("story"), StoryID: "story", MemberIDs: []string{"lead", "member"}, CreatedAt: domain.Timestamp(now), UpdatedAt: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
+	storyRow := domain.Cluster{PK: pk, SK: domain.ClusterSK("story"), StoryID: "story", MemberIDs: []string{"lead", "member"}, CreatedAt: domain.Timestamp(now), UpdatedAt: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
 	model := domain.Model{PK: pk, SK: "MODEL", ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.2, P90: 1.3}}
 	db := &apiDynamo{
 		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {

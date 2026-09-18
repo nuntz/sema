@@ -121,9 +121,9 @@ type itemStore interface {
 	PutItemFailure(context.Context, string, string, int64) error
 	Signals(context.Context, string) ([]domain.Signal, error)
 	ResolveItemIDsConsistent(context.Context, string, []string) ([]domain.Item, error)
-	CreateStory(context.Context, domain.Story) (bool, error)
-	AddStoryMember(context.Context, string, string, string, int64) error
-	SetItemStory(context.Context, domain.Item, string) error
+	CreateCluster(context.Context, domain.Cluster) (bool, error)
+	AddClusterMember(context.Context, string, string, string, int64) error
+	SetItemCluster(context.Context, domain.Item, string) error
 }
 
 func (h *handler) run(ctx context.Context, event events.SQSEvent) (events.SQSEventResponse, error) {
@@ -606,7 +606,7 @@ func (h *handler) process(ctx context.Context, body string) (*processedVectors, 
 	if message.Reprocess && existing.StoryID != "" {
 		item.StoryID = existing.StoryID
 	} else if h.vectors != nil {
-		if assignmentMetrics, storyErr := h.assignStory(ctx, message.User, vector, &item); storyErr != nil {
+		if assignmentMetrics, storyErr := h.assignCluster(ctx, message.User, vector, &item); storyErr != nil {
 			item.StoryID = ""
 			storyMetrics["StoryAssignmentFailed"] = 1
 			slog.WarnContext(ctx, "story assignment failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", storyErr)
@@ -704,7 +704,7 @@ func (h *handler) emitMetrics(metrics map[string]float64, dimensions map[string]
 	observability.Emit(metrics, dimensions)
 }
 
-func (h *handler) assignStory(ctx context.Context, userID string, vector []float32, item *domain.Item) (map[string]float64, error) {
+func (h *handler) assignCluster(ctx context.Context, userID string, vector []float32, item *domain.Item) (map[string]float64, error) {
 	metrics := map[string]float64{}
 	matches, err := h.vectors.Query(ctx, userID, vector, 20, time.Now().Unix())
 	if err != nil {
@@ -739,11 +739,11 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 	if len(candidates) == 0 {
 		return metrics, nil
 	}
-	if storyID, found := storycluster.Choose(candidates); found {
-		if err := h.store.AddStoryMember(ctx, userID, storyID, item.ItemID, item.TTL); err != nil {
+	if clusterID, found := storycluster.Choose(candidates); found {
+		if err := h.store.AddClusterMember(ctx, userID, clusterID, item.ItemID, item.TTL); err != nil {
 			return metrics, err
 		}
-		item.StoryID = storyID
+		item.StoryID = clusterID
 		metrics["StoryJoined"] = 1
 		return metrics, nil
 	}
@@ -754,26 +754,26 @@ func (h *handler) assignStory(ctx context.Context, userID string, vector []float
 		return candidates[i].Item.ItemID < candidates[j].Item.ItemID
 	})
 	founder := candidates[0].Item
-	storyID := founder.ItemID
+	clusterID := founder.ItemID
 	created := domain.Timestamp(time.Now())
-	row := domain.Story{
-		PK: domain.UserPK(userID), SK: domain.StorySK(storyID), StoryID: storyID,
-		MemberIDs: []string{storyID, item.ItemID}, CreatedAt: created, UpdatedAt: created, TTL: max(founder.TTL, item.TTL),
+	row := domain.Cluster{
+		PK: domain.UserPK(userID), SK: domain.ClusterSK(clusterID), StoryID: clusterID,
+		MemberIDs: []string{clusterID, item.ItemID}, CreatedAt: created, UpdatedAt: created, TTL: max(founder.TTL, item.TTL),
 	}
-	createdStory, err := h.store.CreateStory(ctx, row)
+	createdCluster, err := h.store.CreateCluster(ctx, row)
 	if err != nil {
 		return metrics, err
 	}
-	if !createdStory {
-		if err := h.store.AddStoryMember(ctx, userID, storyID, item.ItemID, item.TTL); err != nil {
+	if !createdCluster {
+		if err := h.store.AddClusterMember(ctx, userID, clusterID, item.ItemID, item.TTL); err != nil {
 			return metrics, err
 		}
 	}
-	if err := h.store.SetItemStory(ctx, founder, storyID); err != nil {
+	if err := h.store.SetItemCluster(ctx, founder, clusterID); err != nil {
 		return metrics, err
 	}
-	item.StoryID = storyID
-	if createdStory {
+	item.StoryID = clusterID
+	if createdCluster {
 		metrics["StoryCreated"] = 1
 	} else {
 		metrics["StoryJoined"] = 1

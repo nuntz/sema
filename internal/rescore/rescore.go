@@ -25,10 +25,10 @@ type Repository interface {
 	LiveItems(context.Context, string) ([]domain.Item, error)
 	LoadItemVectors(context.Context, string, []domain.Item) error
 	UpdateItemRankings(context.Context, []domain.Item) error
-	Stories(context.Context, string) ([]domain.Story, error)
-	PutStory(context.Context, domain.Story) error
-	DeleteStory(context.Context, string, string) error
-	SetItemStory(context.Context, domain.Item, string) error
+	Clusters(context.Context, string) ([]domain.Cluster, error)
+	PutCluster(context.Context, domain.Cluster) error
+	DeleteCluster(context.Context, string, string) error
+	SetItemCluster(context.Context, domain.Item, string) error
 }
 
 type Engine struct {
@@ -197,7 +197,7 @@ func (e *Engine) RunUser(ctx context.Context, userID string, onDemand bool) (Res
 }
 
 func (e *Engine) consolidateStories(ctx context.Context, userID string, liveItems []domain.Item, now time.Time) (int, int, error) {
-	rows, err := e.Repository.Stories(ctx, userID)
+	rows, err := e.Repository.Clusters(ctx, userID)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -220,13 +220,13 @@ func (e *Engine) consolidateStories(ctx context.Context, userID string, liveItem
 			ttl = max(ttl, item.TTL)
 		}
 		if len(memberIDs) < 2 {
-			if err := e.Repository.DeleteStory(ctx, userID, row.StoryID); err != nil {
+			if err := e.Repository.DeleteCluster(ctx, userID, row.StoryID); err != nil {
 				return consolidated, deleted, err
 			}
 			for _, itemID := range memberIDs {
 				item := live[itemID]
 				if item.StoryID == row.StoryID {
-					if err := e.Repository.SetItemStory(ctx, item, ""); err != nil {
+					if err := e.Repository.SetItemCluster(ctx, item, ""); err != nil {
 						return consolidated, deleted, err
 					}
 				}
@@ -235,7 +235,7 @@ func (e *Engine) consolidateStories(ctx context.Context, userID string, liveItem
 			continue
 		}
 		row.MemberIDs, row.TTL, row.UpdatedAt = memberIDs, ttl, domain.Timestamp(now)
-		if err := e.Repository.PutStory(ctx, row); err != nil {
+		if err := e.Repository.PutCluster(ctx, row); err != nil {
 			return consolidated, deleted, err
 		}
 		consolidated++

@@ -22,8 +22,8 @@ type fakeRepository struct {
 	items          []domain.Item
 	recomputed     bool
 	replacements   []domain.Item
-	stories        []domain.Story
-	storedStories  []domain.Story
+	stories        []domain.Cluster
+	storedStories  []domain.Cluster
 	deletedStories []string
 	clearedItems   []string
 }
@@ -64,18 +64,18 @@ func (f *fakeRepository) UpdateItemRankings(_ context.Context, items []domain.It
 	f.replacements = append([]domain.Item(nil), items...)
 	return nil
 }
-func (f *fakeRepository) Stories(context.Context, string) ([]domain.Story, error) {
-	return append([]domain.Story(nil), f.stories...), nil
+func (f *fakeRepository) Clusters(context.Context, string) ([]domain.Cluster, error) {
+	return append([]domain.Cluster(nil), f.stories...), nil
 }
-func (f *fakeRepository) PutStory(_ context.Context, row domain.Story) error {
+func (f *fakeRepository) PutCluster(_ context.Context, row domain.Cluster) error {
 	f.storedStories = append(f.storedStories, row)
 	return nil
 }
-func (f *fakeRepository) DeleteStory(_ context.Context, _ string, storyID string) error {
+func (f *fakeRepository) DeleteCluster(_ context.Context, _ string, storyID string) error {
 	f.deletedStories = append(f.deletedStories, storyID)
 	return nil
 }
-func (f *fakeRepository) SetItemStory(_ context.Context, item domain.Item, storyID string) error {
+func (f *fakeRepository) SetItemCluster(_ context.Context, item domain.Item, storyID string) error {
 	if storyID == "" {
 		f.clearedItems = append(f.clearedItems, item.ItemID)
 	}
@@ -311,7 +311,7 @@ func TestRescoreConsolidatesAndDeletesStories(t *testing.T) {
 			{ItemID: "b", StoryID: "keep", FeedID: "two", PublishedTS: domain.Timestamp(now), Vector: vector, TTL: now.Add(2 * time.Hour).Unix()},
 			{ItemID: "only", StoryID: "delete", FeedID: "one", PublishedTS: domain.Timestamp(now), Vector: vector, TTL: now.Add(time.Hour).Unix()},
 		},
-		stories: []domain.Story{
+		stories: []domain.Cluster{
 			{StoryID: "keep", MemberIDs: []string{"a", "expired", "b"}, CreatedAt: domain.Timestamp(now.Add(-time.Hour))},
 			{StoryID: "delete", MemberIDs: []string{"only", "gone"}},
 		},

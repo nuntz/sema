@@ -28,7 +28,7 @@ type fakeItemStore struct {
 	resolveErr   error
 	failures     []itemFailure
 	resolved     []domain.Item
-	putStory     *domain.Story
+	putStory     *domain.Cluster
 	addedStoryID string
 	addedItemID  string
 	setStoryItem string
@@ -138,14 +138,14 @@ func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) 
 func (s *fakeItemStore) ResolveItemIDsConsistent(context.Context, string, []string) ([]domain.Item, error) {
 	return append([]domain.Item(nil), s.resolved...), s.resolveErr
 }
-func (s *fakeItemStore) CreateStory(_ context.Context, row domain.Story) (bool, error) {
+func (s *fakeItemStore) CreateCluster(_ context.Context, row domain.Cluster) (bool, error) {
 	if s.putStory != nil {
 		return false, nil
 	}
 	s.putStory = &row
 	return true, nil
 }
-func (s *fakeItemStore) AddStoryMember(_ context.Context, _ string, storyID, itemID string, _ int64) error {
+func (s *fakeItemStore) AddClusterMember(_ context.Context, _ string, storyID, itemID string, _ int64) error {
 	s.addedStoryID, s.addedItemID = storyID, itemID
 	if s.putStory != nil && s.putStory.StoryID == storyID {
 		for _, member := range s.putStory.MemberIDs {
@@ -157,7 +157,7 @@ func (s *fakeItemStore) AddStoryMember(_ context.Context, _ string, storyID, ite
 	}
 	return nil
 }
-func (s *fakeItemStore) SetItemStory(_ context.Context, item domain.Item, storyID string) error {
+func (s *fakeItemStore) SetItemCluster(_ context.Context, item domain.Item, storyID string) error {
 	s.setStoryItem, s.setStoryID = item.ItemID, storyID
 	return nil
 }
@@ -224,7 +224,7 @@ func TestAssignStoryPreservesMembersWithStaleFounder(t *testing.T) {
 	}
 	for index, id := range []string{"first", "second", "first"} {
 		item := domain.Item{ItemID: id, PublishedTS: founder.PublishedTS, TTL: founder.TTL}
-		metrics, err := h.assignStory(context.Background(), "user", []float32{1, 0}, &item)
+		metrics, err := h.assignCluster(context.Background(), "user", []float32{1, 0}, &item)
 		if err != nil || item.StoryID != "founder" {
 			t.Fatalf("assignment %s = %s, %v", id, item.StoryID, err)
 		}
@@ -249,7 +249,7 @@ func TestAssignStoryCreatesAndJoins(t *testing.T) {
 	repository := &fakeItemStore{resolved: []domain.Item{founder}}
 	vectors := &stubVectorBatchStore{matches: []vectorstore.Match{{Key: "new", Similarity: 100}, {Key: "other-user", Similarity: 99}, {Key: "founder", Similarity: 82}}}
 	h := &handler{store: repository, vectors: vectors, storyConfig: config}
-	metrics, err := h.assignStory(context.Background(), "user", []float32{1, 0}, &newItem)
+	metrics, err := h.assignCluster(context.Background(), "user", []float32{1, 0}, &newItem)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func TestAssignStoryCreatesAndJoins(t *testing.T) {
 	repository = &fakeItemStore{resolved: []domain.Item{joined}}
 	newItem.StoryID = ""
 	h.store = repository
-	metrics, err = h.assignStory(context.Background(), "user", []float32{1, 0}, &newItem)
+	metrics, err = h.assignCluster(context.Background(), "user", []float32{1, 0}, &newItem)
 	if err != nil {
 		t.Fatal(err)
 	}
