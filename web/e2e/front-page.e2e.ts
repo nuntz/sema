@@ -2884,3 +2884,111 @@ test("withheld stories do not drain pages and the reader pauses grid pagination"
   });
   await expect.poll(() => pages).toBeGreaterThan(1);
 });
+
+for (const width of [390, 1280]) {
+  for (const reducedMotion of ["reduce", "no-preference"] as const) {
+    test(`Space reveals already loaded images at ${width}px (${reducedMotion})`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ reducedMotion });
+      await page.addInitScript(() => {
+        const decode = HTMLImageElement.prototype.decode;
+        HTMLImageElement.prototype.decode = async function () {
+          await decode.call(this);
+          this.setAttribute("data-decoded-source", this.currentSrc);
+        };
+      });
+      await stubFrontPage(
+        page,
+        [],
+        Array.from({ length: 60 }, (_, index) => ({
+          ...item(`lookahead-${index}`, "images", `Image ${index}`, 0.5, "L"),
+          media_url: `/sema-mark.svg?image=${index}`,
+        })),
+        [],
+      );
+      await page.goto("/");
+      const grid = page.locator(".grid-scroll");
+      await page.locator(".cell-main").first().focus();
+      const target = await nextPageTop(grid);
+      expect(target).toBeGreaterThan(0);
+      // Wait for the actual offscreen image elements to finish their existing
+      // load/decode path, then snapshot readiness BEFORE pressing Space.
+      const readyImages = () =>
+        grid.locator(".grid-row img").evaluateAll((nodes) =>
+          nodes
+            .filter(
+              (node): node is HTMLImageElement =>
+                node instanceof HTMLImageElement,
+            )
+            .filter(
+              (image) =>
+                image.complete &&
+                image.naturalWidth > 0 &&
+                image.getAttribute("data-decoded-source") === image.currentSrc,
+            )
+            .map((image) => image.currentSrc),
+        );
+      await expect
+        .poll(async () => {
+          const ready = await readyImages();
+          const nextImages = await grid.evaluate((element, top) => {
+            const bounds = element.getBoundingClientRect();
+            return Array.from(
+              element.querySelectorAll<HTMLImageElement>(".grid-row img"),
+            )
+              .filter((image) => {
+                const rect = image.getBoundingClientRect();
+                const y = rect.top - bounds.top + element.scrollTop;
+                return y < top + element.clientHeight && y + rect.height > top;
+              })
+              .map((image) => image.currentSrc);
+          }, target);
+          return (
+            nextImages.length > 0 &&
+            nextImages.every((src) => ready.includes(src))
+          );
+        })
+        .toBe(true);
+      const readyBefore = await readyImages();
+      const visibleBefore = await grid.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return Array.from(
+          element.querySelectorAll<HTMLImageElement>(".grid-row img"),
+        )
+          .filter((image) => image.getBoundingClientRect().top < bounds.bottom)
+          .map((image) => image.currentSrc);
+      });
+      await page.keyboard.press("Space");
+      await expect
+        .poll(() => grid.evaluate((element) => element.scrollTop))
+        .toBe(target);
+      const newlyVisible = await grid.evaluate((element, previous) => {
+        const bounds = element.getBoundingClientRect();
+        return Array.from(
+          element.querySelectorAll<HTMLImageElement>(".grid-row img"),
+        )
+          .filter((image) => {
+            const rect = image.getBoundingClientRect();
+            return (
+              rect.top < bounds.bottom &&
+              rect.bottom > bounds.top &&
+              !previous.includes(image.currentSrc)
+            );
+          })
+          .map((image) => ({
+            src: image.currentSrc,
+            complete: image.complete,
+            width: image.naturalWidth,
+          }));
+      }, visibleBefore);
+      expect(newlyVisible.length).toBeGreaterThan(0);
+      for (const image of newlyVisible) {
+        expect(readyBefore).toContain(image.src);
+        expect(image.complete).toBe(true);
+        expect(image.width).toBeGreaterThan(0);
+      }
+    });
+  }
+}

@@ -1153,9 +1153,9 @@ export function visibleRows(
   rows: LayoutRow[],
   scrollTop: number,
   viewportHeight: number,
-  overscan = 360,
+  overscan = { top: 360, bottom: 360 },
 ): LayoutRow[] {
-  const start = Math.max(0, scrollTop - overscan);
-  const end = scrollTop + viewportHeight + overscan;
+  const start = Math.max(0, scrollTop - overscan.top);
+  const end = scrollTop + viewportHeight + overscan.bottom;
   return rows.filter((row) => row.top + row.height >= start && row.top <= end);
 }

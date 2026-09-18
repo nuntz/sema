@@ -40,7 +40,7 @@ test("grid image loads when it touches the visibility margin", async ({
           },
           {
             root: element.closest(".grid-scroll"),
-            rootMargin: "100px 0px",
+            rootMargin: "100px 0px 500px 0px",
           },
         );
         observer.observe(element);
@@ -48,7 +48,7 @@ test("grid image loads when it touches the visibility margin", async ({
   );
   await expect(image).not.toHaveAttribute("src");
   await image.evaluate((element) => {
-    element.style.top = "500px";
+    element.style.top = "900px";
   });
   await expect(image).toHaveAttribute("src", "/sema-mark.svg");
   await expect

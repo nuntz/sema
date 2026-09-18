@@ -61,7 +61,7 @@ import { frontPageSequence } from "./front-page";
 import { gridLightboxLead, loadGridLightboxImages } from "./grid-lightbox";
 import {
   GridPixelRatioContext,
-  gridImageOverscan,
+  gridImageLookahead,
   ImageLoadingEnabledContext,
 } from "./image-loading";
 import { gridCommand, isEditingTarget } from "./keyboard";
@@ -360,12 +360,12 @@ function GridContent(props: GridProps) {
       : undefined,
   );
   const visible = createMemo(() =>
-    // Keep a small buffer shared with image prefetching.
+    // Mount the next page using the same window as image loading.
     visibleRows(
       rows(),
       scrollTop(),
       viewportHeight(),
-      gridImageOverscan(viewportHeight()),
+      gridImageLookahead(viewportHeight()),
     ),
   );
   const storyList = createMemo(() => props.stories ?? []);

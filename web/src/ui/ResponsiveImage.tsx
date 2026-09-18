@@ -12,7 +12,7 @@ import { responsiveMediaSource } from "../media-image";
 import type { Item } from "../types";
 import {
   GridPixelRatioContext,
-  gridImageOverscan,
+  gridImageLookahead,
   ImageLoadingEnabledContext,
 } from "./image-loading";
 
@@ -74,7 +74,7 @@ export function ResponsiveImage(props: ResponsiveImageProps) {
         // Root the margin at the scroller: the document viewport's margin
         // would still be clipped by the grid's overflow container.
         const root = image.closest(".grid-scroll");
-        const margin = gridImageOverscan(
+        const margin = gridImageLookahead(
           root?.clientHeight ?? window.innerHeight,
         );
         observer = new IntersectionObserver(
@@ -87,7 +87,7 @@ export function ResponsiveImage(props: ResponsiveImageProps) {
               setEnabled(true);
             }
           },
-          { root, rootMargin: `${margin}px 0px` },
+          { root, rootMargin: `${margin.top}px 0px ${margin.bottom}px 0px` },
         );
         observer.observe(image);
       }

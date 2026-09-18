@@ -8,6 +8,7 @@ import {
   mobileStoryMoreHeight,
   reuseLayoutRows,
   spanEligible,
+  visibleRows,
 } from "./justified";
 
 const item = (
@@ -1230,5 +1231,40 @@ describe("story and singleton row alignment", () => {
       ]);
       expect(rows[1].top).toBe(row.height + row.gap);
     }
+  });
+});
+
+describe("visibleRows", () => {
+  const rows: LayoutRow[] = Array.from({ length: 30 }, (_, index) => ({
+    kind: "standard",
+    top: index * 100,
+    height: 80,
+    gap: 10,
+    cells: [],
+  }));
+
+  it("mounts a page ahead while retaining only a small buffer above", () => {
+    expect(visibleRows(rows, 680, 400, { top: 100, bottom: 500 })).toEqual(
+      rows.slice(5, 16),
+    );
+  });
+
+  it("includes edge contact and excludes rows just beyond either edge", () => {
+    expect(visibleRows(rows, 680, 420, { top: 100, bottom: 500 })).toEqual(
+      rows.slice(5, 17),
+    );
+    expect(visibleRows(rows, 681, 418, { top: 100, bottom: 500 })).toEqual(
+      rows.slice(6, 16),
+    );
+  });
+
+  it("handles the beginning and end of the grid", () => {
+    expect(visibleRows(rows, 0, 400, { top: 100, bottom: 500 })).toEqual(
+      rows.slice(0, 10),
+    );
+    expect(visibleRows(rows, 2800, 400, { top: 100, bottom: 500 })).toEqual(
+      rows.slice(27),
+    );
+    expect(visibleRows([], 0, 400, { top: 100, bottom: 500 })).toEqual([]);
   });
 });
