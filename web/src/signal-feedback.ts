@@ -5,10 +5,10 @@ export function signalWhy(value: SignalValue, story = false): string {
   if (!value) return "";
   return value === 1
     ? story
-      ? "More of this story from tomorrow"
+      ? "More like this story's lead from tomorrow"
       : "More like this from tomorrow"
     : story
-      ? "Fewer of this story · undo"
+      ? "Fewer like this story's lead · undo"
       : "Fewer like this · undo";
 }
 export function buryDisabled(item: Pick<Item, "hearted">): boolean {

@@ -579,7 +579,7 @@ export function Feeds(props: {
                       {since()
                         ? `failing ${relativeTime(since() ?? "")}`
                         : feed.muted
-                          ? "paused"
+                          ? "muted"
                           : feed.last_fetch_at
                             ? `${relativeTime(feed.last_fetch_at)} ago`
                             : "never"}
@@ -824,7 +824,7 @@ function FeedDrawer(props: {
         </header>
         <Show when={props.feed.muted}>
           <p class="paused-copy">
-            paused · {props.feed.item_count} items ingested
+            muted · {props.feed.item_count} items ingested
           </p>
         </Show>
 

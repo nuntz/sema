@@ -12,8 +12,8 @@ describe("cell feedback", () => {
   it.each([
     [1, false, "More like this from tomorrow"],
     [-1, false, "Fewer like this · undo"],
-    [1, true, "More of this story from tomorrow"],
-    [-1, true, "Fewer of this story · undo"],
+    [1, true, "More like this story's lead from tomorrow"],
+    [-1, true, "Fewer like this story's lead · undo"],
     [0, false, ""],
     [0, true, ""],
   ] as const)("uses reader copy for %s, story=%s", (value, story, text) => {

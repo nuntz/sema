@@ -64,7 +64,7 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
  | HTTP API   |----> api Lambda ----> DynamoDB / SQS / Bedrock (query
  +------------+                       embeddings) / S3 Vectors (similarity)
 
-  User signals fed back in:  hearts, skips, reading behaviour ---> prefs
+  User signals fed back in:  keeps, boosts, buries, behaviour ---> prefs
 
 
                               RANKING & EXPIRY
