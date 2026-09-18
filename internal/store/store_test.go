@@ -1477,6 +1477,7 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		fallback bool
+		source   string
 		value    int
 	}{
 		{name: "creates heart signal"},
@@ -1634,13 +1635,15 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 	}
 }
 
-func TestRemoveHeartCountsOnlyDeletedHeartSignal(t *testing.T) {
+func TestUnkeepRemovesAnySignal(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		fallback bool
+		source   string
 	}{
-		{name: "deletes heart signal"},
-		{name: "keeps explicit signal", fallback: true},
+		{name: "deletes keep signal", source: "heart"},
+		{name: "deletes prior boost"},
+		{name: "missing signal", fallback: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			item := domain.Item{PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", ArchiveSK: "A#item", TTL: time.Now().Add(time.Hour).Unix()}
@@ -1658,6 +1661,12 @@ func TestRemoveHeartCountsOnlyDeletedHeartSignal(t *testing.T) {
 						return &dynamodb.GetItemOutput{Item: identity}, nil
 					case item.SK:
 						return &dynamodb.GetItemOutput{Item: encodedItem}, nil
+					case domain.SignalSK("item"):
+						if test.fallback {
+							return &dynamodb.GetItemOutput{}, nil
+						}
+						row, _ := attributevalue.MarshalMap(domain.Signal{ItemID: "item", Value: 1, Source: test.source})
+						return &dynamodb.GetItemOutput{Item: row}, nil
 					case "PROFILE":
 						return &dynamodb.GetItemOutput{Item: profile}, nil
 					default:
@@ -1666,25 +1675,28 @@ func TestRemoveHeartCountsOnlyDeletedHeartSignal(t *testing.T) {
 				},
 				transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 					transactions = append(transactions, input)
-					if test.fallback && len(transactions) == 1 {
-						return nil, &types.TransactionCanceledException{}
+					for _, write := range input.TransactItems {
+						if write.Delete != nil && write.Delete.Key["SK"].(*types.AttributeValueMemberS).Value == domain.SignalSK("item") && strings.Contains(aws.ToString(write.Delete.ConditionExpression), "#source = :heart") && test.source != "heart" {
+							t.Fatal("unkeep preserved a prior boost")
+						}
 					}
+
 					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
 			}
 			if _, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", false); err != nil {
 				t.Fatal(err)
 			}
-			if len(transactions) != 1+boolInt(test.fallback) {
+			if len(transactions) != 1 {
 				t.Fatalf("transactions = %d", len(transactions))
 			}
-			if got := profileUpdateExpression(transactions[0]); got != "ADD heart_count :minus_one, signal_count :minus_one" {
-				t.Fatalf("signal transaction profile update = %q", got)
-			}
+
+			want := "ADD heart_count :minus_one, signal_count :minus_one"
 			if test.fallback {
-				if got := profileUpdateExpression(transactions[1]); got != "ADD heart_count :minus_one" {
-					t.Fatalf("fallback profile update = %q", got)
-				}
+				want = "ADD heart_count :minus_one"
+			}
+			if got := profileUpdateExpression(transactions[0]); got != want {
+				t.Fatalf("profile update = %q, want %q", got, want)
 			}
 		})
 	}
@@ -1883,5 +1895,13 @@ func TestInjectedReadMarkers(t *testing.T) {
 	counts, err := s.FeedItemCounts(context.Background(), "user", domain.FetchWindow{})
 	if err != nil || counts["feed"].All != 1 || counts["feed"].Unread != 0 || calls != 2 {
 		t.Fatalf("counts=%v calls=%d err=%v", counts, calls, err)
+	}
+}
+
+func TestSetSignalRejectsBuryOnKeptItem(t *testing.T) {
+	for _, item := range []domain.Item{{ArchiveSK: "A#item"}, {Archived: true}} {
+		if err := New(nil, nil, "table", "", "").SetSignal(context.Background(), "user", item, -1); err == nil {
+			t.Fatal("bury accepted on kept item")
+		}
 	}
 }

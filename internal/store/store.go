@@ -1986,6 +1986,17 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 		return "", 0, err
 	}
 
+	signalResult, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil {
+		return "", 0, err
+	}
+	var old domain.Signal
+	if err := attributevalue.UnmarshalMap(signalResult.Item, &old); err != nil {
+		return "", 0, err
+	}
+
 	minusOne := &types.AttributeValueMemberN{Value: "-1"}
 	baseWrites := []types.TransactWriteItem{
 		{Delete: &types.Delete{
@@ -2027,22 +2038,45 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 		UpdateExpression:          aws.String("ADD heart_count :minus_one"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":minus_one": minusOne},
 	}})
-	withSignalDelete := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Update: &types.Update{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
-		UpdateExpression:          aws.String("ADD heart_count :minus_one, signal_count :minus_one"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":minus_one": minusOne},
-	}}, types.TransactWriteItem{Delete: &types.Delete{
+
+	stateWrites = append(stateWrites, types.TransactWriteItem{ConditionCheck: &types.ConditionCheck{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
-		ConditionExpression:       aws.String("#source = :heart"),
-		ExpressionAttributeNames:  map[string]string{"#source": "source"},
-		ExpressionAttributeValues: map[string]types.AttributeValue{":heart": &types.AttributeValueMemberS{Value: "heart"}},
+		ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
-	err = s.transact(ctx, withSignalDelete)
-	signalDeleted := err == nil
-	if isTransactionCanceled(err) {
-		// Missing or explicit signals must survive un-hearting.
+	signalDeleted := len(signalResult.Item) > 0
+	if signalDeleted {
+		values := map[string]types.AttributeValue{}
+		names := map[string]string{}
+		conditions := []string{"attribute_exists(SK)"}
+		// Match the snapshot used for the model update; concurrent feedback must retry.
+		for _, field := range []string{"created_at", "value", "source", "vector", "model_version", "image_vector", "image_model_version"} {
+			names["#"+field] = field
+			if value, ok := signalResult.Item[field]; ok {
+				values[":"+field] = value
+				conditions = append(conditions, "#"+field+" = :"+field)
+			} else {
+				conditions = append(conditions, "attribute_not_exists(#"+field+")")
+			}
+		}
+		writes := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Update: &types.Update{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), "PROFILE"),
+			UpdateExpression:          aws.String("ADD heart_count :minus_one, signal_count :minus_one"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":minus_one": minusOne},
+		}}, types.TransactWriteItem{Delete: &types.Delete{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
+			ConditionExpression:      aws.String(strings.Join(conditions, " AND ")),
+			ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+		}})
+		err = s.transact(ctx, writes)
+		if isTransactionCanceled(err) {
+			// Only finish without a decrement if the signal was concurrently removed.
+			err = s.transact(ctx, stateWrites)
+			signalDeleted = false
+		}
+	} else {
 		err = s.transact(ctx, stateWrites)
 	}
+
 	if err != nil {
 		if _, currentErr := s.ArchiveItem(ctx, userID, itemID); errors.Is(currentErr, ErrNotFound) {
 			count, countErr := s.heartCount(ctx, userID)
@@ -2051,12 +2085,7 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 		return "", 0, err
 	}
 	if signalDeleted {
-		old := domain.Signal{
-			PK: domain.UserPK(userID), SK: domain.SignalSK(itemID), ItemID: itemID, Value: 1,
-			Vector: archive.Vector, Title: archive.Title, FeedID: archive.FeedID, CreatedAt: archive.HeartedTS, Source: "heart", ModelVersion: archive.ModelVersion,
-			ImageVector: archive.ImageVector, ImageModelVersion: archive.ImageModelVersion,
-		}
-		if modelErr := s.applyExplicitModelUpdate(ctx, userID, &old, nil, archive.ModelVersion); modelErr != nil {
+		if modelErr := s.applyExplicitModelUpdate(ctx, userID, &old, nil, old.ModelVersion); modelErr != nil {
 			slog.ErrorContext(ctx, "decrement heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
 		}
 	}
@@ -2403,6 +2432,9 @@ func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []strin
 }
 
 func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
+	if value == -1 && (item.ArchiveSK != "" || item.Archived) {
+		return errors.New("kept items cannot be buried")
+	}
 	heartSource := false
 	if value == 0 {
 		if item.ArchiveSK != "" {

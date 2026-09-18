@@ -1268,6 +1268,9 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if input.Value != -1 && input.Value != 0 && input.Value != 1 {
 			return badRequest(errors.New("value must be -1, 0, or 1"))
 		}
+		if input.Value == -1 && item.ArchiveSK != "" {
+			return response(http.StatusConflict, map[string]string{"error": "kept items cannot be buried"})
+		}
 		if input.Value != 0 && len(item.Vector) == 0 {
 			return response(http.StatusConflict, map[string]string{"error": "item has no embedding"})
 		}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"mime/multipart"
 	"net/http"
@@ -1449,6 +1450,40 @@ func TestGetSearchScope(t *testing.T) {
 				}
 			} else if vectors.limit <= 2 {
 				t.Fatalf("scoped candidate limit = %d", vectors.limit)
+			}
+		})
+	}
+}
+
+func TestBuryRejectsKeptItems(t *testing.T) {
+	for _, live := range []bool{true, false} {
+		t.Run(fmt.Sprintf("live=%t", live), func(t *testing.T) {
+			item := domain.Item{PK: "U#user", SK: "A#archive", ItemID: "item", Vector: []byte{1}}
+			identity := domain.ItemIdentity{PK: item.PK, SK: domain.ItemIdentitySK("item"), ItemSK: item.SK}
+			if live {
+				item.SK = domain.ItemSK(time.Now(), "item")
+				item.ArchiveSK = "A#archive"
+				item.TTL = time.Now().Add(time.Hour).Unix()
+				identity.ItemSK, identity.TTL = item.SK, item.TTL
+			}
+			db := &apiDynamo{
+				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+					var value any = item
+					if input.Key["SK"].(*types.AttributeValueMemberS).Value == identity.SK {
+						value = identity
+					}
+					row, err := attributevalue.MarshalMap(value)
+					return &dynamodb.GetItemOutput{Item: row}, err
+				},
+				putItem: func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+					t.Fatal("bury must not write a signal for a kept item")
+					return nil, nil
+				},
+			}
+			s := &server{store: store.New(db, nil, "table", "", "")}
+			got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/signal", `{"value":-1}`)
+			if got.StatusCode != http.StatusConflict {
+				t.Fatalf("got %d: %s", got.StatusCode, got.Body)
 			}
 		})
 	}

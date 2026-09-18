@@ -218,17 +218,6 @@ func TestUnheartPermanentIdentityLifecycle(t *testing.T) {
 					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
 			}
-			// Avoid ranking-model reads by making the explicit-signal preservation
-			// retry win, as happens when no heart-derived signal exists.
-			calls := 0
-			db.transactWrite = func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
-				calls++
-				if calls == 1 {
-					return nil, &types.TransactionCanceledException{}
-				}
-				transaction = input
-				return &dynamodb.TransactWriteItemsOutput{}, nil
-			}
 			_, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", false)
 			if err != nil {
 				t.Fatal(err)
