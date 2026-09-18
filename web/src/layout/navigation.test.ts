@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Item } from "../types";
 import { justify, type LayoutRow } from "./justified";
 import {
+  cellLandingTop,
   cellRects,
   type LayoutRect,
   nearestCell,
   nearestPageCell,
   nextGridPageTop,
+  previousGridPageTop,
 } from "./navigation";
 
 describe("grid page scroll target", () => {
@@ -18,23 +20,90 @@ describe("grid page scroll target", () => {
     cells: [],
   }));
 
-  it("shows the partially visible bottom row from its top on successive pages", () => {
-    expect(nextGridPageTop(rows, 0, 500)).toBe(434);
-    expect(nextGridPageTop(rows, 224, 500)).toBe(644);
+  it("lands the first row that is not fully visible with the previous row ending at the top edge", () => {
+    // Viewport 0..500: row 420 sits at 434..634 and is cut off; land at 424 so
+    // row 210 ends exactly at the top edge and the 10px gap is the air above.
+    expect(nextGridPageTop(rows, 0, 500)).toBe(424);
+    expect(nextGridPageTop(rows, 214, 500)).toBe(634);
   });
 
-  it("keeps a full viewport step when the bottom is in a gap or at a row edge", () => {
+  it("steps to the next row when the bottom edge is in a gap or at a row edge", () => {
     for (const height of [214, 220, 224]) {
-      expect(nextGridPageTop(rows, 0, height)).toBe(height);
+      expect(nextGridPageTop(rows, 0, height)).toBe(214);
     }
     expect(nextGridPageTop([], 0, 500)).toBe(500);
   });
 
   it("continues through rows taller than the viewport", () => {
     const tallRows = [{ ...rows[0], height: 1000 }];
-    expect(nextGridPageTop(tallRows, 0, 500)).toBe(14);
-    expect(nextGridPageTop(tallRows, 14, 500)).toBe(514);
+    expect(nextGridPageTop(tallRows, 0, 500)).toBe(500);
+    expect(nextGridPageTop(tallRows, 500, 500)).toBe(1000);
     expect(nextGridPageTop(tallRows, 300, 500)).toBe(800);
+  });
+
+  it("pages up onto the first row that fits, with the previous row ending at the top edge", () => {
+    expect(previousGridPageTop(rows, 634, 500)).toBe(214);
+    expect(previousGridPageTop(rows, 424, 500)).toBe(0);
+    expect(previousGridPageTop(rows, 700, 500)).toBe(214);
+  });
+
+  it("returns to the page a page-down came from", () => {
+    for (const start of [0, 214]) {
+      const landed = nextGridPageTop(rows, start, 500);
+      expect(previousGridPageTop(rows, landed, 500)).toBe(start);
+    }
+  });
+
+  it("pages up to the very top past a slot above the first row", () => {
+    const slotRows = rows.map((row) => ({ ...row, top: row.top + 54 }));
+    expect(previousGridPageTop(slotRows, 268, 500)).toBe(0);
+    expect(previousGridPageTop(slotRows, 688, 500)).toBe(268);
+  });
+
+  it("pages up through rows taller than the viewport and stops at the top", () => {
+    const tallRows = [{ ...rows[0], height: 1000 }];
+    expect(previousGridPageTop(tallRows, 1000, 500)).toBe(500);
+    expect(previousGridPageTop(tallRows, 500, 500)).toBe(0);
+    expect(previousGridPageTop(tallRows, 300, 500)).toBe(0);
+    expect(previousGridPageTop([], 300, 500)).toBe(0);
+  });
+});
+
+describe("arrow navigation landing", () => {
+  const row = { top: 420, height: 200, gap: 10 };
+  const lead: LayoutRect = {
+    id: "story:s",
+    row,
+    left: 0,
+    right: 100,
+    top: 420,
+    bottom: 520, // headlines occupy 520..620
+    centerX: 50,
+    centerY: 470,
+  };
+
+  it("scrolls the whole row into view from below, headlines included", () => {
+    // Viewport 0..500: the lead's bottom is cut off. Land so the next row's
+    // top edge (layout 630, drawn at 644) meets the viewport bottom.
+    expect(cellLandingTop(lead, 0, 500)).toBe(144);
+  });
+
+  it("scrolls the row into view from above with the previous row at the top edge", () => {
+    expect(cellLandingTop(lead, 900, 500)).toBe(424);
+  });
+
+  it("keeps a target visible inside a row taller than the viewport", () => {
+    const tall = { ...lead, row: { top: 420, height: 1000, gap: 10 } };
+    // The lead's own top lands; its bottom (544) is still inside 424..724.
+    expect(cellLandingTop(tall, 0, 300)).toBe(424);
+    const headline = { ...tall, top: 1300, bottom: 1352 };
+    expect(cellLandingTop(headline, 2000, 300)).toBe(1352 + 24 - 300);
+  });
+
+  it("leaves a visible target alone and tolerates DOM rects without a row", () => {
+    expect(cellLandingTop(lead, 400, 500)).toBe(400);
+    const { row: _row, ...bare } = lead;
+    expect(cellLandingTop(bare, 0, 300)).toBe(534 - 300);
   });
 });
 

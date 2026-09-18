@@ -23,6 +23,7 @@ import {
 } from "../grid-display";
 import type { ItemWindow } from "../item-view";
 import {
+  gridCanvasPadding,
   justify,
   type LayoutRow,
   reuseLayoutRows,
@@ -30,11 +31,13 @@ import {
   visibleRows,
 } from "../layout/justified";
 import {
+  cellLandingTop,
   cellRects,
   type LayoutDirection,
   nearestCell,
   nearestPageCell,
   nextGridPageTop,
+  previousGridPageTop,
 } from "../layout/navigation";
 import {
   endMarkActionEnabled,
@@ -764,11 +767,11 @@ function GridContent(props: GridProps) {
     props.onFocus(id);
     programmaticScroll(() => {
       if (!rect) return;
-      const top = rect.top + 14;
-      const bottom = rect.bottom + 14;
-      if (top < scroller.scrollTop) scroller.scrollTop = top;
-      else if (bottom > scroller.scrollTop + scroller.clientHeight)
-        scroller.scrollTop = Math.min(top, bottom - scroller.clientHeight);
+      scroller.scrollTop = cellLandingTop(
+        rect,
+        scroller.scrollTop,
+        scroller.clientHeight,
+      );
       // Mount a destination outside the current virtual window before focusing it.
       setScrollTop(scroller.scrollTop);
     });
@@ -1002,7 +1005,11 @@ function GridContent(props: GridProps) {
                   scroller.scrollTop,
                   scroller.clientHeight,
                 )
-              : scroller.scrollTop - scroller.clientHeight,
+              : previousGridPageTop(
+                  rows(),
+                  scroller.scrollTop,
+                  scroller.clientHeight,
+                ),
           ),
         );
         // Do not restart an animation against a boundary (including subpixel rounding).
@@ -1224,7 +1231,7 @@ function GridContent(props: GridProps) {
             <div
               class="grid-row"
               style={{
-                top: `${row.top + 14}px`,
+                top: `${row.top + gridCanvasPadding}px`,
                 height: `${row.height}px`,
               }}
             >

@@ -1,4 +1,5 @@
 import {
+  gridCanvasPadding,
   type LayoutRow,
   mobileStoryHeadlineHeight,
   storyHeadlineHeight,
@@ -6,25 +7,66 @@ import {
 
 export type LayoutDirection = "up" | "down" | "left" | "right";
 
+// The scroll position that puts a row at the top of the viewport with the row
+// gap as air above it, so the previous row ends exactly at the top edge.
+export function gridLandingTop(row: Pick<LayoutRow, "top" | "gap">): number {
+  return row.top + gridCanvasPadding - row.gap;
+}
+
+// Scroll positions that bring a cell into view the way a page lands: the whole
+// row (not just the focus target, which excludes story headlines) with the row
+// gap as air. Rows taller than the viewport fall back to the target's own edges.
+export function cellLandingTop(
+  rect: LayoutRect,
+  scrollTop: number,
+  viewportHeight: number,
+): number {
+  const row = rect.row ?? {
+    top: rect.top,
+    height: rect.bottom - rect.top,
+    gap: 0,
+  };
+  const targetTop = rect.top + gridCanvasPadding - row.gap;
+  const targetBottom = rect.bottom + gridCanvasPadding + row.gap;
+  const rowBottom = row.top + row.height + gridCanvasPadding + row.gap;
+  if (targetTop < scrollTop)
+    return Math.max(gridLandingTop(row), targetBottom - viewportHeight);
+  if (targetBottom > scrollTop + viewportHeight)
+    return Math.min(targetTop, rowBottom - viewportHeight);
+  return scrollTop;
+}
+
 export function nextGridPageTop(
   rows: LayoutRow[],
   scrollTop: number,
   viewportHeight: number,
-  paddingTop = 14,
 ): number {
   const bottom = scrollTop + viewportHeight;
-  const partialRow = rows.find(
-    (row) =>
-      row.top + paddingTop < bottom &&
-      row.top + paddingTop + row.height > bottom,
+  const nextRow = rows.find(
+    (row) => row.top + gridCanvasPadding + row.height > bottom,
   );
-  const top = partialRow ? partialRow.top + paddingTop : bottom;
   // Oversized rows must still allow paging through their remaining content.
-  return top >= scrollTop + 1 ? top : bottom;
+  return nextRow && nextRow.top > scrollTop ? gridLandingTop(nextRow) : bottom;
+}
+
+export function previousGridPageTop(
+  rows: LayoutRow[],
+  scrollTop: number,
+  viewportHeight: number,
+): number {
+  // A step past the start shows everything above the first row (e.g. a top slot).
+  if (scrollTop <= viewportHeight) return 0;
+  const target = scrollTop - viewportHeight;
+  const firstWholeRow = rows.find((row) => gridLandingTop(row) >= target);
+  const top = firstWholeRow ? gridLandingTop(firstWholeRow) : target;
+  // Oversized rows must still allow paging back through their content.
+  return top <= scrollTop - 1 ? top : target;
 }
 
 export interface LayoutRect {
   id: string;
+  /** Owning layout row; absent for rects measured from the DOM. */
+  row?: Pick<LayoutRow, "top" | "height" | "gap">;
   left: number;
   right: number;
   top: number;
@@ -43,6 +85,7 @@ export function cellRects(rows: LayoutRow[]): LayoutRect[] {
         top + (cell.height ?? row.height) - (cell.headlineHeight ?? 0);
       const lead = {
         id: cell.story ? `story:${cell.story.story_id}` : cell.item.item_id,
+        row: { top: row.top, height: row.height, gap: row.gap },
         left,
         right,
         top,

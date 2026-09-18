@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { nextPageTop } from "./grid-paging";
+import { nextPageTop, pageUpLanding } from "./grid-paging";
 
 type AppState = { itemRequests: number; readBatchRequests: number };
 
@@ -680,7 +680,9 @@ test("grid page keys preserve partial rows without requiring grid focus", async 
   await page.keyboard.press("PageDown");
   await expect.poll(scrollTop).toBe(secondPage);
   await page.keyboard.press("Shift+Space");
-  await expect.poll(scrollTop).toBe(Math.max(0, secondPage - height));
+  await expect
+    .poll(() => pageUpLanding(grid, secondPage))
+    .toMatchObject({ withinPage: true });
   await page.keyboard.press("PageUp");
   await expect.poll(scrollTop).toBe(0);
 
@@ -706,10 +708,7 @@ test("Space pages a keyboard-focused cell while Enter and o open it", async ({
     .locator(".grid-cell.focused")
     .getAttribute("data-item-id");
   const grid = page.locator(".grid-scroll");
-  const { top, height } = await grid.evaluate((element) => ({
-    top: element.scrollTop,
-    height: element.clientHeight,
-  }));
+  const top = await grid.evaluate((element) => element.scrollTop);
   const firstPage = await nextPageTop(grid);
   await page.keyboard.press("Space");
   await expect
@@ -738,8 +737,8 @@ test("Space pages a keyboard-focused cell while Enter and o open it", async ({
   await expect(page.locator(".grid-cell.focused")).toBeInViewport();
   await page.keyboard.press("PageUp");
   await expect
-    .poll(() => grid.evaluate((element) => element.scrollTop))
-    .toBe(Math.max(0, secondPage - height));
+    .poll(() => pageUpLanding(grid, secondPage))
+    .toMatchObject({ withinPage: true });
   await expect(page.locator(".grid-cell.focused .cell-main")).toBeFocused();
   await expect(page.locator(".grid-cell.focused")).toBeInViewport();
   await page.keyboard.press("Shift+Space");

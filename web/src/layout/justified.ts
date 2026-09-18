@@ -52,6 +52,8 @@ const tallCompanionCount = 3;
 const mosaicMinimumCompanions = 3;
 const sizeFactor = { S: 0.8, M: 1.05, L: 1.6 } as const;
 const tallLargeFactor = 1.75;
+/** Vertical inset between the scroller's top edge and the first row. */
+export const gridCanvasPadding = 14;
 export const storyHeadlineHeight = 52;
 export const storyMoreHeight = 33;
 export const storyCardBorderHeight = 3;
