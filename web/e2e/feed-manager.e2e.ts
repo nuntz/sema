@@ -201,7 +201,7 @@ for (const width of [1280, 400]) {
         ),
       ),
     ).toBe(true);
-    await expect(first.locator("time")).toHaveText("failing 8d");
+    await expect(first.locator("time")).toHaveText("broken 8d");
     await expect(first.locator("time")).toHaveAttribute("title", /HTTP 503/);
     await expect(first.locator(".feed-status")).toHaveAttribute(
       "aria-label",
@@ -215,7 +215,7 @@ for (const width of [1280, 400]) {
       .locator(".feed-manage-row")
       .filter({ hasText: "Journal 006" });
     await expect(underThreshold.locator(".feed-status")).toHaveText("broken");
-    await expect(underThreshold.locator("time")).toHaveText("failing 6h");
+    await expect(underThreshold.locator("time")).toHaveText("broken 6h");
     expect(
       await page
         .locator(".feeds-view")

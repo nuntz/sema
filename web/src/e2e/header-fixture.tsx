@@ -1,6 +1,8 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The fixture mirrors the required button-based radio controls.
+
 import { createSignal, For, Show } from "solid-js";
 import { render } from "solid-js/web";
+import { APIClient } from "../api/client";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
 import { ITEM_WINDOWS } from "../item-view";
@@ -193,6 +195,7 @@ function ReaderFixture() {
   return (
     <Show when={open()}>
       <Reader
+        loadBody={(url, signal) => new APIClient().body(url, signal)}
         item={readerItem()}
         active={true}
         archive={false}

@@ -6,10 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -24,15 +21,11 @@ import (
 	rssconnector "github.com/nuntz/sema/internal/connector/rss"
 	youtubeconnector "github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/feedstatus"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/store"
-)
-
-const (
-	defaultRateLimitDelay = 15 * time.Minute
-	rateLimitJitterWindow = 5 * time.Minute
 )
 
 type handler struct {
@@ -103,12 +96,9 @@ func (h *handler) process(ctx context.Context, body string) error {
 	started := time.Now().UTC()
 	result, err := implementation.Fetch(ctx, feed)
 	if err != nil {
-		feed.ErrorCount++
-		feed.LastFetchAt = domain.Timestamp(started)
-		feed.LastStatus = truncate(err.Error(), 240)
-		feed.LastError = truncate(err.Error(), 200)
-		next, rateLimited := nextFetchAfterError(feed, started, err)
-		feed.NextFetchAt = domain.Timestamp(next)
+		var rateLimited bool
+		feed, rateLimited = feedstatus.AfterFetch(feed, result, err, started)
+
 		if storeErr := h.persistFeed(ctx, message.User, feed); storeErr != nil {
 			return fmt.Errorf("fetch: %v; update failure: %w", err, storeErr)
 		}
@@ -121,18 +111,14 @@ func (h *handler) process(ctx context.Context, body string) error {
 		return nil
 	}
 	if result.NotModified {
-		feed.LastFetchAt = domain.Timestamp(started)
-		feed.LastStatus = "304"
-		feed.ErrorCount = 0
-		feed.LastError = ""
-		feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started, domain.FeedIntervalHours(feed)))
+		feed, _ = feedstatus.AfterFetch(feed, result, nil, started)
 		observability.Emit(map[string]float64{"FeedsNotModified": 1}, nil)
 		return h.persistFeed(ctx, message.User, feed)
 	}
 
 	messages := make([]domain.ItemMessage, 0, len(result.Entries))
 	for _, entry := range result.Entries {
-		if entry.Published.Before(started.Add(-domain.Retention)) {
+		if domain.LiveWindowTTL(entry.Published) <= started.Unix() {
 			continue
 		}
 		itemID := domain.ItemID(feed.FeedID, entry.GUID, entry.URL)
@@ -190,11 +176,8 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 	}
-	feed.LastFetchAt = domain.Timestamp(started)
-	feed.LastStatus = "200"
-	feed.ErrorCount = 0
-	feed.LastError = ""
-	feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(feed), started, domain.FeedIntervalHours(feed)))
+	feed, _ = feedstatus.AfterFetch(feed, result, nil, started)
+
 	slog.Info("feed fetched", "user", message.User, "feed_id", message.FeedID, "items_enqueued", len(messages))
 	observability.Emit(map[string]float64{"FeedsFetched": 1, "ItemsEnqueued": float64(len(messages))}, nil)
 	return h.persistFeed(ctx, message.User, feed)
@@ -222,7 +205,7 @@ func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain
 	fetched.AvatarURL = current.AvatarURL
 	if domain.FeedIntervalHours(current) != domain.FeedIntervalHours(fetched) && fetched.ErrorCount == 0 {
 		if lastFetch, parseErr := time.Parse(time.RFC3339Nano, fetched.LastFetchAt); parseErr == nil {
-			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(current)))
+			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(current)))
 		}
 	}
 	fetched.FetchIntervalH = current.FetchIntervalH
@@ -234,40 +217,6 @@ func videoMediaType(videoID string) string {
 		return "video"
 	}
 	return ""
-}
-
-func feedScheduleKey(feed domain.Feed) string {
-	return feed.PK + "#" + feed.FeedID
-}
-
-func nextFetchAfterError(feed domain.Feed, started time.Time, err error) (time.Time, bool) {
-	maximum := time.Duration(max(24, domain.FeedIntervalHours(feed))) * time.Hour
-	var statusErr *connector.HTTPStatusError
-	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusTooManyRequests {
-		delay := time.Duration(1<<min(feed.ErrorCount, 5)) * time.Hour
-		return started.Add(min(delay, maximum)), false
-	}
-
-	next := started.Add(defaultRateLimitDelay)
-	if retryAt, ok := parseRetryAfter(statusErr.Header.Get("Retry-After"), started); ok {
-		next = retryAt
-	}
-	next = next.Add(domain.StableOffset(feedScheduleKey(feed), rateLimitJitterWindow))
-	if capAt := started.Add(maximum); next.After(capAt) {
-		next = capAt
-	}
-	return next, true
-}
-
-func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
-	value = strings.TrimSpace(value)
-	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
-		return now.Add(time.Duration(seconds) * time.Second), true
-	}
-	if retryAt, err := http.ParseTime(value); err == nil && !retryAt.Before(now) {
-		return retryAt.UTC(), true
-	}
-	return time.Time{}, false
 }
 
 func (h *handler) enqueue(ctx context.Context, messages []domain.ItemMessage) error {
@@ -298,14 +247,6 @@ func (h *handler) enqueue(ctx context.Context, messages []domain.ItemMessage) er
 		}
 	}
 	return nil
-}
-
-func truncate(value string, maxRunes int) string {
-	runes := []rune(strings.TrimSpace(value))
-	if len(runes) <= maxRunes {
-		return string(runes)
-	}
-	return string(runes[:maxRunes])
 }
 
 func truncateBytes(value string, maxBytes int) string {

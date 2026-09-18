@@ -126,7 +126,7 @@ func Render(stories []domain.Cluster, members map[string][]domain.Item, allowed 
 			hasUnread = hasUnread || !item.Read
 		}
 		sourceCount := SourceCount(visible)
-		if sourceCount < 2 || (unreadOnly && !hasUnread) {
+		if !IsStory(visible) || (unreadOnly && !hasUnread) {
 			continue
 		}
 		lead := Lead(visible)

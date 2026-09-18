@@ -142,7 +142,7 @@ func TestFeedItemCountsUsesRetainedItemsAndReadMarkers(t *testing.T) {
 		}}, nil
 	}}
 
-	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{})
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestFeedItemCountsExcludesOutsideWindow(t *testing.T) {
 		}
 		return &dynamodb.QueryOutput{Items: items}, nil
 	}}
-	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{From: now, Before: now.Add(time.Hour)})
+	got, err := New(db, nil, "table", "", "").FeedItemCounts(context.Background(), "user", domain.FetchWindow{From: now, Before: now.Add(time.Hour)}, nil)
 	if err != nil || got["feed"].All != 1 || got["feed"].Unread != 1 {
 		t.Fatalf("counts = %#v, %v", got, err)
 	}
@@ -295,7 +295,7 @@ func TestItemsForFeedsFillsPageAfterFeedFiltering(t *testing.T) {
 		return output, nil
 	}}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, false, map[string]bool{"dev": true}, nil, domain.FetchWindow{})
+	items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, true, false, map[string]bool{"dev": true}, nil, domain.FetchWindow{}, nil)
 	if err != nil || cursor != "" || calls != 2 || len(items) != 2 || items[0].FeedID != "dev" || items[1].FeedID != "dev" {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
 	}
@@ -330,7 +330,7 @@ func TestItemsForFeedsFillsFilteredIncludeReadPageBeyondDefaultBudget(t *testing
 	}}
 
 	items, cursor, _, err := New(db, nil, "table", "", "").ItemsForFeeds(
-		context.Background(), "user", domain.OrderInterest, "", 2, true, true, map[string]bool{"dev": true}, nil, domain.FetchWindow{})
+		context.Background(), "user", domain.OrderInterest, "", 2, true, true, map[string]bool{"dev": true}, nil, domain.FetchWindow{}, nil)
 	if err != nil || len(items) != 2 || items[0].ItemID != "keep-0" || items[1].ItemID != "keep-1" || cursor == "" || calls != itemsForFeedsPageBudget+1 {
 		t.Fatalf("items = %#v, cursor = %q, calls = %d, err = %v", items, cursor, calls, err)
 	}
@@ -358,7 +358,7 @@ func TestItemsForFeedsScalesFilteredPageBudget(t *testing.T) {
 					}
 					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}, LastEvaluatedKey: itemPageKey(row, domain.OrderChrono)}, nil
 				}}
-				items, cursor, _, err := New(db, nil, "table", "", "").ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", test.limit, includeRead, true, map[string]bool{"keep": true}, nil, domain.FetchWindow{})
+				items, cursor, _, err := New(db, nil, "table", "", "").ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", test.limit, includeRead, true, map[string]bool{"keep": true}, nil, domain.FetchWindow{}, nil)
 				wantItems := 0
 				if test.limit > 1 {
 					wantItems = 1
@@ -403,7 +403,7 @@ func TestItemsForFeedsReturnsNewestReadAnchorWhileFillingUnreadPage(t *testing.T
 		},
 	}
 	repository := New(db, nil, "table", "", "")
-	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{})
+	items, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 2, false, false, nil, nil, domain.FetchWindow{}, nil)
 	if err != nil || cursor != "" || len(items) != 2 || items[0].ItemID != "new" || items[1].ItemID != "old" {
 		t.Fatalf("items = %#v, cursor = %q, err = %v", items, cursor, err)
 	}
@@ -462,7 +462,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 	}
 	repository := New(db, nil, "table", "", "")
 
-	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, false, false, nil, nil, domain.FetchWindow{})
+	first, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, false, false, nil, nil, domain.FetchWindow{}, nil)
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget || readQueryCalls != 1 || len(first) != 1 || first[0].ItemID != "unread-100" || cursor == "" {
 		t.Fatalf("budget page = %#v, cursor = %q, item queries = %d, read queries = %d, err = %v", first, cursor, itemQueryCalls, readQueryCalls, err)
 	}
@@ -470,7 +470,7 @@ func TestItemsForFeedsReturnsBudgetCursorAndResumes(t *testing.T) {
 		t.Fatalf("budget page anchor = %#v", anchor)
 	}
 
-	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 100, false, false, nil, nil, domain.FetchWindow{})
+	second, cursor, anchor, err := repository.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, cursor, 100, false, false, nil, nil, domain.FetchWindow{}, nil)
 	if err != nil || itemQueryCalls != unreadItemsForFeedsPageBudget+1 || readQueryCalls != 2 || len(second) != 1 || second[0].ItemID != "unread-101" || cursor != "" || anchor != nil {
 		t.Fatalf("resumed page = %#v, cursor = %q, anchor = %#v, item queries = %d, read queries = %d, err = %v", second, cursor, anchor, itemQueryCalls, readQueryCalls, err)
 	}
@@ -523,7 +523,7 @@ func TestResolveReadDeduplicatesKeysAndFansOutState(t *testing.T) {
 		}}}, nil
 	}}
 	items := []domain.Item{{ItemID: "same"}, {ItemID: "same"}}
-	if err := New(db, nil, "table", "", "").ResolveRead(context.Background(), "user", items); err != nil {
+	if err := New(db, nil, "table", "", "").ResolveRead(context.Background(), "user", items, nil); err != nil {
 		t.Fatal(err)
 	}
 	if batchCalls != 1 || !items[0].Read || !items[1].Read {
@@ -549,7 +549,7 @@ func TestResolveReadChunksAtDynamoBatchLimit(t *testing.T) {
 	for index := range items {
 		items[index].ItemID = fmt.Sprintf("item-%03d", index)
 	}
-	if err := New(db, nil, "table", "", "").ResolveRead(context.Background(), "user", items); err != nil {
+	if err := New(db, nil, "table", "", "").ResolveRead(context.Background(), "user", items, nil); err != nil {
 		t.Fatal(err)
 	}
 	if batchCalls != 3 {
@@ -980,7 +980,7 @@ func TestResolveItemIDsUsesIdentityRowsAndPreservesSemantics(t *testing.T) {
 			return nil, nil
 		},
 	}
-	got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"archive", "live", "archive", "read", "missing", "no-identity"})
+	got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"archive", "live", "archive", "read", "missing", "no-identity"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1869,11 +1869,11 @@ func TestItemsForFeedsFiltersFetchWindowBeforePagination(t *testing.T) {
 				},
 			}
 			repository := New(db, nil, "table", "", "")
-			items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", order, "", 1, true, false, map[string]bool{"feed": true}, nil, window)
+			items, cursor, _, err := repository.ItemsForFeeds(context.Background(), "user", order, "", 1, true, false, map[string]bool{"feed": true}, nil, window, nil)
 			if err != nil || pageCalls != 7 || len(items) != 1 || items[0].ItemID != "first" || !items[0].Read || cursor == "" {
 				t.Fatalf("first page = %#v, cursor = %q, calls = %d, err = %v", items, cursor, pageCalls, err)
 			}
-			items, cursor, _, err = repository.ItemsForFeeds(context.Background(), "user", order, cursor, 2, true, false, map[string]bool{"feed": true}, nil, window)
+			items, cursor, _, err = repository.ItemsForFeeds(context.Background(), "user", order, cursor, 2, true, false, map[string]bool{"feed": true}, nil, window, nil)
 			if err != nil || len(items) != 1 || items[0].ItemID != "second" || cursor != "" {
 				t.Fatalf("second page = %#v, cursor = %q, err = %v", items, cursor, err)
 			}
@@ -1917,7 +1917,6 @@ func TestSearchItemsScopedPageFill(t *testing.T) {
 }
 
 func TestInjectedReadMarkers(t *testing.T) {
-	calls := 0
 	row, err := attributevalue.MarshalMap(domain.Item{PK: domain.UserPK("user"), SK: "I#item", ItemID: "item", FeedID: "feed"})
 	if err != nil {
 		t.Fatal(err)
@@ -1929,20 +1928,14 @@ func TestInjectedReadMarkers(t *testing.T) {
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}}, nil
 	}}
 	s := New(db, nil, "table", "", "")
-	s.ReadMarkers = func(_ context.Context, userID string) (map[string]bool, error) {
-		if userID != "user" {
-			t.Fatalf("user = %q", userID)
-		}
-		calls++
-		return map[string]bool{"item": true}, nil
-	}
-	items, _, anchor, err := s.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, false, false, nil, nil, domain.FetchWindow{})
+	snapshot := map[string]bool{"item": true}
+	items, _, anchor, err := s.ItemsForFeeds(context.Background(), "user", domain.OrderChrono, "", 100, false, false, nil, nil, domain.FetchWindow{}, snapshot)
 	if err != nil || len(items) != 0 || anchor == nil || anchor.ItemID != "item" {
 		t.Fatalf("items=%v anchor=%v err=%v", items, anchor, err)
 	}
-	counts, err := s.FeedItemCounts(context.Background(), "user", domain.FetchWindow{})
-	if err != nil || counts["feed"].All != 1 || counts["feed"].Unread != 0 || calls != 2 {
-		t.Fatalf("counts=%v calls=%d err=%v", counts, calls, err)
+	counts, err := s.FeedItemCounts(context.Background(), "user", domain.FetchWindow{}, snapshot)
+	if err != nil || counts["feed"].All != 1 || counts["feed"].Unread != 0 {
+		t.Fatalf("counts=%v err=%v", counts, err)
 	}
 }
 
@@ -1951,5 +1944,148 @@ func TestSetSignalRejectsBuryOnKeptItem(t *testing.T) {
 		if err := New(nil, nil, "table", "", "").SetSignal(context.Background(), "user", item, -1); err == nil {
 			t.Fatal("bury accepted on kept item")
 		}
+	}
+}
+
+func TestReadExpiresWithLiveItem(t *testing.T) {
+	expires := time.Now().Add(time.Hour).Unix()
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		rows := []map[string]types.AttributeValue{}
+		for _, k := range input.RequestItems["table"].Keys {
+			sk := k["SK"].(*types.AttributeValueMemberS).Value
+			var value any
+			switch sk {
+			case "D#live":
+				value = domain.ItemIdentity{SK: sk, ItemSK: "I#live", TTL: expires}
+			case "I#live":
+				value = domain.Item{SK: sk, ItemID: "live", TTL: expires, ArchiveSK: "A#kept"}
+			default:
+				continue
+			}
+			row, err := attributevalue.MarshalMap(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row)
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+	}}
+	writes := 0
+	db.batchWrite = func(input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+		for _, request := range input.RequestItems["table"] {
+			var row domain.Read
+			if err := attributevalue.UnmarshalMap(request.PutRequest.Item, &row); err != nil {
+				t.Fatal(err)
+			}
+			if row.SK != "R#live" || row.TTL != expires {
+				t.Fatalf("Read row = %+v", row)
+			}
+			writes++
+		}
+		return &dynamodb.BatchWriteItemOutput{}, nil
+	}
+	if err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", []string{"live", "missing"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 {
+		t.Fatalf("writes = %d", writes)
+	}
+}
+
+func TestReadLegacyLiveItemWithoutIdentity(t *testing.T) {
+	expires := time.Now().Add(time.Hour).Unix()
+	queries, writes := 0, 0
+	db := &fakeDynamoDB{
+		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+			if !aws.ToBool(input.RequestItems["table"].ConsistentRead) {
+				t.Fatal("read writes require strong resolution")
+			}
+			return &dynamodb.BatchGetItemOutput{}, nil
+		},
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			queries++
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("legacy lookup must be consistent")
+			}
+			row, _ := attributevalue.MarshalMap(domain.Item{PK: "U#user", SK: "I#legacy", ItemID: "legacy", TTL: expires})
+			expired, _ := attributevalue.MarshalMap(domain.Item{PK: "U#user", SK: "I#expired", ItemID: "expired", TTL: 1})
+			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row, expired}}, nil
+		},
+		batchWrite: func(input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+			for _, request := range input.RequestItems["table"] {
+				var row domain.Read
+				if err := attributevalue.UnmarshalMap(request.PutRequest.Item, &row); err != nil {
+					t.Fatal(err)
+				}
+				if row.SK != "R#legacy" || row.TTL != expires {
+					t.Fatalf("Read = %+v", row)
+				}
+				writes++
+			}
+			return &dynamodb.BatchWriteItemOutput{}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	repository.legacyReadFallback = true
+	if err := repository.SetRead(context.Background(), "user", []string{"legacy", "legacy", "expired", "missing"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 || queries != 1 {
+		t.Fatalf("writes=%d queries=%d", writes, queries)
+	}
+}
+
+func TestReadStaleIDsDoesNotQueryLivePartition(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint("legacy=", legacy), func(t *testing.T) {
+			queries, writes := 0, 0
+			db := &fakeDynamoDB{
+				batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+					if !aws.ToBool(input.RequestItems["table"].ConsistentRead) {
+						t.Fatal("resolution must be consistent")
+					}
+					rows := []map[string]types.AttributeValue{}
+					for _, k := range input.RequestItems["table"].Keys {
+						sk := k["SK"].(*types.AttributeValueMemberS).Value
+						var identity domain.ItemIdentity
+						switch sk {
+						case "D#terminal":
+							identity = domain.ItemIdentity{SK: sk, TTL: time.Now().Add(time.Hour).Unix()}
+						case "D#expired":
+							identity = domain.ItemIdentity{SK: sk, ItemSK: "I#expired", TTL: 1}
+						default:
+							continue
+						}
+						row, _ := attributevalue.MarshalMap(identity)
+						rows = append(rows, row)
+					}
+					return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+				},
+				query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+					queries++
+					return &dynamodb.QueryOutput{}, nil
+				},
+				batchWrite: func(*dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+					writes++
+					return &dynamodb.BatchWriteItemOutput{}, nil
+				},
+			}
+			repository := New(db, nil, "table", "", "")
+			repository.legacyReadFallback = legacy
+			// Existing terminal/expired identities never need legacy recovery. With the
+			// default configuration, absent (TTL-deleted) identities must not scan either.
+			ids := []string{"terminal", "expired"}
+			if !legacy {
+				ids = append(ids, "ttl-deleted")
+			}
+			for attempt := 0; attempt < 3; attempt++ {
+				if err := repository.SetRead(context.Background(), "user", ids, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if queries != 0 || writes != 0 {
+				t.Fatalf("queries=%d writes=%d", queries, writes)
+			}
+		})
 	}
 }

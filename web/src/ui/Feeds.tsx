@@ -7,7 +7,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { type APIClient, APIError } from "../api/client";
+import { APIError, type AppAPI } from "../api/client";
 import { archiveSize } from "../archive";
 import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
@@ -39,7 +39,7 @@ import { type BadgeSize, SourceBadge } from "./SourceBadge";
 import { displayFeedTitle as displayTitle } from "./tag-options";
 
 export function Feeds(props: {
-  api: APIClient;
+  api: AppAPI;
   itemCounts: FeedItemCounts | undefined;
   onRefreshCounts(): Promise<void>;
   focusSearch?: boolean;
@@ -704,7 +704,7 @@ export function Feeds(props: {
 }
 
 function FeedDrawer(props: {
-  api: APIClient;
+  api: AppAPI;
   feed: Feed;
   allTags: string[];
   onClose(): void;
@@ -1052,7 +1052,7 @@ function ExtractionQuality(props: { feed: Feed }) {
 }
 
 function AddFeedDialog(props: {
-  api: APIClient;
+  api: AppAPI;
   allTags: string[];
   onClose(): void;
   onAdded(feed: Feed): void;

@@ -179,6 +179,8 @@ make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
 
 The backfill keeps the newest row for each item, preserves archive pointers, and creates its identity marker. The final pass catches items written during deployment.
 
+Read writes use strongly consistent identity lookups and skip missing or expired Items by default. If an older stack needs to mark live Items Read before this backfill completes, temporarily set `LEGACY_READ_FALLBACK=true` on the API Lambda. This enables a consistent query through the user’s live partition when an identity is absent—including identities already removed by TTL—so leave it unset during normal operation and remove it after the final backfill pass. No deployment enables it by default.
+
 ### Split item-vector rollout and recovery
 
 Deploy the split-vector writer and targeted rescore updates before migrating older live items. Then inspect and apply the DynamoDB item-vector backfill before allowing a scheduled or on-demand rescore:

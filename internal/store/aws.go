@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -20,5 +21,7 @@ func FromEnv(ctx context.Context) (*Store, aws.Config, error) {
 	if err != nil {
 		return nil, aws.Config{}, err
 	}
-	return New(dynamodb.NewFromConfig(config), s3.NewFromConfig(config), table, bucket, os.Getenv("CONTENT_BASE_URL")), config, nil
+	repository := New(dynamodb.NewFromConfig(config), s3.NewFromConfig(config), table, bucket, os.Getenv("CONTENT_BASE_URL"))
+	repository.legacyReadFallback = strings.EqualFold(strings.TrimSpace(os.Getenv("LEGACY_READ_FALLBACK")), "true")
+	return repository, config, nil
 }

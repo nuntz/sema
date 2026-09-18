@@ -1,3 +1,4 @@
+import { feedbackEligibility } from "./feedback";
 import type { Item } from "./types";
 
 export type SignalValue = -1 | 0 | 1;
@@ -12,7 +13,7 @@ export function signalWhy(value: SignalValue, story = false): string {
       : "Fewer like this · undo";
 }
 export function buryDisabled(item: Pick<Item, "hearted">): boolean {
-  return item.hearted;
+  return !feedbackEligibility(item).bury;
 }
 export function signalLabel(value: SignalValue): string {
   return value === 1 ? "boosted" : value === -1 ? "buried" : "";

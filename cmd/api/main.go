@@ -39,6 +39,7 @@ import (
 	"github.com/nuntz/sema/internal/embed"
 	bedrockembed "github.com/nuntz/sema/internal/embed/bedrock"
 	"github.com/nuntz/sema/internal/embed/titanimage"
+	"github.com/nuntz/sema/internal/feedback"
 	"github.com/nuntz/sema/internal/httpx"
 	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/observability"
@@ -58,7 +59,7 @@ type queueAPI interface {
 type server struct {
 	readMu           sync.Mutex
 	readCache        map[string]cachedReadMarkers
-	store            *store.Store
+	store            apiStore
 	sessions         *auth.Sessions
 	verifyGoogle     func(context.Context, string) (auth.Claims, error)
 	queue            queueAPI
@@ -480,7 +481,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 	for index := range fused {
 		ids[index] = fused[index].Key
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids, nil)
 	if err != nil {
 		return related, false
 	}
@@ -513,7 +514,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 		return related, false
 	}
 	for _, item := range items {
-		if item.HeartedTS != "" && item.TTL == 0 {
+		if domain.IsArchive(item) {
 			related.Archive = append(related.Archive, item)
 		} else {
 			related.Window = append(related.Window, item)
@@ -567,7 +568,7 @@ func (s *server) getSimilar(ctx context.Context, userID, itemID string, query ma
 	for index := range fused {
 		ids[index] = fused[index].Key
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids)
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids, nil)
 	if err != nil {
 		return s.failure("resolve similar items", err)
 	}
@@ -722,20 +723,22 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("load ranking model", err)
 		}
 	}
-	itemStore := s.store
+	var snapshot map[string]bool
 	if !includeRead {
-		itemStore = s.markerStore(ctx)
-		ctx = context.WithValue(ctx, readMarkerStoreKey{}, itemStore)
+		snapshot, err = s.loadReadMarkers(ctx, userID)
+		if err != nil {
+			return s.failure("load read markers", err)
+		}
 	}
 	var hidden map[string]bool
 	if excludeStories {
-		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window)
+		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window, snapshot)
 		if err != nil {
 			return s.failure("render stories for item filtering", err)
 		}
 	}
 	filtered := query["tag"] != "" || query["feed"] != ""
-	items, next, readAnchor, err := itemStore.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window)
+	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, snapshot)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -784,7 +787,7 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 	if err != nil {
 		return s.failure("load ranking model", err)
 	}
-	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window)
+	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window, nil)
 	if err != nil {
 		return s.failure("list stories", err)
 	}
@@ -820,26 +823,6 @@ const readCacheTTL = time.Minute
 type cachedReadMarkers struct {
 	loaded time.Time
 	ids    map[string]bool
-}
-
-type readMarkerStoreKey struct{}
-
-// A request-local store copy reuses one snapshot for items and story members.
-// The shared store remains unchanged, including for callers outside these paths.
-func (s *server) markerStore(ctx context.Context) *store.Store {
-	if requestStore, ok := ctx.Value(readMarkerStoreKey{}).(*store.Store); ok {
-		return requestStore
-	}
-	requestStore := *s.store
-	var ids map[string]bool
-	requestStore.ReadMarkers = func(ctx context.Context, userID string) (map[string]bool, error) {
-		var err error
-		if ids == nil {
-			ids, err = s.loadReadMarkers(ctx, userID)
-		}
-		return ids, err
-	}
-	return &requestStore
 }
 
 func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
@@ -915,7 +898,7 @@ type cachedStoryList struct {
 
 // Results are immutable after rendering. Include the model's public ranking
 // cutoffs as well as filters so a newly computed model cannot reuse old sizes.
-func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
+func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
 	filters, err := json.Marshal(struct {
 		Allowed    map[string]bool
 		UnreadOnly bool
@@ -935,7 +918,7 @@ func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowe
 	if entry, ok := s.storyCache[key]; ok && now.Sub(entry.loaded) < storyCacheTTL {
 		return entry.stories, entry.hidden, nil
 	}
-	stories, hidden, err := s.renderStories(ctx, userID, allowed, unreadOnly, model, tag, window)
+	stories, hidden, err := s.renderStories(ctx, userID, allowed, unreadOnly, model, tag, window, snapshot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -972,44 +955,32 @@ func (s *server) invalidateStories(userID string) {
 	}
 }
 
-func (s *server) renderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
+func (s *server) renderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
 	rows, err := s.store.Clusters(ctx, userID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(rows) == 0 {
+		return []storycluster.Rendered{}, map[string]bool{}, nil
 	}
 	ids := make([]string, 0)
 	for _, row := range rows {
 		ids = append(ids, row.MemberIDs...)
 	}
-	itemStore := s.store
-	if unreadOnly {
-		itemStore = s.markerStore(ctx)
+	if unreadOnly && snapshot == nil {
+		snapshot, err = s.loadReadMarkers(ctx, userID)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	items, err := itemStore.ResolveItemIDs(ctx, userID, ids)
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids, snapshot)
 	if err != nil {
 		return nil, nil, err
-	}
-	resolvedIDs := make(map[string]bool, len(items))
-	for _, item := range items {
-		resolvedIDs[item.ItemID] = true
-	}
-	var pruneStory domain.Cluster
-	var missing []string
-	for _, row := range rows {
-		for _, id := range row.MemberIDs {
-			if !resolvedIDs[id] {
-				missing = append(missing, id)
-			}
-		}
-		if len(missing) > 0 {
-			pruneStory = row
-			break // At most one story per uncached render.
-		}
 	}
 	live := items[:0]
 	now := time.Now().Unix()
 	for _, item := range items {
-		if strings.HasPrefix(item.SK, "I#") && item.TTL > now && window.Contains(item.FetchedTS) {
+		if domain.Live(item, now) && window.Contains(item.FetchedTS) {
 			live = append(live, item)
 		}
 	}
@@ -1026,22 +997,11 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 	}
 	members := make(map[string][]domain.Item, len(rows))
 	for _, row := range rows {
-		for _, itemID := range row.MemberIDs {
-			if item, ok := byID[itemID]; ok {
-				members[row.StoryID] = append(members[row.StoryID], item)
-			}
-		}
+		members[row.StoryID] = storycluster.LiveMembers(row, byID, now)
 	}
+
 	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model, tag)
-	if len(missing) > 0 {
-		// Lambda freezes background work when the handler returns. Complete one
-		// bounded best-effort prune while this invocation is still running.
-		pruneCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-		if err := s.store.PruneClusterMembers(pruneCtx, userID, pruneStory, missing); err != nil {
-			slog.Warn("prune story members", "story_id", pruneStory.StoryID, "error", err)
-		}
-	}
+
 	return rendered, hidden, nil
 }
 
@@ -1189,7 +1149,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 			return s.failure("get item", err)
 		}
 		items := []domain.Item{item}
-		if err := s.store.ResolveRead(ctx, userID, items); err != nil {
+		if err := s.store.ResolveRead(ctx, userID, items, nil); err != nil {
 			return s.failure("resolve read state", err)
 		}
 		if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -1268,7 +1228,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		if input.Value != -1 && input.Value != 0 && input.Value != 1 {
 			return badRequest(errors.New("value must be -1, 0, or 1"))
 		}
-		if input.Value == -1 && item.ArchiveSK != "" {
+		if _, err := feedback.Apply(feedback.State{Kept: feedback.Kept(item)}, feedback.Signal, input.Value); errors.Is(err, feedback.ErrKept) {
 			return response(http.StatusConflict, map[string]string{"error": "kept items cannot be buried"})
 		}
 		if input.Value != 0 && len(item.Vector) == 0 {
@@ -1409,7 +1369,11 @@ func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map
 	if err != nil {
 		return badRequest(err)
 	}
-	counts, err := s.markerStore(ctx).FeedItemCounts(ctx, userID, window)
+	snapshot, err := s.loadReadMarkers(ctx, userID)
+	if err != nil {
+		return s.failure("load read markers", err)
+	}
+	counts, err := s.store.FeedItemCounts(ctx, userID, window, snapshot)
 	if err != nil {
 		return s.failure("count live feed items", err)
 	}

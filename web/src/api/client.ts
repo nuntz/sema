@@ -54,6 +54,11 @@ function appendScope(params: URLSearchParams, scope: GridScope): void {
 }
 
 export class APIClient {
+  async body(url: string, signal?: AbortSignal): Promise<string> {
+    const response = await fetch(url, { credentials: "same-origin", signal });
+    if (!response.ok) throw new Error("body unavailable");
+    return response.text();
+  }
   private storyCache = new Map<string, ConditionalCache<StoriesResponse>>();
   private async request<T>(
     path: string,
@@ -333,3 +338,6 @@ export class APIClient {
     });
   }
 }
+
+// The public adapter surface has no private class members, so tests can supply plain fakes.
+export type AppAPI = Pick<APIClient, keyof APIClient>;

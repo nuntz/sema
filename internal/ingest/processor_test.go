@@ -1,4 +1,4 @@
-package main
+package ingest
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-lambda-go/events"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/extract"
 	"github.com/nuntz/sema/internal/httpx"
@@ -67,16 +66,16 @@ func (s *concurrentItemStore) Feed(context.Context, string, string) (domain.Feed
 
 func TestRunBoundsBatchConcurrency(t *testing.T) {
 	repository := &concurrentItemStore{}
-	h := &handler{store: repository}
+	h := &Processor{Store: repository}
 	published := domain.Timestamp(time.Now().UTC())
-	event := events.SQSEvent{}
+	event := Batch{}
 	for _, id := range []string{"one", "two", "three", "four", "five"} {
-		event.Records = append(event.Records, events.SQSMessage{
-			MessageId: id,
-			Body:      `{"user":"user","feed_id":"feed","item_id":"` + id + `","title":"Title","published_ts":"` + published + `"}`,
+		event.Records = append(event.Records, Message{
+			ID:   id,
+			Body: `{"user":"user","feed_id":"feed","item_id":"` + id + `","title":"Title","published_ts":"` + published + `"}`,
 		})
 	}
-	response, err := h.run(context.Background(), event)
+	response, err := h.Run(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,15 +86,15 @@ func TestRunBoundsBatchConcurrency(t *testing.T) {
 		t.Errorf("processed records = %d, want 5", calls)
 	}
 	failures := map[string]bool{}
-	for _, failure := range response.BatchItemFailures {
-		failures[failure.ItemIdentifier] = true
+	for _, failure := range response.Failures {
+		failures[failure.ID] = true
 	}
-	if len(response.BatchItemFailures) != 5 {
-		t.Errorf("failures = %#v, want 5", response.BatchItemFailures)
+	if len(response.Failures) != 5 {
+		t.Errorf("failures = %#v, want 5", response.Failures)
 	}
 	for _, record := range event.Records {
-		if !failures[record.MessageId] {
-			t.Errorf("missing failure for %s", record.MessageId)
+		if !failures[record.ID] {
+			t.Errorf("missing failure for %s", record.ID)
 		}
 	}
 }
@@ -218,9 +217,9 @@ func TestAssignStoryPreservesMembersWithStaleFounder(t *testing.T) {
 	// Simulate workers that both resolved the founder before either assigned
 	// its story. Each sees the same stale snapshot, including on redelivery.
 	repository := &fakeItemStore{resolved: []domain.Item{founder}}
-	h := &handler{
-		store: repository, vectors: &stubVectorBatchStore{matches: []vectorstore.Match{{Key: "founder", Similarity: 90}}},
-		storyConfig: storycluster.Config{Threshold: 80, Window: 72 * time.Hour},
+	h := &Processor{
+		Store: repository, Vectors: &stubVectorBatchStore{matches: []vectorstore.Match{{Key: "founder", Similarity: 90}}},
+		StoryConfig: storycluster.Config{Threshold: 80, Window: 72 * time.Hour},
 	}
 	for index, id := range []string{"first", "second", "first"} {
 		item := domain.Item{ItemID: id, PublishedTS: founder.PublishedTS, TTL: founder.TTL}
@@ -248,7 +247,7 @@ func TestAssignStoryCreatesAndJoins(t *testing.T) {
 	founder := domain.Item{PK: "U#user", SK: "I#founder", ItemID: "founder", FeedID: "old-feed", URL: "https://example.com/founder", PublishedTS: domain.Timestamp(now.Add(-time.Hour)), TTL: now.Add(2 * time.Hour).Unix()}
 	repository := &fakeItemStore{resolved: []domain.Item{founder}}
 	vectors := &stubVectorBatchStore{matches: []vectorstore.Match{{Key: "new", Similarity: 100}, {Key: "other-user", Similarity: 99}, {Key: "founder", Similarity: 82}}}
-	h := &handler{store: repository, vectors: vectors, storyConfig: config}
+	h := &Processor{Store: repository, Vectors: vectors, StoryConfig: config}
 	metrics, err := h.assignCluster(context.Background(), "user", []float32{1, 0}, &newItem)
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +260,7 @@ func TestAssignStoryCreatesAndJoins(t *testing.T) {
 	joined.StoryID = "existing-story"
 	repository = &fakeItemStore{resolved: []domain.Item{joined}}
 	newItem.StoryID = ""
-	h.store = repository
+	h.Store = repository
 	metrics, err = h.assignCluster(context.Background(), "user", []float32{1, 0}, &newItem)
 	if err != nil {
 		t.Fatal(err)
@@ -289,10 +288,10 @@ func (s stubSummarizer) Summarize(context.Context, string, string) (string, erro
 
 func TestIngestSizeUsesStoredCutoffs(t *testing.T) {
 	model := domain.Model{ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 0.6, P90: 0.8}}
-	if got := ingestSize(0.5, "2", model); got != "S" {
+	if got := Build(Work{}, domain.Item{}, domain.Item{Score: 0.5}, time.Now(), "2", model).Size; got != "S" {
 		t.Fatalf("ingest size = %s, want stored-cutoff S", got)
 	}
-	if got := ingestSize(0.5, "1", model); got != "M" {
+	if got := Build(Work{}, domain.Item{}, domain.Item{Score: 0.5}, time.Now(), "1", model).Size; got != "M" {
 		t.Fatalf("legacy ingest size = %s, want fixed-threshold M", got)
 	}
 }
@@ -300,11 +299,11 @@ func TestIngestSizeUsesStoredCutoffs(t *testing.T) {
 func TestPermanentMissingTitleWritesMarkerAndConsumesMessage(t *testing.T) {
 	published := time.Now().UTC()
 	repository := &fakeItemStore{}
-	h := &handler{store: repository}
+	h := &Processor{Store: repository}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","published_ts":"` + domain.Timestamp(published) + `"}`
 
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(repository.failures) != 1 {
@@ -318,11 +317,11 @@ func TestPermanentMissingTitleWritesMarkerAndConsumesMessage(t *testing.T) {
 
 func TestTransientItemFailureStillRetries(t *testing.T) {
 	repository := &fakeItemStore{feedErr: errors.New("dynamo unavailable")}
-	h := &handler{store: repository}
+	h := &Processor{Store: repository}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
 
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 1 || response.BatchItemFailures[0].ItemIdentifier != "message" {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 1 || response.Failures[0].ID != "message" {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(repository.failures) != 0 {
@@ -332,21 +331,21 @@ func TestTransientItemFailureStillRetries(t *testing.T) {
 
 func TestRunBatchesVectorsAcrossWrittenItems(t *testing.T) {
 	vectors := &stubVectorBatchStore{}
-	h := &handler{
-		store:          &fakeItemStore{},
-		media:          media.New(nil),
-		embedder:       stubEmbedder{},
-		scoringVersion: "1",
-		vectors:        vectors,
+	h := &Processor{
+		Store:          &fakeItemStore{},
+		Media:          media.New(nil),
+		Embedder:       stubEmbedder{},
+		ScoringVersion: "1",
+		Vectors:        vectors,
 	}
 	published := domain.Timestamp(time.Now().UTC())
-	message := func(id string) events.SQSMessage {
+	message := func(id string) Message {
 		body := `{"user":"user","feed_id":"feed","item_id":"` + id + `","title":"Title","summary_raw":"Useful summary","published_ts":"` + published + `"}`
-		return events.SQSMessage{MessageId: "message-" + id, Body: body}
+		return Message{ID: "message-" + id, Body: body}
 	}
 
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{message("one"), message("two")}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{message("one"), message("two")}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if vectors.calls != 1 || len(vectors.records) != 2 {
@@ -364,16 +363,16 @@ func TestRunBatchesVectorsAcrossWrittenItems(t *testing.T) {
 func TestStoryAssignmentFailureEmitsMetricAndConsumesMessage(t *testing.T) {
 	repository := &fakeItemStore{resolveErr: errors.New("resolve item IDs")}
 	emitted := []map[string]float64{}
-	h := &handler{
-		store: repository, media: media.New(nil), embedder: stubEmbedder{}, scoringVersion: "1", vectors: &stubVectorBatchStore{},
-		emit: func(metrics map[string]float64, _ map[string]string) {
+	h := &Processor{
+		Store: repository, Media: media.New(nil), Embedder: stubEmbedder{}, ScoringVersion: "1", Vectors: &stubVectorBatchStore{},
+		Emit: func(metrics map[string]float64, _ map[string]string) {
 			emitted = append(emitted, metrics)
 		},
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","summary_raw":"Useful summary","published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
 
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	found := false
@@ -399,13 +398,13 @@ func TestReprocessEmbedsStored768VariantAndBatchesImageVector(t *testing.T) {
 	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead-1280.jpg": {1}, "lead-768.jpg": {7, 6, 8}}}
 	images := &stubImageEmbedder{vector: []float32{3, 4}}
 	textVectors, imageVectors := &stubVectorBatchStore{}, &stubVectorBatchStore{}
-	h := &handler{
-		store: repository, embedder: stubEmbedder{}, imageEmbedder: images, imageModelVersion: "image-v1",
-		scoringVersion: "1", vectors: textVectors, imageVectors: imageVectors,
+	h := &Processor{
+		Store: repository, Embedder: stubEmbedder{}, ImageEmbedder: images, ImageModelVersion: "image-v1",
+		ScoringVersion: "1", Vectors: textVectors, ImageVectors: imageVectors,
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(images.images) != 1 || string(images.images[0]) != string([]byte{7, 6, 8}) || len(repository.contentReads) != 1 || repository.contentReads[0] != "lead-768.jpg" {
@@ -430,13 +429,13 @@ func TestImageEmbeddingFailureDoesNotFailItemAndPreservesReplayVector(t *testing
 	}
 	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
 	images := &stubImageEmbedder{err: errors.New("Bedrock unavailable")}
-	h := &handler{
-		store: repository, embedder: stubEmbedder{}, imageEmbedder: images, imageModelVersion: "image-v1",
-		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: &stubVectorBatchStore{},
+	h := &Processor{
+		Store: repository, Embedder: stubEmbedder{}, ImageEmbedder: images, ImageModelVersion: "image-v1",
+		ScoringVersion: "1", Vectors: &stubVectorBatchStore{}, ImageVectors: &stubVectorBatchStore{},
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if repository.overwritten == nil || string(repository.overwritten.ImageVector) != string(existingImage) || repository.overwritten.ImageModelVersion != "image-v0" {
@@ -453,10 +452,10 @@ func TestCompatibleReplayPreservesTextVectorWithoutEmbedding(t *testing.T) {
 	}
 	repository := &fakeItemStore{item: existing}
 	embedder := &countingTextEmbedder{}
-	h := &handler{store: repository, media: media.New(nil), embedder: embedder, modelVersion: "text-v1", scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	h := &Processor{Store: repository, Media: media.New(nil), Embedder: embedder, ModelVersion: "text-v1", ScoringVersion: "1", Vectors: &stubVectorBatchStore{}}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if embedder.calls != 0 || repository.overwritten == nil || string(repository.overwritten.Vector) != string(textVector) {
@@ -473,10 +472,10 @@ func TestForcedExtractRefreshesCompatibleTextVector(t *testing.T) {
 	}
 	repository := &fakeItemStore{item: existing}
 	embedder := &countingTextEmbedder{}
-	h := &handler{store: repository, media: media.New(nil), embedder: embedder, modelVersion: "text-v1", scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	h := &Processor{Store: repository, Media: media.New(nil), Embedder: embedder, ModelVersion: "text-v1", ScoringVersion: "1", Vectors: &stubVectorBatchStore{}}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true,"force_extract":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if embedder.calls != 1 || repository.overwritten == nil || string(repository.overwritten.Vector) == string(oldVector) {
@@ -496,13 +495,13 @@ func TestCompatibleReplayReusesImageVectorAndBatchesRecord(t *testing.T) {
 	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
 	images := &stubImageEmbedder{vector: []float32{0, 1}}
 	imageVectors := &stubVectorBatchStore{}
-	h := &handler{
-		store: repository, embedder: stubEmbedder{}, modelVersion: "text-v1", imageEmbedder: images, imageModelVersion: "image-v1",
-		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	h := &Processor{
+		Store: repository, Embedder: stubEmbedder{}, ModelVersion: "text-v1", ImageEmbedder: images, ImageModelVersion: "image-v1",
+		ScoringVersion: "1", Vectors: &stubVectorBatchStore{}, ImageVectors: imageVectors,
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(images.images) != 0 {
@@ -528,13 +527,13 @@ func TestIncompatibleReplayRefreshesImageVector(t *testing.T) {
 	repository := &fakeItemStore{item: existing, content: map[string][]byte{"lead.jpg": {7}}}
 	images := &stubImageEmbedder{vector: []float32{0, 1}}
 	imageVectors := &stubVectorBatchStore{}
-	h := &handler{
-		store: repository, embedder: stubEmbedder{}, modelVersion: "text-v1", imageEmbedder: images, imageModelVersion: "image-v1",
-		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	h := &Processor{
+		Store: repository, Embedder: stubEmbedder{}, ModelVersion: "text-v1", ImageEmbedder: images, ImageModelVersion: "image-v1",
+		ScoringVersion: "1", Vectors: &stubVectorBatchStore{}, ImageVectors: imageVectors,
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(images.images) != 1 || string(images.images[0]) != string([]byte{7}) {
@@ -559,13 +558,13 @@ func TestForcedExtractClearsImageVectorWhenLeadDisappears(t *testing.T) {
 	repository := &fakeItemStore{item: existing}
 	images := &stubImageEmbedder{vector: []float32{0, 1}}
 	imageVectors := &stubVectorBatchStore{}
-	h := &handler{
-		store: repository, media: media.New(nil), embedder: stubEmbedder{}, modelVersion: "text-v1", imageEmbedder: images, imageModelVersion: "image-v1",
-		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	h := &Processor{
+		Store: repository, Media: media.New(nil), Embedder: stubEmbedder{}, ModelVersion: "text-v1", ImageEmbedder: images, ImageModelVersion: "image-v1",
+		ScoringVersion: "1", Vectors: &stubVectorBatchStore{}, ImageVectors: imageVectors,
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(now) + `","reprocess":true,"force_extract":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(images.images) != 0 {
@@ -589,13 +588,13 @@ func TestVideoNeverEmbedsOrBatchesImageVector(t *testing.T) {
 	repository := &fakeItemStore{item: existing, content: map[string][]byte{"thumbnail.jpg": {1}}}
 	images := &stubImageEmbedder{vector: []float32{1, 0}}
 	imageVectors := &stubVectorBatchStore{}
-	h := &handler{
-		store: repository, embedder: stubEmbedder{}, imageEmbedder: images, imageModelVersion: "image-v1",
-		scoringVersion: "1", vectors: &stubVectorBatchStore{}, imageVectors: imageVectors,
+	h := &Processor{
+		Store: repository, Embedder: stubEmbedder{}, ImageEmbedder: images, ImageModelVersion: "image-v1",
+		ScoringVersion: "1", Vectors: &stubVectorBatchStore{}, ImageVectors: imageVectors,
 	}
 	body := `{"user":"user","feed_id":"feed","item_id":"video","title":"Video","media_type":"video","published_ts":"` + domain.Timestamp(now) + `","reprocess":true}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "message", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "message", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("run = %#v, %v", response, err)
 	}
 	if len(images.images) != 0 || imageVectors.calls != 0 || repository.overwritten == nil || len(repository.overwritten.ImageVector) != 0 {
@@ -674,7 +673,7 @@ func TestArticleContentDecision(t *testing.T) {
 			if pageHTML == nil {
 				pageHTML = linkedPage
 			}
-			article, err := articleContent(test.raw, test.itemURL, test.siteURL, pageURL, pageHTML)
+			article, err := ArticleExtractor{}.Extract(ExtractionInput{RawContent: test.raw, ItemURL: test.itemURL, SiteURL: test.siteURL, PageURL: pageURL, PageHTML: pageHTML})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -718,7 +717,7 @@ func TestReplayRecoversRedditGalleryEnclosuresFromPostFeed(t *testing.T) {
   <entry><id>t3_1w1q9k6</id><title>Evening vibes in Vancouver</title><published>2026-08-29T15:59:14Z</published><link href="https://www.reddit.com/r/vancouver/comments/1w1q9k6/evening_vibes_in_vancouver/"/><media:thumbnail url="https://preview.redd.it/5bpaudvx6cmh1.jpg?width=140&amp;amp;height=140&amp;amp;crop=1:1,smart&amp;amp;auto=webp&amp;amp;s=signature"/><content type="html">&lt;table&gt;&lt;tr&gt;&lt;td&gt;&lt;a href="https://www.reddit.com/gallery/1w1q9k6"&gt;[link]&lt;/a&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;</content></entry>
 </feed>`
 	client := &stubHTTP{response: httpx.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: []byte(body), FinalURL: base}}
-	h := &handler{http: client}
+	h := &Processor{HTTP: client}
 
 	enclosures, err := h.mediaEnclosures(context.Background(), domain.ItemMessage{
 		URL: "https://www.reddit.com/r/vancouver/comments/1w1q9k6/evening_vibes_in_vancouver/", PostType: "gallery",
@@ -738,7 +737,7 @@ func TestRedditSelftextPreservesStoredFormatting(t *testing.T) {
 	thread := "https://www.reddit.com/r/example/comments/one/title/"
 	pageURL, _ := url.Parse(thread)
 	raw := `<p>Opening paragraph with an <a href="https://example.com/reference">inline link</a>.</p><ul><li>First point</li><li>Second point</li></ul><blockquote><p>Quoted text</p></blockquote>`
-	article, err := articleContent(raw, thread, "https://www.reddit.com/r/example/", pageURL, nil)
+	article, err := ArticleExtractor{}.Extract(ExtractionInput{RawContent: raw, ItemURL: thread, SiteURL: "https://www.reddit.com/r/example/", PageURL: pageURL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,12 +753,12 @@ func TestChooseSummaryGenerationAndFailureFallback(t *testing.T) {
 		Text:           "A first factual paragraph about the subject. A second paragraph adds detail.",
 		FirstParagraph: "A first factual paragraph about the subject.", Quality: 0.8,
 	}
-	h := &handler{summarizer: stubSummarizer{value: "A generated first sentence. A generated second sentence."}}
+	h := &Processor{Summarizer: stubSummarizer{value: "A generated first sentence. A generated second sentence."}}
 	got, source, metrics := h.chooseSummary(context.Background(), "Title", "Read more…", article, false)
 	if got == "" || source != domain.SummarySourceGenerated || metrics["SummariesGenerated"] != 1 {
 		t.Fatalf("generated summary = %q, %q, %#v", got, source, metrics)
 	}
-	h.summarizer = stubSummarizer{err: errors.New("offline")}
+	h.Summarizer = stubSummarizer{err: errors.New("offline")}
 	got, source, metrics = h.chooseSummary(context.Background(), "Title", "Read more…", article, false)
 	if got != article.FirstParagraph || source != domain.SummarySourceBody || metrics["SummaryFallbackError"] != 1 {
 		t.Fatalf("fallback summary = %q, %q, %#v", got, source, metrics)
@@ -767,7 +766,7 @@ func TestChooseSummaryGenerationAndFailureFallback(t *testing.T) {
 }
 
 func TestChooseSummaryKeepsCleanRedditExcerpt(t *testing.T) {
-	h := &handler{summarizer: stubSummarizer{value: "must not be used"}}
+	h := &Processor{Summarizer: stubSummarizer{value: "must not be used"}}
 	excerpt := "A cleaned subreddit excerpt with the submitter and link boilerplate removed."
 	got, source, metrics := h.chooseSummary(context.Background(), "Post title", excerpt, extract.Result{}, false)
 	if got != excerpt || source != domain.SummarySourceFeed || len(metrics) != 0 {
@@ -776,7 +775,7 @@ func TestChooseSummaryKeepsCleanRedditExcerpt(t *testing.T) {
 }
 
 func TestChooseSummaryReportsMissingBody(t *testing.T) {
-	h := &handler{summarizer: stubSummarizer{value: "must not be used"}}
+	h := &Processor{Summarizer: stubSummarizer{value: "must not be used"}}
 	got, source, metrics := h.chooseSummary(context.Background(), "Title", "", extract.Result{}, false)
 	if got != "" || source != domain.SummarySourceBody || metrics["SummaryFallbackNoBody"] != 1 || metrics["SummaryFallbackLowQuality"] != 0 {
 		t.Fatalf("summary = %q, source = %q, metrics = %#v", got, source, metrics)
@@ -784,7 +783,7 @@ func TestChooseSummaryReportsMissingBody(t *testing.T) {
 }
 
 func TestChooseSummaryReportsLowQualityBody(t *testing.T) {
-	h := &handler{summarizer: stubSummarizer{value: "must not be used"}}
+	h := &Processor{Summarizer: stubSummarizer{value: "must not be used"}}
 	article := extract.Result{Text: "A low-quality article body.", FirstParagraph: "A low-quality article body.", Quality: 0.2}
 	got, source, metrics := h.chooseSummary(context.Background(), "Title", "", article, false)
 	if got != article.FirstParagraph || source != domain.SummarySourceBody || metrics["SummaryFallbackLowQuality"] != 1 || metrics["SummaryFallbackNoBody"] != 0 {
@@ -808,7 +807,7 @@ func TestForcedSummaryReplayStillKeepsHealthyFeedSummaries(t *testing.T) {
 
 func TestVimeoThumbnailUsesOfficialOEmbedMetadata(t *testing.T) {
 	client := &stubHTTP{response: httpx.Response{StatusCode: http.StatusOK, Body: []byte(`{"thumbnail_url":"https://i.vimeocdn.com/video/42.jpg"}`)}}
-	h := &handler{http: client}
+	h := &Processor{HTTP: client}
 	got, err := h.embedThumbnailURL(context.Background(), extract.MediaCard{Provider: "Vimeo", URL: "https://vimeo.com/12345"})
 	if err != nil {
 		t.Fatal(err)
@@ -827,15 +826,15 @@ func TestVectorFailureRetriesStoredEmbeddings(t *testing.T) {
 			failed = image
 		}
 		failed.err = errors.New("temporary outage")
-		h := &handler{store: repository, vectors: text, imageVectors: image}
-		event := events.SQSEvent{Records: []events.SQSMessage{{MessageId: "retry", Body: `{"user":"user","item_id":"item","published_ts":"` + domain.Timestamp(time.Now()) + `"}`}}}
-		response, err := h.run(context.Background(), event)
-		if err != nil || len(response.BatchItemFailures) != 1 || response.BatchItemFailures[0].ItemIdentifier != "retry" {
+		h := &Processor{Store: repository, Vectors: text, ImageVectors: image}
+		event := Batch{Records: []Message{{ID: "retry", Body: `{"user":"user","item_id":"item","published_ts":"` + domain.Timestamp(time.Now()) + `"}`}}}
+		response, err := h.Run(context.Background(), event)
+		if err != nil || len(response.Failures) != 1 || response.Failures[0].ID != "retry" {
 			t.Fatalf("failure = %#v, %v", response, err)
 		}
 		failed.err = nil
-		response, err = h.run(context.Background(), event)
-		if err != nil || len(response.BatchItemFailures) != 0 {
+		response, err = h.Run(context.Background(), event)
+		if err != nil || len(response.Failures) != 0 {
 			t.Fatalf("retry = %#v, %v", response, err)
 		}
 		if len(text.records) != 1 || len(image.records) != 1 || text.records[0].Kind != vectorstore.KindArchive || text.calls != 2 || image.calls != 2 {
@@ -860,10 +859,10 @@ func (s *dedupRaceStore) PutItem(context.Context, domain.Item) (bool, error) { r
 func TestDedupRaceStillIndexesWinningStoredVectors(t *testing.T) {
 	repository := &dedupRaceStore{fakeItemStore: fakeItemStore{item: domain.Item{PK: "U#user", ItemID: "item", Vector: score.EncodeVector([]float32{0, 1}), ArchiveSK: "A#saved"}}}
 	vectors := &stubVectorBatchStore{}
-	h := &handler{store: repository, media: media.New(nil), embedder: stubEmbedder{}, vectors: vectors, scoringVersion: "1"}
+	h := &Processor{Store: repository, Media: media.New(nil), Embedder: stubEmbedder{}, Vectors: vectors, ScoringVersion: "1"}
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
-	response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "dedup", Body: body}}})
-	if err != nil || len(response.BatchItemFailures) != 0 {
+	response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "dedup", Body: body}}})
+	if err != nil || len(response.Failures) != 0 {
 		t.Fatalf("%#v %v", response, err)
 	}
 	if len(vectors.records) != 1 || vectors.records[0].Data[1] != 1 || vectors.records[0].Kind != vectorstore.KindArchive {
@@ -905,9 +904,9 @@ func TestIngestionUsesPointReadsAndAcknowledgesTerminalDedupe(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			repository := &ingestionLookupStore{dedup: test.dedup, lookupErr: test.lookupErr}
 			vectors := &stubVectorBatchStore{}
-			h := &handler{store: repository, media: media.New(nil), embedder: stubEmbedder{}, vectors: vectors, scoringVersion: "1"}
-			response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "item", Body: `{"user":"user","item_id":"item","feed_id":"feed","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(time.Now()) + `"}`}}})
-			if err != nil || (len(response.BatchItemFailures) > 0) != test.failed {
+			h := &Processor{Store: repository, Media: media.New(nil), Embedder: stubEmbedder{}, Vectors: vectors, ScoringVersion: "1"}
+			response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "item", Body: `{"user":"user","item_id":"item","feed_id":"feed","title":"Title","summary_raw":"Summary","published_ts":"` + domain.Timestamp(time.Now()) + `"}`}}})
+			if err != nil || (len(response.Failures) > 0) != test.failed {
 				t.Fatalf("%#v %v", response, err)
 			}
 			expected := 1
@@ -948,9 +947,9 @@ func TestReplayAcknowledgesMissingRowsButRetriesWriteFailures(t *testing.T) {
 				repository.item = domain.Item{PK: "U#user", SK: domain.ItemSK(now, "item"), ItemID: "item", Title: "Title", Vector: score.EncodeVector([]float32{1, 0}), TTL: now.Add(time.Hour).Unix()}
 			}
 			vectors := &stubVectorBatchStore{}
-			h := &handler{store: repository, media: media.New(nil), embedder: stubEmbedder{}, vectors: vectors, scoringVersion: "1"}
-			response, err := h.run(context.Background(), events.SQSEvent{Records: []events.SQSMessage{{MessageId: "item", Body: `{"user":"user","item_id":"item","feed_id":"feed","reprocess":true,"published_ts":"` + domain.Timestamp(now) + `"}`}}})
-			if err != nil || (len(response.BatchItemFailures) > 0) != test.failed || vectors.calls != 0 {
+			h := &Processor{Store: repository, Media: media.New(nil), Embedder: stubEmbedder{}, Vectors: vectors, ScoringVersion: "1"}
+			response, err := h.Run(context.Background(), Batch{Records: []Message{{ID: "item", Body: `{"user":"user","item_id":"item","feed_id":"feed","reprocess":true,"published_ts":"` + domain.Timestamp(now) + `"}`}}})
+			if err != nil || (len(response.Failures) > 0) != test.failed || vectors.calls != 0 {
 				t.Fatalf("%#v %v index calls=%d", response, err, vectors.calls)
 			}
 		})
@@ -976,7 +975,7 @@ func (s *deadlineItemStore) ItemByIdentity(ctx context.Context, _, itemID string
 
 func TestItemDeadlineReportsOnlyExpiredMessage(t *testing.T) {
 	var deadlineEvents atomic.Int32
-	h := &handler{store: &deadlineItemStore{t: t}, emit: func(metrics map[string]float64, fields map[string]string) {
+	h := &Processor{Store: &deadlineItemStore{t: t}, Emit: func(metrics map[string]float64, fields map[string]string) {
 		if metrics["ItemDeadlineExceeded"] == 1 {
 			deadlineEvents.Add(1)
 			if fields["feed_id"] != "feed" || fields["item_id"] != "slow" {
@@ -993,11 +992,11 @@ func TestItemDeadlineReportsOnlyExpiredMessage(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	response, err := h.run(ctx, events.SQSEvent{Records: []events.SQSMessage{
-		{MessageId: "slow-message", Body: body("slow")},
-		{MessageId: "healthy-message", Body: body("healthy")},
+	response, err := h.Run(ctx, Batch{Records: []Message{
+		{ID: "slow-message", Body: body("slow")},
+		{ID: "healthy-message", Body: body("healthy")},
 	}})
-	if err != nil || len(response.BatchItemFailures) != 1 || response.BatchItemFailures[0].ItemIdentifier != "slow-message" {
+	if err != nil || len(response.Failures) != 1 || response.Failures[0].ID != "slow-message" {
 		t.Fatalf("batch response = %#v, error %v", response, err)
 	}
 	if deadlineEvents.Load() != 2 {
@@ -1007,7 +1006,7 @@ func TestItemDeadlineReportsOnlyExpiredMessage(t *testing.T) {
 
 func TestProcessDropsItemFromDeletedFeed(t *testing.T) {
 	repository := &fakeItemStore{feedErr: store.ErrNotFound}
-	h := &handler{store: repository}
+	h := &Processor{Store: repository}
 	body := `{"user":"user","feed_id":"removed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(time.Now()) + `"}`
 	records, err := h.process(context.Background(), body)
 	if err != nil || records != nil {
@@ -1058,7 +1057,7 @@ func (s *recordingItemStore) PutItem(_ context.Context, item domain.Item) (bool,
 func TestExhaustedMediaBudgetStillPersistsItem(t *testing.T) {
 	repository := &recordingItemStore{}
 	processor := &blockingMedia{}
-	h := &handler{store: repository, media: processor, embedder: stubEmbedder{}, scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	h := &Processor{Store: repository, Media: processor, Embedder: stubEmbedder{}, ScoringVersion: "1", Vectors: &stubVectorBatchStore{}}
 	raw := `<p>A first factual paragraph about the subject that runs long enough to count as an article body.</p>` +
 		`<img src="https://publisher.example/lead.jpg"><p>A second paragraph adds more detail for the extractor.</p>`
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","content_raw":` + strconv.Quote(raw) +
@@ -1114,7 +1113,7 @@ func (s *blockingUploadStore) PutContent(ctx context.Context, key, contentType s
 
 func TestSlowLeadUploadYieldsToCompletionReserve(t *testing.T) {
 	repository := &blockingUploadStore{}
-	h := &handler{store: repository, media: &readyMedia{}, embedder: stubEmbedder{}, scoringVersion: "1", vectors: &stubVectorBatchStore{}}
+	h := &Processor{Store: repository, Media: &readyMedia{}, Embedder: stubEmbedder{}, ScoringVersion: "1", Vectors: &stubVectorBatchStore{}}
 	raw := `<p>A first factual paragraph about the subject that runs long enough to count as an article body.</p>` +
 		`<img src="https://publisher.example/lead.jpg"><p>A second paragraph adds more detail for the extractor.</p>`
 	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","content_raw":` + strconv.Quote(raw) +

@@ -9,32 +9,19 @@ import (
 	"math"
 	"mime/multipart"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/feedstatus"
 	"github.com/nuntz/sema/internal/store"
 	"github.com/nuntz/sema/internal/vectorstore"
 )
-
-type apiDynamo struct {
-	*dynamodb.Client
-	batchGet func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error)
-	delete   func(*dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error)
-	getItem  func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)
-	putItem  func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error)
-	query    func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error)
-	update   func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error)
-}
 
 func TestSimilarMatchesExcludeSelfWeakAndRespectLimit(t *testing.T) {
 	got := similarMatches([]vectorstore.Match{
@@ -98,10 +85,7 @@ func TestResponseEncodesNilCollectionsAsArrays(t *testing.T) {
 }
 
 func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
-	db := &apiDynamo{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		return &dynamodb.QueryOutput{}, nil
-	}}
-	server := &server{store: store.New(db, nil, "table", "", "")}
+	server := &server{store: &fakeAPIStore{}}
 	got := server.getSearch(context.Background(), "user", map[string]string{"q": "pulumi"})
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
@@ -130,49 +114,12 @@ func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
 }
 
 func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
-	now := time.Now().UTC()
-	marshal := func(id string, published time.Time) map[string]types.AttributeValue {
-		item, err := attributevalue.MarshalMap(domain.Item{
-			PK: domain.UserPK("user"), SK: domain.ItemSK(published, id), ItemID: id,
-			FeedID: "feed", URL: "https://example.com/" + id, Title: id,
-			PublishedTS: domain.Timestamp(published), FetchedTS: domain.Timestamp(now),
-			SummarySource: "", Size: "S", TTL: now.Add(time.Hour).Unix(),
-		})
-		if err != nil {
-			t.Fatal(err)
+	server := &server{store: &fakeAPIStore{itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, limit int, includeRead, fill bool, allowed, excluded map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+		if limit != 2 || includeRead {
+			t.Fatal("wrong unread page request")
 		}
-		return item
-	}
-	db := &apiDynamo{
-		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
-			if prefix == "R#" {
-				return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
-					{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}},
-				}}, nil
-			}
-			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{
-				marshal("new", now),
-				marshal("anchor", now.Add(-time.Minute)),
-				marshal("old", now.Add(-2*time.Minute)),
-			}}, nil
-		},
-		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			request := input.RequestItems["table"]
-			if aws.ToString(request.ProjectionExpression) == "SK" {
-				return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{
-					"table": {{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("anchor")}}},
-				}}, nil
-			}
-			return &dynamodb.BatchGetItemOutput{}, nil
-		},
-	}
-	server := &server{
-		store: store.New(db, nil, "table", "", ""),
-		feedCache: map[string]cachedFeedList{
-			"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}},
-		},
-	}
+		return []domain.Item{{ItemID: "new"}, {ItemID: "old"}}, "", &domain.Item{ItemID: "anchor", PublishedTS: "2026-09-17T00:00:00Z"}, nil
+	}}, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
 	got := server.getItems(context.Background(), "user", map[string]string{
 		"order": "chrono", "limit": "2",
 	})
@@ -198,25 +145,6 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 }
 
 func TestGetItemsFiltersByFeed(t *testing.T) {
-	now := time.Now().UTC()
-	marshal := func(id, feedID string) map[string]types.AttributeValue {
-		item, err := attributevalue.MarshalMap(domain.Item{
-			PK: domain.UserPK("user"), SK: domain.ItemSK(now, id), ItemID: id,
-			FeedID: feedID, URL: "https://example.com/" + id, Title: id,
-			PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
-			SummarySource: "", Size: "S", TTL: now.Add(time.Hour).Unix(),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return item
-	}
-	rows := []map[string]types.AttributeValue{
-		marshal("alpha-item", "alpha"),
-		marshal("beta-item", "beta"),
-		marshal("muted-item", "muted"),
-	}
-
 	for _, test := range []struct {
 		name    string
 		feedID  string
@@ -227,20 +155,20 @@ func TestGetItemsFiltersByFeed(t *testing.T) {
 		{name: "unknown feed", feedID: "unknown", wantIDs: []string{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			db := &apiDynamo{
-				query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-					prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
-					if prefix == "R#" {
-						return &dynamodb.QueryOutput{}, nil
+			db := &fakeAPIStore{itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, _ int, _, _ bool, allowed, _ map[string]bool, _ domain.FetchWindow, _ map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+				if test.feedID == "alpha" {
+					if len(allowed) != 1 || !allowed["alpha"] {
+						t.Fatalf("allowed=%v", allowed)
 					}
-					return &dynamodb.QueryOutput{Items: rows}, nil
-				},
-				batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-					return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {}}}, nil
-				},
-			}
+					return []domain.Item{{ItemID: "alpha-item"}}, "", nil, nil
+				}
+				if len(allowed) != 0 {
+					t.Fatalf("allowed=%v", allowed)
+				}
+				return nil, "", nil, nil
+			}}
 			server := &server{
-				store: store.New(db, nil, "table", "", ""),
+				store: db,
 				feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
 					{FeedID: "alpha"}, {FeedID: "beta"}, {FeedID: "muted", Muted: true},
 				}}},
@@ -269,54 +197,23 @@ func TestGetItemsFiltersByFeed(t *testing.T) {
 }
 
 func TestGetItemsAppliesTagCutoffsOnlyToTagScope(t *testing.T) {
-	now := time.Now().UTC()
-	marshal := func(value any) map[string]types.AttributeValue {
-		row, err := attributevalue.MarshalMap(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return row
-	}
-	rows := []map[string]types.AttributeValue{
-		marshal(domain.Item{
-			PK: domain.UserPK("user"), SK: domain.ItemSK(now, "tagged"), ItemID: "tagged", FeedID: "tagged-feed",
-			URL: "https://example.com/tagged", Title: "Tagged", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
-			Score: 0.45, Size: "S", TTL: now.Add(time.Hour).Unix(),
-		}),
-		marshal(domain.Item{
-			PK: domain.UserPK("user"), SK: domain.ItemSK(now.Add(-time.Minute), "plain"), ItemID: "plain", FeedID: "plain-feed",
-			URL: "https://example.com/plain", Title: "Plain", PublishedTS: domain.Timestamp(now.Add(-time.Minute)), FetchedTS: domain.Timestamp(now),
-			Score: 0.45, Size: "S", TTL: now.Add(time.Hour).Unix(),
-		}),
-	}
-	model := marshal(domain.Model{
-		PK: domain.UserPK("user"), SK: "MODEL", ExplicitCount: 10,
-		SizeCutoffs: &domain.SizeCutoffs{P60: 0.1, P90: 0.2},
-		TagSizeCutoffs: map[string]*domain.SizeCutoffs{
-			"tech": {P60: 0.4, P90: 0.5},
-		},
-	})
 	modelLoads := 0
-	db := &apiDynamo{
-		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			if prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value; prefix == "R#" {
-				return &dynamodb.QueryOutput{}, nil
-			}
-			return &dynamodb.QueryOutput{Items: rows}, nil
-		},
-		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {}}}, nil
-		},
-		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			if input.Key["SK"].(*types.AttributeValueMemberS).Value != "MODEL" {
-				t.Fatalf("model key = %#v", input.Key)
-			}
+	db := &fakeAPIStore{
+		model: func(context.Context, string) (domain.Model, error) {
 			modelLoads++
-			return &dynamodb.GetItemOutput{Item: model}, nil
+			return domain.Model{ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 0.1, P90: 0.2}, TagSizeCutoffs: map[string]*domain.SizeCutoffs{"tech": {P60: 0.4, P90: 0.5}}}, nil
 		},
-	}
+		itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, _ int, _, _ bool, allowed, _ map[string]bool, _ domain.FetchWindow, _ map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+			rows := []domain.Item{}
+			for _, item := range []domain.Item{{ItemID: "tagged", FeedID: "tagged-feed", Score: 0.45, Size: "S"}, {ItemID: "plain", FeedID: "plain-feed", Score: 0.45, Size: "S"}} {
+				if allowed == nil || allowed[item.FeedID] {
+					rows = append(rows, item)
+				}
+			}
+			return rows, "", nil, nil
+		}}
 	server := &server{
-		store: store.New(db, nil, "table", "", ""),
+		store: db,
 		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
 			{FeedID: "tagged-feed", Tags: []string{"tech"}},
 			{FeedID: "plain-feed"},
@@ -388,14 +285,8 @@ func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 }
 
 func TestGetStoriesReturnsArray(t *testing.T) {
-	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value != "T#" {
-			t.Fatalf("story prefix = %#v", input.ExpressionAttributeValues)
-		}
-		return &dynamodb.QueryOutput{}, nil
-	}}
 	server := &server{
-		store:     store.New(db, nil, "table", "", ""),
+		store:     &fakeAPIStore{},
 		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}},
 	}
 	got := server.getStories(context.Background(), "user", map[string]string{})
@@ -407,48 +298,21 @@ func TestGetStoriesReturnsArray(t *testing.T) {
 func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	now := time.Now().UTC()
 	pk := domain.UserPK("user")
-	marshal := func(value any) map[string]types.AttributeValue {
-		row, err := attributevalue.MarshalMap(value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return row
-	}
 	items := []domain.Item{
 		{PK: pk, SK: domain.ItemSK(now, "lead"), ItemID: "lead", FeedID: "one", URL: "https://example.com/lead", Title: "Lead", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now), Score: 1, Size: "L", TTL: now.Add(time.Hour).Unix()},
 		{PK: pk, SK: domain.ItemSK(now.Add(-time.Minute), "member"), ItemID: "member", FeedID: "two", URL: "https://example.com/member", Title: "Member", PublishedTS: domain.Timestamp(now.Add(-time.Minute)), FetchedTS: domain.Timestamp(now), Score: 0.8, Size: "M", TTL: now.Add(time.Hour).Unix()},
 	}
-	rowsBySK := make(map[string]map[string]types.AttributeValue)
-	for _, item := range items {
-		rowsBySK[item.SK] = marshal(item)
-		identity := domain.ItemIdentity{PK: pk, SK: domain.ItemIdentitySK(item.ItemID), ItemSK: item.SK, TTL: item.TTL}
-		rowsBySK[identity.SK] = marshal(identity)
-	}
 	storyRow := domain.Cluster{PK: pk, SK: domain.ClusterSK("story"), StoryID: "story", MemberIDs: []string{"lead", "member"}, CreatedAt: domain.Timestamp(now), UpdatedAt: domain.Timestamp(now), TTL: now.Add(time.Hour).Unix()}
 	model := domain.Model{PK: pk, SK: "MODEL", ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.2, P90: 1.3}}
-	db := &apiDynamo{
-		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal(storyRow)}}, nil
+	db := &fakeAPIStore{
+		clusters: func(context.Context, string) ([]domain.Cluster, error) { return []domain.Cluster{storyRow}, nil },
+		resolve: func(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
+			return append([]domain.Item(nil), items...), nil
 		},
-		batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			response := []map[string]types.AttributeValue{}
-			for _, key := range input.RequestItems["table"].Keys {
-				sk := key["SK"].(*types.AttributeValueMemberS).Value
-				if row, ok := rowsBySK[sk]; ok {
-					response = append(response, row)
-				}
-			}
-			return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": response}}, nil
-		},
-		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			if input.Key["SK"].(*types.AttributeValueMemberS).Value == "MODEL" {
-				return &dynamodb.GetItemOutput{Item: marshal(model)}, nil
-			}
-			return &dynamodb.GetItemOutput{}, nil
-		},
+		model: func(context.Context, string) (domain.Model, error) { return model, nil },
 	}
 	server := &server{
-		store: store.New(db, nil, "table", "", ""),
+		store: db,
 		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
 			{FeedID: "one"}, {FeedID: "two"},
 		}}},
@@ -481,14 +345,16 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		t.Fatalf("in-window story = %d, %s", got.StatusCode, got.Body)
 	}
 	items[1].FetchedTS = domain.Timestamp(now.Add(-24 * time.Hour))
-	rowsBySK[items[1].SK] = marshal(items[1])
 	server.invalidateStories("user")
 	got = server.getStories(context.Background(), "user", windowQuery)
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
 		t.Fatalf("single-source story = %d, %s", got.StatusCode, got.Body)
 	}
-	db.query = func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal(items[0]), marshal(items[1])}}, nil
+	db.itemsForFeeds = func(_ context.Context, _ string, _ domain.Order, _ string, _ int, _, _ bool, _, _ map[string]bool, window domain.FetchWindow, _ map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+		if !window.Contains(items[0].FetchedTS) || window.Contains(items[1].FetchedTS) {
+			t.Fatal("incorrect window")
+		}
+		return items[:1], "", nil, nil
 	}
 	got = server.getItems(context.Background(), "user", windowQuery)
 	var itemBody struct {
@@ -516,93 +382,14 @@ func (q *apiQueue) SendMessageBatch(_ context.Context, input *sqs.SendMessageBat
 	return &sqs.SendMessageBatchOutput{}, nil
 }
 
-func (f *apiDynamo) BatchGetItem(_ context.Context, input *dynamodb.BatchGetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.BatchGetItemOutput, error) {
-	return f.batchGet(input)
-}
-
-func (f *apiDynamo) DeleteItem(_ context.Context, input *dynamodb.DeleteItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.DeleteItemOutput, error) {
-	return f.delete(input)
-}
-
-func (f *apiDynamo) GetItem(_ context.Context, input *dynamodb.GetItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error) {
-	if f.getItem != nil {
-		return f.getItem(input)
-	}
-	return &dynamodb.GetItemOutput{}, nil
-}
-
-func (f *apiDynamo) PutItem(_ context.Context, input *dynamodb.PutItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.PutItemOutput, error) {
-	return f.putItem(input)
-}
-
-func (f *apiDynamo) Query(_ context.Context, input *dynamodb.QueryInput, _ ...func(*dynamodb.Options)) (*dynamodb.QueryOutput, error) {
-	return f.query(input)
-}
-
-func (f *apiDynamo) UpdateItem(_ context.Context, input *dynamodb.UpdateItemInput, _ ...func(*dynamodb.Options)) (*dynamodb.UpdateItemOutput, error) {
-	if f.update == nil {
-		return &dynamodb.UpdateItemOutput{}, nil
-	}
-	return f.update(input)
-}
-
-func captureFeedUpdate(t *testing.T, destination *domain.Feed) func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-	t.Helper()
-	return func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-		row := map[string]types.AttributeValue{"PK": input.Key["PK"], "SK": input.Key["SK"]}
-		for alias, name := range input.ExpressionAttributeNames {
-			placeholder := strings.Replace(alias, "#", ":", 1)
-			if value, ok := input.ExpressionAttributeValues[placeholder]; ok {
-				row[name] = value
-			}
-		}
-		if err := attributevalue.UnmarshalMap(row, destination); err != nil {
-			t.Fatal(err)
-		}
-		return &dynamodb.UpdateItemOutput{}, nil
-	}
-}
-
 func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
-	profile, err := attributevalue.MarshalMap(domain.User{
-		PK: "U#reader", SK: "PROFILE", Email: "reader@example.com", OrderPref: domain.OrderInterest,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var sessionItem map[string]types.AttributeValue
-	var deleted map[string]types.AttributeValue
 	updateCount := 0
-	db := &apiDynamo{
-		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			sk := input.Key["SK"].(*types.AttributeValueMemberS).Value
-			if sk == "PROFILE" {
-				return &dynamodb.GetItemOutput{Item: profile}, nil
-			}
-			if sk == "MODEL" {
-				return &dynamodb.GetItemOutput{}, nil
-			}
-			return &dynamodb.GetItemOutput{Item: sessionItem}, nil
-		},
-		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-			sessionItem = input.Item
-			return &dynamodb.PutItemOutput{}, nil
-		},
-		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			return &dynamodb.QueryOutput{}, nil
-		},
-		update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-			updateCount++
-			return &dynamodb.UpdateItemOutput{}, nil
-		},
-		delete: func(input *dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) {
-			deleted = input.Key
-			return &dynamodb.DeleteItemOutput{}, nil
-		},
-	}
-	repository := store.New(db, nil, "table", "", "")
+	sessions := &fakeSessions{}
+	repository := &fakeAPIStore{user: func(context.Context, string) (domain.User, error) {
+		return domain.User{Email: "reader@example.com", OrderPref: domain.OrderInterest}, nil
+	}, ensureUser: func(context.Context, string, string) error { updateCount++; return nil }}
 	server := &server{
-		store: repository, sessions: auth.NewSessions(repository),
+		store: repository, sessions: auth.NewSessions(sessions),
 		verifyGoogle: func(_ context.Context, credential string) (auth.Claims, error) {
 			if credential != "google-token" {
 				t.Fatalf("credential = %q", credential)
@@ -624,7 +411,7 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 	if setCookie.Path != "/api" || setCookie.MaxAge != int(auth.SessionLifetime.Seconds()) || !setCookie.Secure || !setCookie.HttpOnly || setCookie.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("session cookie = %#v", setCookie)
 	}
-	if sessionItem["PK"].(*types.AttributeValueMemberS).Value == "SESSION#"+setCookie.Value {
+	if sessions.hash == setCookie.Value {
 		t.Fatal("session record used the raw credential as its key")
 	}
 
@@ -654,8 +441,8 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 	if len(cleared.Cookies) != 13 || !strings.Contains(cleared.Cookies[0], "Max-Age=0") {
 		t.Fatalf("clear cookies = %#v", cleared.Cookies)
 	}
-	if deleted["PK"].(*types.AttributeValueMemberS).Value != sessionItem["PK"].(*types.AttributeValueMemberS).Value {
-		t.Fatalf("deleted key = %#v, session = %#v", deleted, sessionItem)
+	if sessions.deleted != sessions.hash {
+		t.Fatalf("deleted hash = %s, session = %s", sessions.deleted, sessions.hash)
 	}
 }
 
@@ -698,16 +485,14 @@ func TestAPIRouteTemplateBoundsDynamicPaths(t *testing.T) {
 }
 
 func TestAPIEmitsOneRequestEventIncludingServerErrors(t *testing.T) {
-	db := &apiDynamo{update: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-		return nil, errors.New("dynamo unavailable")
-	}}
+	db := &fakeAPIStore{ensureUser: func(context.Context, string, string) error { return errors.New("store unavailable") }}
 	type metricEvent struct {
 		metrics    map[string]float64
 		dimensions map[string]string
 	}
 	events := []metricEvent{}
 	server := &server{
-		store: store.New(db, nil, "table", "", ""),
+		store: db,
 		verifyGoogle: func(context.Context, string) (auth.Claims, error) {
 			return auth.Claims{Subject: "reader", Email: "reader@example.com"}, nil
 		},
@@ -764,27 +549,19 @@ func TestNormalizeTagsAndFeedStatus(t *testing.T) {
 	if err != nil || len(tags) != 2 || tags[0] != "dev" || tags[1] != "ニュース" {
 		t.Fatalf("tags = %#v, err = %v", tags, err)
 	}
-	if got := feedStatus(domain.Feed{ErrorCount: 3}); got != "broken" {
+	if got := feedstatus.Status(domain.Feed{ErrorCount: 3}); got != "broken" {
 		t.Fatalf("broken status = %q", got)
 	}
-	if got := feedStatus(domain.Feed{Muted: true, ErrorCount: 3}); got != "muted" {
+	if got := feedstatus.Status(domain.Feed{Muted: true, ErrorCount: 3}); got != "muted" {
 		t.Fatalf("muted status = %q", got)
 	}
 }
 
 func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
 	var saved domain.Feed
-	db := &apiDynamo{
-		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			return &dynamodb.GetItemOutput{}, nil
-		},
-		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			return &dynamodb.QueryOutput{}, nil
-		},
-		update: captureFeedUpdate(t, &saved),
-	}
+	db := &fakeAPIStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
-	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
+	server := &server{store: db, queue: queue}
 	got := server.addFeed(context.Background(), "user", `{
 		"feed_url":"https://old.reddit.com/r/Castles/new.rss",
 		"connector":"reddit",
@@ -810,19 +587,10 @@ func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
 		Title: "r/castles", SiteURL: "https://www.reddit.com/r/castles/", FetchIntervalH: 24,
 		ETag: `"top"`, LastModified: "yesterday", ErrorCount: 3, LastError: "forbidden",
 	}
-	item, err := attributevalue.MarshalMap(feed)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var saved domain.Feed
-	db := &apiDynamo{
-		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			return &dynamodb.GetItemOutput{Item: item}, nil
-		},
-		update: captureFeedUpdate(t, &saved),
-	}
+	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }, putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
-	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
+	server := &server{store: db, queue: queue}
 	got := server.patchFeed(context.Background(), "user", "legacy-id", `{"url":"https://www.reddit.com/r/castles/.rss"}`)
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
@@ -843,19 +611,10 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 		URL: feedURL, CustomTitle: "My title", Tags: []string{"saved"}, Muted: true,
 		FetchIntervalH: 24, NextFetchAt: "2026-08-27T12:00:00Z",
 	}
-	item, err := attributevalue.MarshalMap(existing)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var saved domain.Feed
-	db := &apiDynamo{
-		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			return &dynamodb.GetItemOutput{Item: item}, nil
-		},
-		update: captureFeedUpdate(t, &saved),
-	}
+	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return existing, nil }, putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
-	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue}
+	server := &server{store: db, queue: queue}
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -890,24 +649,14 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 
 func TestImportFeedsInvalidatesCacheAfterPartialWriteFailure(t *testing.T) {
 	writeFailure := errors.New("write failed")
-	db := &apiDynamo{
-		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			return &dynamodb.GetItemOutput{}, nil
-		},
-		update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-			var feed domain.Feed
-			capture := captureFeedUpdate(t, &feed)
-			if _, err := capture(input); err != nil {
-				return nil, err
-			}
-			if strings.Contains(feed.URL, "failed") {
-				return nil, writeFailure
-			}
-			return &dynamodb.UpdateItemOutput{}, nil
-		},
-	}
+	db := &fakeAPIStore{putFeed: func(_ context.Context, feed domain.Feed) error {
+		if strings.Contains(feed.URL, "failed") {
+			return writeFailure
+		}
+		return nil
+	}}
 	server := &server{
-		store: store.New(db, nil, "table", "", ""), queue: &apiQueue{},
+		store: db, queue: &apiQueue{},
 		feedCache:       map[string]cachedFeedList{"user": {}},
 		feedDetailCache: map[string]cachedFeedList{"user": {}},
 	}
@@ -972,14 +721,10 @@ func TestDecorateExtractionUsesLifetimeFeedCounters(t *testing.T) {
 }
 
 func TestDecorateFeedsUsesFeedRowsWithoutScanningItems(t *testing.T) {
-	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		t.Fatalf("decorate feeds queried items: %#v", input)
-		return nil, nil
-	}}
 	want := []domain.Feed{{FeedID: "enough", ItemCount: 10, ExtractionSample: 10, ExtractionFailures: 2, ExtractionQualityTotal: 5.5}, {FeedID: "new", ItemCount: 4, ExtractionSample: 4, ExtractionQualityTotal: 3.6}}
 	decorateExtraction(want)
 	got := []domain.Feed{{FeedID: "enough", ItemCount: 10, ExtractionSample: 10, ExtractionFailures: 2, ExtractionQualityTotal: 5.5}, {FeedID: "new", ItemCount: 4, ExtractionSample: 4, ExtractionQualityTotal: 3.6}}
-	server := &server{store: store.New(db, nil, "table", "", "")}
+	server := &server{store: &fakeAPIStore{}}
 	if err := server.decorateFeeds(context.Background(), "user", got); err != nil {
 		t.Fatal(err)
 	}
@@ -997,16 +742,12 @@ func TestDecorateFeedsUsesFeedRowsWithoutScanningItems(t *testing.T) {
 }
 
 func TestPrepareItemsLoadsOnlyPageSignals(t *testing.T) {
-	db := &apiDynamo{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-		request := input.RequestItems["table"]
-		if len(request.Keys) != 2 {
-			t.Fatalf("signal keys = %#v", request.Keys)
+	server := &server{store: &fakeAPIStore{signalValues: func(_ context.Context, _ string, ids []string) (map[string]int, error) {
+		if len(ids) != 2 || ids[0] != "first" || ids[1] != "second" {
+			t.Fatalf("signal ids=%v", ids)
 		}
-		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {
-			{"SK": &types.AttributeValueMemberS{Value: "S#first"}, "value": &types.AttributeValueMemberN{Value: "1"}},
-		}}}, nil
-	}}
-	server := &server{store: store.New(db, nil, "table", "", "/content")}
+		return map[string]int{"first": 1}, nil
+	}}}
 	items := []domain.Item{{ItemID: "first", Vector: []byte{1}}, {ItemID: "second", Vector: []byte{2}}}
 	if err := server.prepareItems(context.Background(), "user", items); err != nil {
 		t.Fatal(err)
@@ -1017,22 +758,9 @@ func TestPrepareItemsLoadsOnlyPageSignals(t *testing.T) {
 }
 
 func TestGetMeUsesProfileSignalCount(t *testing.T) {
-	profile, err := attributevalue.MarshalMap(domain.User{
-		PK: "U#user", SK: "PROFILE", Email: "reader@example.com", OrderPref: domain.OrderChrono, SignalCount: 12, HeartCount: 3,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := &apiDynamo{
-		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-			return &dynamodb.GetItemOutput{Item: profile}, nil
-		},
-		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			t.Fatal("getMe unexpectedly loaded signals")
-			return nil, nil
-		},
-	}
-	response := (&server{store: store.New(db, nil, "table", "", "")}).getMe(context.Background(), "user")
+	response := (&server{store: &fakeAPIStore{user: func(context.Context, string) (domain.User, error) {
+		return domain.User{SignalCount: 12, HeartCount: 3}, nil
+	}}}).getMe(context.Background(), "user")
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body %s", response.StatusCode, response.Body)
 	}
@@ -1060,28 +788,19 @@ func TestPatchMeKeepsGridPreferencesMutuallyExclusive(t *testing.T) {
 		{name: "tag clears feed", body: `{"tag_pref":" Tech "}`, wantTag: "tech", wantFeed: ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			var updated *dynamodb.UpdateItemInput
-			db := &apiDynamo{update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-				updated = input
-				return &dynamodb.UpdateItemOutput{}, nil
+			var tagValue, feedValue *string
+			db := &fakeAPIStore{updateUser: func(_ context.Context, _ string, _ *domain.Order, _, tag, feed *string) error {
+				tagValue, feedValue = tag, feed
+				return nil
 			}}
-			got := (&server{store: store.New(db, nil, "table", "", "")}).patchMe(context.Background(), "user", test.body)
+			got := (&server{store: db}).patchMe(context.Background(), "user", test.body)
 			if got.StatusCode != http.StatusOK {
 				t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
 			}
-			if updated == nil {
-				t.Fatal("profile was not updated")
+			if tagValue == nil || feedValue == nil || *tagValue != test.wantTag || *feedValue != test.wantFeed {
+				t.Fatalf("preferences=%v %v", tagValue, feedValue)
 			}
-			value := func(key string) string {
-				attribute, ok := updated.ExpressionAttributeValues[key].(*types.AttributeValueMemberS)
-				if !ok {
-					t.Fatalf("%s = %#v", key, updated.ExpressionAttributeValues[key])
-				}
-				return attribute.Value
-			}
-			if value(":tag") != test.wantTag || value(":feed") != test.wantFeed {
-				t.Fatalf("preferences = tag %q, feed %q; want tag %q, feed %q", value(":tag"), value(":feed"), test.wantTag, test.wantFeed)
-			}
+
 		})
 	}
 }
@@ -1106,75 +825,36 @@ func TestPatchMeValidatesFeedPreference(t *testing.T) {
 }
 
 func TestBehaviourValidatesAndWritesMonotonicRow(t *testing.T) {
-	item, err := attributevalue.MarshalMap(domain.Item{
-		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "Title",
-		Vector: []byte{1, 2, 3}, TTL: time.Now().Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var updateInputs []*dynamodb.UpdateItemInput
-	db := &apiDynamo{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-		switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
-		case domain.ItemIdentitySK("item"):
-			return &dynamodb.GetItemOutput{Item: map[string]types.AttributeValue{"item_sk": item["SK"], "ttl": item["ttl"]}}, nil
-		case item["SK"].(*types.AttributeValueMemberS).Value:
-			return &dynamodb.GetItemOutput{Item: item}, nil
-		default:
-			return &dynamodb.GetItemOutput{}, nil
+	var writes []store.BehaviourEvent
+	source := &fakeAPIStore{item: func(context.Context, string, string) (domain.Item, error) {
+		return domain.Item{ItemID: "item", Vector: []byte{1}}, nil
+	}, recordBehaviour: func(_ context.Context, _ string, item domain.Item, event store.BehaviourEvent) error {
+		if item.ItemID != "item" {
+			t.Fatal("wrong item")
 		}
-	},
-		query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
-		},
-		update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-			updateInputs = append(updateInputs, input)
-			return &dynamodb.UpdateItemOutput{}, nil
-		},
+		writes = append(writes, event)
+		return nil
+	}}
+	s := &server{store: source}
+	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
+	if got.StatusCode != 200 || len(writes) != 1 || !writes[0].Opened || writes[0].DwellMS == nil || *writes[0].DwellMS != 31000 || !writes[0].ClickedThrough {
+		t.Fatalf("event=%v response=%v", writes, got)
 	}
-	server := &server{store: store.New(db, nil, "table", "", "")}
-	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
-	if response.StatusCode != http.StatusOK || len(updateInputs) != 2 {
-		t.Fatalf("events response = %d %s, updates %d", response.StatusCode, response.Body, len(updateInputs))
+	got = s.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{}`)
+	if got.StatusCode != 400 || len(writes) != 1 {
+		t.Fatal("empty event accepted")
 	}
-	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{}`)
-	if response.StatusCode != http.StatusBadRequest {
-		t.Fatalf("empty event status = %d, body %s", response.StatusCode, response.Body)
-	}
-	response = server.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"shared":true}`)
-	if response.StatusCode != http.StatusOK || len(updateInputs) != 3 {
-		t.Fatalf("share event response = %d %s, updates %d", response.StatusCode, response.Body, len(updateInputs))
-	}
-	shareUpdate := updateInputs[2]
-	if shareUpdate.ExpressionAttributeNames["#shared"] != "shared" {
-		t.Fatalf("share expression names = %#v", shareUpdate.ExpressionAttributeNames)
-	}
-	if value, ok := shareUpdate.ExpressionAttributeValues[":shared"].(*types.AttributeValueMemberBOOL); !ok || !value.Value {
-		t.Fatalf("share expression values = %#v", shareUpdate.ExpressionAttributeValues)
+	got = s.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"shared":true}`)
+	if got.StatusCode != 200 || len(writes) != 2 || !writes[1].Shared {
+		t.Fatal("share event not written")
 	}
 }
 
 func TestRetryItemQueuesForcedExtractionAndSummary(t *testing.T) {
-	item, err := attributevalue.MarshalMap(domain.Item{
-		PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", URL: "https://example.com/story", Title: "Title", PublishedTS: "2026-08-20T12:00:00Z", TTL: time.Now().Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := &apiDynamo{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-		switch input.Key["SK"].(*types.AttributeValueMemberS).Value {
-		case domain.ItemIdentitySK("item"):
-			return &dynamodb.GetItemOutput{Item: map[string]types.AttributeValue{"item_sk": item["SK"], "ttl": item["ttl"]}}, nil
-		case item["SK"].(*types.AttributeValueMemberS).Value:
-			return &dynamodb.GetItemOutput{Item: item}, nil
-		default:
-			return &dynamodb.GetItemOutput{}, nil
-		}
-	}, query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{item}}, nil
-	}}
 	queue := &apiQueue{}
-	server := &server{store: store.New(db, nil, "table", "", ""), queue: queue, itemsURL: "items-queue"}
+	server := &server{store: &fakeAPIStore{item: func(context.Context, string, string) (domain.Item, error) {
+		return domain.Item{ItemID: "item", FeedID: "feed", URL: "https://example.com/story", Title: "Title", PublishedTS: "2026-08-20T12:00:00Z"}, nil
+	}}, queue: queue, itemsURL: "items-queue"}
 	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/retry", "")
 	if response.StatusCode != http.StatusAccepted || queue.input == nil || aws.ToString(queue.input.QueueUrl) != "items-queue" || len(queue.input.Entries) != 1 {
 		t.Fatalf("response = %d %s, queue = %#v", response.StatusCode, response.Body, queue.input)
@@ -1239,21 +919,17 @@ func TestFeedCountsRejectsInvalidFetchWindow(t *testing.T) {
 }
 
 func TestFeedCountsAppliesFetchWindow(t *testing.T) {
-	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value == "R#" {
-			return &dynamodb.QueryOutput{}, nil
-		}
-		var items []map[string]types.AttributeValue
-		for i, fetched := range []string{"2026-09-06T12:00:00Z", "2026-09-07T12:00:00Z", "2026-09-08T00:00:00Z"} {
-			item, err := attributevalue.MarshalMap(domain.Item{ItemID: strconv.Itoa(i), FeedID: "feed", FetchedTS: fetched})
-			if err != nil {
-				t.Fatal(err)
+	db := &fakeAPIStore{feedItemCounts: func(_ context.Context, _ string, window domain.FetchWindow, _ map[string]bool) (map[string]domain.FeedItemCount, error) {
+		count := 3
+		if !window.From.IsZero() {
+			if domain.Timestamp(window.From) != "2026-09-07T00:00:00.000000000Z" || domain.Timestamp(window.Before) != "2026-09-08T00:00:00.000000000Z" {
+				t.Fatal("incorrect window")
 			}
-			items = append(items, item)
+			count = 1
 		}
-		return &dynamodb.QueryOutput{Items: items}, nil
+		return map[string]domain.FeedItemCount{"feed": {All: count, Unread: count}}, nil
 	}}
-	s := &server{store: store.New(db, nil, "table", "", ""), feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
+	s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
 	for _, test := range []struct {
 		query map[string]string
 		want  int
@@ -1278,21 +954,10 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 }
 
 func TestFeedCountsOmitsDeletedFeeds(t *testing.T) {
-	db := &apiDynamo{query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-		if input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value == "R#" {
-			return &dynamodb.QueryOutput{}, nil
-		}
-		var rows []map[string]types.AttributeValue
-		for _, id := range []string{"current", "deleted"} {
-			row, err := attributevalue.MarshalMap(domain.Item{ItemID: id, FeedID: id})
-			if err != nil {
-				t.Fatal(err)
-			}
-			rows = append(rows, row)
-		}
-		return &dynamodb.QueryOutput{Items: rows}, nil
+	db := &fakeAPIStore{feedItemCounts: func(context.Context, string, domain.FetchWindow, map[string]bool) (map[string]domain.FeedItemCount, error) {
+		return map[string]domain.FeedItemCount{"current": {All: 1}, "deleted": {All: 1}}, nil
 	}}
-	s := &server{store: store.New(db, nil, "table", "", ""), feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "current"}}}}}
+	s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "current"}}}}}
 	got := s.getFeedItemCounts(context.Background(), "user", nil)
 	var body struct {
 		Feeds map[string]domain.FeedItemCount `json:"feeds"`
@@ -1307,19 +972,19 @@ func TestFeedCountsOmitsDeletedFeeds(t *testing.T) {
 
 func TestPatchMeTrimsAndBoundsInterestPosition(t *testing.T) {
 	for _, length := range []int{256, 257} {
-		var updated *dynamodb.UpdateItemInput
-		db := &apiDynamo{update: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-			updated = input
-			return &dynamodb.UpdateItemOutput{}, nil
+		var updated *string
+		db := &fakeAPIStore{updateUser: func(_ context.Context, _ string, _ *domain.Order, position, _, _ *string) error {
+			updated = position
+			return nil
 		}}
 		value := strings.Repeat("界", length)
 		body, _ := json.Marshal(map[string]string{"interest_position": "  " + value + "  "})
-		got := (&server{store: store.New(db, nil, "table", "", "")}).patchMe(context.Background(), "user", string(body))
+		got := (&server{store: db}).patchMe(context.Background(), "user", string(body))
 		if length == 257 {
 			if got.StatusCode != http.StatusBadRequest || !strings.Contains(got.Body, "interest_position must be at most 256 characters") || updated != nil {
 				t.Fatalf("response = %#v", got)
 			}
-		} else if got.StatusCode != http.StatusOK || updated == nil || updated.ExpressionAttributeValues[":position"].(*types.AttributeValueMemberS).Value != value {
+		} else if got.StatusCode != http.StatusOK || updated == nil || *updated != value {
 			t.Fatalf("response = %#v, update = %#v", got, updated)
 		}
 	}
@@ -1362,48 +1027,47 @@ func TestGetSearchScope(t *testing.T) {
 		{name: "invalid tag", tag: strings.Repeat("x", 33), status: http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			marshal := func(value any) map[string]types.AttributeValue {
-				row, err := attributevalue.MarshalMap(value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				return row
-			}
-			rows := map[string]map[string]types.AttributeValue{}
+			rows := []domain.Item{}
 			for _, feed := range []string{"other", "selected", "untagged"} {
-				for _, prefix := range []string{"I#", "A#"} {
-					kind := "live"
-					ttl := time.Now().Add(time.Hour).Unix()
-					hearted := ""
-					if prefix == "A#" {
-						kind, ttl, hearted = "archive", 0, "2026-09-01T00:00:00Z"
+				for _, kind := range []string{"live", "archive"} {
+					row := domain.Item{ItemID: feed + "-" + kind, FeedID: feed, TTL: time.Now().Add(time.Hour).Unix(), SK: "I#" + feed}
+					if kind == "archive" {
+						row.TTL = 0
+						row.SK = "A#" + feed
+						row.Archived = true
 					}
-					id := feed + "-" + kind
-					rows[domain.ItemIdentitySK(id)] = marshal(domain.ItemIdentity{SK: domain.ItemIdentitySK(id), ItemSK: prefix + id, TTL: ttl})
-					rows[prefix+id] = marshal(domain.Item{SK: prefix + id, ItemID: id, FeedID: feed, TTL: ttl, HeartedTS: hearted})
+					rows = append(rows, row)
 				}
 			}
-			db := &apiDynamo{
-				query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-					prefix := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS).Value
-					result := &dynamodb.QueryOutput{}
-					for _, feed := range []string{"other", "selected", "untagged"} {
-						result.Items = append(result.Items, marshal(domain.Item{SK: prefix + feed, ItemID: "keyword-" + prefix + feed, FeedID: feed}))
+			db := &fakeAPIStore{
+				searchItems: func(_ context.Context, _ string, prefix string, _ []string, limit int, allowed map[string]bool) ([]domain.Item, error) {
+					result := []domain.Item{}
+					for _, row := range rows {
+						if !strings.HasPrefix(row.SK, prefix) || (allowed != nil && !allowed[row.FeedID]) {
+							continue
+						}
+						row.ItemID = "keyword-" + row.ItemID
+						result = append(result, row)
+						if len(result) == limit {
+							break
+						}
 					}
 					return result, nil
 				},
-				batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-					result := &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{}}
-					for _, key := range input.RequestItems["table"].Keys {
-						if row := rows[key["SK"].(*types.AttributeValueMemberS).Value]; row != nil {
-							result.Responses["table"] = append(result.Responses["table"], row)
+				resolve: func(_ context.Context, _ string, ids []string, _ map[string]bool) ([]domain.Item, error) {
+					result := []domain.Item{}
+					for _, id := range ids {
+						for _, row := range rows {
+							if row.ItemID == id {
+								result = append(result, row)
+							}
 						}
 					}
 					return result, nil
 				},
 			}
 			vectors := &searchVectors{}
-			s := &server{store: store.New(db, nil, "table", "", ""), embedder: searchEmbedder{}, vectors: vectors,
+			s := &server{store: db, embedder: searchEmbedder{}, vectors: vectors,
 				feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
 					{FeedID: "selected", Tags: []string{"tech"}},
 					{FeedID: "other", Tags: []string{"other"}},
@@ -1460,28 +1124,18 @@ func TestBuryRejectsKeptItems(t *testing.T) {
 	for _, live := range []bool{true, false} {
 		t.Run(fmt.Sprintf("live=%t", live), func(t *testing.T) {
 			item := domain.Item{PK: "U#user", SK: "A#archive", ItemID: "item", Vector: []byte{1}}
-			identity := domain.ItemIdentity{PK: item.PK, SK: domain.ItemIdentitySK("item"), ItemSK: item.SK}
 			if live {
-				item.SK = domain.ItemSK(time.Now(), "item")
+				item.SK = "I#live"
 				item.ArchiveSK = "A#archive"
 				item.TTL = time.Now().Add(time.Hour).Unix()
-				identity.ItemSK, identity.TTL = item.SK, item.TTL
 			}
-			db := &apiDynamo{
-				getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-					var value any = item
-					if input.Key["SK"].(*types.AttributeValueMemberS).Value == identity.SK {
-						value = identity
-					}
-					row, err := attributevalue.MarshalMap(value)
-					return &dynamodb.GetItemOutput{Item: row}, err
-				},
-				putItem: func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
-					t.Fatal("bury must not write a signal for a kept item")
-					return nil, nil
-				},
-			}
-			s := &server{store: store.New(db, nil, "table", "", "")}
+			db := &fakeAPIStore{item: func(context.Context, string, string) (domain.Item, error) {
+				if !live {
+					return domain.Item{}, store.ErrNotFound
+				}
+				return item, nil
+			}, archiveItem: func(context.Context, string, string) (domain.Item, error) { return item, nil }, setSignal: func(context.Context, string, domain.Item, int) error { t.Fatal("bury must not write"); return nil }}
+			s := &server{store: db}
 			got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/signal", `{"value":-1}`)
 			if got.StatusCode != http.StatusConflict {
 				t.Fatalf("got %d: %s", got.StatusCode, got.Body)

@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  finishAndClearGrid,
   includeReadForGrid,
   mergeNewItems,
   nextPollInterval,
   pollCandidates,
   prependGridIDs,
-  unreadIDsAfter,
-  updateRead,
   visibleItemIDs,
-} from "./item-list";
+} from "./item-session";
 import { readVisualState } from "./layout/read-state";
+import { finishAndClearGrid, unreadIDsAfter, updateRead } from "./read-state";
 import type { Item } from "./types";
 
 const make = (itemID: string): Item => ({

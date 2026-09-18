@@ -13,6 +13,7 @@ import { useClock } from "../clock";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
 import { hoursLeft } from "../expiry";
+import { feedbackEligibility } from "../feedback";
 import { decodeImageWithin } from "../image-decode";
 import { createMediaQuery } from "../media-query";
 import { readerDeadlineLine } from "../reader-expiry";
@@ -60,6 +61,7 @@ import {
 } from "./video-description";
 
 interface ReaderProps {
+  loadBody(url: string, signal?: AbortSignal): Promise<string>;
   item: Item;
   active: boolean;
   archive: boolean;
@@ -86,10 +88,10 @@ interface ReaderProps {
 export function Reader(props: ReaderProps) {
   const now = useClock();
   const showLifetime = () =>
-    !props.archive &&
-    !props.item.archived &&
-    !props.hearted &&
-    !props.item.hearted;
+    feedbackEligibility(
+      { ...props.item, hearted: props.hearted || props.item.hearted },
+      props.archive,
+    ).lifetime;
   let article!: HTMLDivElement;
   let cancelPageScroll = () => {};
   const stopPageScroll = () => cancelPageScroll();
@@ -226,11 +228,8 @@ export function Reader(props: ReaderProps) {
     if (!url || !source.hasBody) return;
     const controller = new AbortController();
     setLoading(true);
-    fetch(url, { credentials: "same-origin", signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error("body unavailable");
-        return response.text();
-      })
+    props
+      .loadBody(url, controller.signal)
       .then(async (markup) => {
         if (controller.signal.aborted) return;
         const prepared = markup.trim()

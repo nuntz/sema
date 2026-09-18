@@ -4,14 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/nuntz/sema/internal/domain"
-	"github.com/nuntz/sema/internal/store"
 )
 
 func TestArchiveFiltersAcrossPages(t *testing.T) {
@@ -29,30 +26,24 @@ func TestArchiveFiltersAcrossPages(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			source := []string{"muted", "plain", "tech", "deleted"}
 			calls := 0
-			db := &apiDynamo{batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-				return &dynamodb.BatchGetItemOutput{}, nil
-			}, query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			db := &fakeAPIStore{archives: func(_ context.Context, _ string, cursor string, _ int) ([]domain.Item, string, error) {
 				index := 0
-				if key, ok := input.ExclusiveStartKey["SK"].(*types.AttributeValueMemberS); ok {
-					for i, id := range source {
-						if key.Value == "A#"+id {
-							index = i + 1
-						}
+				if cursor != "" {
+					var err error
+					index, err = strconv.Atoi(cursor)
+					if err != nil {
+						t.Fatal(err)
 					}
 				}
 				calls++
 				id := source[index]
-				row, err := attributevalue.MarshalMap(domain.Item{PK: domain.UserPK("user"), SK: "A#" + id, ItemID: id, FeedID: id})
-				if err != nil {
-					t.Fatal(err)
-				}
-				out := &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}}
+				next := ""
 				if index+1 < len(source) {
-					out.LastEvaluatedKey = map[string]types.AttributeValue{"PK": row["PK"], "SK": row["SK"]}
+					next = strconv.Itoa(index + 1)
 				}
-				return out, nil
+				return []domain.Item{{SK: "A#" + id, ItemID: id, FeedID: id, Archived: true, Hearted: true}}, next, nil
 			}}
-			s := &server{store: store.New(db, nil, "table", "", ""), feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+			s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
 				{FeedID: "muted", Muted: true, Tags: []string{"tech"}}, {FeedID: "plain"}, {FeedID: "tech", Tags: []string{"tech"}},
 			}}}}
 			tc.query["limit"] = "1"

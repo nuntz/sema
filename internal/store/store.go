@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/feedback"
 	"github.com/nuntz/sema/internal/score"
 )
 
@@ -47,14 +48,14 @@ type s3API interface {
 }
 
 type Store struct {
-	// ReadMarkers optionally supplies an immutable read-marker snapshot.
-	ReadMarkers func(context.Context, string) (map[string]bool, error)
-	db          dynamoAPI
-	s3          s3API
-	table       string
-	bucket      string
-	contentURL  string
-	sleep       func(context.Context, time.Duration) error
+	// Temporary, opt-in bridge while backfill-item-identities is running.
+	legacyReadFallback bool
+	db                 dynamoAPI
+	s3                 s3API
+	table              string
+	bucket             string
+	contentURL         string
+	sleep              func(context.Context, time.Duration) error
 }
 
 const (
@@ -595,15 +596,15 @@ type cursor struct {
 }
 
 func (s *Store) Items(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead bool) ([]domain.Item, string, error) {
-	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, false, nil, nil, domain.FetchWindow{})
+	items, next, _, err := s.ItemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, false, nil, nil, domain.FetchWindow{}, nil)
 	return items, next, err
 }
 
 // FeedItemCounts returns per-feed totals for the retained live-item window.
 // It deliberately does not use Feed.ItemCount, which is a lifetime ingest
 // counter and therefore includes expired and read items.
-func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow) (map[string]domain.FeedItemCount, error) {
-	readItemIDs, err := s.LoadReadMarkers(ctx, userID)
+func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error) {
+	readItemIDs, err := s.readSnapshot(ctx, userID, snapshot)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +660,7 @@ func (s *Store) FeedItemCounts(ctx context.Context, userID string, window domain
 // ItemsForFeeds fills a page after applying read-state and feed membership.
 // A nil allowedFeedIDs map disables feed filtering; an empty map returns no
 // items while still walking the underlying pages until the end or page budget.
-func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow) ([]domain.Item, string, *domain.Item, error) {
+func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 	if limit < 1 || limit > 100 {
 		limit = 100
 	}
@@ -693,7 +694,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	var readItemIDs map[string]bool
 	pageBudget := itemsForFeedsPageBudget
 	if !includeRead {
-		readItemIDs, err = s.LoadReadMarkers(ctx, userID)
+		readItemIDs, err = s.readSnapshot(ctx, userID, snapshot)
 		if err != nil {
 			return nil, "", nil, err
 		}
@@ -716,7 +717,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 			return nil, "", nil, err
 		}
 		if includeRead {
-			if err := s.ResolveRead(ctx, userID, page); err != nil {
+			if err := s.ResolveRead(ctx, userID, page, snapshot); err != nil {
 				return nil, "", nil, err
 			}
 		} else {
@@ -768,11 +769,8 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 	return items, next, newestRead, err
 }
 
-// LoadReadMarkers uses the injected source when present, otherwise querying DynamoDB.
+// LoadReadMarkers loads the current live Read markers.
 func (s *Store) LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
-	if s.ReadMarkers != nil {
-		return s.ReadMarkers(ctx, userID)
-	}
 	return s.readItemIDs(ctx, userID)
 }
 
@@ -913,59 +911,6 @@ func (s *Store) AddClusterMember(ctx context.Context, userID, clusterID, itemID 
 		ConditionExpression:       aws.String("attribute_exists(PK)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":member": values[":member"], ":updated": values[":updated"]},
 	})
-	return err
-}
-
-// PruneClusterMembers removes confirmed absent IDs only if membership has not
-// changed since rendering. Strong confirmation prevents eventual read lag from
-// pruning a newly ingested item. Callers should bound this best-effort work.
-func (s *Store) PruneClusterMembers(ctx context.Context, userID string, cluster domain.Cluster, missing []string) error {
-	if userID == "" || cluster.StoryID == "" || len(cluster.MemberIDs) == 0 {
-		return errors.New("cluster identity and observed members are required")
-	}
-	observed := make(map[string]bool, len(cluster.MemberIDs))
-	for _, id := range cluster.MemberIDs {
-		observed[id] = true
-	}
-	ids := make([]string, 0, len(missing))
-	for _, id := range missing {
-		if observed[id] {
-			ids = append(ids, id)
-			delete(observed, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-	resolved, err := s.ResolveItemIDsConsistent(ctx, userID, ids)
-	if err != nil {
-		return err
-	}
-	for _, item := range resolved {
-		observed[item.ItemID] = true
-	}
-	dead := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if !observed[id] {
-			dead = append(dead, id)
-		}
-	}
-	if len(dead) == 0 {
-		return nil
-	}
-	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ClusterSK(cluster.StoryID)),
-		UpdateExpression:    aws.String("DELETE member_ids :dead"),
-		ConditionExpression: aws.String("attribute_exists(PK) AND member_ids = :observed"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":dead":     &types.AttributeValueMemberSS{Value: dead},
-			":observed": &types.AttributeValueMemberSS{Value: cluster.MemberIDs},
-		},
-	})
-	var conditional *types.ConditionalCheckFailedException
-	if errors.As(err, &conditional) {
-		return nil // Concurrent membership changes win; a later render can retry.
-	}
 	return err
 }
 
@@ -1150,7 +1095,7 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 		}
 	}
 	if prefix == "I#" {
-		if err := s.ResolveRead(ctx, userID, items); err != nil {
+		if err := s.ResolveRead(ctx, userID, items, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -1162,16 +1107,16 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 // copy resolves through its permanent identity or a legacy archive_sk pointer.
 // Missing identities and deleted pointers are absent; this path never scans
 // live or archive partitions to recover legacy rows.
-func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
-	return s.resolveItemIDs(ctx, userID, ids, false)
+func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error) {
+	return s.resolveItemIDs(ctx, userID, ids, false, snapshot)
 }
 
 // ResolveItemIDsConsistent preserves strong reads for ingestion candidate selection.
 func (s *Store) ResolveItemIDsConsistent(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
-	return s.resolveItemIDs(ctx, userID, ids, true)
+	return s.resolveItemIDs(ctx, userID, ids, true, nil)
 }
 
-func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string, consistent bool) ([]domain.Item, error) {
+func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string, consistent bool, snapshot map[string]bool) ([]domain.Item, error) {
 	if len(ids) == 0 {
 		return []domain.Item{}, nil
 	}
@@ -1184,7 +1129,7 @@ func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string,
 		requested[id] = true
 		orderedIDs = append(orderedIDs, id)
 	}
-	live, archiveKeys, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs, consistent)
+	live, archiveKeys, err := s.resolveLiveItemIDs(ctx, userID, orderedIDs, consistent, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,7 +1164,7 @@ func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string,
 			windowIndexes = append(windowIndexes, index)
 		}
 	}
-	if err := s.ResolveRead(ctx, userID, window); err != nil {
+	if err := s.ResolveRead(ctx, userID, window, snapshot); err != nil {
 		return nil, err
 	}
 	for index, resultIndex := range windowIndexes {
@@ -1228,7 +1173,7 @@ func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string,
 	return result, nil
 }
 
-func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string, consistent bool) (map[string]domain.Item, []map[string]types.AttributeValue, error) {
+func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []string, consistent, legacy bool) (map[string]domain.Item, []map[string]types.AttributeValue, error) {
 	pk := domain.UserPK(userID)
 	identityKeys := make([]map[string]types.AttributeValue, 0, len(ids))
 	for _, id := range ids {
@@ -1279,7 +1224,7 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 		}
 		identity, ok := identities[item.ItemID]
 		if ok && identity.ItemSK == item.SK {
-			if identity.TTL > now && item.TTL > now {
+			if identity.TTL > now && domain.Live(item, now) {
 				live[item.ItemID] = item
 			} else if strings.HasPrefix(item.ArchiveSK, "A#") {
 				archivePointers[item.ItemID] = item.ArchiveSK
@@ -1292,7 +1237,56 @@ func (s *Store) resolveLiveItemIDs(ctx context.Context, userID string, ids []str
 			archiveKeys = append(archiveKeys, key(pk, archiveSK))
 		}
 	}
+
+	if legacy {
+		missing := make(map[string]bool)
+		for _, id := range ids {
+			if _, ok := identities[id]; !ok {
+				missing[id] = true
+			}
+		}
+		if err := s.resolveLegacyReadItems(ctx, userID, missing, live, now); err != nil {
+			return nil, nil, err
+		}
+	}
 	return live, archiveKeys, nil
+}
+
+// Legacy Items can still appear in the grid before their identity backfill.
+// Read writes use this only when LEGACY_READ_FALLBACK is explicitly enabled.
+// Absent identities also include TTL-deleted Items, so this must stay off after
+// the identity backfill. Existing terminal/Archive identities remain authoritative.
+// Missing/expired IDs are no-ops.
+func (s *Store) resolveLegacyReadItems(ctx context.Context, userID string, missing map[string]bool, live map[string]domain.Item, now int64) error {
+	if len(missing) == 0 {
+		return nil
+	}
+	input := &dynamodb.QueryInput{
+		TableName: aws.String(s.table), ConsistentRead: aws.Bool(true),
+		KeyConditionExpression:    aws.String("PK = :pk AND begins_with(SK, :prefix)"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "I#"}},
+		ProjectionExpression:      aws.String("SK, item_id, #ttl"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+	}
+	for {
+		page, err := s.db.Query(ctx, input)
+		if err != nil {
+			return err
+		}
+		for _, row := range page.Items {
+			var item domain.Item
+			if err := attributevalue.UnmarshalMap(row, &item); err != nil {
+				return err
+			}
+			if missing[item.ItemID] && domain.Live(item, now) {
+				live[item.ItemID] = item
+				delete(missing, item.ItemID)
+			}
+		}
+		if len(missing) == 0 || len(page.LastEvaluatedKey) == 0 {
+			return nil
+		}
+		input.ExclusiveStartKey = page.LastEvaluatedKey
+	}
 }
 
 func (s *Store) batchGetRows(ctx context.Context, keys []map[string]types.AttributeValue) ([]map[string]types.AttributeValue, error) {
@@ -1554,7 +1548,7 @@ func (s *Store) item(ctx context.Context, userID, itemID string) (domain.Item, e
 	if err := attributevalue.UnmarshalMap(response.Item, &item); err != nil {
 		return domain.Item{}, err
 	}
-	if item.ItemID != itemID || item.TTL <= now {
+	if item.ItemID != itemID || !domain.Live(item, now) {
 		return domain.Item{}, ErrNotFound
 	}
 	return s.loadItemVector(ctx, item, now)
@@ -1862,11 +1856,13 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	if err != nil {
 		return "", 0, err
 	}
-	heartSignal, err := attributevalue.MarshalMap(domain.Signal{
-		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
-		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
+	plan, _ := feedback.Apply(feedback.State{}, feedback.Keep, 0)
+	signal := domain.Signal{
+		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: plan.Value,
+		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: plan.Source, ModelVersion: item.ModelVersion,
 		ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
-	})
+	}
+	heartSignal, err := attributevalue.MarshalMap(signal)
 	if err != nil {
 		return "", 0, err
 	}
@@ -1919,10 +1915,11 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 			return "", 0, decodeErr
 		}
 		retry := append([]types.TransactWriteItem{}, baseWrites...)
-		if old.Value < 0 {
+		plan, _ := feedback.Apply(feedback.State{Value: old.Value, Source: old.Source}, feedback.Keep, 0)
+		if !plan.Preserve {
 			retry = append(retry, types.TransactWriteItem{Put: &types.Put{
 				TableName: aws.String(s.table), Item: heartSignal,
-				ConditionExpression:       aws.String("#value < :zero"),
+				ConditionExpression:       aws.String("#value <= :zero"),
 				ExpressionAttributeNames:  map[string]string{"#value": "value"},
 				ExpressionAttributeValues: map[string]types.AttributeValue{":zero": &types.AttributeValueMemberN{Value: "0"}},
 			}})
@@ -1931,13 +1928,13 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 			// removal must retry with the appropriate signal and count update.
 			retry = append(retry, types.TransactWriteItem{ConditionCheck: &types.ConditionCheck{
 				TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
-				ConditionExpression:       aws.String("#value >= :zero"),
+				ConditionExpression:       aws.String("#value > :zero"),
 				ExpressionAttributeNames:  map[string]string{"#value": "value"},
 				ExpressionAttributeValues: map[string]types.AttributeValue{":zero": &types.AttributeValueMemberN{Value: "0"}},
 			}})
 		}
 		err = s.transact(ctx, retry)
-		if err == nil && old.Value < 0 {
+		if err == nil && !plan.Preserve {
 			oldSignal = &old
 			signalChanged = true
 		}
@@ -1953,11 +1950,6 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 		return "", 0, err
 	}
 	if signalChanged {
-		signal := domain.Signal{
-			PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: 1,
-			Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(now), Source: "heart", ModelVersion: item.ModelVersion,
-			ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
-		}
 		if modelErr := s.applyExplicitModelUpdate(ctx, userID, oldSignal, &signal, item.ModelVersion); modelErr != nil {
 			slog.ErrorContext(ctx, "increment heart ranking model", "user", userID, "item_id", itemID, "error", modelErr)
 		}
@@ -2043,6 +2035,7 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(itemID)),
 		ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
+	// Unkeep always clears feedback, including an explicit Boost made before Keep.
 	signalDeleted := len(signalResult.Item) > 0
 	if signalDeleted {
 		values := map[string]types.AttributeValue{}
@@ -2432,39 +2425,33 @@ func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []strin
 }
 
 func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
-	if value == -1 && (item.ArchiveSK != "" || item.Archived) {
-		return errors.New("kept items cannot be buried")
+	plan, err := feedback.Apply(feedback.State{Kept: feedback.Kept(item)}, feedback.Signal, value)
+	if err != nil {
+		return err
 	}
-	heartSource := false
-	if value == 0 {
-		if item.ArchiveSK != "" {
-			value = 1
-			heartSource = true
-		} else {
-			response, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-				TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID)), ReturnValues: types.ReturnValueAllOld,
-			})
-			if err != nil || len(response.Attributes) == 0 {
-				return err
-			}
-			var old domain.Signal
-			if err := attributevalue.UnmarshalMap(response.Attributes, &old); err != nil {
-				return err
-			}
-			if err := s.addSignalCount(ctx, userID, -1); err != nil {
-				return err
-			}
-			return s.applyExplicitModelUpdate(ctx, userID, &old, nil, item.ModelVersion)
+	value = plan.Value
+	if plan.DeletesSignal() {
+		response, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID)), ReturnValues: types.ReturnValueAllOld,
+		})
+		if err != nil || len(response.Attributes) == 0 {
+			return err
 		}
+		var old domain.Signal
+		if err := attributevalue.UnmarshalMap(response.Attributes, &old); err != nil {
+			return err
+		}
+		if err := s.addSignalCount(ctx, userID, -1); err != nil {
+			return err
+		}
+		return s.applyExplicitModelUpdate(ctx, userID, &old, nil, item.ModelVersion)
 	}
 	signal := domain.Signal{
 		PK: domain.UserPK(userID), SK: domain.SignalSK(item.ItemID), ItemID: item.ItemID, Value: value,
 		Vector: item.Vector, Title: item.Title, FeedID: item.FeedID, CreatedAt: domain.Timestamp(time.Now()), ModelVersion: item.ModelVersion,
 		ImageVector: item.ImageVector, ImageModelVersion: item.ImageModelVersion,
 	}
-	if heartSource {
-		signal.Source = "heart"
-	}
+	signal.Source = plan.Source
 	encoded, err := attributevalue.MarshalMap(signal)
 	if err != nil {
 		return err
@@ -2592,12 +2579,12 @@ func (s *Store) addSignalCount(ctx context.Context, userID string, delta int) er
 	return err
 }
 
-func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.Item) error {
+func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error {
 	if len(items) == 0 {
 		return nil
 	}
-	if s.ReadMarkers != nil {
-		read, err := s.LoadReadMarkers(ctx, userID)
+	if snapshot != nil {
+		read, err := s.readSnapshot(ctx, userID, snapshot)
 		if err != nil {
 			return err
 		}
@@ -2645,11 +2632,33 @@ func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read b
 	if len(ids) == 0 {
 		return nil
 	}
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			unique = append(unique, id)
+		}
+	}
+	ids = unique
 	now := time.Now().UTC()
+	// Resolve only live rows: Read lapses with the Item, including when kept.
+	live := map[string]domain.Item{}
+	if read {
+		var err error
+		live, _, err = s.resolveLiveItemIDs(ctx, userID, ids, true, s.legacyReadFallback)
+		if err != nil {
+			return err
+		}
+	}
 	requests := make([]types.WriteRequest, 0, len(ids))
 	for _, id := range ids {
 		if read {
-			row, err := attributevalue.MarshalMap(domain.Read{PK: domain.UserPK(userID), SK: domain.ReadSK(id), ReadAt: domain.Timestamp(now), TTL: now.Add(domain.Retention).Unix()})
+			item, ok := live[id]
+			if !ok {
+				continue
+			}
+			row, err := attributevalue.MarshalMap(domain.Read{PK: domain.UserPK(userID), SK: domain.ReadSK(id), ReadAt: domain.Timestamp(now), TTL: item.TTL})
 			if err != nil {
 				return err
 			}
@@ -2783,3 +2792,11 @@ var (
 	ErrNotFound      = errors.New("not found")
 	ErrInvalidCursor = errors.New("invalid cursor")
 )
+
+// A nil snapshot means load from storage; an empty non-nil map is authoritative.
+func (s *Store) readSnapshot(ctx context.Context, userID string, snapshot map[string]bool) (map[string]bool, error) {
+	if snapshot != nil {
+		return snapshot, nil
+	}
+	return s.LoadReadMarkers(ctx, userID)
+}

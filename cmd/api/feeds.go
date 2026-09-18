@@ -16,6 +16,7 @@ import (
 	"github.com/nuntz/sema/internal/connector/rss"
 	"github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/feedstatus"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
 )
@@ -332,7 +333,11 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		feed.FetchIntervalH = *input.FetchInterval
 	}
 	if input.Muted != nil {
-		feed.Muted = *input.Muted
+		if *input.Muted {
+			feed = feedstatus.Mute(feed)
+		} else if feed.Muted {
+			feed = feedstatus.Unmute(feed, time.Now().UTC())
+		}
 	}
 	if input.AlwaysGenerate != nil {
 		feed.AlwaysGenerate = *input.AlwaysGenerate
@@ -345,7 +350,7 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 	}
 	unmuted := wasMuted && !feed.Muted
 	queueNow := unmuted || (sortChanged && !feed.Muted)
-	if queueNow {
+	if sortChanged && !feed.Muted && !unmuted {
 		feed.NextFetchAt = domain.Timestamp(time.Now().UTC())
 		feed.LastStatus = "queued"
 	}
@@ -358,7 +363,7 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		}
 	}
 	s.invalidateFeeds(userID)
-	feed.Status = feedStatus(feed)
+	feed.Status = feedstatus.Status(feed)
 	return response(http.StatusOK, publicFeed(s.store, feed))
 }
 
@@ -376,9 +381,7 @@ func (s *server) retryFeed(ctx context.Context, userID, feedID string) events.AP
 	if feed.Muted {
 		return badRequest(errors.New("unmute the feed before retrying"))
 	}
-	feed.ErrorCount = 0
-	feed.LastStatus = "queued"
-	feed.NextFetchAt = domain.Timestamp(time.Now().UTC())
+	feed = feedstatus.Retry(feed, time.Now().UTC())
 	if err := s.store.PutFeed(ctx, feed); err != nil {
 		return s.failure("reset feed", err)
 	}
@@ -386,7 +389,7 @@ func (s *server) retryFeed(ctx context.Context, userID, feedID string) events.AP
 		return s.failure("enqueue retry", err)
 	}
 	s.invalidateFeeds(userID)
-	feed.Status = feedStatus(feed)
+	feed.Status = feedstatus.Status(feed)
 	return response(http.StatusAccepted, publicFeed(s.store, feed))
 }
 
@@ -598,20 +601,7 @@ func hasTag(tags []string, wanted string) bool {
 	return false
 }
 
-func feedStatus(feed domain.Feed) string {
-	if feed.Muted {
-		return "muted"
-	}
-	if feed.ErrorCount >= 3 {
-		return "broken"
-	}
-	if feed.ErrorCount > 0 {
-		return "slowed"
-	}
-	return "ok"
-}
-
-func publicFeed(repository *store.Store, feed domain.Feed) domain.Feed {
+func publicFeed(repository interface{ ContentURL(string) string }, feed domain.Feed) domain.Feed {
 	feed.Connector = domain.FeedConnector(feed)
 	feed.FaviconKey = repository.ContentURL(feed.FaviconKey)
 	if feed.FetchIntervalH == 0 {
@@ -624,7 +614,7 @@ func publicFeed(repository *store.Store, feed domain.Feed) domain.Feed {
 	if feed.LastError == "" && feed.ErrorCount > 0 {
 		feed.LastError = feed.LastStatus
 	}
-	feed.Status = feedStatus(feed)
+	feed.Status = feedstatus.Status(feed)
 	return feed
 }
 

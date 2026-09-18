@@ -207,19 +207,9 @@ func (e *Engine) consolidateStories(ctx context.Context, userID string, liveItem
 	}
 	consolidated, deleted := 0, 0
 	for _, row := range rows {
-		memberIDs := make([]string, 0, len(row.MemberIDs))
-		seen := make(map[string]bool, len(row.MemberIDs))
-		var ttl int64
-		for _, itemID := range row.MemberIDs {
-			item, ok := live[itemID]
-			if !ok || seen[itemID] {
-				continue
-			}
-			seen[itemID] = true
-			memberIDs = append(memberIDs, itemID)
-			ttl = max(ttl, item.TTL)
-		}
-		if len(memberIDs) < 2 {
+		plan := storycluster.Reconcile(row, live, now.Unix())
+		memberIDs := plan.Cluster.MemberIDs
+		if plan.Dissolve {
 			if err := e.Repository.DeleteCluster(ctx, userID, row.StoryID); err != nil {
 				return consolidated, deleted, err
 			}
@@ -234,7 +224,8 @@ func (e *Engine) consolidateStories(ctx context.Context, userID string, liveItem
 			deleted++
 			continue
 		}
-		row.MemberIDs, row.TTL, row.UpdatedAt = memberIDs, ttl, domain.Timestamp(now)
+		row = plan.Cluster
+		row.UpdatedAt = domain.Timestamp(now)
 		if err := e.Repository.PutCluster(ctx, row); err != nil {
 			return consolidated, deleted, err
 		}

@@ -1,0 +1,11 @@
+[
+ {"name":"boost", "kept":false, "current":0, "action":"signal", "requested":1, "value":1, "nextKept":false, "source":""},
+ {"name":"bury", "kept":false, "current":1, "action":"signal", "requested":-1, "value":-1, "nextKept":false, "source":""},
+ {"name":"neutral", "kept":false, "current":-1, "action":"signal", "requested":0, "value":0, "nextKept":false, "source":""},
+ {"name":"kept cannot be buried", "kept":true, "current":1, "action":"signal", "requested":-1, "rejected":true},
+ {"name":"kept stays boosted", "kept":true, "current":1, "action":"signal", "requested":0, "value":1, "nextKept":true, "source":"heart"},
+ {"name":"keep undoes bury", "kept":false, "current":-1, "action":"keep", "value":1, "nextKept":true, "source":"heart"},
+ {"name":"keep boosts neutral", "kept":false, "current":0, "action":"keep", "value":1, "nextKept":true, "source":"heart"},
+ {"name":"keep preserves boost", "kept":false, "current":1, "action":"keep", "value":1, "nextKept":true, "source":"", "preserve":true},
+ {"name":"unkeep resets feedback", "kept":true, "current":1, "action":"unkeep", "value":0, "nextKept":false, "source":""}
+]

@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -156,14 +157,14 @@ func TestDynamoAccessPatterns(t *testing.T) {
 		t.Fatalf("interest = %#v, %v", interest, err)
 	}
 	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
-		first, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, "", 1, false, false, nil, nil, domain.FetchWindow{})
+		first, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, "", 1, false, false, nil, nil, domain.FetchWindow{}, nil)
 		if err != nil || len(first) != 1 || first[0].ItemID != "new" || cursor == "" {
 			t.Fatalf("first unread page (%s) = %#v, cursor %q, %v", order, first, cursor, err)
 		}
 		if len(first[0].Vector) != 0 || first[0].SearchText != "" {
 			t.Fatalf("first unread page (%s) included excluded fields: %#v", order, first[0])
 		}
-		second, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, cursor, 1, false, false, nil, nil, domain.FetchWindow{})
+		second, cursor, _, err := repository.ItemsForFeeds(ctx, "user", order, cursor, 1, false, false, nil, nil, domain.FetchWindow{}, nil)
 		if err != nil || len(second) != 1 || second[0].ItemID != "old" || cursor != "" {
 			t.Fatalf("second unread page (%s) = %#v, cursor %q, %v", order, second, cursor, err)
 		}
@@ -174,7 +175,7 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if err := repository.SetRead(ctx, "user", []string{"old"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.ResolveRead(ctx, "user", chrono); err != nil || chrono[0].Read || !chrono[1].Read {
+	if err := repository.ResolveRead(ctx, "user", chrono, nil); err != nil || chrono[0].Read || !chrono[1].Read {
 		t.Fatalf("read state = %#v, %v", chrono, err)
 	}
 	unread, _, err := repository.Items(ctx, "user", domain.OrderChrono, "", 100, false)
@@ -317,7 +318,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if durable, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); err != nil || durable.BodyKey != ArchiveBodyKey("keeper", "kept") {
 		t.Fatalf("archive after live expiry = %#v, %v", durable, err)
 	}
-	resolved, err := repository.ResolveItemIDs(ctx, "keeper", []string{item.ItemID, item.ItemID, "missing"})
+	resolved, err := repository.ResolveItemIDs(ctx, "keeper", []string{item.ItemID, item.ItemID, "missing"}, nil)
 	if err != nil || len(resolved) != 1 || resolved[0].SK != archiveSK || !resolved[0].Archived || !resolved[0].Hearted || resolved[0].Read {
 		t.Fatalf("resolve expired live item = %#v, %v", resolved, err)
 	}
@@ -358,7 +359,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 		t.Fatalf("second heart = %q, %d, %v", secondSK, count, err)
 	}
 
-	if err := repository.SetSignal(ctx, "keeper", item, -1); err != nil {
+	if err := repository.SetSignal(ctx, "keeper", live, 1); err != nil {
 		t.Fatal(err)
 	}
 	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
@@ -368,7 +369,7 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 	if err := repository.OverwriteItem(ctx, live); err != nil {
 		t.Fatal(err)
 	}
-	assertUserCounts(t, repository, "keeper", 0, 1)
+	assertUserCounts(t, repository, "keeper", 0, 0)
 	if _, err := repository.ArchiveItem(ctx, "keeper", item.ItemID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("archive after unheart = %v", err)
 	}
@@ -380,13 +381,13 @@ func TestHeartArchiveLifecycle(t *testing.T) {
 		t.Fatalf("live pointer after unheart = %#v, %v", live, err)
 	}
 	signals, err = repository.Signals(ctx, "keeper")
-	if err != nil || len(signals) != 1 || signals[0].Value != -1 || signals[0].Source != "" {
-		t.Fatalf("explicit signal after unheart = %#v, %v", signals, err)
+	if err != nil || len(signals) != 0 {
+		t.Fatalf("unkeep must clear explicit feedback = %#v, %v", signals, err)
 	}
 	if _, count, err = repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil || count != 0 {
 		t.Fatalf("second unheart = %d, %v", count, err)
 	}
-	assertUserCounts(t, repository, "keeper", 0, 1)
+	assertUserCounts(t, repository, "keeper", 0, 0)
 }
 
 func TestHeartToleratesMissingContentAndRejectsExpiredItem(t *testing.T) {
@@ -608,5 +609,60 @@ func assertEncodesAsArray(t *testing.T, label string, value any) {
 	}
 	if string(encoded) != "[]" {
 		t.Fatalf("%s encoded as %s, want []", label, encoded)
+	}
+}
+
+func TestReadLegacyItemsAndIdentityBoundaries(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	repository.legacyReadFallback = true
+	expires := time.Now().Add(time.Hour).Unix()
+	for _, item := range []domain.Item{
+		{PK: "U#reader", SK: "I#legacy", ItemID: "legacy", TTL: expires},
+		{PK: "U#reader", SK: "I#expired", ItemID: "expired", TTL: 1},
+		{PK: "U#reader", SK: "I#deleted", ItemID: "deleted", TTL: expires},
+		{PK: "U#reader", SK: "A#archive", ItemID: "archive", TTL: 0},
+	} {
+		row, err := attributevalue.MarshalMap(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repository.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(repository.table), Item: row}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A terminal identity must not be bypassed by legacy fallback.
+	terminal, _ := attributevalue.MarshalMap(domain.ItemIdentity{PK: "U#reader", SK: domain.ItemIdentitySK("deleted"), TTL: expires})
+	if _, err := repository.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(repository.table), Item: terminal}); err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{"legacy", "legacy", "expired", "deleted", "archive", "missing"}
+	if err := repository.SetRead(ctx, "reader", ids, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		result, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(repository.table), Key: key("U#reader", domain.ReadSK(id)), ConsistentRead: aws.Bool(true)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if id != "legacy" {
+			if len(result.Item) != 0 {
+				t.Fatalf("unexpected Read for %s", id)
+			}
+			continue
+		}
+		var read domain.Read
+		if err := attributevalue.UnmarshalMap(result.Item, &read); err != nil {
+			t.Fatal(err)
+		}
+		if read.TTL != expires {
+			t.Fatalf("legacy Read TTL=%d want %d", read.TTL, expires)
+		}
+	}
+	if err := repository.SetRead(ctx, "reader", ids, false); err != nil {
+		t.Fatal(err)
+	}
+	markers, err := repository.LoadReadMarkers(ctx, "reader")
+	if err != nil || len(markers) != 0 {
+		t.Fatalf("markers after Unread = %v, %v", markers, err)
 	}
 }

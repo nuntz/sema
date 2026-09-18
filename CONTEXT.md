@@ -104,6 +104,10 @@ _Avoid_: Feed (in this sense), outlet, publisher
 
 ### Feedback
 
+**Feedback**:
+The user's current Keep, Boost, or Bury choice for an Item. Keeping always implies a Boost; Unkeep returns the Item to neutral. Story feedback acts on its Lead only.
+_Avoid_: Rating, vote, reaction
+
 **Signal**:
 Explicit feedback the user gives on an Item: a Boost, a Bury, or a Keep. A Signal on an Item always outweighs any Behaviour on the same Item.
 _Avoid_: Explicit feedback, vote, rating

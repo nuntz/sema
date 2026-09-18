@@ -151,60 +151,9 @@ func TestRateLimitIsPersistedWithoutExponentialBackoff(t *testing.T) {
 	feed := store.putFeeds[0]
 	last, lastErr := time.Parse(time.RFC3339Nano, feed.LastFetchAt)
 	next, nextErr := time.Parse(time.RFC3339Nano, feed.NextFetchAt)
-	wantDelay := 2*time.Minute + domain.StableOffset(feedScheduleKey(feed), rateLimitJitterWindow)
+	wantDelay := 2*time.Minute + domain.StableOffset(feed.PK+"#"+feed.FeedID, 5*time.Minute)
 	if lastErr != nil || nextErr != nil || next.Sub(last) != wantDelay || feed.ErrorCount != 4 || feed.LastStatus != "feed returned HTTP 429" {
 		t.Fatalf("rate-limited feed = %#v, last error %v, next error %v, want delay %v", feed, lastErr, nextErr, wantDelay)
-	}
-}
-
-func TestRateLimitHonorsRetryAfterWithPositiveJitter(t *testing.T) {
-	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
-	feed := domain.Feed{PK: "U#user", FeedID: "feed", ErrorCount: 1}
-	headers := make(http.Header)
-	headers.Set("Retry-After", "120")
-
-	next, rateLimited := nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusTooManyRequests, Header: headers})
-	want := started.Add(2*time.Minute + domain.StableOffset(feedScheduleKey(feed), rateLimitJitterWindow))
-	if !rateLimited || next != want || next.Before(started.Add(2*time.Minute)) {
-		t.Fatalf("next = %s, rate limited = %v, want %s", next, rateLimited, want)
-	}
-}
-
-func TestRateLimitAcceptsHTTPDateAndFallsBackWhenInvalid(t *testing.T) {
-	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
-	feed := domain.Feed{PK: "U#user", FeedID: "feed", ErrorCount: 4}
-	jitter := domain.StableOffset(feedScheduleKey(feed), rateLimitJitterWindow)
-
-	headers := make(http.Header)
-	headers.Set("Retry-After", started.Add(7*time.Minute).Format(http.TimeFormat))
-	next, rateLimited := nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusTooManyRequests, Header: headers})
-	if !rateLimited || next != started.Add(7*time.Minute).Add(jitter) {
-		t.Fatalf("HTTP-date next = %s, rate limited = %v", next, rateLimited)
-	}
-
-	headers.Set("Retry-After", "not-a-date")
-	next, rateLimited = nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusTooManyRequests, Header: headers})
-	if !rateLimited || next != started.Add(defaultRateLimitDelay).Add(jitter) {
-		t.Fatalf("fallback next = %s, rate limited = %v", next, rateLimited)
-	}
-}
-
-func TestNonRateLimitKeepsExponentialBackoff(t *testing.T) {
-	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
-	feed := domain.Feed{ErrorCount: 3}
-
-	next, rateLimited := nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusServiceUnavailable})
-	if rateLimited || next != started.Add(8*time.Hour) {
-		t.Fatalf("next = %s, rate limited = %v", next, rateLimited)
-	}
-}
-
-func TestErrorBackoffCapsAtTwentyFourHours(t *testing.T) {
-	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
-	feed := domain.Feed{ErrorCount: 12, FetchIntervalH: 24}
-	next, rateLimited := nextFetchAfterError(feed, started, errors.New("offline"))
-	if rateLimited || next != started.Add(24*time.Hour) {
-		t.Fatalf("next = %s, rate limited = %v", next, rateLimited)
 	}
 }
 

@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { INITIAL_POLL_INTERVAL } from "../src/item-list";
+import { INITIAL_POLL_INTERVAL } from "../src/item-session";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
   item_id: id,

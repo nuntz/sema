@@ -21,7 +21,7 @@ import {
   relatedCoverageHeight,
   repeatsLeadHeadline,
 } from "../grid-display";
-import type { ItemWindow } from "../item-view";
+import type { GridActions, GridModel } from "../grid-model";
 import {
   gridCanvasPadding,
   justify,
@@ -40,21 +40,16 @@ import {
   previousGridPageTop,
 } from "../layout/navigation";
 import {
-  endMarkActionEnabled,
-  gridReadStateContext,
   nextScrollReassert,
-  readVisualState,
   type ScrollReassertState,
-  scrollReadCandidates,
   shouldLoadNextPage,
   shouldLoadToFillViewport,
   shouldShowEndCard,
 } from "../layout/read-state";
 import { whyText } from "../ranking-display";
+import type { ReadGeometry } from "../read-state";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
-import type { ScopeCellModel } from "../scope-cell";
-import { buryDisabled } from "../signal-feedback";
-import type { FrontPageEntry, GridScope, Item, Order, Story } from "../types";
+import type { Item, Story } from "../types";
 import { ExpiryPill } from "./ExpiryPill";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
@@ -92,58 +87,27 @@ import {
 import { useSheetDrag } from "./use-sheet-drag";
 
 interface GridProps {
-  scopeCell?: ScopeCellModel;
+  model: GridModel;
+  pendingNewCount: number;
+  layout: {
+    layoutKey: number;
+    scrollToTopKey: number;
+    scrollTarget: number;
+    initialScrollTop?: number;
+    focusedID: string;
+  };
+  reader: {
+    readerOpen: boolean;
+    readerReveal: number;
+    readerDragging: boolean;
+  };
+  actions: GridActions;
+  onPassed(geometry: ReadGeometry): void;
+  onFinishAndClear(): void;
+  onReachedEnd(): void;
   topSlot?: JSX.Element;
   onTopSlotHeight?(height: number): void;
-  scope?: GridScope;
-  scopeTitle?: string;
-  itemWindow?: ItemWindow;
-  onClearScope?(): void;
-  onShowAll?(): void;
-  onShowRead?(): void;
-  onOpenArchive?(): void;
-  onSelectView?(view: "today" | "yesterday"): void;
-  clearedCount?: number;
-  items: Item[];
-  entries: FrontPageEntry[];
-  stories?: Story[];
-  expandedStoryIDs?: ReadonlySet<string>;
-  layoutKey: number;
-  scrollToTopKey: number;
-  scrollTarget: number;
-  initialScrollTop?: number;
-  focusedID: string;
   active: boolean;
-  readerOpen: boolean;
-  readerReveal: number;
-  readerDragging: boolean;
-  hasMore: boolean;
-  archive: boolean;
-  unreadOnly: boolean;
-  order: Order;
-  linkActionID: string;
-  pendingNewCount: number;
-  onFocus(id: string): void;
-  onOpen(item: Item): void;
-  onOpenStoryLead?(story: Story): void;
-  onExternalOpen(item: Item): void;
-  onDiscussion(item: Item): void;
-  onSignal(item: Item, value: -1 | 0 | 1): void;
-  onHeart(item: Item): void;
-  onToggleRead(item: Item): void;
-  onToggleStoryRead?(story: Story): void;
-  onCopy(item: Item): void;
-  onOriginal(item: Item): void;
-  onRelated(item: Item): void;
-  onApplyFeed(item: Item): void;
-  onMarkBelow(item: Item): void;
-  onMarkStoryBelow?(storyID: string): void;
-  onExpandStory?(storyID: string): void;
-  onItemsPassed(ids: string[]): void;
-  onFinishAndClear(ids: string[]): void;
-  onLoadMore(): void;
-  onToggleOrder(): void;
-  onUndo(): void;
   onRefresh(): Promise<number>;
   onScrollPosition?(top: number): void;
 }
@@ -220,7 +184,7 @@ function GridContent(props: GridProps) {
   const [width, setWidth] = createSignal(0);
   const [viewportHeight, setViewportHeight] = createSignal(0);
   const [scrollTop, setScrollTop] = createSignal(
-    Math.max(0, props.initialScrollTop ?? 0),
+    Math.max(0, props.layout.initialScrollTop ?? 0),
   );
   const [lightbox, setLightbox] = createSignal<{
     item: Item;
@@ -243,7 +207,7 @@ function GridContent(props: GridProps) {
     imageRequest?.abort();
     const request = new AbortController();
     imageRequest = request;
-    const id = props.focusedID || item.item_id;
+    const id = props.layout.focusedID || item.item_id;
     const cell = scroller.querySelector<HTMLElement>(
       `[data-focus-id="${CSS.escape(id)}"], [data-item-id="${CSS.escape(id)}"]`,
     );
@@ -274,14 +238,12 @@ function GridContent(props: GridProps) {
     () =>
       new Map(
         [
-          ...props.items,
-          ...(props.stories ?? []).flatMap((story) => story.items),
+          ...props.model.items,
+          ...(props.model.stories ?? []).flatMap((story) => story.items),
         ].map((item) => [item.item_id, item]),
       ),
   );
-  const readContext = createMemo(() =>
-    gridReadStateContext(props.archive, props.unreadOnly),
-  );
+  const readContext = createMemo(() => props.model.readContext);
   const contentWidth = createMemo(() =>
     Math.max(0, width() - (width() < 700 ? 24 : 32)),
   );
@@ -290,7 +252,7 @@ function GridContent(props: GridProps) {
   const storyHeadlineHeights = createMemo(
     () =>
       new Map(
-        (props.stories ?? []).flatMap((story) =>
+        (props.model.stories ?? []).flatMap((story) =>
           story.items
             .slice(1)
             .map(
@@ -306,8 +268,8 @@ function GridContent(props: GridProps) {
   );
   const layoutSnapshot = createMemo(
     on(
-      () => props.layoutKey,
-      () => ({ entries: props.entries, hasMore: props.hasMore }),
+      () => props.layout.layoutKey,
+      () => ({ entries: props.model.entries, hasMore: props.model.hasMore }),
     ),
   );
   let previousLayoutRows: LayoutRow[] = [];
@@ -320,7 +282,7 @@ function GridContent(props: GridProps) {
     const { entries, hasMore } = layoutSnapshot();
     const rows = stableRows(
       justify(entries, contentWidth(), hasMore, {
-        expandedStoryIDs: props.expandedStoryIDs,
+        expandedStoryIDs: props.model.expandedStoryIDs,
         storyLeadHeights: storyLeadHeights(),
         storyHeadlineHeights: storyHeadlineHeights(),
         storyCardMinHeight: mobile() ? undefined : 310,
@@ -351,10 +313,11 @@ function GridContent(props: GridProps) {
     ),
   );
   const closedEmpty = createMemo(() =>
-    !props.archive && props.entries.length === 0
+    !props.model.archive && props.model.entries.length === 0
       ? emptyState({
-          ...props,
-          scopeTitle: props.scopeCell?.title ?? props.scopeTitle,
+          ...props.model,
+          ...props.actions,
+          scopeTitle: props.model.scopeCell?.title ?? props.model.scopeTitle,
           phone: mobile(),
         })
       : undefined,
@@ -368,26 +331,19 @@ function GridContent(props: GridProps) {
       gridImageLookahead(viewportHeight()),
     ),
   );
-  const storyList = createMemo(() => props.stories ?? []);
+  const storyList = createMemo(() => props.model.stories ?? []);
   const liveStories = createMemo(
     () => new Map(storyList().map((story) => [story.story_id, story])),
   );
   const frontSequence = createMemo(() =>
     frontPageSequence(
-      props.entries,
-      props.expandedStoryIDs ?? new Set<string>(),
+      props.model.entries,
+      props.model.expandedStoryIDs ?? new Set<string>(),
     ),
   );
-  const unreadIDs = createMemo(() =>
-    Array.from(liveItems().values())
-      .filter((item) => !item.read)
-      .map((item) => item.item_id),
-  );
-  const showEndAction = createMemo(
-    () => endMarkActionEnabled(readContext()) && props.entries.length > 0,
-  );
+  const showEndAction = () => props.model.canFinish;
   const showEndMarkAction = createMemo(
-    () => showEndAction() && unreadIDs().length > 0,
+    () => showEndAction() && props.model.unreadCount > 0,
   );
   const gridEndTop = createMemo(() => {
     if (closedEmpty()?.centered) return topSlotHeight();
@@ -395,14 +351,13 @@ function GridContent(props: GridProps) {
     return (
       topSlotHeight() +
       layout().height +
-      (!props.archive && props.unreadOnly ? 22 : 28)
+      (!props.model.archive && props.model.unreadOnly ? 22 : 28)
     );
   });
   const endTop = createMemo(() => gridEndTop());
   const canvasHeight = createMemo(
-    () => endTop() + (props.hasMore ? 0 : viewportHeight()),
+    () => endTop() + (props.model.hasMore ? 0 : viewportHeight()),
   );
-  const passedIDs = new Set<string>();
 
   const updateViewport = () => {
     setWidth(scroller.clientWidth);
@@ -442,7 +397,7 @@ function GridContent(props: GridProps) {
 
   const openSheet = (item: Item, story?: Story) => {
     cancelLongPress();
-    props.onFocus(story ? `story:${story.story_id}` : item.item_id);
+    props.actions.onFocus(story ? `story:${story.story_id}` : item.item_id);
     if (!sheetItem())
       pushOverlay("action-sheet", () => {
         setSheetItem();
@@ -498,7 +453,7 @@ function GridContent(props: GridProps) {
 
   const onPullStart = (event: TouchEvent) => {
     if (
-      props.archive ||
+      props.model.archive ||
       event.touches.length !== 1 ||
       scroller.scrollTop > 0 ||
       refreshState() === "fetching"
@@ -608,34 +563,22 @@ function GridContent(props: GridProps) {
     setScrollTop(top);
     props.onScrollPosition?.(top);
     if (!props.active) return;
-    const context = readContext();
-    const userInitiated = userScrolling && !programmaticScrolling;
-    const alreadyRead = new Set(
-      Array.from(liveItems().values())
-        .filter((item) => item.read)
-        .map((item) => item.item_id),
-    );
-    const ids = scrollReadCandidates(
-      context,
-      rows(),
+    props.onPassed({
+      rows: rows(),
       top,
-      scroller.clientHeight,
-      scroller.scrollHeight,
-      userInitiated,
-      passedIDs,
-      alreadyRead,
-    );
-    for (const id of ids) passedIDs.add(id);
-    if (ids.length > 0) props.onItemsPassed(ids);
+      clientHeight: scroller.clientHeight,
+      scrollHeight: scroller.scrollHeight,
+      userInitiated: userScrolling && !programmaticScrolling,
+    });
     if (
       shouldLoadNextPage(
-        props.hasMore,
+        props.model.hasMore,
         top,
         scroller.clientHeight,
         scroller.scrollHeight,
       )
     )
-      props.onLoadMore();
+      props.onReachedEnd();
     if (
       pageFocus &&
       Math.abs(
@@ -672,7 +615,7 @@ function GridContent(props: GridProps) {
     scroller.addEventListener("touchend", onPullEnd, { passive: true });
     scroller.addEventListener("touchcancel", onPullEnd, { passive: true });
     window.addEventListener("keydown", onKeyDown);
-    const restoredTop = Math.max(0, props.initialScrollTop ?? 0);
+    const restoredTop = Math.max(0, props.layout.initialScrollTop ?? 0);
     if (restoredTop > 0) {
       restoreFrame = requestAnimationFrame(() => {
         restoreFrame = 0;
@@ -704,16 +647,15 @@ function GridContent(props: GridProps) {
     });
   });
 
-  let currentScrollToTopKey = props.scrollToTopKey;
+  let currentScrollToTopKey = props.layout.scrollToTopKey;
   createEffect(() => {
-    const nextKey = props.scrollToTopKey;
+    const nextKey = props.layout.scrollToTopKey;
     if (!scroller || nextKey === currentScrollToTopKey) return;
     stopPageScroll();
     currentScrollToTopKey = nextKey;
     endRequested = false;
-    const target = Math.max(0, props.scrollTarget);
+    const target = Math.max(0, props.layout.scrollTarget);
     reassertScrollTarget(target);
-    passedIDs.clear();
   });
 
   createEffect(() => {
@@ -722,9 +664,9 @@ function GridContent(props: GridProps) {
     // justified layout can withhold a trailing run until the next page arrives.
     if (
       props.active &&
-      shouldLoadToFillViewport(props.hasMore, gridEndTop(), viewport)
+      shouldLoadToFillViewport(props.model.hasMore, gridEndTop(), viewport)
     )
-      props.onLoadMore();
+      props.onReachedEnd();
   });
 
   createEffect(
@@ -743,8 +685,8 @@ function GridContent(props: GridProps) {
     programmaticScroll(() => {
       scroller.scrollTop = scroller.scrollHeight;
     });
-    if (props.hasMore) {
-      props.onLoadMore();
+    if (props.model.hasMore) {
+      props.onReachedEnd();
       return;
     }
     endRequested = false;
@@ -752,19 +694,19 @@ function GridContent(props: GridProps) {
   };
 
   createEffect(() => {
-    props.layoutKey;
-    props.hasMore;
+    props.layout.layoutKey;
+    props.model.hasMore;
     if (endRequested) requestAnimationFrame(continueToEnd);
   });
 
   const move = (direction: LayoutDirection) => {
     const allRows = rows();
     if (allRows.length === 0) return;
-    const id = nearestCell(allRows, props.focusedID, direction);
+    const id = nearestCell(allRows, props.layout.focusedID, direction);
     if (!id) return;
     const rect = cellRects(allRows).find((candidate) => candidate.id === id);
     endRequested = false;
-    props.onFocus(id);
+    props.actions.onFocus(id);
     programmaticScroll(() => {
       if (!rect) return;
       scroller.scrollTop = cellLandingTop(
@@ -822,13 +764,13 @@ function GridContent(props: GridProps) {
       viewport.bottom,
     );
     if (!id) return;
-    props.onFocus(id);
+    props.actions.onFocus(id);
     focusControl(id)?.focus({ preventScroll: true });
   };
 
   const focusElement = (id: string) => {
     endRequested = false;
-    props.onFocus(id);
+    props.actions.onFocus(id);
     requestAnimationFrame(() => {
       programmaticScroll(() => {
         const target = scroller.querySelector<HTMLElement>(
@@ -842,12 +784,12 @@ function GridContent(props: GridProps) {
   };
 
   const focusedEntry = () =>
-    frontSequence().find((entry) => entry.id === props.focusedID);
+    frontSequence().find((entry) => entry.id === props.layout.focusedID);
 
   const focused = () =>
     focusedEntry()?.item ??
-    props.items.find((item) => item.item_id === props.focusedID) ??
-    props.items[0];
+    props.model.items.find((item) => item.item_id === props.layout.focusedID) ??
+    props.model.items[0];
 
   const focusedStory = () => {
     const storyID = focusedEntry()?.storyID;
@@ -871,7 +813,7 @@ function GridContent(props: GridProps) {
       focusElement(first);
       return;
     }
-    if (first) props.onFocus(first);
+    if (first) props.actions.onFocus(first);
     programmaticScroll(() => {
       scroller.scrollTop = 0;
       scroller.focus({ preventScroll: true });
@@ -884,20 +826,18 @@ function GridContent(props: GridProps) {
   };
 
   const finishAndClear = () => {
-    const ids = unreadIDs();
-    for (const id of ids) passedIDs.add(id);
-    props.onFinishAndClear(ids);
+    props.onFinishAndClear();
     requestAnimationFrame(() => scroller.focus({ preventScroll: true }));
   };
 
   const openPrimary = (item: Item) => {
     const route = redditPrimaryRoute(item);
     if (route.kind === "external") {
-      props.onExternalOpen(item);
+      props.actions.onExternalOpen(item);
       window.open(route.url, "_blank", "noopener,noreferrer");
       return;
     }
-    props.onOpen(item);
+    props.actions.onOpen(item);
   };
 
   const openStoryLead = (story: Story) => {
@@ -907,7 +847,7 @@ function GridContent(props: GridProps) {
       suppressOpenID = "";
       return;
     }
-    props.onOpenStoryLead?.(story);
+    props.actions.onOpenStoryLead?.(story);
   };
 
   const openFocused = (item: Item) => {
@@ -922,7 +862,7 @@ function GridContent(props: GridProps) {
   };
 
   const openDiscussion = (item: Item) => {
-    props.onDiscussion(item);
+    props.actions.onDiscussion(item);
     window.open(item.url, "_blank", "noopener,noreferrer");
   };
 
@@ -1016,7 +956,7 @@ function GridContent(props: GridProps) {
         if (Math.abs(top - scroller.scrollTop) < 1) break;
         const viewport = scroller.getBoundingClientRect();
         const focusedRect = focusControl(
-          props.focusedID,
+          props.layout.focusedID,
         )?.getBoundingClientRect();
         pageFocus = {
           top,
@@ -1057,32 +997,32 @@ function GridContent(props: GridProps) {
         break;
       case "like": {
         const lead = focusedStory()?.items[0] ?? item;
-        if (lead && !props.archive)
-          props.onSignal(lead, lead.signal === 1 ? 0 : 1);
+        if (lead && props.model.cell(lead).signal)
+          props.actions.onSignal(lead, lead.signal === 1 ? 0 : 1);
         break;
       }
       case "dislike": {
         const lead = focusedStory()?.items[0] ?? item;
-        if (lead && !props.archive && !buryDisabled(lead))
-          props.onSignal(lead, lead.signal === -1 ? 0 : -1);
+        if (lead && props.model.cell(lead).bury)
+          props.actions.onSignal(lead, lead.signal === -1 ? 0 : -1);
         break;
       }
       case "heart":
-        if (item) props.onHeart(item);
+        if (item) props.actions.onHeart(item);
         break;
       case "read":
-        if (item && !props.archive) {
+        if (item && !props.model.archive) {
           const story =
             focusedEntry()?.kind === "story" ? focusedStory() : undefined;
-          if (story) props.onToggleStoryRead?.(story);
-          else props.onToggleRead(item);
+          if (story) props.actions.onToggleStoryRead?.(story);
+          else props.actions.onToggleRead(item);
         }
         break;
       case "mark-below":
-        if (item && !props.archive) {
+        if (item && !props.model.archive) {
           const storyID = focusedEntry()?.storyID;
-          if (storyID) props.onMarkStoryBelow?.(storyID);
-          else props.onMarkBelow(item);
+          if (storyID) props.actions.onMarkStoryBelow?.(storyID);
+          else props.actions.onMarkBelow(item);
         }
         break;
       case "end":
@@ -1101,23 +1041,23 @@ function GridContent(props: GridProps) {
         }
         break;
       case "undo":
-        if (!props.archive) props.onUndo();
+        if (!props.model.archive) props.actions.onUndo();
         break;
       case "copy":
         if (item && isRedditItem(item)) openDiscussion(item);
-        else if (item) props.onCopy(item);
+        else if (item) props.actions.onCopy(item);
         break;
       case "image":
         if (item) void openImages(item);
         break;
       case "original":
-        if (item) props.onOriginal(item);
+        if (item) props.actions.onOriginal(item);
         break;
       case "related":
-        if (item) props.onRelated(item);
+        if (item) props.actions.onRelated(item);
         break;
       case "order":
-        if (!props.archive) props.onToggleOrder();
+        if (!props.model.archive) props.actions.onToggleOrder();
         break;
     }
     event.preventDefault();
@@ -1136,10 +1076,10 @@ function GridContent(props: GridProps) {
         "refined-grid": true,
         "mobile-refined-grid": mobile(),
         "keyboard-focus": keyboardFocus(),
-        "reader-underlay": props.readerOpen,
-        "reader-underlay-dragging": props.readerDragging,
+        "reader-underlay": props.reader.readerOpen,
+        "reader-underlay-dragging": props.reader.readerDragging,
       }}
-      style={{ "--reader-reveal": props.readerReveal }}
+      style={{ "--reader-reveal": props.reader.readerReveal }}
       ref={scroller}
       tabindex="-1"
     >
@@ -1195,7 +1135,7 @@ function GridContent(props: GridProps) {
       >
         <div class="grid-top-slot" ref={observeTopSlot}>
           {props.topSlot}
-          <Show when={props.scopeCell} keyed>
+          <Show when={props.model.scopeCell} keyed>
             {(model) => (
               <h2 class="scope-cell" title={model.title}>
                 <Show when={model.faviconFeed} keyed>
@@ -1241,25 +1181,25 @@ function GridContent(props: GridProps) {
                     const storyID = cell.story.story_id;
                     return (
                       <StoryCell
-                        archive={props.archive}
+                        archive={props.model.archive}
                         story={liveStories().get(storyID) ?? cell.story}
                         cell={cell}
                         row={row}
-                        focusedID={props.focusedID}
+                        focusedID={props.layout.focusedID}
                         readContext={readContext()}
                         refined={true}
                         pressed={pressedID() === `story:${storyID}`}
-                        onExpand={(id) => props.onExpandStory?.(id)}
+                        onExpand={(id) => props.actions.onExpandStory?.(id)}
                         onLeadHeight={recordStoryLeadHeight}
                         onFocus={(id) => {
-                          if (!pageFocus) props.onFocus(id);
+                          if (!pageFocus) props.actions.onFocus(id);
                         }}
                         onOpenLead={openStoryLead}
-                        onOpen={props.onOpen}
-                        onExternalOpen={props.onExternalOpen}
-                        onHeart={props.onHeart}
-                        onSignal={props.onSignal}
-                        onApplyFeed={props.onApplyFeed}
+                        onOpen={props.actions.onOpen}
+                        onExternalOpen={props.actions.onExternalOpen}
+                        onHeart={props.actions.onHeart}
+                        onSignal={props.actions.onSignal}
+                        onApplyFeed={props.actions.onApplyFeed}
                         onMore={(story) => {
                           const lead = story.items[0];
                           if (lead) openSheet(lead, story);
@@ -1277,13 +1217,14 @@ function GridContent(props: GridProps) {
                     () => liveItems().get(cell.item.item_id) ?? cell.item,
                   );
                   const expiring = () =>
-                    !props.archive &&
+                    props.model.cell(item()).lifetime &&
                     itemExpiryState(item(), clockNow()) !== "none";
                   const expiryName = () =>
                     expiring()
                       ? `, ${expirySentence(item().published_ts, clockNow())}`
                       : "";
-                  const cellSignal = () => (props.archive ? 0 : item().signal);
+                  const cellSignal = () =>
+                    props.model.cell(item()).signal ? item().signal : 0;
                   const signalFresh = createSignalFresh(cellSignal);
                   const condensedLarge = createMemo(
                     () =>
@@ -1296,7 +1237,7 @@ function GridContent(props: GridProps) {
                     condensedLarge() ? shortWhyText(item()) : whyText(item()),
                   );
                   const readVisuals = createMemo(() =>
-                    readVisualState(readContext(), item().read),
+                    props.model.cell(item()),
                   );
                   const primaryRoute = createMemo(() =>
                     redditPrimaryRoute(item()),
@@ -1305,11 +1246,11 @@ function GridContent(props: GridProps) {
                     <article
                       class="grid-cell"
                       classList={{
-                        focused: item().item_id === props.focusedID,
+                        focused: item().item_id === props.layout.focusedID,
                         read: readVisuals().dimmed,
                         "is-read": readVisuals().dimmed,
                         "all-items-cell": readContext() === "all-items",
-                        "archive-cell": props.archive,
+                        "archive-cell": props.model.archive,
                         "text-cell": !item().media_url,
                         "video-cell": item().media_type === "video",
                         "reddit-cell": isRedditItem(item()),
@@ -1333,11 +1274,11 @@ function GridContent(props: GridProps) {
                       }}
                       data-signal={cellSignal()}
                       data-signal-fresh={
-                        !props.archive && signalFresh() ? "" : undefined
+                        !props.model.archive && signalFresh() ? "" : undefined
                       }
                       data-item-id={item().item_id}
                       onMouseEnter={() => {
-                        if (!pageFocus) props.onFocus(item().item_id);
+                        if (!pageFocus) props.actions.onFocus(item().item_id);
                       }}
                       onDblClick={() => {
                         if (primaryRoute().kind !== "external")
@@ -1396,8 +1337,8 @@ function GridContent(props: GridProps) {
                       </Show>
                       <Show
                         when={
-                          !props.archive &&
-                          props.order === "interest" &&
+                          !props.model.archive &&
+                          props.model.order === "interest" &&
                           !item().signal &&
                           whyText(item())
                         }
@@ -1418,7 +1359,7 @@ function GridContent(props: GridProps) {
                           classList={{ "has-expiry": expiring() }}
                         >
                           <Show
-                            when={props.archive}
+                            when={props.model.archive}
                             fallback={
                               <Show
                                 when={expiring()}
@@ -1451,7 +1392,7 @@ function GridContent(props: GridProps) {
                               )}`}
                             </span>
                           </Show>
-                          <Show when={!props.archive}>
+                          <Show when={!props.model.archive}>
                             <span class="cell-rank">
                               {rankBand(cell.effectiveSize)}
                             </span>
@@ -1486,13 +1427,15 @@ function GridContent(props: GridProps) {
                               item={item()}
                               refined={true}
                               unreadDot={readVisuals().unreadDot}
-                              archive={props.archive}
+                              archive={props.model.archive}
                               effectiveSize={cell.effectiveSize}
                               condensed={condensedLarge()}
                               explanation={explanation()}
                               dimmed={readVisuals().dimmed}
-                              onUndo={() => props.onSignal(item(), 0)}
-                              onApplyFeed={() => props.onApplyFeed(item())}
+                              onUndo={() => props.actions.onSignal(item(), 0)}
+                              onApplyFeed={() =>
+                                props.actions.onApplyFeed(item())
+                              }
                             />
                           </span>
                         }
@@ -1503,7 +1446,7 @@ function GridContent(props: GridProps) {
                             href={item().external_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={() => props.onExternalOpen(item())}
+                            onClick={() => props.actions.onExternalOpen(item())}
                             aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                           >
                             <span class="sr-only">
@@ -1514,13 +1457,15 @@ function GridContent(props: GridProps) {
                             item={item()}
                             refined={true}
                             unreadDot={readVisuals().unreadDot}
-                            archive={props.archive}
+                            archive={props.model.archive}
                             effectiveSize={cell.effectiveSize}
                             condensed={condensedLarge()}
                             explanation={explanation()}
                             dimmed={readVisuals().dimmed}
-                            onUndo={() => props.onSignal(item(), 0)}
-                            onApplyFeed={() => props.onApplyFeed(item())}
+                            onUndo={() => props.actions.onSignal(item(), 0)}
+                            onApplyFeed={() =>
+                              props.actions.onApplyFeed(item())
+                            }
                           />
                         </span>
                       </Show>
@@ -1534,7 +1479,7 @@ function GridContent(props: GridProps) {
                           data-tooltip="Discussion on Reddit"
                           onClick={(event) => {
                             event.stopPropagation();
-                            props.onDiscussion(item());
+                            props.actions.onDiscussion(item());
                           }}
                         >
                           <Icon name="discussion" size={13} />
@@ -1543,9 +1488,9 @@ function GridContent(props: GridProps) {
                       <SignalActions
                         item={item()}
                         size={cell.effectiveSize}
-                        archive={props.archive}
-                        onSignal={props.onSignal}
-                        onHeart={props.onHeart}
+                        archive={props.model.archive}
+                        onSignal={props.actions.onSignal}
+                        onHeart={props.actions.onHeart}
                         onMore={() => openSheet(item())}
                       />
                     </article>
@@ -1555,18 +1500,20 @@ function GridContent(props: GridProps) {
             </div>
           )}
         </For>
-        <Show when={shouldShowEndCard(props.hasMore)}>
+        <Show when={shouldShowEndCard(props.model.hasMore)}>
           <section
             class="end-of-feed"
             classList={{
-              "empty-grid": props.entries.length === 0,
+              "empty-grid": props.model.entries.length === 0,
               "finish-card":
-                !props.archive && props.unreadOnly && props.entries.length > 0,
+                !props.model.archive &&
+                props.model.unreadOnly &&
+                props.model.entries.length > 0,
               "finish-card--all-read":
-                !props.archive &&
-                props.unreadOnly &&
-                props.entries.length > 0 &&
-                unreadIDs().length === 0,
+                !props.model.archive &&
+                props.model.unreadOnly &&
+                props.model.entries.length > 0 &&
+                props.model.unreadCount === 0,
               "closed-empty": Boolean(closedEmpty()),
               "closed-empty--centered": Boolean(closedEmpty()?.centered),
               "closed-empty--pending":
@@ -1614,10 +1561,10 @@ function GridContent(props: GridProps) {
                 }
               >
                 <Show
-                  when={props.archive}
+                  when={props.model.archive}
                   fallback={
                     <Show
-                      when={props.unreadOnly}
+                      when={props.model.unreadOnly}
                       fallback={
                         <>
                           <h2>You&apos;re all caught up</h2>
@@ -1626,7 +1573,7 @@ function GridContent(props: GridProps) {
                       }
                     >
                       <Show
-                        when={props.entries.length > 0}
+                        when={props.model.entries.length > 0}
                         fallback={
                           <>
                             <i class="empty-mark" aria-hidden="true" />
@@ -1663,8 +1610,8 @@ function GridContent(props: GridProps) {
                           <div class="finish-card__copy finish-card__variant">
                             <h2>Everything loaded is behind you</h2>
                             <p>
-                              {unreadIDs().length}{" "}
-                              {unreadIDs().length === 1
+                              {props.model.unreadCount}{" "}
+                              {props.model.unreadCount === 1
                                 ? "item is"
                                 : "items are"}{" "}
                               still unread. Clearing marks them and empties the
@@ -1691,7 +1638,7 @@ function GridContent(props: GridProps) {
                               }
                             >
                               <span class="finish-card__button-label">
-                                Mark {unreadIDs().length} read &amp; clear
+                                Mark {props.model.unreadCount} read &amp; clear
                               </span>
                             </Show>
                           </button>
@@ -1703,10 +1650,10 @@ function GridContent(props: GridProps) {
                   <small>END OF ARCHIVE</small>
                   <h2>That&apos;s everything you&apos;ve kept</h2>
                   <p>
-                    {props.items.length}{" "}
-                    {props.items.length === 1 ? "item" : "items"}
-                    {oldestHeartMonth(props.items)
-                      ? `, oldest kept in ${oldestHeartMonth(props.items)}`
+                    {props.model.items.length}{" "}
+                    {props.model.items.length === 1 ? "item" : "items"}
+                    {oldestHeartMonth(props.model.items)
+                      ? `, oldest kept in ${oldestHeartMonth(props.model.items)}`
                       : ""}
                     . Nothing here expires.
                   </p>
@@ -1789,10 +1736,7 @@ function GridContent(props: GridProps) {
                                 type="button"
                                 class="sheet-headline"
                                 classList={{
-                                  read: readVisualState(
-                                    readContext(),
-                                    headline.read,
-                                  ).dimmed,
+                                  read: props.model.cell(headline).dimmed,
                                   "related-also": repeatsLeadHeadline(
                                     story.items[0].title,
                                     headline.title,
@@ -1800,7 +1744,9 @@ function GridContent(props: GridProps) {
                                 }}
                                 aria-label={`Open ${headlineText(headline.title)}`}
                                 onClick={() =>
-                                  runSheetAction(() => props.onOpen(headline))
+                                  runSheetAction(() =>
+                                    props.actions.onOpen(headline),
+                                  )
                                 }
                               >
                                 <RelatedCoverage
@@ -1817,7 +1763,7 @@ function GridContent(props: GridProps) {
                               class="sheet-headline sheet-headline-more"
                               onClick={() =>
                                 runSheetAction(() =>
-                                  props.onOpenStoryLead?.(story),
+                                  props.actions.onOpenStoryLead?.(story),
                                 )
                               }
                             >
@@ -1829,13 +1775,15 @@ function GridContent(props: GridProps) {
                     );
                   }}
                 </Show>
-                <Show when={sheetStory() && !props.archive}>
+                <Show when={sheetStory() && !props.model.archive}>
                   <button
                     type="button"
                     onClick={() => {
                       const story = sheetStory();
                       if (story)
-                        runSheetAction(() => props.onToggleStoryRead?.(story));
+                        runSheetAction(() =>
+                          props.actions.onToggleStoryRead?.(story),
+                        );
                     }}
                   >
                     <Icon name="check" size={20} />
@@ -1863,7 +1811,9 @@ function GridContent(props: GridProps) {
                 <Show when={!isRedditItem(item)}>
                   <button
                     type="button"
-                    onClick={() => runSheetAction(() => props.onOriginal(item))}
+                    onClick={() =>
+                      runSheetAction(() => props.actions.onOriginal(item))
+                    }
                   >
                     <Icon name="open-original" size={20} />
                     Open original
@@ -1874,7 +1824,7 @@ function GridContent(props: GridProps) {
                     type="button"
                     onClick={() =>
                       runSheetAction(() => {
-                        props.onExternalOpen(item);
+                        props.actions.onExternalOpen(item);
                         window.open(
                           item.external_url,
                           "_blank",
@@ -1903,7 +1853,10 @@ function GridContent(props: GridProps) {
                     runSheetAction(() =>
                       requestAnimationFrame(() =>
                         requestAnimationFrame(() =>
-                          props.onSignal(item, item.signal === 1 ? 0 : 1),
+                          props.actions.onSignal(
+                            item,
+                            item.signal === 1 ? 0 : 1,
+                          ),
                         ),
                       ),
                     )
@@ -1917,7 +1870,9 @@ function GridContent(props: GridProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => runSheetAction(() => props.onRelated(item))}
+                  onClick={() =>
+                    runSheetAction(() => props.actions.onRelated(item))
+                  }
                 >
                   <Icon name="search" size={20} />
                   Similar
@@ -1925,16 +1880,21 @@ function GridContent(props: GridProps) {
                 <button
                   type="button"
                   classList={{ selected: item.signal === -1 }}
-                  disabled={buryDisabled(item)}
+                  disabled={!props.model.cell(item).bury}
                   aria-label={
-                    buryDisabled(item) ? "Kept items can't be buried" : "Bury"
+                    !props.model.cell(item).bury
+                      ? "Kept items can't be buried"
+                      : "Bury"
                   }
                   onClick={() =>
                     runSheetAction(() =>
                       requestAnimationFrame(() =>
                         requestAnimationFrame(() => {
-                          if (!buryDisabled(item))
-                            props.onSignal(item, item.signal === -1 ? 0 : -1);
+                          if (props.model.cell(item).bury)
+                            props.actions.onSignal(
+                              item,
+                              item.signal === -1 ? 0 : -1,
+                            );
                         }),
                       ),
                     )
@@ -1949,14 +1909,18 @@ function GridContent(props: GridProps) {
                 <button
                   type="button"
                   classList={{ selected: item.hearted }}
-                  onClick={() => runSheetAction(() => props.onHeart(item))}
+                  onClick={() =>
+                    runSheetAction(() => props.actions.onHeart(item))
+                  }
                 >
                   <Icon name="keep" size={20} filled={item.hearted} />
                   {item.hearted ? "Kept" : "Keep"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => runSheetAction(() => props.onCopy(item))}
+                  onClick={() =>
+                    runSheetAction(() => props.actions.onCopy(item))
+                  }
                 >
                   <Icon name="copy-link" size={20} />
                   Copy link

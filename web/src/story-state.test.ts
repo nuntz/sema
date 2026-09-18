@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  excludeRenderedStoryItems,
-  updateStoriesRead,
-  updateStoryItem,
-} from "./story-state";
+import { excludeRenderedStoryItems, updateStoryItem } from "./item-session";
+import { updateStoriesRead } from "./read-state";
 import type { Item, Story } from "./types";
 
 const item = (item_id: string, read = false): Item =>

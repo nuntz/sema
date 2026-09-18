@@ -8,51 +8,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/nuntz/sema/internal/domain"
-	"github.com/nuntz/sema/internal/store"
 )
-
-type readMarkerDynamo struct {
-	*apiDynamo
-	writeErr error
-}
-
-func (d *readMarkerDynamo) BatchWriteItem(context.Context, *dynamodb.BatchWriteItemInput, ...func(*dynamodb.Options)) (*dynamodb.BatchWriteItemOutput, error) {
-	return &dynamodb.BatchWriteItemOutput{}, d.writeErr
-}
 
 func TestUnreadItemsCacheAndReadBatch(t *testing.T) {
 	queries := 0
-	row, err := attributevalue.MarshalMap(domain.Item{
-		PK: domain.UserPK("user"), SK: "I#item", ItemID: "item", FeedID: "feed", TTL: time.Now().Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := &readMarkerDynamo{apiDynamo: &apiDynamo{
-		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
-			prefix, _ := input.ExpressionAttributeValues[":prefix"].(*types.AttributeValueMemberS)
-			if prefix != nil {
-				switch prefix.Value {
-				case "R#":
-					queries++
-					return &dynamodb.QueryOutput{}, nil
-				case "F#":
-					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{{"feed_id": &types.AttributeValueMemberS{Value: "feed"}}}}, nil
-				case "I#":
-					return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}}, nil
-				}
+	var writeErr error
+	row := domain.Item{ItemID: "item", FeedID: "feed", TTL: time.Now().Add(time.Hour).Unix()}
+	db := &fakeAPIStore{
+		loadMarkers: func(context.Context, string) (map[string]bool, error) { queries++; return map[string]bool{}, nil },
+		itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, _ int, _, _ bool, _, _ map[string]bool, _ domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+			if snapshot == nil {
+				t.Fatal("missing snapshot")
 			}
-			return &dynamodb.QueryOutput{}, nil
+			if snapshot["item"] {
+				return nil, "", &row, nil
+			}
+			return []domain.Item{row}, "", nil, nil
 		},
-		batchGet: func(*dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
-			return &dynamodb.BatchGetItemOutput{}, nil
-		},
-	}}
-	s := &server{store: store.New(db, nil, "table", "", "")}
+		feeds:   func(context.Context, string) ([]domain.Feed, error) { return []domain.Feed{{FeedID: "feed"}}, nil },
+		item:    func(context.Context, string, string) (domain.Item, error) { return row, nil },
+		setRead: func(context.Context, string, []string, bool) error { return writeErr },
+	}
+	s := &server{store: db}
 	ctx := context.Background()
 	load := func(want int) {
 		t.Helper()
@@ -101,13 +79,6 @@ func TestUnreadItemsCacheAndReadBatch(t *testing.T) {
 	if snapshot["item"] {
 		t.Fatal("mutation changed an existing request snapshot")
 	}
-	db.getItem = func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
-		if input.Key["SK"].(*types.AttributeValueMemberS).Value == "D#item" {
-			identity, err := attributevalue.MarshalMap(domain.ItemIdentity{PK: "U#user", SK: "D#item", ItemSK: "I#item", TTL: time.Now().Add(time.Hour).Unix()})
-			return &dynamodb.GetItemOutput{Item: identity}, err
-		}
-		return &dynamodb.GetItemOutput{Item: row}, nil
-	}
 	if result := s.itemRoute(ctx, "user", "POST", "item/read", `{"read":true}`); result.StatusCode != 200 {
 		t.Fatalf("item read: %s", result.Body)
 	}
@@ -116,7 +87,7 @@ func TestUnreadItemsCacheAndReadBatch(t *testing.T) {
 		t.Fatalf("per-item mutation reloaded markers: %d", queries)
 	}
 
-	db.writeErr = errors.New("write failed")
+	writeErr = errors.New("write failed")
 	if result := s.readBatch(ctx, "user", `{"ids":["item"]}`); result.StatusCode != 500 {
 		t.Fatalf("failed mutation: %s", result.Body)
 	}
@@ -128,8 +99,8 @@ func TestUnreadItemsCacheAndReadBatch(t *testing.T) {
 
 func TestReadMarkerCacheExpiryAndBound(t *testing.T) {
 	calls := 0
-	source := store.New(nil, nil, "table", "", "")
-	source.ReadMarkers = func(context.Context, string) (map[string]bool, error) {
+	source := &fakeAPIStore{}
+	source.loadMarkers = func(context.Context, string) (map[string]bool, error) {
 		calls++
 		return map[string]bool{"read": true}, nil
 	}
@@ -158,25 +129,23 @@ func TestReadMarkerCacheExpiryAndBound(t *testing.T) {
 }
 
 func TestRequestReadMarkerSnapshot(t *testing.T) {
-	calls := 0
-	source := store.New(nil, nil, "table", "", "")
-	source.ReadMarkers = func(context.Context, string) (map[string]bool, error) {
-		calls++
-		return map[string]bool{"read": true}, nil
-	}
+	source := &fakeAPIStore{loadMarkers: func(context.Context, string) (map[string]bool, error) { return map[string]bool{"read": true}, nil }}
 	s := &server{store: source}
-	requestStore := s.markerStore(context.Background())
-	ctx := context.WithValue(context.Background(), readMarkerStoreKey{}, requestStore)
-	first, err := requestStore.LoadReadMarkers(ctx, "user")
+	first, err := s.loadReadMarkers(context.Background(), "user")
 	if err != nil {
 		t.Fatal(err)
 	}
-	delete(s.readCache, "user") // Even a cache eviction cannot change this request's snapshot.
-	members := []domain.Item{{ItemID: "read"}, {ItemID: "unread"}}
-	if err := s.markerStore(ctx).ResolveRead(ctx, "user", members); err != nil {
+	if err := s.setRead(context.Background(), "user", []string{"read"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || !first["read"] || !members[0].Read || members[1].Read {
-		t.Fatalf("calls=%d members=%v", calls, members)
+	if !first["read"] {
+		t.Fatal("mutation changed a request snapshot")
+	}
+	second, err := s.loadReadMarkers(context.Background(), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second["read"] {
+		t.Fatal("mutation did not update cache")
 	}
 }

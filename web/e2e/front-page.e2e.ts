@@ -992,16 +992,24 @@ test("scroll-reading a story cell uses all of its unread members", async ({
   const storyCell = page.locator('[data-story-id="story-0"]');
   const scrollPastStoryRow = async () => {
     const scroller = page.locator(".grid-scroll");
-    const delta = await storyCell.evaluate((element) => {
-      const row = element.closest<HTMLElement>(".grid-row");
-      const scroll = element.closest<HTMLElement>(".grid-scroll");
-      if (!row || !scroll) throw new Error("story row unavailable");
-      return Math.ceil(
-        row.getBoundingClientRect().bottom -
-          scroll.getBoundingClientRect().top +
-          1,
-      );
-    });
+    let delta = 0;
+    // Changing Read mode reloads the grid; measure the attached replacement row.
+    await expect
+      .poll(async () => {
+        delta = await scroller.evaluate((scroll) => {
+          const row = scroll
+            .querySelector('[data-story-id="story-0"]')
+            ?.closest<HTMLElement>(".grid-row");
+          if (!row) return 0;
+          return Math.ceil(
+            row.getBoundingClientRect().bottom -
+              scroll.getBoundingClientRect().top +
+              1,
+          );
+        });
+        return delta;
+      })
+      .toBeGreaterThan(0);
     await scroller.hover();
     await page.mouse.wheel(0, delta);
     await expect
@@ -1726,6 +1734,9 @@ for (const width of [1470, 390]) {
     page,
   }) => {
     await page.setViewportSize({ width, height: 833 });
+    // This test assigns scrollTop after PageDown; finish paging synchronously so
+    // its animation cannot overwrite the subsequent virtualization checks.
+    await page.emulateMedia({ reducedMotion: "reduce" });
     const requests: string[] = [];
     await page.route("**/memory-experiment/**", async (route) => {
       requests.push(route.request().url());

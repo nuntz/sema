@@ -65,7 +65,7 @@ func TestPermanentArchiveIdentityResolution(t *testing.T) {
 					return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
 				},
 			}
-			got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"item", "no-identity", "item"})
+			got, err := New(db, nil, "table", "", "").ResolveItemIDs(context.Background(), "user", []string{"item", "no-identity", "item"}, nil)
 			if err != nil || len(got) != 1 {
 				t.Fatalf("resolution = %#v, %v", got, err)
 			}
