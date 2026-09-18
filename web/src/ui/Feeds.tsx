@@ -33,7 +33,7 @@ import {
   type DiscoveryState,
   discoveredCandidateState,
 } from "./feed-discovery";
-import { upsertFeed } from "./feed-list";
+import { feedFetchLabel, upsertFeed } from "./feed-list";
 import { relativeTime } from "./Grid";
 import { type BadgeSize, SourceBadge } from "./SourceBadge";
 import { displayFeedTitle as displayTitle } from "./tag-options";
@@ -576,13 +576,14 @@ export function Feeds(props: {
                           : undefined
                       }
                     >
-                      {since()
-                        ? `failing ${relativeTime(since() ?? "")}`
-                        : feed.muted
-                          ? "muted"
+                      {feedFetchLabel(
+                        feed,
+                        since()
+                          ? relativeTime(since() ?? "")
                           : feed.last_fetch_at
-                            ? `${relativeTime(feed.last_fetch_at)} ago`
-                            : "never"}
+                            ? relativeTime(feed.last_fetch_at)
+                            : undefined,
+                      )}
                     </time>
                   </button>
                 );

@@ -1325,7 +1325,8 @@ export function App(props: { signOut(): void; theme: ThemeController }) {
   };
 
   const recordOpened = (item: Item, archive = item.archived === true) => {
-    if (!archive) api.behaviour(item.item_id, { opened: true }).catch(handleError);
+    if (!archive)
+      api.behaviour(item.item_id, { opened: true }).catch(handleError);
     if (!archive && !item.read) {
       setReadAdjust((value) => value + 1);
       replaceItem(item.item_id, { read: true });

@@ -3,7 +3,7 @@ import { archiveSize } from "../archive";
 import { formatPrior, whyText } from "../ranking-display";
 import type { Feed, FeedCandidate, Item } from "../types";
 import { discoveredCandidateState } from "./feed-discovery";
-import { upsertFeed } from "./feed-list";
+import { feedFetchLabel, upsertFeed } from "./feed-list";
 
 describe("archive storage estimate", () => {
   it("uses the specified 300 KB per kept item estimate", () => {
@@ -62,5 +62,19 @@ describe("feed list updates", () => {
     expect(upsertFeed(current, feed("same", "New title"))).toEqual([
       feed("same", "New title"),
     ]);
+  });
+});
+
+describe("feed fetch status", () => {
+  it.each([
+    ["slowed", "2h", "slowed 2h"],
+    ["broken", "3d", "broken 3d"],
+    ["muted", "3d", "muted"],
+    ["ok", "2h", "2h ago"],
+    ["ok", undefined, "never"],
+    ["slowed", undefined, "slowed"],
+    ["broken", undefined, "broken"],
+  ] as const)("shows %s from the API", (status, age, expected) => {
+    expect(feedFetchLabel({ status }, age)).toBe(expected);
   });
 });

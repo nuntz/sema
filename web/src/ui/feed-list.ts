@@ -12,3 +12,13 @@ export function upsertFeed(
     index === existing ? { ...feed, ...incoming } : feed,
   );
 }
+
+export function feedFetchLabel(
+  feed: Pick<Feed, "status">,
+  age?: string,
+): string {
+  if (feed.status === "muted") return "muted";
+  if (feed.status === "slowed" || feed.status === "broken")
+    return age ? `${feed.status} ${age}` : feed.status;
+  return age ? `${age} ago` : "never";
+}
