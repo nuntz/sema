@@ -199,8 +199,12 @@ function GridContent(props: GridProps) {
     if (restoreFocus) imageOrigin?.focus({ preventScroll: true });
   };
   onCleanup(() => imageRequest?.abort());
+  // Yield Grid shortcuts to its lightbox without cancelling that preview.
+  const imagePreviewActive = () =>
+    props.active ||
+    (Boolean(lightbox()) && keyOwnership().owner === "lightbox");
   createEffect(() => {
-    if (!props.active) closeGridLightbox(false);
+    if (!imagePreviewActive()) closeGridLightbox(false);
   });
   const openImages = async (item: Item) => {
     imageRequest?.abort();
@@ -221,7 +225,11 @@ function GridContent(props: GridProps) {
     );
     if (lead) setLightbox({ item, images: [lead], index: 0 });
     const images = await loadGridLightboxImages(item, lead, request.signal);
-    if (request.signal.aborted || imageRequest !== request || !props.active)
+    if (
+      request.signal.aborted ||
+      imageRequest !== request ||
+      !imagePreviewActive()
+    )
       return;
     if (images.length) setLightbox({ item, images, index: 0 });
   };

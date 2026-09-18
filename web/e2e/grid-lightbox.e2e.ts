@@ -254,7 +254,7 @@ for (const declared of [true, false]) {
   });
 }
 
-for (const method of ["Escape", "button", "Back"]) {
+for (const method of ["Escape", "i", "button", "Back"]) {
   test(`closing grid lightbox with ${method} preserves the tag filter`, async ({
     page,
   }) => {
@@ -266,7 +266,8 @@ for (const method of ["Escape", "button", "Back"]) {
       await page.keyboard.press("#");
       await expect(page.locator(".grid-tag-filter")).not.toHaveClass(/is-open/);
     }
-    if (method === "Escape") await page.keyboard.press("Escape");
+    if (method === "Escape" || method === "i")
+      await page.keyboard.press(method);
     else if (method === "Back") await page.goBack();
     else
       await page
@@ -276,6 +277,13 @@ for (const method of ["Escape", "button", "Back"]) {
     await expect(page.locator(".scope-cell__title")).toHaveText("#design");
     await expect(cell.locator(".cell-main")).toBeFocused();
     expect(mutations).toEqual([]);
+    if (method === "i") {
+      await page.keyboard.press("i");
+      await expect(page.locator(".lb-overlay")).toBeVisible();
+      await page.keyboard.press("i");
+      await expect(page.locator(".lb-overlay")).toHaveCount(0);
+      await expect(cell.locator(".cell-main")).toBeFocused();
+    }
     // After dismissal, Escape should still clear the filter normally.
     await page.keyboard.press("Escape");
     await expect(page.locator(".scope-cell__title")).not.toHaveText("#design");
