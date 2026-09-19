@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/smithy-go"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
 )
@@ -1194,6 +1196,137 @@ func TestReplayOverwritePreservesConcurrentHeartState(t *testing.T) {
 				t.Fatal(calls)
 			}
 		})
+	}
+}
+
+func TestRecomputeModelPreservesSizeCutoffs(t *testing.T) {
+	previous := domain.Model{
+		PK: "U#user", SK: "MODEL", ComputedAt: "2026-09-18T09:01:00Z",
+		SizeCutoffs:    &domain.SizeCutoffs{P60: 0.3, P90: 0.6},
+		TagSizeCutoffs: map[string]*domain.SizeCutoffs{"tech": {P60: 0.4, P90: 0.7}},
+	}
+	row, err := attributevalue.MarshalMap(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := &fakeDynamoDB{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			return &dynamodb.GetItemOutput{Item: row}, nil
+		},
+		putItem: func(input *dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) {
+			row = input.Item
+			return &dynamodb.PutItemOutput{}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	rebuilt, err := repository.RecomputeModel(context.Background(), "user", "v1", "image-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repository.Model(context.Background(), "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, model := range map[string]domain.Model{"returned": rebuilt, "stored": stored} {
+		if !reflect.DeepEqual(model.SizeCutoffs, previous.SizeCutoffs) || !reflect.DeepEqual(model.TagSizeCutoffs, previous.TagSizeCutoffs) {
+			t.Errorf("%s model lost size cutoffs: global=%+v tags=%+v", name, model.SizeCutoffs, model.TagSizeCutoffs)
+		}
+	}
+}
+
+func TestUpdateItemRankingsRetriesThrottling(t *testing.T) {
+	for _, throttle := range []error{
+		&types.ProvisionedThroughputExceededException{},
+		&smithy.GenericAPIError{Code: "ThrottlingException", Message: "slow down"},
+	} {
+		t.Run(fmt.Sprintf("%T", throttle), func(t *testing.T) {
+			var mu sync.Mutex
+			attempts := map[string]int{}
+			written := map[string]bool{}
+			db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				id := input.Key["SK"].(*types.AttributeValueMemberS).Value
+				attempts[id]++
+				if attempts[id] <= 2 {
+					return nil, fmt.Errorf("SDK retries exhausted: %w", throttle)
+				}
+				written[id] = true
+				return &dynamodb.UpdateItemOutput{}, nil
+			}}
+			repository := New(db, nil, "table", "", "")
+			repository.sleep = func(ctx context.Context, delay time.Duration) error {
+				if delay < time.Second || delay > 4*time.Second {
+					t.Errorf("retry delay = %s, want seconds of backoff", delay)
+				}
+				return ctx.Err()
+			}
+			items := make([]domain.Item, 40)
+			for i := range items {
+				items[i] = domain.Item{PK: "U#user", SK: fmt.Sprintf("I#%d", i), Score: 0.7, Size: "L"}
+			}
+			if err := repository.UpdateItemRankings(context.Background(), items); err != nil {
+				t.Fatal(err)
+			}
+			if len(written) != len(items) {
+				t.Fatalf("wrote %d of %d items", len(written), len(items))
+			}
+		})
+	}
+}
+
+func TestUpdateItemRankingsStopsRetrying(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		wantCalls int
+	}{
+		{name: "non-throttling error", err: errors.New("access denied"), wantCalls: 1},
+		{name: "persistent throttling", err: &types.ProvisionedThroughputExceededException{}, wantCalls: 4},
+		{name: "deleted item", err: &types.ConditionalCheckFailedException{}, wantCalls: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls, sleeps := 0, 0
+			db := &fakeDynamoDB{updateItem: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				calls++
+				return nil, test.err
+			}}
+			repository := New(db, nil, "table", "", "")
+			repository.sleep = func(_ context.Context, delay time.Duration) error {
+				minimum := time.Second << sleeps
+				if delay < minimum || delay >= 2*minimum {
+					t.Errorf("delay %s outside [%s, %s)", delay, minimum, 2*minimum)
+				}
+				sleeps++
+				return nil
+			}
+			err := repository.UpdateItemRankings(context.Background(), []domain.Item{{PK: "U#user", SK: "I#item"}})
+			if test.name == "deleted item" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, test.err) {
+				t.Fatalf("error = %v, want %v", err, test.err)
+			}
+			if calls != test.wantCalls || sleeps != test.wantCalls-1 {
+				t.Fatalf("calls=%d sleeps=%d, want %d calls and %d sleeps", calls, sleeps, test.wantCalls, test.wantCalls-1)
+			}
+		})
+	}
+}
+
+func TestUpdateItemRankingsCancelsBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := 0
+	db := &fakeDynamoDB{updateItem: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		calls++
+		cancel()
+		return nil, &types.ProvisionedThroughputExceededException{}
+	}}
+	err := New(db, nil, "table", "", "").UpdateItemRankings(ctx, []domain.Item{{PK: "U#user", SK: "I#item"}})
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("error=%v calls=%d, want cancellation after one call", err, calls)
 	}
 }
 

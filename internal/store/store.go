@@ -1375,7 +1375,7 @@ func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
 	return users, nil
 }
 
-const rankingUpdateConcurrency = 16
+const rankingUpdateConcurrency = 8
 
 // UpdateItemRankings persists only attributes derived by rescore. Item rows
 // also carry migration and archive state that may change independently, so a
@@ -1443,19 +1443,30 @@ func (s *Store) updateItemRanking(ctx context.Context, item domain.Item) error {
 		values[":why"] = whyValue
 		expression = "SET #score = :score, #size = :size, #why = :why"
 	}
-	_, err = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+	input := &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
 		UpdateExpression: aws.String(expression), ConditionExpression: aws.String("attribute_exists(PK)"),
 		ExpressionAttributeNames: names, ExpressionAttributeValues: values,
-	})
-	var conditional *types.ConditionalCheckFailedException
-	if errors.As(err, &conditional) {
-		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("update ranking for %s: %w", item.ItemID, err)
+	for attempt := 0; attempt < 4; attempt++ {
+		_, err = s.db.UpdateItem(ctx, input)
+		var conditional *types.ConditionalCheckFailedException
+		if err == nil || errors.As(err, &conditional) {
+			return nil
+		}
+		var apiErr smithy.APIError
+		if attempt == 3 || !errors.As(err, &apiErr) ||
+			(apiErr.ErrorCode() != "ProvisionedThroughputExceededException" && apiErr.ErrorCode() != "ThrottlingException") {
+			break
+		}
+		// The SDK has already exhausted its retries. Give the index seconds
+		// to recover, with jitter so workers do not retry in lockstep.
+		backoff := time.Second << attempt
+		if sleepErr := s.sleep(ctx, backoff+time.Duration(rand.Int64N(int64(backoff)))); sleepErr != nil {
+			return fmt.Errorf("wait to update ranking for %s: %w", item.ItemID, sleepErr)
+		}
 	}
-	return nil
+	return fmt.Errorf("update ranking for %s: %w", item.ItemID, err)
 }
 
 func (s *Store) StartReplay(ctx context.Context, userID, version string, at time.Time) error {
@@ -2396,6 +2407,7 @@ func (s *Store) RecomputeModel(ctx context.Context, userID, version, imageVersio
 		model := score.BuildModel(userID, signals, behaviours, time.Now().UTC(), version, imageVersion)
 		if getErr == nil {
 			model.ReplayTS, model.ReplayVersion = previous.ReplayTS, previous.ReplayVersion
+			model.SizeCutoffs, model.TagSizeCutoffs = previous.SizeCutoffs, previous.TagSizeCutoffs
 		}
 		err = s.putModelIfUnchanged(ctx, model, previous.ComputedAt)
 		var conditional *types.ConditionalCheckFailedException
