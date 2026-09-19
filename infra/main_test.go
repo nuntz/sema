@@ -12,6 +12,29 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
+func TestRescoreErrorsAlarmMetric(t *testing.T) {
+	actions := pulumi.Array{pulumi.String("arn:aws:sns:us-east-1:123456789012:alerts")}
+	args := rescoreErrorsAlarmArgs(pulumi.String("sema-test-rescore"), actions)
+
+	assertPulumiString(t, "namespace", args.Namespace, "AWS/Lambda")
+	assertPulumiString(t, "metric name", args.MetricName, "Errors")
+	assertPulumiString(t, "statistic", args.Statistic, "Sum")
+	assertPulumiString(t, "comparison operator", args.ComparisonOperator, "GreaterThanOrEqualToThreshold")
+	assertPulumiString(t, "missing data", args.TreatMissingData, "notBreaching")
+	assertPulumiInt(t, "period", args.Period, 3600)
+	assertPulumiInt(t, "evaluation periods", args.EvaluationPeriods, 1)
+	dimensions := args.Dimensions.(pulumi.StringMap)
+	if len(dimensions) != 1 || dimensions["FunctionName"] != pulumi.String("sema-test-rescore") {
+		t.Fatalf("dimensions = %#v", dimensions)
+	}
+	if threshold, ok := args.Threshold.(pulumi.Float64); !ok || float64(threshold) != 1 {
+		t.Fatalf("threshold = %#v, want 1", args.Threshold)
+	}
+	if got, ok := args.AlarmActions.(pulumi.Array); !ok || len(got) != 1 || got[0] != actions[0] {
+		t.Fatalf("alarm actions = %#v, want %#v", args.AlarmActions, actions)
+	}
+}
+
 func TestSchedulerSilentAlarmMetric(t *testing.T) {
 	actions := pulumi.Array{pulumi.String("arn:aws:sns:us-east-1:123456789012:alerts")}
 	args := schedulerSilentAlarmArgs(actions)
@@ -134,7 +157,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		},
 		feedsQueue: "feeds-queue", feedsDLQ: "feeds-dlq", itemsQueue: "items-queue", itemsDLQ: "items-dlq",
 		table: "sema-dev", apiID: "abc123", distributionID: "E123456789",
-		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7"},
+		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7", "arn:rescore-errors"},
 	})
 	if err != nil {
 		t.Fatalf("dashboardBody: %v", err)
@@ -144,9 +167,10 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		Widgets []struct {
 			Type       string `json:"type"`
 			Properties struct {
-				Title   string  `json:"title"`
-				Metrics [][]any `json:"metrics"`
-				Query   string  `json:"query"`
+				Alarms  []string `json:"alarms"`
+				Title   string   `json:"title"`
+				Metrics [][]any  `json:"metrics"`
+				Query   string   `json:"query"`
 			} `json:"properties"`
 		} `json:"widgets"`
 	}
@@ -170,6 +194,9 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		title := strings.TrimSpace(widget.Properties.Title)
 		if title == "" {
 			t.Errorf("widget %d has no title", index)
+		}
+		if title == "Alarms" && (len(widget.Properties.Alarms) != 8 || widget.Properties.Alarms[7] != "arn:rescore-errors") {
+			t.Errorf("dashboard alarm set = %v", widget.Properties.Alarms)
 		}
 		metrics += len(widget.Properties.Metrics)
 		metricsByTitle[title] = widget.Properties.Metrics

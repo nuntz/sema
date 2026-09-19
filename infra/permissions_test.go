@@ -101,6 +101,18 @@ func TestAPIArchiveCleanupPermissions(t *testing.T) {
 		}
 		return false
 	}
+	listBucketAllowed := false
+	for _, statement := range policy.Statements {
+		if statement.Effect == "Allow" && contains(statement.Action, "s3:ListBucket") {
+			if statement.Resource != "arn:aws:s3:::content" {
+				t.Errorf("ListBucket resource = %#v, want content bucket ARN", statement.Resource)
+			}
+			listBucketAllowed = statement.Resource == "arn:aws:s3:::content"
+		}
+	}
+	if !listBucketAllowed {
+		t.Error("API archive cleanup needs s3:ListBucket so missing objects return 404")
+	}
 	for _, action := range []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"} {
 		allowed := false
 		for _, statement := range policy.Statements {

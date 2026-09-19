@@ -248,7 +248,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		rescoreLambda, err := function(ctx, "rescore", rescoreRole, 256, 300, 0, merge(common, storyEnvironment))
+		rescoreLambda, err := function(ctx, "rescore", rescoreRole, 1024, 300, 0, merge(common, storyEnvironment))
 		if err != nil {
 			return err
 		}
@@ -483,6 +483,10 @@ func main() {
 		if err != nil {
 			return err
 		}
+		rescoreErrorsAlarm, err := cloudwatch.NewMetricAlarm(ctx, "rescore-errors", rescoreErrorsAlarmArgs(rescoreLambda.Name, alarmActions))
+		if err != nil {
+			return err
+		}
 		summariesAlarm, err := cloudwatch.NewMetricAlarm(ctx, "generated-summaries-daily", &cloudwatch.MetricAlarmArgs{
 			Namespace: pulumi.String("Sema"), MetricName: pulumi.String("SummariesGenerated"), Statistic: pulumi.String("Sum"), Period: pulumi.Int(86400), EvaluationPeriods: pulumi.Int(1),
 			ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(2000), TreatMissingData: pulumi.String("notBreaching"), AlarmActions: alarmActions,
@@ -501,7 +505,7 @@ func main() {
 			scheduler.Name, feedWorker.Name, itemWorker.Name, apiLambda.Name, rescoreLambda.Name, cleanupLambda.Name,
 			feedsQueue.Name, feedsDLQ.Name, itemsQueue.Name, itemsDLQ.Name, table.Name,
 			httpAPI.ID().ToStringOutput(), distribution.ID().ToStringOutput(),
-			dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn,
+			dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn, rescoreErrorsAlarm.Arn,
 		).ApplyT(func(values []any) (string, error) {
 			return dashboardBody(dashboardResources{
 				stack:  stack,
@@ -514,7 +518,7 @@ func main() {
 				itemsQueue: values[8].(string), itemsDLQ: values[9].(string),
 				table: values[10].(string),
 				apiID: values[11].(string), distributionID: values[12].(string),
-				alarmArns: []string{values[13].(string), values[14].(string), values[15].(string), values[16].(string), values[17].(string), values[18].(string), values[19].(string)},
+				alarmArns: []string{values[13].(string), values[14].(string), values[15].(string), values[16].(string), values[17].(string), values[18].(string), values[19].(string), values[20].(string)},
 			})
 		}).(pulumi.StringOutput)
 		if _, err := cloudwatch.NewDashboard(ctx, "dashboard", &cloudwatch.DashboardArgs{
@@ -571,6 +575,22 @@ func boundedInt(raw string, fallback, low, high int) (int, error) {
 		return 0, fmt.Errorf("must be an integer from %d to %d", low, high)
 	}
 	return value, nil
+}
+
+func rescoreErrorsAlarmArgs(functionName pulumi.StringInput, alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
+	return &cloudwatch.MetricAlarmArgs{
+		Namespace:          pulumi.String("AWS/Lambda"),
+		MetricName:         pulumi.String("Errors"),
+		Statistic:          pulumi.String("Sum"),
+		Period:             pulumi.Int(3600),
+		EvaluationPeriods:  pulumi.Int(1),
+		ComparisonOperator: pulumi.String("GreaterThanOrEqualToThreshold"),
+		Threshold:          pulumi.Float64(1),
+		TreatMissingData:   pulumi.String("notBreaching"),
+		Dimensions:         pulumi.StringMap{"FunctionName": functionName},
+		AlarmActions:       alarmActions,
+		AlarmDescription:   pulumi.String("rescore failed at least once in the last hour"),
+	}
 }
 
 func schedulerSilentAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
@@ -715,6 +735,8 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 			)
 		case "api":
 			statements = append(statements,
+				// S3 needs ListBucket to return 404 for missing archived content.
+				map[string]any{"Effect": "Allow", "Action": "s3:ListBucket", "Resource": values[1].(string)},
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:TransactWriteItems", "dynamodb:ConditionCheckItem"}, "Resource": tableResources},
 				map[string]any{"Effect": "Allow", "Action": "s3:GetObject", "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"}, "Resource": values[1].(string) + "/archive/*"},
