@@ -1,6 +1,18 @@
 import { expect, type Page, test } from "@playwright/test";
 
-async function openGrid(page: Page, kind = "image", tag = false) {
+async function openGrid(
+  page: Page,
+  kind = "image",
+  tag = false,
+  size = "M",
+  options: {
+    story?: boolean;
+    second?: boolean;
+    read?: boolean;
+    external?: boolean;
+    order?: string;
+  } = {},
+) {
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
   const item = {
     item_id: "peek",
@@ -19,8 +31,10 @@ async function openGrid(page: Page, kind = "image", tag = false) {
     media_h: 1000,
     extract_quality: 0.8,
     score: 0.5,
-    size: "M",
-    read: false,
+    size,
+    read: options.read ?? false,
+    connector: options.external ? "reddit" : "rss",
+    external_url: options.external ? "https://v.redd.it/example" : undefined,
     signal: 0,
     hearted: false,
   };
@@ -39,7 +53,7 @@ async function openGrid(page: Page, kind = "image", tag = false) {
         json: {
           profile: {
             email: "reader@example.com",
-            order_pref: "interest",
+            order_pref: options.order ?? "interest",
             tag_pref: tag ? "design" : "",
             heart_count: 0,
           },
@@ -53,10 +67,49 @@ async function openGrid(page: Page, kind = "image", tag = false) {
           },
         },
       });
-    } else if (path === "/api/items")
-      await route.fulfill({ json: { items: [item], next_cursor: null } });
+    } else if (path === "/api/items" || path === "/api/archive")
+      await route.fulfill({
+        json: {
+          items: options.second
+            ? [
+                item,
+                {
+                  ...item,
+                  item_id: "other",
+                  title: "Other image",
+                  media_url: "/media/e2e/lightbox-images/2.svg",
+                },
+              ]
+            : [item],
+          next_cursor: null,
+        },
+      });
     else if (path === "/api/stories")
-      await route.fulfill({ json: { stories: [] } });
+      await route.fulfill({
+        json: {
+          stories: options.story
+            ? [
+                {
+                  story_id: "peek-story",
+                  source_count: 2,
+                  order_key: 1,
+                  size,
+                  items: [
+                    { ...item, story_id: "peek-story" },
+                    {
+                      ...item,
+                      item_id: "headline",
+                      feed_id: "other",
+                      title: "Another headline",
+                      media_url: "/media/e2e/lightbox-images/2.svg",
+                      story_id: "peek-story",
+                    },
+                  ],
+                },
+              ]
+            : [],
+        },
+      });
     else if (path === "/api/feeds")
       await route.fulfill({ json: { feeds: [] } });
     else await route.fulfill({ json: item });
@@ -68,9 +121,13 @@ async function openGrid(page: Page, kind = "image", tag = false) {
     }),
   );
   await page.goto("/");
-  const cell = page.locator('[data-item-id="peek"]');
+  if (options.read)
+    await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
+  const cell = page.locator(
+    options.story ? '[data-story-id="peek-story"]' : '[data-item-id="peek"]',
+  );
   await expect(cell).toBeVisible();
-  await cell.locator(".cell-main").focus();
+  await cell.locator(".cell-main, .story-lead").first().focus();
   return { cell, mutations };
 }
 
@@ -130,6 +187,7 @@ for (const kind of ["image", "body"]) {
     const { cell, mutations } = await openGrid(page, kind);
     await page.keyboard.press("Shift+F10");
     await page
+      .locator(".action-sheet-layer")
       .getByRole("button", { name: "View images", exact: true })
       .click();
     await expect(page.locator(".lb-overlay")).toBeVisible();
@@ -287,5 +345,173 @@ for (const method of ["Escape", "i", "button", "Back"]) {
     // After dismissal, Escape should still clear the filter normally.
     await page.keyboard.press("Escape");
     await expect(page.locator(".scope-cell__title")).not.toHaveText("#design");
+  });
+}
+
+for (const width of [390, 1280]) {
+  for (const size of ["S", "M", "L"]) {
+    for (const kind of ["image", "video", "body"]) {
+      test(`Peek pill eligibility: ${kind}, ${size}, ${width}px`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 900 });
+        const { cell } = await openGrid(page, kind, false, size);
+        await expect(
+          cell.getByRole("button", { name: "View images", exact: true }),
+        ).toHaveCount(kind === "image" && size !== "S" ? 1 : 0);
+      });
+    }
+  }
+}
+
+for (const size of ["M", "L"]) {
+  test(`Story Peek pill opens only the Lead: ${size}`, async ({ page }) => {
+    const { cell, mutations } = await openGrid(page, "image", false, size, {
+      story: true,
+    });
+    const pill = cell.getByRole("button", { name: "View images", exact: true });
+    await expect(pill).toHaveCount(1);
+    if (size === "L")
+      await expect(cell.locator(".story-headline")).toHaveCount(1);
+    await expect(cell.locator(".story-headline .peek-pill")).toHaveCount(0);
+    await cell.hover();
+    await pill.click();
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    await expect(page.locator(".lb-image").first()).toHaveAttribute(
+      "src",
+      /1.svg$/,
+    );
+    await page.keyboard.press("Escape");
+    await expect(cell.locator(".cell-main, .story-lead").first()).toBeFocused();
+    expect(mutations).toEqual([]);
+  });
+}
+
+test("desktop Peek pill reveals on hover and keyboard focus", async ({
+  page,
+}) => {
+  const { cell, mutations } = await openGrid(page);
+  const pill = cell.getByRole("button", { name: "View images", exact: true });
+  await page.mouse.move(0, 0);
+  await expect(pill).toHaveCSS("opacity", "0");
+  await cell.hover();
+  await expect(pill).toHaveCSS("opacity", "1");
+  await page.screenshot({
+    path: "/tmp/sema-peek-pill-desktop.png",
+    animations: "disabled",
+  });
+  await page.mouse.move(0, 0);
+  await cell.locator(".cell-main").focus();
+  // The Feed shortcut in the cell copy precedes the per-cell actions.
+  for (let step = 0; step < 6; step++) {
+    await page.keyboard.press("Tab");
+    if (await pill.evaluate((button) => button === document.activeElement))
+      break;
+  }
+  await expect(pill).toBeFocused();
+  await expect(pill).toHaveCSS("opacity", "1");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".lb-overlay")).toBeVisible();
+  await page.keyboard.press("Escape");
+  expect(mutations).toEqual([]);
+});
+
+test.describe("touch Peek pill", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+
+  test("tap moves a stale Cursor and opens that Item without Read or Behaviour", async ({
+    page,
+  }) => {
+    const { cell, mutations } = await openGrid(page, "image", false, "M", {
+      second: true,
+    });
+    const other = page.locator('[data-item-id="other"]');
+    await expect(cell).toHaveClass(/focused/);
+    const pill = other.getByRole("button", {
+      name: "View images",
+      exact: true,
+    });
+    await expect(pill).toHaveCSS("opacity", "1");
+    const box = await pill.boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    await page.screenshot({
+      path: "/tmp/sema-peek-pill-phone.png",
+      animations: "disabled",
+    });
+    // Hold beyond both the pressed-state delay and the long-press threshold.
+    const session = await page.context().newCDPSession(page);
+    if (!box) throw new Error("Missing Peek pill bounds");
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: box.x + 2, y: box.y + 2 }],
+    });
+    await page.waitForTimeout(650);
+    await expect(other).not.toHaveClass(/pressed/);
+    await expect(page.locator(".action-sheet-layer")).toHaveCount(0);
+    await session.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    await expect(page.locator(".lb-image").first()).toHaveAttribute(
+      "src",
+      /2.svg$/,
+    );
+    await expect(page.locator(".reader")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(other).toHaveClass(/focused/);
+    await expect(other.locator(".cell-main")).toBeFocused();
+    await expect(other).not.toHaveClass(/is-read/);
+    expect(mutations).toEqual([]);
+  });
+
+  test("Peek pill does not follow an external primary route", async ({
+    page,
+  }) => {
+    const { cell, mutations } = await openGrid(page, "image", false, "M", {
+      external: true,
+    });
+    await expect(cell.locator("a.cell-main")).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+    await cell.getByRole("button", { name: "View images", exact: true }).tap();
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    expect(page.context().pages()).toHaveLength(1);
+    await expect(page.locator(".reader")).toHaveCount(0);
+    expect(mutations).toEqual([]);
+  });
+});
+
+for (const view of ["Front Page", "chrono", "tag", "Archive"]) {
+  test(`Read cells retain their Peek pill in ${view}`, async ({ page }) => {
+    const { cell, mutations } = await openGrid(
+      page,
+      "image",
+      view === "tag",
+      "M",
+      {
+        read: true,
+        order: view === "chrono" ? "chrono" : "interest",
+      },
+    );
+    if (view === "Archive") {
+      await page.keyboard.press("Shift+A");
+      await expect(cell).toHaveClass(/archive-cell/);
+    }
+    await cell.hover();
+    const before = mutations.length;
+    await cell
+      .getByRole("button", { name: "View images", exact: true })
+      .click();
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    await expect(page.locator(".reader")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    expect(mutations.slice(before)).toEqual([]);
   });
 }

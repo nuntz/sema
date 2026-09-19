@@ -112,6 +112,14 @@ _Avoid_: Focus, selection, highlight, active cell
 A surface opened over the grid or reader that owns the keyboard and the back button while it is on top. An Overlay closes with Escape and with the key that opened it, except an Overlay holding a text input, which closes with Escape only.
 _Avoid_: Modal, dialog, sheet, popup, panel
 
+**Peek**:
+An Overlay that shows an Item's images over the grid without marking the Item Read. A Peek on a Story shows the Lead's images.
+_Avoid_: Lightbox, preview, image viewer, gallery
+
+**Flip**:
+Leaving a Peek for the reader of the same Item.
+_Avoid_: Open, expand, go to article
+
 ### Feedback
 
 **Feedback**:

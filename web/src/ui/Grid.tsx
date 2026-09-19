@@ -63,6 +63,7 @@ import { gridCommand, isEditingTarget } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import type { LightboxImage } from "./lightbox-set";
 import { closeOverlay, keyOwnership, pushOverlay } from "./overlay-history";
+import { PeekPill } from "./PeekPill";
 import { animatePageScroll } from "./page-scroll";
 import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
@@ -496,7 +497,8 @@ function GridContent(props: GridProps) {
 
   const startLongPress = (event: PointerEvent, item: Item, story?: Story) => {
     if (event.pointerType !== "touch") return;
-    if ((event.target as HTMLElement).closest(".cell-actions")) return;
+    if ((event.target as HTMLElement).closest(".cell-actions, .peek-pill"))
+      return;
     cancelLongPress();
     longPress = beginLongPress(event.clientX, event.clientY, performance.now());
     longPressItem = item;
@@ -908,7 +910,7 @@ function GridContent(props: GridProps) {
       return;
     if (
       target.closest(
-        ".story-heart, .story-more, .story-more-action, .cell-actions, .signal-why, .signal-hint",
+        ".story-heart, .story-more, .story-more-action, .cell-actions, .peek-pill, .signal-why, .signal-hint",
       ) &&
       (event.key === "Enter" || event.key === " ")
     )
@@ -1195,6 +1197,12 @@ function GridContent(props: GridProps) {
                           if (!pageFocus) props.actions.onFocus(id);
                         }}
                         onOpenLead={openStoryLead}
+                        onPeekLead={(story) => {
+                          const lead = story.items[0];
+                          if (!lead) return;
+                          props.actions.onFocus(`story:${story.story_id}`);
+                          void openImages(lead);
+                        }}
                         onOpen={props.actions.onOpen}
                         onExternalOpen={props.actions.onExternalOpen}
                         onHeart={props.actions.onHeart}
@@ -1485,6 +1493,14 @@ function GridContent(props: GridProps) {
                           <Icon name="discussion" size={13} />
                         </a>
                       </Show>
+                      <PeekPill
+                        item={item()}
+                        size={cell.effectiveSize}
+                        onPeek={() => {
+                          props.actions.onFocus(item().item_id);
+                          void openImages(item());
+                        }}
+                      />
                       <SignalActions
                         item={item()}
                         size={cell.effectiveSize}

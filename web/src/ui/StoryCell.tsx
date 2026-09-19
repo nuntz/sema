@@ -25,6 +25,7 @@ import { externalHost, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Story } from "../types";
 import { ExpiryPill } from "./ExpiryPill";
 import { CellCopy, relativeTime, UnreadDot } from "./Grid";
+import { PeekPill } from "./PeekPill";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SignalActions } from "./SignalActions";
@@ -49,6 +50,7 @@ interface StoryCellProps {
   onLeadHeight(storyID: string, height: number): void;
   onFocus(id: string): void;
   onOpenLead(story: Story): void;
+  onPeekLead(story: Story): void;
   onOpen(item: Item): void;
   onExternalOpen(item: Item): void;
   onHeart(item: Item): void;
@@ -317,6 +319,11 @@ export function StoryCell(props: StoryCellProps) {
                     dimmed={leadReadVisuals().dimmed}
                     onApplyFeed={() => props.onApplyFeed(item)}
                   />
+                  <PeekPill
+                    item={item}
+                    size={props.story.size}
+                    onPeek={() => props.onPeekLead(props.story)}
+                  />
                   <SignalActions
                     item={item}
                     size={props.story.size}
@@ -370,6 +377,11 @@ export function StoryCell(props: StoryCellProps) {
                   </strong>
                   <em>top 10%</em>
                 </div>
+                <PeekPill
+                  item={item}
+                  size={props.story.size}
+                  onPeek={() => props.onPeekLead(props.story)}
+                />
                 <SignalActions
                   item={item}
                   size={props.story.size}

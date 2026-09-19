@@ -1181,6 +1181,17 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .cell-actions button.heart.selected:hover .icon { color: var(--cell-action-kept-hover-fg); }
 .cell-actions button.heart:focus-visible { color: var(--accent); }
 .cell-actions button.copy-link.activated { background: var(--accent-wash-18); color: var(--accent); }
+/* Peek uses the reader hover pill material with a 44px touch target. */
+.peek-pill { position: absolute; top: 0; right: 0; z-index: 5; width: 44px; height: 44px; padding: 7px; display: grid; place-items: center; background: transparent; transition: opacity 120ms ease-out; user-select: none; -webkit-touch-callout: none; }
+.peek-pill > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--lb-control); color: var(--fg-primary); backdrop-filter: blur(12px); }
+.peek-pill:hover > span { background: var(--lb-control-hover); }
+.peek-pill:focus-visible { outline: none; }
+.peek-pill:focus-visible > span { box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
+.grid-cell:has(> .peek-pill) > .cell-corner, .story-lead-shell:has(> .peek-pill) > .cell-corner { right: 49px; }
+@media (hover: hover) {
+  .peek-pill { opacity: 0; pointer-events: none; }
+  .grid-cell:hover .peek-pill, .peek-pill:focus-visible { opacity: 1; pointer-events: auto; }
+}
 .action-sheet-layer { position: fixed; inset: 0; z-index: 120; display: flex; align-items: flex-end; justify-content: center; background: transparent; }
 .related-layer { position: fixed; inset: 0; z-index: 140; display: flex; justify-content: flex-end; background: transparent; }
 .sheet-scrim-visual, .confirm-scrim-visual { position: absolute; inset: 0; pointer-events: none; transition: opacity 180ms ease-out; }

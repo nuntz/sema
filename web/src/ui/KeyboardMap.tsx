@@ -46,7 +46,7 @@ const groups = [
       ["u", "Undo last read batch / grid clear"],
       ["c", "Copy or share original; Reddit discussion in grid"],
       ["v", "Open original"],
-      ["i", "Toggle image lightbox"],
+      ["i", "Toggle Peek"],
       ["r", "Show related coverage"],
     ],
   },
