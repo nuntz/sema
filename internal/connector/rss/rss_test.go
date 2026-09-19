@@ -158,3 +158,20 @@ func TestFetchRejectsInvalidFeed(t *testing.T) {
 		t.Fatal("expected a parse error")
 	}
 }
+
+func TestBlueskyLinkItems(t *testing.T) {
+	for _, test := range []struct {
+		body string
+		link bool
+	}{
+		{`Short post`, true},
+		{`<a href="https://bsky.app/profile/someone">mention</a>`, true},
+		{`<a href="https://article.example/story">Read more</a>`, false},
+	} {
+		body := `<rss version="2.0"><channel><title>Posts</title><item><title>Post</title><link>https://bsky.app/profile/user/post/id</link><description><![CDATA[` + test.body + `]]></description></item></channel></rss>`
+		result, err := connectorFor(body, "application/rss+xml").Fetch(context.Background(), domain.Feed{URL: "https://bsky.app/profile/user/rss"})
+		if err != nil || len(result.Entries) != 1 || result.Entries[0].LinkItem != test.link {
+			t.Fatalf("result=%+v err=%v", result, err)
+		}
+	}
+}

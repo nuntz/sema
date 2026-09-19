@@ -587,7 +587,7 @@ func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 		if got := counter.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.FeedSK("feed") {
 			t.Fatalf("counter key = %q", got)
 		}
-		if aws.ToString(counter.UpdateExpression) != "ADD item_count :one, extraction_sample :one, extraction_failures :extraction_failure, media_failures :media_failure, extraction_quality_total :quality" {
+		if aws.ToString(counter.UpdateExpression) != "ADD item_count :one, extraction_sample :one, extraction_failures :extraction_failure, media_failures :media_failure, extraction_quality_total :quality, link_item_count :link_item" {
 			t.Fatalf("counter update = %#v", counter)
 		}
 		if counter.ExpressionAttributeValues[":extraction_failure"].(*types.AttributeValueMemberN).Value != "1" || counter.ExpressionAttributeValues[":media_failure"].(*types.AttributeValueMemberN).Value != "1" {
@@ -2087,5 +2087,75 @@ func TestReadStaleIDsDoesNotQueryLivePartition(t *testing.T) {
 				t.Fatalf("queries=%d writes=%d", queries, writes)
 			}
 		})
+	}
+}
+
+func TestLinkItemCountersAndBodyHistoryCommitTogether(t *testing.T) {
+	for _, test := range []struct {
+		name                  string
+		link, body            bool
+		media                 string
+		wantFailure, wantLink string
+	}{
+		{"link omission", true, false, "", "0", "1"}, {"real failure", false, false, "", "1", "0"},
+		{"link with body", true, true, "", "0", "0"}, {"video", false, false, "video", "0", "0"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+				update := input.TransactItems[3].Update
+				values := update.ExpressionAttributeValues
+				for key, want := range map[string]string{":extraction_failure": test.wantFailure, ":link_item": test.wantLink, ":media_failure": "1", ":one": "1"} {
+					if values[key].(*types.AttributeValueMemberN).Value != want {
+						t.Fatalf("%s=%v want=%s", key, values[key], want)
+					}
+				}
+				if values[":outcomes"].(*types.AttributeValueMemberS).Value != domain.AppendBodyOutcome(strings.Repeat("0", 50), test.body) || !strings.Contains(aws.ToString(update.ConditionExpression), "body_outcomes = :before") {
+					t.Fatalf("update=%+v", update)
+				}
+				return &dynamodb.TransactWriteItemsOutput{}, nil
+			}}
+			item := putItemRetryFixture()
+			item.LinkItem = test.link
+			item.HasBody = test.body
+			item.MediaType = test.media
+			item.RecordBodyOutcome = true
+			item.BodyOutcomesBefore = strings.Repeat("0", 50)
+			written, err := New(db, nil, "table", "", "").PutItem(context.Background(), item)
+			if err != nil || !written {
+				t.Fatalf("written=%v err=%v", written, err)
+			}
+		})
+	}
+}
+
+func TestBodyHistoryRefreshesAfterConcurrentItem(t *testing.T) {
+	calls := 0
+	db := &fakeDynamoDB{
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			if input.Key["PK"].(*types.AttributeValueMemberS).Value != "U#user" {
+				t.Fatalf("key=%v", input.Key)
+			}
+			row, _ := attributevalue.MarshalMap(domain.Feed{PK: "U#user", FeedID: "feed", BodyOutcomes: "10"})
+			return &dynamodb.GetItemOutput{Item: row}, nil
+		},
+		transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+			calls++
+			if calls == 1 {
+				return nil, transactionCanceled("None", "None", "None", "ConditionalCheckFailed")
+			}
+			update := input.TransactItems[3].Update
+			if update.ExpressionAttributeValues[":outcomes"].(*types.AttributeValueMemberS).Value != "101" {
+				t.Fatalf("lost concurrent outcome: %+v", update)
+			}
+			return &dynamodb.TransactWriteItemsOutput{}, nil
+		},
+	}
+	item := putItemRetryFixture()
+	item.RecordBodyOutcome = true
+	item.BodyOutcomesBefore = "1"
+	item.HasBody = true
+	written, err := New(db, nil, "table", "", "").PutItem(context.Background(), item)
+	if err != nil || !written || calls != 2 {
+		t.Fatalf("written=%v calls=%d err=%v", written, calls, err)
 	}
 }

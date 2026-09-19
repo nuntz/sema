@@ -73,7 +73,7 @@ type itemProjection struct {
 var listItemProjection = newItemProjection("vector", "image_vector", "search_text")
 
 var feedCounterAttributes = map[string]bool{
-	"item_count": true, "extraction_failures": true, "media_failures": true,
+	"body_outcomes": true, "link_item_count": true, "item_count": true, "extraction_failures": true, "media_failures": true,
 	"extraction_quality_total": true, "extraction_sample": true,
 }
 
@@ -180,9 +180,6 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 
 func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
 	feed.Connector = domain.FeedConnector(feed)
-	if feed.FetchIntervalH == 0 {
-		feed.FetchIntervalH = 1
-	}
 	if feed.Muted {
 		feed.GSI1PK = ""
 	} else {
@@ -234,9 +231,6 @@ func (s *Store) Feed(ctx context.Context, userID, feedID string) (domain.Feed, e
 	if err := attributevalue.UnmarshalMap(response.Item, &feed); err != nil {
 		return domain.Feed{}, err
 	}
-	if feed.FetchIntervalH == 0 {
-		feed.FetchIntervalH = 1
-	}
 	feed.Connector = domain.FeedConnector(feed)
 	return feed, nil
 }
@@ -260,9 +254,6 @@ func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 		}
 		for i := range page {
 			page[i].Connector = domain.FeedConnector(page[i])
-			if page[i].FetchIntervalH == 0 {
-				page[i].FetchIntervalH = 1
-			}
 			if page[i].Tags == nil {
 				page[i].Tags = []string{}
 			}
@@ -405,6 +396,24 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 		_, err = s.db.TransactWriteItems(ctx, transaction)
 		if err == nil {
 			return true, nil
+		}
+		var canceled *types.TransactionCanceledException
+		if item.RecordBodyOutcome && errors.As(err, &canceled) && len(canceled.CancellationReasons) == 4 && aws.ToString(canceled.CancellationReasons[3].Code) == "ConditionalCheckFailed" && aws.ToString(canceled.CancellationReasons[0].Code) != "ConditionalCheckFailed" {
+			// Another item advanced the window. Refresh only the outcome snapshot;
+			// the item identity and all counters still commit in one transaction.
+			current, readErr := s.Feed(ctx, strings.TrimPrefix(item.PK, "U#"), item.FeedID)
+			if errors.Is(readErr, ErrNotFound) {
+				return false, nil
+			}
+			if readErr != nil {
+				return false, readErr
+			}
+			if attempt == maxAttempts-1 {
+				return false, err
+			}
+			item.BodyOutcomesBefore = current.BodyOutcomes
+			transaction.TransactItems[3].Update = feedCounterUpdate(s.table, item)
+			continue
 		}
 		if transactionConditionFailed(err) {
 			return false, nil
@@ -569,24 +578,40 @@ func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
 }
 
 func feedCounterUpdate(table string, item domain.Item) *types.Update {
-	extractionFailure, mediaFailure := 0, 0
-	if !item.HasBody {
-		extractionFailure = 1
+	extractionFailure, mediaFailure, linkItem := 0, 0, 0
+	if !item.HasBody && item.MediaType != "video" {
+		if item.LinkItem {
+			linkItem = 1
+		} else {
+			extractionFailure = 1
+		}
 	}
 	if item.MediaKey == "" {
 		mediaFailure = 1
 	}
-	return &types.Update{
+	update := &types.Update{
 		TableName: aws.String(table), Key: key(item.PK, domain.FeedSK(item.FeedID)),
-		UpdateExpression:    aws.String("ADD item_count :one, extraction_sample :one, extraction_failures :extraction_failure, media_failures :media_failure, extraction_quality_total :quality"),
+		UpdateExpression:    aws.String("ADD item_count :one, extraction_sample :one, extraction_failures :extraction_failure, media_failures :media_failure, extraction_quality_total :quality, link_item_count :link_item"),
 		ConditionExpression: aws.String("attribute_exists(PK)"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
 			":one":                &types.AttributeValueMemberN{Value: "1"},
+			":link_item":          &types.AttributeValueMemberN{Value: strconv.Itoa(linkItem)},
 			":extraction_failure": &types.AttributeValueMemberN{Value: strconv.Itoa(extractionFailure)},
 			":media_failure":      &types.AttributeValueMemberN{Value: strconv.Itoa(mediaFailure)},
 			":quality":            &types.AttributeValueMemberN{Value: strconv.FormatFloat(item.ExtractQuality, 'f', -1, 64)},
 		},
 	}
+	if item.RecordBodyOutcome {
+		update.UpdateExpression = aws.String("SET body_outcomes = :outcomes " + aws.ToString(update.UpdateExpression))
+		update.ExpressionAttributeValues[":outcomes"] = &types.AttributeValueMemberS{Value: domain.AppendBodyOutcome(item.BodyOutcomesBefore, item.HasBody)}
+		if item.BodyOutcomesBefore == "" {
+			update.ConditionExpression = aws.String("attribute_exists(PK) AND attribute_not_exists(body_outcomes)")
+		} else {
+			update.ConditionExpression = aws.String("attribute_exists(PK) AND body_outcomes = :before")
+			update.ExpressionAttributeValues[":before"] = &types.AttributeValueMemberS{Value: item.BodyOutcomesBefore}
+		}
+	}
+	return update
 }
 
 type cursor struct {

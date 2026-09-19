@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -109,14 +110,15 @@ func (s *server) discoverFeeds(ctx context.Context, body string) events.APIGatew
 
 func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
 	var input struct {
-		FeedURL     string   `json:"feed_url"`
-		Tags        []string `json:"tags"`
-		CustomTitle string   `json:"custom_title"`
-		Connector   string   `json:"connector"`
-		Title       string   `json:"title"`
-		SiteURL     string   `json:"site_url"`
-		AvatarURL   string   `json:"avatar_url"`
-		BadgeURL    string   `json:"badge_url"`
+		FeedURL       string   `json:"feed_url"`
+		FetchInterval *int     `json:"fetch_interval_h"`
+		Tags          []string `json:"tags"`
+		CustomTitle   string   `json:"custom_title"`
+		Connector     string   `json:"connector"`
+		Title         string   `json:"title"`
+		SiteURL       string   `json:"site_url"`
+		AvatarURL     string   `json:"avatar_url"`
+		BadgeURL      string   `json:"badge_url"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
@@ -149,7 +151,16 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 	if connectorName == domain.ConnectorYouTube && !youtube.IsFeedURL(feedURL) {
 		return badRequest(errors.New("youtube connector requires a channel uploads URL"))
 	}
-	interval := 1
+	interval := 0
+	if input.FetchInterval != nil {
+		interval = *input.FetchInterval
+		if interval != 1 && interval != 3 && interval != 6 && interval != 24 {
+			return badRequest(errors.New("fetch_interval_h must be null, 1, 3, 6, or 24"))
+		}
+		if connectorName == domain.ConnectorReddit {
+			return badRequest(errors.New("Reddit Cadence is controlled by Collect"))
+		}
+	}
 	feedID := domain.FeedID(feedURL)
 	var redditInput reddit.Input
 	if connectorName == domain.ConnectorReddit {
@@ -210,7 +221,7 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 		PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: feedURL,
 		Title: discoveredTitle, SiteURL: siteURL, FaviconKey: iconKey,
 		CustomTitle: customTitle, Tags: tags, FetchIntervalH: interval,
-		NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
+		NextFetchAt: domain.Timestamp(now), LastStatus: "queued", HistoryStartedAt: domain.Timestamp(now), EffectiveCadenceH: max(interval, 1),
 	}
 	created := true
 	if existingFeed != nil {
@@ -265,13 +276,13 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 
 func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) events.APIGatewayV2HTTPResponse {
 	var input struct {
-		CustomTitle    *string   `json:"custom_title"`
-		Tags           *[]string `json:"tags"`
-		Muted          *bool     `json:"muted"`
-		AlwaysGenerate *bool     `json:"always_generate"`
-		HideShorts     *bool     `json:"hide_shorts"`
-		FetchInterval  *int      `json:"fetch_interval_h"`
-		URL            *string   `json:"url"`
+		CustomTitle    *string         `json:"custom_title"`
+		Tags           *[]string       `json:"tags"`
+		Muted          *bool           `json:"muted"`
+		AlwaysGenerate *bool           `json:"always_generate"`
+		HideShorts     *bool           `json:"hide_shorts"`
+		FetchInterval  json.RawMessage `json:"fetch_interval_h"`
+		URL            *string         `json:"url"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
@@ -324,13 +335,26 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		feed.Tags = value
 	}
 	if input.FetchInterval != nil {
-		if *input.FetchInterval != 1 && *input.FetchInterval != 3 && *input.FetchInterval != 6 && *input.FetchInterval != 24 {
-			return badRequest(errors.New("fetch_interval_h must be 1, 3, 6, or 24"))
+		var pin *int
+		if err := json.Unmarshal(input.FetchInterval, &pin); err != nil {
+			return badRequest(err)
 		}
-		if domain.FeedConnector(feed) == domain.ConnectorReddit {
-			return badRequest(errors.New("Reddit fetch interval is controlled by Collect"))
+		if pin != nil && *pin != 1 && *pin != 3 && *pin != 6 && *pin != 24 {
+			return badRequest(errors.New("fetch_interval_h must be null, 1, 3, 6, or 24"))
 		}
-		feed.FetchIntervalH = *input.FetchInterval
+		if domain.FeedConnector(feed) == domain.ConnectorReddit && pin != nil {
+			return badRequest(errors.New("Reddit Cadence is controlled by Collect"))
+		}
+		if domain.FeedConnector(feed) != domain.ConnectorReddit {
+			feed.FetchIntervalH = 0
+			if pin != nil {
+				feed.FetchIntervalH = *pin
+			}
+			domain.UpdateCadence(&feed, time.Now().UTC(), 0)
+			if feed.ErrorCount == 0 && feed.RefusedSince == "" {
+				feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(feed), time.Now().UTC(), domain.FeedIntervalHours(feed)))
+			}
+		}
 	}
 	if input.Muted != nil {
 		if *input.Muted {
@@ -406,7 +430,7 @@ func (s *server) exportFeeds(ctx context.Context, userID string) events.APIGatew
 			title = feed.Title
 		}
 		subscriptions = append(subscriptions, rss.Subscription{
-			Title: title, URL: feed.URL, Tags: feed.Tags, Muted: feed.Muted, IntervalH: domain.FeedIntervalHours(feed),
+			Title: title, URL: feed.URL, Tags: feed.Tags, Muted: feed.Muted, IntervalH: feed.FetchIntervalH,
 		})
 	}
 	encoded, err := rss.ExportOPML(subscriptions)
@@ -604,9 +628,13 @@ func hasTag(tags []string, wanted string) bool {
 func publicFeed(repository interface{ ContentURL(string) string }, feed domain.Feed) domain.Feed {
 	feed.Connector = domain.FeedConnector(feed)
 	feed.FaviconKey = repository.ContentURL(feed.FaviconKey)
-	if feed.FetchIntervalH == 0 {
-		feed.FetchIntervalH = 1
+	feed.EffectiveCadenceH = domain.FeedIntervalHours(feed)
+	if feed.FetchIntervalH != 0 {
+		pin := feed.FetchIntervalH
+		feed.CadencePin = &pin
 	}
+	feed.LinkFeed = domain.IsLinkFeed(feed)
+	feed.FetchIntervalH = feed.EffectiveCadenceH
 	if feed.Tags == nil {
 		feed.Tags = []string{}
 	}
@@ -639,10 +667,11 @@ func (s *server) decorateFeeds(ctx context.Context, userID string, feeds []domai
 // as ingested rather than retained/current-window counts.
 func decorateExtraction(feeds []domain.Feed) {
 	for i := range feeds {
-		if feeds[i].ExtractionSample >= 10 {
-			successes := max(0, feeds[i].ExtractionSample-feeds[i].ExtractionFailures)
-			rate := float64(successes) / float64(feeds[i].ExtractionSample)
-			average := feeds[i].ExtractionQualityTotal / float64(feeds[i].ExtractionSample)
+		expected := max(0, feeds[i].ItemCount-feeds[i].LinkItemCount)
+		if expected > 0 {
+			successes := max(0, expected-feeds[i].ExtractionFailures)
+			rate := float64(successes) / float64(expected)
+			average := feeds[i].ExtractionQualityTotal / float64(expected)
 			feeds[i].ExtractionRate = &rate
 			feeds[i].AverageQuality = &average
 		}

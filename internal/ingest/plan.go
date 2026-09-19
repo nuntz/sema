@@ -48,6 +48,7 @@ func Plan(message domain.ItemMessage, existing domain.Item, now time.Time, textV
 			message.ContentRaw = existing.Description
 		}
 		message.IsShort = message.IsShort || existing.IsShort
+		message.LinkItem = message.LinkItem || existing.LinkItem
 	}
 	video := message.MediaType == "video" || message.VideoID != ""
 	return Work{

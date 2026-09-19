@@ -628,7 +628,7 @@ func TestFailureMetricsCarryOnlyFeedIDDimension(t *testing.T) {
 		dimensions map[string]string
 	}
 	events := []event{}
-	emitItemMetrics(map[string]float64{"ItemsWritten": 1, "BodyImageFailed": 2}, "feed", false, false, func(metrics map[string]float64, dimensions map[string]string) {
+	emitItemMetrics(map[string]float64{"ItemsWritten": 1, "BodyImageFailed": 2}, "feed", false, false, false, func(metrics map[string]float64, dimensions map[string]string) {
 		events = append(events, event{metrics: metrics, dimensions: dimensions})
 	})
 	if len(events) != 2 || events[0].dimensions != nil || events[0].metrics["ItemsWritten"] != 1 || events[0].metrics["BodyImageFailed"] != 0 {
@@ -1138,5 +1138,100 @@ func TestSlowLeadUploadYieldsToCompletionReserve(t *testing.T) {
 	}
 	if !slices.Contains(repository.contentKeys, store.BodyKey("user", "item")) {
 		t.Fatalf("body was not stored: %v", repository.contentKeys)
+	}
+}
+
+type linkItemStore struct {
+	recordingItemStore
+	feed domain.Feed
+}
+
+func (s *linkItemStore) Feed(context.Context, string, string) (domain.Feed, error) {
+	return s.feed, nil
+}
+func (s *linkItemStore) PutItem(ctx context.Context, item domain.Item) (bool, error) {
+	s.feed.ItemCount++
+	if !item.HasBody {
+		if item.LinkItem {
+			s.feed.LinkItemCount++
+		} else if item.MediaType != "video" {
+			s.feed.ExtractionFailures++
+		}
+	}
+	if item.RecordBodyOutcome {
+		s.feed.BodyOutcomes = domain.AppendBodyOutcome(s.feed.BodyOutcomes, item.HasBody)
+	}
+	return s.recordingItemStore.PutItem(ctx, item)
+}
+
+type failedLeadMedia struct{ blockingMedia }
+
+func (*failedLeadMedia) FetchLead(context.Context, []string) (media.Lead, error) {
+	return media.Lead{}, errors.New("image unavailable")
+}
+
+func TestLinkItemAccountingAndRollingFeedHistory(t *testing.T) {
+	for _, test := range []struct {
+		name, connector, url, history string
+		flag, hasBody, wantLink       bool
+	}{
+		{name: "reddit image", connector: domain.ConnectorReddit, flag: true, wantLink: true},
+		{name: "reddit link", connector: domain.ConnectorReddit, history: strings.Repeat("0", 50)},
+		{name: "bluesky post", url: "https://bsky.app/profile/user/rss", flag: true, wantLink: true},
+		{name: "bluesky external link", url: "https://bsky.app/profile/user/rss", history: strings.Repeat("0", 50)},
+		{name: "rss link feed", history: strings.Repeat("0", 45) + strings.Repeat("1", 5), wantLink: true},
+		{name: "rss too young", history: strings.Repeat("0", 49)},
+		{name: "rss recovered", history: strings.Repeat("0", 44) + strings.Repeat("1", 6)},
+		{name: "link item with body", flag: true, hasBody: true, wantLink: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &linkItemStore{feed: domain.Feed{Connector: test.connector, URL: test.url, BodyOutcomes: test.history}}
+			totals := map[string]float64{}
+			h := &Processor{Store: repository, Media: &failedLeadMedia{}, Embedder: stubEmbedder{}, ScoringVersion: "1",
+				Extraction: extractionStage(func(ExtractionInput) (extract.Result, error) {
+					if test.hasBody {
+						return extract.Result{HTML: "<p>Article body</p>", Text: "Article body", Quality: 0.9}, nil
+					}
+					return extract.Result{}, nil
+				}),
+				Emit: func(metrics map[string]float64, _ map[string]string) {
+					for k, v := range metrics {
+						totals[k] += v
+					}
+				},
+			}
+			body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","link_item":` + strconv.FormatBool(test.flag) + `,"enclosure_urls":[{"url":"https://example.com/image.jpg","type":"image/jpeg"}],"published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+			if _, err := h.process(context.Background(), body); err != nil {
+				t.Fatal(err)
+			}
+			if len(repository.items) != 1 || repository.items[0].LinkItem != test.wantLink {
+				t.Fatalf("items=%+v", repository.items)
+			}
+			missingLink := test.wantLink && !test.hasBody
+			if (totals["LinkItems"] == 1) != missingLink || (repository.feed.LinkItemCount == 1) != missingLink || (totals["ExtractionFailed"] == 1) != (!test.wantLink && !test.hasBody) || repository.feed.ItemCount != 1 || totals["MediaFailed"] != 1 {
+				t.Fatalf("feed=%+v metrics=%v", repository.feed, totals)
+			}
+		})
+	}
+	// Successful bodies roll a Link Feed out of the class; the next no-body item fails extraction again.
+	repository := &linkItemStore{feed: domain.Feed{BodyOutcomes: strings.Repeat("0", 50)}}
+	h := &Processor{Store: repository, Media: media.New(nil), Embedder: stubEmbedder{}, ScoringVersion: "1", Extraction: extractionStage(func(ExtractionInput) (extract.Result, error) {
+		return extract.Result{HTML: "<p>Recovered article</p>", Text: "Recovered article", Quality: 0.9}, nil
+	})}
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+	for range 6 {
+		if _, err := h.process(context.Background(), body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if domain.IsLinkFeed(repository.feed) {
+		t.Fatal("feed did not leave Link Feed class")
+	}
+	h.Extraction = extractionStage(func(ExtractionInput) (extract.Result, error) { return extract.Result{}, nil })
+	if _, err := h.process(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+	if repository.feed.ExtractionFailures != 1 || repository.feed.LinkItemCount != 0 {
+		t.Fatalf("recovered feed=%+v", repository.feed)
 	}
 }

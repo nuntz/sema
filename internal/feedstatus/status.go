@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	defaultRateLimitDelay = 15 * time.Minute
-	rateLimitJitterWindow = 5 * time.Minute
+	refusalJitterWindow = 5 * time.Minute
 )
 
 func ScheduleKey(feed domain.Feed) string {
@@ -22,22 +21,17 @@ func ScheduleKey(feed domain.Feed) string {
 }
 
 func nextFetchAfterError(feed domain.Feed, started time.Time, err error) (time.Time, bool) {
-	maximum := time.Duration(max(24, domain.FeedIntervalHours(feed))) * time.Hour
 	var statusErr *connector.HTTPStatusError
-	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusTooManyRequests {
+	refused := errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusTooManyRequests || domain.FeedConnector(feed) == domain.ConnectorYouTube && (statusErr.StatusCode == 404 || statusErr.StatusCode == 500))
+	if !refused {
 		delay := time.Duration(1<<min(feed.ErrorCount, 5)) * time.Hour
-		return started.Add(min(delay, maximum)), false
+		return started.Add(min(delay, 24*time.Hour)), false
 	}
-
-	next := started.Add(defaultRateLimitDelay)
 	if retryAt, ok := parseRetryAfter(statusErr.Header.Get("Retry-After"), started); ok {
-		next = retryAt
+		return retryAt, true
 	}
-	next = next.Add(domain.StableOffset(ScheduleKey(feed), rateLimitJitterWindow))
-	if capAt := started.Add(maximum); next.After(capAt) {
-		next = capAt
-	}
-	return next, true
+	delay := time.Duration(min(domain.FeedIntervalHours(feed), 6)) * time.Hour
+	return started.Add(delay).Add(domain.StableOffset(ScheduleKey(feed), refusalJitterWindow)), true
 }
 
 func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
@@ -54,19 +48,29 @@ func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
 func AfterFetch(feed domain.Feed, result domain.FetchResult, err error, now time.Time) (domain.Feed, bool) {
 	feed.LastFetchAt = domain.Timestamp(now)
 	if err != nil {
-		feed.ErrorCount++
 		feed.LastStatus = truncate(err.Error(), 240)
-		feed.LastError = truncate(err.Error(), 200)
-		next, limited := nextFetchAfterError(feed, now, err)
+		next, refused := nextFetchAfterError(feed, now, err)
+		if refused {
+			if feed.RefusedSince == "" {
+				feed.RefusedSince = domain.Timestamp(now)
+			}
+		} else {
+			feed.RefusedSince = ""
+			feed.ErrorCount++
+			feed.LastError = truncate(err.Error(), 200)
+			next, _ = nextFetchAfterError(feed, now, err)
+		}
 		feed.NextFetchAt = domain.Timestamp(next)
-		return feed, limited
+		return feed, refused
 	}
+	feed.RefusedSince = ""
 	feed.ErrorCount = 0
 	feed.LastError = ""
 	feed.LastStatus = "200"
 	if result.NotModified {
 		feed.LastStatus = "304"
 	}
+	domain.UpdateCadence(&feed, now, 0)
 	feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(ScheduleKey(feed), now, domain.FeedIntervalHours(feed)))
 	return feed, false
 }
@@ -74,6 +78,7 @@ func Retry(feed domain.Feed, now time.Time) domain.Feed {
 	if feed.Muted {
 		return feed
 	}
+	feed.RefusedSince = ""
 	feed.ErrorCount = 0
 	feed.LastError = ""
 	feed.LastStatus = "queued"
@@ -90,6 +95,9 @@ func Unmute(feed domain.Feed, now time.Time) domain.Feed {
 func Status(feed domain.Feed) string {
 	if feed.Muted {
 		return "muted"
+	}
+	if since, err := time.Parse(time.RFC3339Nano, feed.RefusedSince); err == nil && time.Since(since) > 24*time.Hour {
+		return "broken"
 	}
 	if feed.ErrorCount >= 3 {
 		return "broken"

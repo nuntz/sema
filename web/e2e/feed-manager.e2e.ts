@@ -17,6 +17,10 @@ const fixtures: Feed[] = Array.from({ length: 320 }, (_, index) => ({
   hide_shorts: false,
   always_generate: index === 0,
   fetch_interval_h: index === 1 ? 1 : 24,
+  cadence_pin_h: index === 7 ? null : index === 1 ? 1 : 24,
+  effective_cadence_h: index === 1 ? 1 : 24,
+  link_feed: index === 7,
+  link_item_count: index === 7 ? 400 : 0,
   last_fetch_at: index === 5 ? undefined : now.toISOString(),
   last_error: index < 3 ? "HTTP 503 Service Unavailable" : undefined,
   error_count: index < 3 ? 12 : index === 6 ? 3 : index === 3 ? 1 : 0,
@@ -162,7 +166,23 @@ async function openManager(
       return route.fulfill({ json: { feed: original } });
     }
     if (path.startsWith("/api/feeds/") && request.method() === "PATCH") {
-      state.patches.push(request.postDataJSON());
+      const patch = request.postDataJSON();
+      state.patches.push(patch);
+      feeds = feeds.map((feed) =>
+        feed.feed_id === path.split("/")[3]
+          ? {
+              ...feed,
+              ...patch,
+              ...(Object.hasOwn(patch, "fetch_interval_h")
+                ? {
+                    cadence_pin_h: patch.fetch_interval_h,
+                    fetch_interval_h: patch.fetch_interval_h ?? 24,
+                    effective_cadence_h: patch.fetch_interval_h ?? 24,
+                  }
+                : {}),
+            }
+          : feed,
+      );
       return route.fulfill({
         json: feeds.find((feed) => feed.feed_id === path.split("/")[3]),
       });
@@ -441,4 +461,34 @@ test("failed counts stay unavailable instead of making every feed quiet", async 
     await page.getByRole("combobox", { name: "Sort feeds" }).selectOption(sort);
     await expect(rows).toHaveText(titles);
   }
+});
+
+test("Auto Cadence round-trips and Link Feed rows carry a badge", async ({
+  page,
+}) => {
+  const state = await openManager(page);
+  const row = page
+    .locator(".feed-manage-row")
+    .filter({ hasText: "Journal 007" });
+  await expect(row).toContainText("Link Feed");
+  await expect(row).toContainText("Auto · daily");
+  await row.click();
+  const cadence = page.getByRole("group", { name: "CADENCE" });
+  await expect(
+    cadence.getByRole("button", { name: "Auto", exact: true }),
+  ).toHaveClass(/active/);
+  await cadence.getByRole("button", { name: "3h", exact: true }).click();
+  await expect(
+    cadence.getByRole("button", { name: "3h", exact: true }),
+  ).toHaveClass(/active/);
+  await expect(row).toContainText("Every 3h");
+  await cadence.getByRole("button", { name: "Auto", exact: true }).click();
+  await expect(
+    cadence.getByRole("button", { name: "Auto", exact: true }),
+  ).toHaveClass(/active/);
+  expect(state.patches).toEqual([
+    { fetch_interval_h: 3 },
+    { fetch_interval_h: null },
+  ]);
+  await page.screenshot({ path: "/tmp/sema-cadence-link-feed.png" });
 });

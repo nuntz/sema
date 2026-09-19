@@ -43,7 +43,7 @@ func ParseOPML(reader io.Reader) ([]Subscription, error) {
 		var title, feedURL string
 		var tags []string
 		muted := false
-		interval := 1
+		interval := 0
 		for _, attribute := range start.Attr {
 			switch strings.ToLower(attribute.Name.Local) {
 			case "xmlurl":
@@ -58,6 +58,10 @@ func ParseOPML(reader io.Reader) ([]Subscription, error) {
 				muted = strings.EqualFold(strings.TrimSpace(attribute.Value), "true")
 			case "interval":
 				switch strings.ToLower(strings.TrimSpace(attribute.Value)) {
+				case "1h":
+					interval = 1
+				case "3h":
+					interval = 3
 				case "6h":
 					interval = 6
 				case "24h":
@@ -123,10 +127,10 @@ func ExportOPML(subscriptions []Subscription) ([]byte, error) {
 			entry.Muted = "true"
 		}
 		switch subscription.IntervalH {
-		case 6, 24:
+		case 1, 3, 6, 24:
 			entry.Interval = fmt.Sprintf("%dh", subscription.IntervalH)
 		default:
-			entry.Interval = "1h"
+			entry.Interval = "auto"
 		}
 		value.Body.Outlines = append(value.Body.Outlines, entry)
 	}

@@ -100,6 +100,7 @@ func transformEntry(entry *domain.Entry, baseURL *url.URL) {
 	}
 	entry.Enclosures = preferOriginalRedditImages(entry.Enclosures)
 	entry.PostType = inferPostType(externalURL, len(entry.Enclosures) > 0)
+	entry.LinkItem = entry.PostType != "link"
 }
 
 func preferOriginalRedditImages(enclosures []domain.Enclosure) []domain.Enclosure {

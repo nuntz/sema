@@ -277,6 +277,7 @@ export class APIClient {
 
   addFeed(input: {
     feed_url: string;
+    fetch_interval_h?: Feed["fetch_interval_h"] | null;
     tags?: string[];
     custom_title?: string;
     connector?: string;
@@ -301,10 +302,9 @@ export class APIClient {
         | "muted"
         | "hide_shorts"
         | "always_generate"
-        | "fetch_interval_h"
         | "url"
       >
-    >,
+    > & { fetch_interval_h?: Feed["fetch_interval_h"] | null },
   ): Promise<Feed> {
     return this.request(`/feeds/${encodeURIComponent(feedID)}`, {
       method: "PATCH",

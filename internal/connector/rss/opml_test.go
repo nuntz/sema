@@ -51,3 +51,20 @@ func TestOPMLRoundTripPreservesSemaFeedMetadata(t *testing.T) {
 		t.Fatalf("round trip = %#v\n%s", got, encoded)
 	}
 }
+
+func TestOPMLPreservesAutoAndEveryCadencePin(t *testing.T) {
+	for _, hours := range []int{0, 1, 3, 6, 24} {
+		encoded, err := ExportOPML([]Subscription{{URL: "https://example.com/feed", IntervalH: hours}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		feeds, err := ParseOPML(strings.NewReader(string(encoded)))
+		if err != nil || len(feeds) != 1 || feeds[0].IntervalH != hours {
+			t.Fatalf("cadence=%d feeds=%+v error=%v", hours, feeds, err)
+		}
+	}
+	feeds, err := ParseOPML(strings.NewReader(`<opml><body><outline xmlUrl="https://example.com/feed"/></body></opml>`))
+	if err != nil || feeds[0].IntervalH != 0 {
+		t.Fatalf("default import=%+v error=%v", feeds, err)
+	}
+}

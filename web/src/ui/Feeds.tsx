@@ -13,6 +13,8 @@ import { AppMark } from "../components/AppMark";
 import { Icon, type IconName } from "../components/Icon";
 import {
   brokenSince,
+  cadenceLabel,
+  cadencePin,
   compareFeeds,
   type FeedFilter,
   type FeedSort,
@@ -184,7 +186,7 @@ export function Feeds(props: {
           feed.muted ||
           feed.hide_shorts ||
           feed.always_generate ||
-          (feed.connector !== "reddit" && feed.fetch_interval_h !== 1)
+          (feed.connector !== "reddit" && cadencePin(feed) !== null)
         ) {
           await props.api.patchFeed(restored.feed.feed_id, {
             muted: feed.muted,
@@ -192,7 +194,7 @@ export function Feeds(props: {
               feed.connector === "youtube" ? feed.hide_shorts : undefined,
             always_generate: feed.always_generate,
             fetch_interval_h:
-              feed.connector === "reddit" ? undefined : feed.fetch_interval_h,
+              feed.connector === "reddit" ? undefined : cadencePin(feed),
           });
         }
       }),
@@ -539,12 +541,15 @@ export function Feeds(props: {
                     <div class="feed-row-copy">
                       <div>
                         <strong>{displayTitle(feed)}</strong>
+                        <Show when={feed.link_feed}>
+                          <span class="tag-chip">Link Feed</span>
+                        </Show>
                         <For each={(feed.tags ?? []).slice(0, 3)}>
                           {(tag) => <span class="tag-chip">{tag}</span>}
                         </For>
                       </div>
                       <small>
-                        {feedDescriptor(feed)}
+                        {feedDescriptor(feed)} · {cadenceLabel(feed)}
                         {!feed.muted &&
                         feedCount(props.itemCounts, feed.feed_id)?.all === 0
                           ? " · nothing this week"
@@ -743,10 +748,9 @@ function FeedDrawer(props: {
         | "muted"
         | "hide_shorts"
         | "always_generate"
-        | "fetch_interval_h"
         | "url"
       >
-    >,
+    > & { fetch_interval_h?: Feed["fetch_interval_h"] | null },
   ) => {
     setWorking(true);
     try {
@@ -862,31 +866,32 @@ function FeedDrawer(props: {
                 class="drawer-field interval-field"
                 disabled={props.feed.muted || working()}
               >
-                <legend>FETCH EVERY</legend>
+                <legend>CADENCE</legend>
                 <div>
-                  <For each={[1, 6, 24] as const}>
+                  <For each={[null, 1, 3, 6, 24] as const}>
                     {(interval) => (
                       <button
                         type="button"
                         classList={{
-                          active: props.feed.fetch_interval_h === interval,
+                          active: cadencePin(props.feed) === interval,
                         }}
                         onClick={() =>
                           void patch({ fetch_interval_h: interval })
                         }
                       >
-                        {interval}h
+                        {interval === null ? "Auto" : `${interval}h`}
                       </button>
                     )}
                   </For>
                 </div>
+                <small>{cadenceLabel(props.feed)}</small>
               </fieldset>
               <section class="drawer-content">
                 <h3>CONTENT</h3>
                 <div class="content-row extraction-row">
                   <span>
                     <strong>Extraction</strong>
-                    <small>Last 30 days</small>
+                    <small>All ingested Items · excludes Link Items</small>
                   </span>
                   <ExtractionQuality feed={props.feed} />
                 </div>
@@ -1035,7 +1040,8 @@ function ExtractionQuality(props: { feed: Feed }) {
   const label = () => {
     if (available())
       return `${Math.round((props.feed.extraction_success_rate ?? 0) * 100)}% · ${(props.feed.average_extract_quality ?? 0).toFixed(2)}`;
-    if ((props.feed.extraction_sample ?? 0) > 0) return "not yet";
+    if ((props.feed.item_count ?? 0) > (props.feed.link_item_count ?? 0))
+      return "not yet";
     return "— · —";
   };
   return (
@@ -1559,6 +1565,7 @@ function StatusBadge(props: { feed: Feed; since?: string }) {
     const duration = since
       ? `, failing for ${days === 0 ? "less than a day" : `${days} ${days === 1 ? "day" : "days"}`}`
       : "";
+    if (props.feed.refused_since) return `Refused${duration}`;
     return `${props.feed.status}: ${props.feed.error_count} consecutive fetch failures${duration}`;
   };
   return (
@@ -1614,7 +1621,7 @@ function drawerDescriptor(feed: Feed): string {
     : "not checked yet";
   if (feed.connector === "youtube") return `YouTube · uploads · ${checked}`;
   if (feed.connector === "reddit")
-    return `${feedDescriptor(feed)} · ${checked}`;
+    return `${feedDescriptor(feed)} · {cadenceLabel(feed)} · ${checked}`;
   return feed.last_fetch_at
     ? `last fetched ${relativeTime(feed.last_fetch_at)} ago`
     : "not fetched yet";

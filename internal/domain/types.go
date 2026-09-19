@@ -32,6 +32,15 @@ type User struct {
 }
 
 type Feed struct {
+	HistoryStartedAt  string         `dynamodbav:"history_started_at,omitempty" json:"-"`
+	PublishHistory    map[string]int `dynamodbav:"publish_history,omitempty" json:"-"`
+	EffectiveCadenceH int            `dynamodbav:"effective_cadence_h,omitempty" json:"effective_cadence_h"`
+	RefusedSince      string         `dynamodbav:"refused_since,omitempty" json:"refused_since,omitempty"`
+	BodyOutcomes      string         `dynamodbav:"body_outcomes,omitempty" json:"-"`
+	LinkItemCount     int            `dynamodbav:"link_item_count,omitempty" json:"link_item_count"`
+	LinkFeed          bool           `dynamodbav:"-" json:"link_feed"`
+	CadencePin        *int           `dynamodbav:"-" json:"cadence_pin_h"`
+
 	PK             string   `dynamodbav:"PK" json:"-"`
 	SK             string   `dynamodbav:"SK" json:"-"`
 	GSI1PK         string   `dynamodbav:"gsi1pk,omitempty" json:"-"`
@@ -110,6 +119,10 @@ type MediaVariant struct {
 }
 
 type Item struct {
+	LinkItem           bool   `dynamodbav:"link_item,omitempty" json:"-"`
+	RecordBodyOutcome  bool   `dynamodbav:"-" json:"-"`
+	BodyOutcomesBefore string `dynamodbav:"-" json:"-"`
+
 	PK                string         `dynamodbav:"PK" json:"-"`
 	SK                string         `dynamodbav:"SK" json:"-"`
 	FeedPK            string         `dynamodbav:"feed_pk" json:"-"`
@@ -287,6 +300,7 @@ type Enclosure struct {
 }
 
 type Entry struct {
+	LinkItem     bool
 	GUID         string
 	URL          string
 	ExternalURL  string
@@ -318,6 +332,7 @@ type FeedMessage struct {
 }
 
 type ItemMessage struct {
+	LinkItem      bool        `json:"link_item,omitempty"`
 	User          string      `json:"user"`
 	FeedID        string      `json:"feed_id"`
 	ItemID        string      `json:"item_id"`
@@ -359,7 +374,7 @@ func BehaviourSK(id string) string    { return "B#" + id }
 func ReadSK(id string) string         { return "R#" + id }
 func ItemIdentitySK(id string) string { return "D#" + id }
 func ItemVectorSK(id string) string   { return "V#" + id }
-func ClusterSK(id string) string        { return "T#" + id }
+func ClusterSK(id string) string      { return "T#" + id }
 
 func ArchiveSK(hearted time.Time, id string) string {
 	return "A#" + Timestamp(hearted) + "#" + id

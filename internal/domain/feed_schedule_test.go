@@ -66,3 +66,19 @@ func TestStableOffset(t *testing.T) {
 		t.Fatalf("sample feed offsets unexpectedly collide at %v", first)
 	}
 }
+
+func TestAutoCadenceTiersAndLearningWeek(t *testing.T) {
+	now := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct{ count, want int }{{0, 24}, {2, 24}, {3, 6}, {9, 6}, {10, 3}, {27, 3}, {28, 1}, {100, 1}} {
+		feed := Feed{HistoryStartedAt: Timestamp(now.Add(-7 * 24 * time.Hour)), PublishHistory: map[string]int{"2026-09-19": test.count, "2026-09-12": 100}}
+		UpdateCadence(&feed, now, 0)
+		if FeedIntervalHours(feed) != test.want || len(feed.PublishHistory) != 1 {
+			t.Fatalf("count=%d feed=%+v", test.count, feed)
+		}
+		feed.HistoryStartedAt = Timestamp(now.Add(-6 * 24 * time.Hour))
+		UpdateCadence(&feed, now, 0)
+		if FeedIntervalHours(feed) != 1 {
+			t.Fatalf("young feed=%+v", feed)
+		}
+	}
+}

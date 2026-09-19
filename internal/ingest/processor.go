@@ -554,6 +554,9 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 		Score: value, Vector: score.EncodeVector(vector), ModelVersion: h.ModelVersion,
 		ImageVector: imageVector, ImageModelVersion: imageModelVersion, Why: why,
 	}, started, h.ScoringVersion, model)
+	item.LinkItem = message.LinkItem || domain.IsLinkFeed(feed)
+	item.RecordBodyOutcome = domain.UsesBodyHistory(feed) && !isVideo
+	item.BodyOutcomesBefore = feed.BodyOutcomes
 	storyMetrics := map[string]float64{}
 	if message.Reprocess && existing.StoryID != "" {
 		item.StoryID = existing.StoryID
@@ -639,7 +642,10 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 			vectorRecords = recordsForItem(stored)
 		}
 	}
-	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", h.emitMetrics)
+	if item.LinkItem && !hasBody {
+		metrics["LinkItems"] = 1
+	}
+	emitItemMetrics(metrics, message.FeedID, hasBody, mediaKey != "", item.LinkItem || isVideo, h.emitMetrics)
 	return vectorRecords, nil
 }
 
@@ -728,7 +734,7 @@ func (h *Processor) assignCluster(ctx context.Context, userID string, vector []f
 	return metrics, nil
 }
 
-func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia bool, emit func(map[string]float64, map[string]string)) {
+func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedia, skipExtraction bool, emit func(map[string]float64, map[string]string)) {
 	failures := map[string]float64{}
 	if bodyImageFailed := metrics["BodyImageFailed"]; bodyImageFailed > 0 {
 		failures["BodyImageFailed"] = bodyImageFailed
@@ -736,7 +742,7 @@ func emitItemMetrics(metrics map[string]float64, feedID string, hasBody, hasMedi
 	}
 	if hasBody {
 		metrics["ExtractionSucceeded"] = 1
-	} else {
+	} else if !skipExtraction {
 		failures["ExtractionFailed"] = 1
 	}
 	if hasMedia {

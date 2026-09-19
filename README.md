@@ -82,6 +82,12 @@ Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid
 
 The repository contains six Go Lambda functions, shared feed-processing packages, a SolidJS/TypeScript PWA, and a Pulumi Go project that provisions the AWS stack. Queue consumers are retry-safe and use dead-letter queues. DynamoDB TTL and S3 lifecycle rules enforce the rolling seven-day window; archived items and preference signals do not expire.
 
+## Cadence and refusals
+
+Each feed has a Cadence: how often Sema checks it. Cadence follows the feed's own publish rate rather than a fixed default, because most subscribed feeds publish less than one item a day while a few publish dozens, and polling every one of them hourly spent most of the fetch budget on sources that had nothing new. A feed is checked hourly when it produces four or more items a day, every three hours at ten to twenty-seven a week, every six hours at three to nine a week, and daily below that, measured over the seven-day live window and recomputed after every successful fetch. New feeds start hourly for their first week; a quiet feed that publishes again is promoted on the first fetch that finds new items, so the lag is bounded by one slot. The user can pin any feed to a fixed Cadence, and Reddit feeds keep the Cadence implied by their collection. The trade-off is deliberate: a feed that publishes rarely may be seen up to a day late.
+
+A refused fetch, such as a 429 anywhere or the 404s and 500s YouTube returns when it throttles feed readers, is not a feed error. It never slows or breaks the feed; it is retried after one Cadence period or six hours, whichever is shorter, so the retry lands outside the source's burst window. Only a feed refused continuously for a day is shown as broken, and it keeps being checked at its Cadence.
+
 ## Connectors
 
 Feed transports implement the shared `internal/connector.Connector` interface and are registered by source type in the feed worker. RSS, Atom, and JSON Feed share the generic parser; YouTube and Reddit add source-specific discovery and item metadata while retaining the same scheduling, deduplication, ranking, retry, retention, and archive paths.

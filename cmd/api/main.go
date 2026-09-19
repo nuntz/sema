@@ -1497,7 +1497,7 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 			feed := domain.Feed{
 				PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: subscription.URL,
 				Title: title, SiteURL: siteURL, CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
-				FetchIntervalH: subscription.IntervalH, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
+				HistoryStartedAt: domain.Timestamp(now), FetchIntervalH: subscription.IntervalH, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
 			}
 			if existing, getErr := s.store.Feed(ctx, userID, feedID); getErr == nil {
 				feed = existing

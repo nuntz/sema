@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -96,18 +97,21 @@ func (h *handler) process(ctx context.Context, body string) error {
 	started := time.Now().UTC()
 	result, err := implementation.Fetch(ctx, feed)
 	if err != nil {
-		var rateLimited bool
-		feed, rateLimited = feedstatus.AfterFetch(feed, result, err, started)
+		var refused bool
+		feed, refused = feedstatus.AfterFetch(feed, result, err, started)
 
 		if storeErr := h.persistFeed(ctx, message.User, feed); storeErr != nil {
 			return fmt.Errorf("fetch: %v; update failure: %w", err, storeErr)
 		}
-		slog.WarnContext(ctx, "feed fetch failed", "user", message.User, "feed_id", message.FeedID, "error", err, "next_fetch_at", feed.NextFetchAt)
-		metrics := map[string]float64{"FeedsFailed": 1}
-		if rateLimited {
-			metrics["FeedsRateLimited"] = 1
+		if refused {
+			host, _ := url.Parse(feed.URL)
+			var statusErr *connector.HTTPStatusError
+			errors.As(err, &statusErr)
+			slog.WarnContext(ctx, "feed refused", "user", message.User, "feed_id", message.FeedID, "connector", domain.FeedConnector(feed), "host", host.Hostname(), "status", statusErr.StatusCode, "refusals", 1, "next_fetch_at", feed.NextFetchAt)
+		} else {
+			slog.WarnContext(ctx, "feed fetch failed", "user", message.User, "feed_id", message.FeedID, "error", err, "next_fetch_at", feed.NextFetchAt)
+			observability.Emit(map[string]float64{"FeedsFailed": 1}, nil)
 		}
-		observability.Emit(metrics, nil)
 		return nil
 	}
 	if result.NotModified {
@@ -136,7 +140,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 		messages = append(messages, domain.ItemMessage{
-			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, ExternalURL: entry.ExternalURL, PostType: entry.PostType, Title: entry.Title,
+			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, ExternalURL: entry.ExternalURL, LinkItem: entry.LinkItem, PostType: entry.PostType, Title: entry.Title,
 			SummaryRaw: truncateBytes(entry.SummaryRaw, 20<<10), ContentRaw: truncateBytes(entry.ContentRaw, 200<<10),
 			Author: entry.Author, PublishedTS: domain.Timestamp(entry.Published), DisplayDate: entry.DisplayDate, EnclosureURLs: entry.Enclosures,
 			MediaType: videoMediaType(entry.VideoID), VideoID: entry.VideoID, IsShort: entry.IsShort,
@@ -176,6 +180,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 	}
+	domain.UpdateCadence(&feed, started, len(messages))
 	feed, _ = feedstatus.AfterFetch(feed, result, nil, started)
 
 	slog.Info("feed fetched", "user", message.User, "feed_id", message.FeedID, "items_enqueued", len(messages))
@@ -203,12 +208,16 @@ func (h *handler) persistFeed(ctx context.Context, userID string, fetched domain
 	fetched.AlwaysGenerate = current.AlwaysGenerate
 	fetched.Connector = current.Connector
 	fetched.AvatarURL = current.AvatarURL
-	if domain.FeedIntervalHours(current) != domain.FeedIntervalHours(fetched) && fetched.ErrorCount == 0 {
+	if (current.FetchIntervalH != fetched.FetchIntervalH || current.HistoryStartedAt != fetched.HistoryStartedAt) && fetched.ErrorCount == 0 && fetched.RefusedSince == "" {
+		fetched.HistoryStartedAt = current.HistoryStartedAt
+		fetched.FetchIntervalH = current.FetchIntervalH
 		if lastFetch, parseErr := time.Parse(time.RFC3339Nano, fetched.LastFetchAt); parseErr == nil {
-			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(current)))
+			domain.UpdateCadence(&fetched, lastFetch, 0)
+			fetched.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(fetched), lastFetch, domain.FeedIntervalHours(fetched)))
 		}
 	}
 	fetched.FetchIntervalH = current.FetchIntervalH
+	fetched.HistoryStartedAt = current.HistoryStartedAt
 	return h.store.PutFeed(ctx, fetched)
 }
 

@@ -150,6 +150,11 @@ export interface Feed {
   hide_shorts: boolean;
   always_generate: boolean;
   fetch_interval_h: 1 | 3 | 6 | 24;
+  cadence_pin_h?: 1 | 3 | 6 | 24 | null;
+  effective_cadence_h?: 1 | 3 | 6 | 24;
+  refused_since?: string;
+  link_feed?: boolean;
+  link_item_count?: number;
   favicon_url?: string;
   last_fetch_at?: string;
   last_status?: string;

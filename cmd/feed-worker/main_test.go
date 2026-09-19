@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/nuntz/sema/internal/feedstatus"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -151,8 +153,8 @@ func TestRateLimitIsPersistedWithoutExponentialBackoff(t *testing.T) {
 	feed := store.putFeeds[0]
 	last, lastErr := time.Parse(time.RFC3339Nano, feed.LastFetchAt)
 	next, nextErr := time.Parse(time.RFC3339Nano, feed.NextFetchAt)
-	wantDelay := 2*time.Minute + domain.StableOffset(feed.PK+"#"+feed.FeedID, 5*time.Minute)
-	if lastErr != nil || nextErr != nil || next.Sub(last) != wantDelay || feed.ErrorCount != 4 || feed.LastStatus != "feed returned HTTP 429" {
+	wantDelay := 2 * time.Minute
+	if lastErr != nil || nextErr != nil || next.Sub(last) != wantDelay || feed.ErrorCount != 3 || feed.RefusedSince == "" || feed.LastStatus != "feed returned HTTP 429" {
 		t.Fatalf("rate-limited feed = %#v, last error %v, next error %v, want delay %v", feed, lastErr, nextErr, wantDelay)
 	}
 }
@@ -349,5 +351,81 @@ func TestPersistFeedDropsStaleRedditSortResult(t *testing.T) {
 	}
 	if len(store.putFeeds) != 0 {
 		t.Fatalf("stale result wrote %#v", store.putFeeds)
+	}
+}
+
+func TestRefusalsPersistAndRecover(t *testing.T) {
+	for _, test := range []struct {
+		connector       string
+		status, cadence int
+		since           string
+		wantStatus      string
+	}{
+		{domain.ConnectorYouTube, 404, 1, "", "ok"}, {domain.ConnectorYouTube, 500, 24, "", "ok"},
+		{domain.ConnectorRSS, 429, 3, domain.Timestamp(time.Now().Add(-2 * time.Hour)), "ok"},
+		{domain.ConnectorYouTube, 404, 24, domain.Timestamp(time.Now().Add(-25 * time.Hour)), "broken"},
+	} {
+		t.Run(fmt.Sprintf("%s-%d-%s", test.connector, test.status, test.wantStatus), func(t *testing.T) {
+			repository := &fakeFeedStore{feed: domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", URL: "https://example.com/feed", Connector: test.connector, FetchIntervalH: test.cadence, RefusedSince: test.since}}
+			h := &handler{store: repository, connectors: map[string]connector.Connector{test.connector: failingConnector{err: &connector.HTTPStatusError{StatusCode: test.status}}}}
+			if err := h.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+				t.Fatal(err)
+			}
+			got := repository.putFeeds[0]
+			if got.ErrorCount != 0 || got.RefusedSince == "" || (test.since != "" && got.RefusedSince != test.since) || feedstatus.Status(got) != test.wantStatus {
+				t.Fatalf("refused feed=%+v", got)
+			}
+			last, _ := time.Parse(time.RFC3339Nano, got.LastFetchAt)
+			next, _ := time.Parse(time.RFC3339Nano, got.NextFetchAt)
+			if next.Sub(last) != time.Duration(min(test.cadence, 6))*time.Hour+domain.StableOffset(feedstatus.ScheduleKey(got), 5*time.Minute) {
+				t.Fatalf("retry=%s", next.Sub(last))
+			}
+			repository.feed = got
+			if err := h.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+				t.Fatal(err)
+			}
+			if repository.putFeeds[1].RefusedSince != got.RefusedSince {
+				t.Fatal("second refusal replaced first timestamp")
+			}
+			h.connectors[test.connector] = resultConnector{result: domain.FetchResult{NotModified: true}}
+			if err := h.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+				t.Fatal(err)
+			}
+			if recovered := repository.putFeeds[2]; recovered.RefusedSince != "" || feedstatus.Status(recovered) != "ok" {
+				t.Fatalf("304=%+v", recovered)
+			}
+		})
+	}
+}
+
+func TestSuccessfulFetchLearnsCadenceFromEnqueuedItems(t *testing.T) {
+	now := time.Now().UTC()
+	for _, test := range []struct {
+		name      string
+		pin       int
+		connector string
+		age       time.Duration
+		want      int
+	}{
+		{"auto", 0, domain.ConnectorRSS, 8 * 24 * time.Hour, 3}, {"young", 0, domain.ConnectorRSS, time.Hour, 1},
+		{"pinned", 24, domain.ConnectorRSS, 8 * 24 * time.Hour, 24}, {"reddit", 6, domain.ConnectorReddit, 8 * 24 * time.Hour, 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			feed := domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", URL: "https://example.com/feed", Connector: test.connector, FetchIntervalH: test.pin, HistoryStartedAt: domain.Timestamp(now.Add(-test.age)), PublishHistory: map[string]int{now.Format("2006-01-02"): 9}, EffectiveCadenceH: 24}
+			repository := &fakeFeedStore{feed: feed, existing: map[string]bool{domain.ItemID("feed", "old", "https://example.com/old"): true}}
+			queue := &fakeItemsQueue{}
+			h := &handler{store: repository, queue: queue, connectors: map[string]connector.Connector{test.connector: resultConnector{result: domain.FetchResult{Entries: []domain.Entry{{GUID: "new", URL: "https://example.com/new", Published: now, LinkItem: true}, {GUID: "old", URL: "https://example.com/old", Published: now}}}}}}
+			if err := h.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
+				t.Fatal(err)
+			}
+			got := repository.putFeeds[0]
+			if got.PublishHistory[now.Format("2006-01-02")] != 10 || domain.FeedIntervalHours(got) != test.want || len(queue.messages) != 1 || !queue.messages[0].LinkItem {
+				t.Fatalf("feed=%+v messages=%+v", got, queue.messages)
+			}
+			last, _ := time.Parse(time.RFC3339Nano, got.LastFetchAt)
+			if got.NextFetchAt != domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(got), last, test.want)) {
+				t.Fatalf("next fetch=%s", got.NextFetchAt)
+			}
+		})
 	}
 }

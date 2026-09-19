@@ -23,8 +23,24 @@ Stopping a Feed without removing it. A muted Feed is not fetched and its live It
 _Avoid_: Pause, disable, snooze, hide
 
 **Feed Status**:
-How a Feed is doing: ok, slowed after a fetch error, broken after repeated errors, or muted.
+How a Feed is doing: ok, slowed after a fetch error, broken after repeated errors or after a day of being Refused, or muted. A Feed broken by refusals keeps being checked at its Cadence.
 _Avoid_: Health, state
+
+**Refused**:
+A fetch the source turned away because of who is asking or how often, not because the Feed is gone. A Refused fetch never slows a Feed and is simply tried again; only a Feed refused continuously for a day becomes broken.
+_Avoid_: Rate limited, throttled, blocked, error
+
+**Cadence**:
+How often Sema checks a Feed for new Items: hourly, every three or six hours, or daily. Cadence follows how often the Feed actually publishes unless the user pins it.
+_Avoid_: Interval, poll rate, frequency, schedule
+
+**Link Item**:
+An Item that points at something Sema is not meant to extract, so having no body is normal and not a failure. A Reddit or Bluesky post without an external link is a Link Item, and so is every Item of a Link Feed.
+_Avoid_: Pointer, stub, headline-only item
+
+**Link Feed**:
+A Feed whose Items are all Link Items, judged from its recent history when the source cannot say per Item, such as an RSS feed of image posts. A Feed leaves the class when it starts carrying articles again.
+_Avoid_: Aggregator, no-body feed, link aggregator
 
 ### Items
 

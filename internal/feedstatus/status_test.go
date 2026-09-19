@@ -10,14 +10,14 @@ import (
 	"github.com/nuntz/sema/internal/domain"
 )
 
-func TestRateLimitHonorsRetryAfterWithPositiveJitter(t *testing.T) {
+func TestRefusalHonorsRetryAfter(t *testing.T) {
 	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
 	feed := domain.Feed{PK: "U#user", FeedID: "feed", ErrorCount: 1}
 	headers := make(http.Header)
 	headers.Set("Retry-After", "120")
 
 	next, rateLimited := nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusTooManyRequests, Header: headers})
-	want := started.Add(2*time.Minute + domain.StableOffset(ScheduleKey(feed), rateLimitJitterWindow))
+	want := started.Add(2 * time.Minute)
 	if !rateLimited || next != want || next.Before(started.Add(2*time.Minute)) {
 		t.Fatalf("next = %s, rate limited = %v, want %s", next, rateLimited, want)
 	}
@@ -26,18 +26,18 @@ func TestRateLimitHonorsRetryAfterWithPositiveJitter(t *testing.T) {
 func TestRateLimitAcceptsHTTPDateAndFallsBackWhenInvalid(t *testing.T) {
 	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
 	feed := domain.Feed{PK: "U#user", FeedID: "feed", ErrorCount: 4}
-	jitter := domain.StableOffset(ScheduleKey(feed), rateLimitJitterWindow)
+	jitter := domain.StableOffset(ScheduleKey(feed), refusalJitterWindow)
 
 	headers := make(http.Header)
 	headers.Set("Retry-After", started.Add(7*time.Minute).Format(http.TimeFormat))
 	next, rateLimited := nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusTooManyRequests, Header: headers})
-	if !rateLimited || next != started.Add(7*time.Minute).Add(jitter) {
+	if !rateLimited || next != started.Add(7*time.Minute) {
 		t.Fatalf("HTTP-date next = %s, rate limited = %v", next, rateLimited)
 	}
 
 	headers.Set("Retry-After", "not-a-date")
 	next, rateLimited = nextFetchAfterError(feed, started, &connector.HTTPStatusError{StatusCode: http.StatusTooManyRequests, Header: headers})
-	if !rateLimited || next != started.Add(defaultRateLimitDelay).Add(jitter) {
+	if !rateLimited || next != started.Add(time.Hour).Add(jitter) {
 		t.Fatalf("fallback next = %s, rate limited = %v", next, rateLimited)
 	}
 }
@@ -94,5 +94,17 @@ func TestFetchErrorTrimsWhitespace(t *testing.T) {
 	feed, _ := AfterFetch(domain.Feed{}, domain.FetchResult{}, errors.New("  unavailable\n"), time.Now())
 	if feed.LastStatus != "unavailable" || feed.LastError != "unavailable" {
 		t.Fatalf("error text = %q / %q", feed.LastStatus, feed.LastError)
+	}
+}
+
+func TestRefusalRetryAndOrdinaryError(t *testing.T) {
+	now := time.Now().UTC()
+	feed := domain.Feed{RefusedSince: domain.Timestamp(now.Add(-25 * time.Hour))}
+	if got := Retry(feed, now); got.RefusedSince != "" || Status(got) != "ok" {
+		t.Fatalf("retry=%+v", got)
+	}
+	got, refused := AfterFetch(feed, domain.FetchResult{}, &connector.HTTPStatusError{StatusCode: 500}, now)
+	if refused || got.RefusedSince != "" || got.ErrorCount != 1 || Status(got) != "slowed" || got.NextFetchAt != domain.Timestamp(now.Add(2*time.Hour)) {
+		t.Fatalf("ordinary error=%+v", got)
 	}
 }

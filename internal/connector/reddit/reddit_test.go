@@ -49,15 +49,15 @@ func TestFetchTransformsObservedRedditAtomShapes(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 	self := result.Entries[0]
-	if self.GUID != "t3_self" || self.PostType != "text" || self.ExternalURL != "" || self.SummaryRaw != "Body with an inner link." || strings.Contains(self.ContentRaw, "submitted by") || !strings.Contains(self.ContentRaw, "inside.example") {
+	if !self.LinkItem || self.GUID != "t3_self" || self.PostType != "text" || self.ExternalURL != "" || self.SummaryRaw != "Body with an inner link." || strings.Contains(self.ContentRaw, "submitted by") || !strings.Contains(self.ContentRaw, "inside.example") {
 		t.Fatalf("self entry = %#v", self)
 	}
 	link := result.Entries[1]
-	if link.GUID != "t3_link" || link.PostType != "link" || link.ExternalURL != "https://arxiv.org/abs/123" || link.SummaryRaw != "Submitter context." {
+	if link.LinkItem || link.GUID != "t3_link" || link.PostType != "link" || link.ExternalURL != "https://arxiv.org/abs/123" || link.SummaryRaw != "Submitter context." {
 		t.Fatalf("link entry = %#v", link)
 	}
 	image := result.Entries[2]
-	if image.GUID != "t3_image" || image.PostType != "image" || image.ExternalURL != "https://i.redd.it/image.jpeg" || len(image.Enclosures) != 2 || image.Enclosures[0].URL != "https://i.redd.it/image.jpeg" || strings.Contains(image.Enclosures[1].URL, "&amp;") {
+	if !image.LinkItem || image.GUID != "t3_image" || image.PostType != "image" || image.ExternalURL != "https://i.redd.it/image.jpeg" || len(image.Enclosures) != 2 || image.Enclosures[0].URL != "https://i.redd.it/image.jpeg" || strings.Contains(image.Enclosures[1].URL, "&amp;") {
 		t.Fatalf("image entry = %#v", image)
 	}
 }

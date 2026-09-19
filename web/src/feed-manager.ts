@@ -129,7 +129,12 @@ function statusWeight(feed: Feed): number {
 }
 
 export function brokenSince(feed: Feed, now = Date.now()): string | undefined {
-  if (feed.status !== "broken" || !feed.last_fetch_at) return undefined;
+  if (feed.status !== "broken") return undefined;
+  if (feed.refused_since) {
+    const refused = Date.parse(feed.refused_since);
+    if (Number.isFinite(refused) && refused <= now) return feed.refused_since;
+  }
+  if (!feed.last_fetch_at) return undefined;
   const attempt = Date.parse(feed.last_fetch_at);
   if (!Number.isFinite(attempt) || attempt > now) return undefined;
   // Estimate the first failure using worker backoff; ignores rate-limit delays
@@ -144,4 +149,19 @@ export function brokenSince(feed: Feed, now = Date.now()): string | undefined {
     hours += Math.min(2 ** Math.min(attemptNumber - 1, 5), cap);
   }
   return new Date(attempt - hours * 3600000).toISOString();
+}
+
+export function cadencePin(feed: Feed): Feed["fetch_interval_h"] | null {
+  return feed.cadence_pin_h === undefined
+    ? feed.fetch_interval_h
+    : feed.cadence_pin_h;
+}
+
+export function cadenceLabel(feed: Feed): string {
+  const hours = feed.effective_cadence_h ?? feed.fetch_interval_h;
+  const cadence =
+    hours === 1 ? "Hourly" : hours === 24 ? "Daily" : `Every ${hours}h`;
+  return feed.connector !== "reddit" && cadencePin(feed) === null
+    ? `Auto · ${cadence.toLowerCase()}`
+    : cadence;
 }

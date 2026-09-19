@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   brokenSince,
+  cadenceLabel,
+  cadencePin,
   compareFeeds,
   feedCount,
   feedFilterCounts,
@@ -214,4 +216,31 @@ describe("brokenSince", () => {
         brokenSince(feed("x", { status: "broken", last_fetch_at }), now),
       ).toBeUndefined();
   });
+});
+
+it("uses the first refusal for broken-since even without a last fetch", () => {
+  const refused = "2026-09-01T00:00:00Z";
+  expect(
+    brokenSince(
+      feed("refused", {
+        status: "broken",
+        refused_since: refused,
+        last_fetch_at: undefined,
+      }),
+      Date.parse("2026-09-03T00:00:00Z"),
+    ),
+  ).toBe(refused);
+});
+
+it("keeps Auto distinct from its effective Cadence", () => {
+  const automatic = feed("auto", {
+    cadence_pin_h: null,
+    effective_cadence_h: 6,
+  });
+  expect(cadencePin(automatic)).toBeNull();
+  expect(cadenceLabel(automatic)).toBe("Auto · every 6h");
+  expect(cadencePin(feed("pin", { cadence_pin_h: 1 }))).toBe(1);
+  expect(
+    cadenceLabel(feed("reddit", { connector: "reddit", fetch_interval_h: 24 })),
+  ).toBe("Daily");
 });

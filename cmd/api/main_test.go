@@ -715,7 +715,7 @@ func TestDecorateExtractionUsesLifetimeFeedCounters(t *testing.T) {
 	if feeds[0].ExtractionSample != 10 || feeds[0].ExtractionRate == nil || *feeds[0].ExtractionRate != 0.8 || feeds[0].AverageQuality == nil || *feeds[0].AverageQuality != 0.55 {
 		t.Fatalf("enough feed stats = %#v", feeds[0])
 	}
-	if feeds[1].ExtractionSample != 4 || feeds[1].ExtractionRate != nil || feeds[1].AverageQuality != nil {
+	if feeds[1].ExtractionSample != 4 || feeds[1].ExtractionRate == nil || *feeds[1].ExtractionRate != 1 || feeds[1].AverageQuality == nil || *feeds[1].AverageQuality != 0.9 {
 		t.Fatalf("new feed stats = %#v", feeds[1])
 	}
 }
