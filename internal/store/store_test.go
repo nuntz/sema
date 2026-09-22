@@ -2292,3 +2292,36 @@ func TestBodyHistoryRefreshesAfterConcurrentItem(t *testing.T) {
 		t.Fatalf("written=%v calls=%d err=%v", written, calls, err)
 	}
 }
+
+// The SDK's idempotency middleware pins ClientRequestToken on the input on
+// the first call. DynamoDB rejects a reused token whose parameters changed,
+// so a retry that swaps the counter update must clear the token.
+func TestBodyHistoryRetryDoesNotReuseIdempotencyToken(t *testing.T) {
+	calls := 0
+	const pinned = "sdk-generated-token"
+	db := &fakeDynamoDB{
+		getItem: func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			row, _ := attributevalue.MarshalMap(domain.Feed{PK: "U#user", FeedID: "feed", BodyOutcomes: "10"})
+			return &dynamodb.GetItemOutput{Item: row}, nil
+		},
+		transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+			calls++
+			if calls == 1 {
+				input.ClientRequestToken = aws.String(pinned)
+				return nil, transactionCanceled("None", "None", "None", "ConditionalCheckFailed")
+			}
+			if aws.ToString(input.ClientRequestToken) == pinned {
+				return nil, &types.IdempotentParameterMismatchException{Message: aws.String("Specified idempotent token was used with different request parameters within the idempotency window")}
+			}
+			return &dynamodb.TransactWriteItemsOutput{}, nil
+		},
+	}
+	item := putItemRetryFixture()
+	item.RecordBodyOutcome = true
+	item.BodyOutcomesBefore = "1"
+	item.HasBody = true
+	written, err := New(db, nil, "table", "", "").PutItem(context.Background(), item)
+	if err != nil || !written || calls != 2 {
+		t.Fatalf("written=%v calls=%d err=%v", written, calls, err)
+	}
+}

@@ -413,6 +413,9 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 			}
 			item.BodyOutcomesBefore = current.BodyOutcomes
 			transaction.TransactItems[3].Update = feedCounterUpdate(s.table, item)
+			// The SDK pinned an idempotency token on the first attempt; DynamoDB
+			// rejects that token once the request parameters change.
+			transaction.ClientRequestToken = nil
 			continue
 		}
 		if transactionConditionFailed(err) {
