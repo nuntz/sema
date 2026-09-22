@@ -142,6 +142,35 @@ async function openApp(
   return state;
 }
 
+for (const archive of [false, true]) {
+  test(`c copies a Reddit link in the ${archive ? "Archive" : "live"} grid`, async ({
+    page,
+    context,
+  }) => {
+    const redditItem = {
+      ...items[0],
+      connector: "reddit",
+      url: "https://www.reddit.com/r/example/comments/one/title/",
+      hearted: archive,
+      archived: archive,
+    };
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openApp(page, {
+      initialItems: [redditItem],
+      archiveItems: [redditItem],
+    });
+    if (archive)
+      await page.getByRole("button", { name: "Archive", exact: true }).click();
+    await page.locator(".grid-cell").first().hover();
+    await page.keyboard.press("c");
+    await expect(page.getByText("Link copied", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      redditItem.url,
+    );
+    expect(context.pages()).toHaveLength(1);
+  });
+}
+
 test("desktop grid actions appear only while their cell is hovered", async ({
   page,
 }) => {

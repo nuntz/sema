@@ -1046,8 +1046,7 @@ function GridContent(props: GridProps) {
         if (!props.model.archive) props.actions.onUndo();
         break;
       case "copy":
-        if (item && isRedditItem(item)) openDiscussion(item);
-        else if (item) props.actions.onCopy(item);
+        if (item) props.actions.onCopy(item);
         break;
       case "image":
         if (item) void openImages(item);
