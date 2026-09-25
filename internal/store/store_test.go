@@ -876,6 +876,50 @@ func TestLoadItemVectorsUsesOneBatchAndPreservesLegacyFallback(t *testing.T) {
 	}
 }
 
+func TestLoadItemVectorsUsesEventuallyConsistentReads(t *testing.T) {
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		if aws.ToBool(input.RequestItems["table"].ConsistentRead) {
+			t.Fatal("vector rows were read with strong consistency, doubling rescore RCU")
+		}
+		return &dynamodb.BatchGetItemOutput{}, nil
+	}}
+	if err := New(db, nil, "table", "", "").LoadItemVectors(context.Background(), "user", []domain.Item{{ItemID: "item"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadItemVectorsWaitsOutThrottledPartition(t *testing.T) {
+	stored, _ := attributevalue.MarshalMap(domain.ItemVector{PK: domain.UserPK("user"), SK: domain.ItemVectorSK("item"), Vector: []byte("vector")})
+	calls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		calls++
+		if calls <= 5 {
+			return &dynamodb.BatchGetItemOutput{UnprocessedKeys: map[string]types.KeysAndAttributes{"table": {Keys: input.RequestItems["table"].Keys}}}, nil
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {stored}}}, nil
+	}}
+	repository := New(db, nil, "table", "", "")
+	floors := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond}
+	sleeps := 0
+	repository.sleep = func(_ context.Context, delay time.Duration) error {
+		if sleeps >= len(floors) {
+			t.Fatalf("unexpected sleep %d", sleeps+1)
+		}
+		if floor := floors[sleeps]; delay < floor || delay >= 2*floor {
+			t.Errorf("sleep %d = %s, want [%s, %s)", sleeps+1, delay, floor, 2*floor)
+		}
+		sleeps++
+		return nil
+	}
+	items := []domain.Item{{ItemID: "item"}}
+	if err := repository.LoadItemVectors(context.Background(), "user", items); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 6 || sleeps != 5 || string(items[0].Vector) != "vector" {
+		t.Fatalf("calls=%d sleeps=%d vector=%q", calls, sleeps, items[0].Vector)
+	}
+}
+
 func TestItemRejectsExpiredIdentityWithoutScanning(t *testing.T) {
 	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
 		PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("expired"), ItemSK: "I#expired", TTL: time.Now().Add(-time.Hour).Unix(),

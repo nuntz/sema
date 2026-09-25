@@ -77,7 +77,9 @@ func (h *handler) run(ctx context.Context, input request) (response, error) {
 			"StoriesDeleted":              float64(result.StoriesDeleted),
 		}, map[string]string{"User": userID})
 	}
-	if input.User != "" && output.Failed > 0 {
+	// Fail the invocation so the Lambda Errors alarm sees it; the async
+	// retry then gives a throttled user a second chance.
+	if output.Failed > 0 {
 		return output, userErr
 	}
 	return output, nil

@@ -31,7 +31,7 @@ func TestRunContinuesAfterUserFailure(t *testing.T) {
 		users, failed, skipped, calls int
 		wantErr                       bool
 	}{
-		{"scheduled", "", failure, 1, 1, 0, 2, false},
+		{"scheduled", "", failure, 1, 1, 0, 2, true},
 		{"on demand", "bad", failure, 0, 1, 0, 1, true},
 		{"replay", "", rankingrescore.ErrReplayActive, 1, 0, 1, 2, false},
 	} {

@@ -1325,7 +1325,15 @@ func (s *Store) batchGetRowsWithConsistency(ctx context.Context, keys []map[stri
 	rows := make([]map[string]types.AttributeValue, 0, len(keys))
 	for offset := 0; offset < len(keys); offset += 100 {
 		pending := keys[offset:min(offset+100, len(keys))]
-		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
+		for attempt := 0; len(pending) > 0 && attempt < 8; attempt++ {
+			if attempt > 0 {
+				// Unprocessed keys are not SDK errors, so nothing else backs off.
+				// Retrying at once keeps hitting the same hot partition.
+				backoff := min(50*time.Millisecond<<(attempt-1), 2*time.Second)
+				if err := s.sleep(ctx, backoff+time.Duration(rand.Int64N(int64(backoff)))); err != nil {
+					return nil, err
+				}
+			}
 			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
 				Keys: pending, ConsistentRead: aws.Bool(consistent),
 			}}})
@@ -1628,7 +1636,9 @@ func (s *Store) LoadItemVectors(ctx context.Context, userID string, items []doma
 		seen[item.ItemID] = true
 		keys = append(keys, key(pk, domain.ItemVectorSK(item.ItemID)))
 	}
-	rows, err := s.batchGetRowsWithConsistency(ctx, keys, true)
+	// Every V# row shares the user's partition, so strong reads of a full
+	// rescore throttle it. A vector written in the last second can wait a day.
+	rows, err := s.batchGetRows(ctx, keys)
 	if err != nil {
 		return err
 	}
