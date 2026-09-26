@@ -2684,3 +2684,5 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .scope-header-chip--visible { opacity: 1; visibility: visible; transform: none; pointer-events: auto; }
 @media (min-width: 620px) { .scope-bar { padding-left: 20px; padding-right: 20px; } }
 @media (prefers-reduced-motion: reduce) { .scope-header-chip, .filter-switch, .filter-switch::after { transition: none; } }
+/* iOS Safari zooms into focused fields under 16px and never zooms back out. */
+@media (pointer: coarse) { :root :is(input:not([type="checkbox"], [type="radio"], [type="range"]), select, textarea) { font-size: max(16px, 1em); } }

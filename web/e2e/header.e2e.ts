@@ -870,3 +870,38 @@ for (const width of [620, 860, 900, 1024]) {
     });
   });
 }
+
+test.describe("touch text fields", () => {
+  test.use({
+    viewport: { width: 390, height: 780 },
+    hasTouch: true,
+    isMobile: true,
+  });
+
+  test("stay at 16px or larger so iOS never zooms on focus", async ({
+    page,
+  }) => {
+    await openFixture(page, "grid");
+    const sizes = await page.evaluate(() => {
+      const host = document.createElement("div");
+      host.innerHTML = `
+        <div class="app-header">
+          <div class="tag-combobox"><span>#</span><input data-field="tag filter" /></div>
+          <div class="search-field"><input type="search" data-field="search" /></div>
+        </div>
+        <div class="feed-search"><input data-field="feed search" /></div>
+        <div class="feed-sort"><select data-field="feed sort"><option>a</option></select></div>
+        <div class="tag-editor"><input data-field="tag editor" /></div>
+        <label class="drawer-field"><input data-field="drawer" /></label>`;
+      document.body.append(host);
+      return Object.fromEntries(
+        [...host.querySelectorAll<HTMLElement>("[data-field]")].map((field) => [
+          field.dataset.field,
+          Number.parseFloat(getComputedStyle(field).fontSize),
+        ]),
+      );
+    });
+    for (const [field, size] of Object.entries(sizes))
+      expect(size, field).toBeGreaterThanOrEqual(16);
+  });
+});
