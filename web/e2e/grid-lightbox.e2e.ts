@@ -520,7 +520,7 @@ for (const view of ["Front Page", "chrono", "tag", "Archive"]) {
   });
 }
 
-for (const entry of ["thumbnail", "key", "pill", "sheet", "story"]) {
+for (const entry of ["glyph", "key", "sheet", "story"]) {
   test(`Video Item Peek from ${entry} records Play without Read, then Flips with position`, async ({
     page,
   }) => {
@@ -533,9 +533,9 @@ for (const entry of ["thumbnail", "key", "pill", "sheet", "story"]) {
     const { cell } = await openGrid(page, "youtube", false, "M", {
       story: entry === "story",
     });
-    if (entry === "thumbnail")
-      await cell.locator(".cell-main").click({ position: { x: 50, y: 50 } });
-    else if (entry === "pill" || entry === "story") {
+    if (entry === "glyph")
+      await cell.getByRole("button", { name: /^Play / }).click();
+    else if (entry === "story") {
       await cell.hover();
       await cell.locator(".peek-pill").click();
     } else if (entry === "sheet") {
@@ -563,12 +563,12 @@ for (const entry of ["thumbnail", "key", "pill", "sheet", "story"]) {
   });
 }
 
-test("Video Item text opens the Poster; Play failure stays in the frame", async ({
+test("Video Item main button opens the Poster; Play failure stays in the frame", async ({
   page,
 }) => {
   await stubYouTube(page, true);
   const { cell } = await openGrid(page, "youtube");
-  await cell.locator(".video-reader-link").first().click();
+  await cell.locator(".cell-main").click();
   await expect(page.locator(".video-media-card")).toBeVisible();
   await expect(page.locator(".article-body")).toContainText("Article body");
   await page.keyboard.press("i");
@@ -647,3 +647,108 @@ test("Escape closes Video Peek after leaving other YouTube controls", async ({
   await page.keyboard.press("Escape");
   await expect(page.locator(".video-peek")).toHaveCount(0);
 });
+
+for (const gesture of ["click", "double-click"]) {
+  test(`Video Item main ${gesture} opens the Poster without Play`, async ({
+    page,
+  }) => {
+    await stubYouTube(page);
+    const events: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/api/"))
+        events.push(request.postData() || "");
+    });
+    const { cell } = await openGrid(page, "youtube");
+    const main = cell.locator(".cell-main");
+    if (gesture === "click") await main.click({ position: { x: 50, y: 50 } });
+    else await main.dblclick({ position: { x: 50, y: 50 } });
+    await expect(page.locator(".video-media-card")).toBeVisible();
+    await expect(page.locator(".video-peek")).toHaveCount(0);
+    await expect(page.locator(".reader iframe")).toHaveCount(0);
+    await expect
+      .poll(() => events.join(" "), { timeout: 10_000 })
+      .toContain('"opened":true');
+    expect(events.join(" ")).not.toContain('"clicked_through"');
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`Video Item Play glyph has a 44px target on small cells at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stubYouTube(page);
+    const { cell } = await openGrid(page, "youtube", false, "S");
+    const play = cell.getByRole("button", {
+      name: "Play Image article",
+      exact: true,
+    });
+    const box = await play.boundingBox();
+    expect(box?.width).toBeGreaterThanOrEqual(44);
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+    await expect(cell.locator(".cell-main")).toHaveAccessibleName(
+      /^Open Image article/,
+    );
+    await play.click();
+    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await expect(page.locator(".reader")).toHaveCount(0);
+  });
+
+  test(`Video Item Play glyph hover and focus at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { cell } = await openGrid(page, "youtube");
+    const play = cell.getByRole("button", {
+      name: "Play Image article",
+      exact: true,
+    });
+    await expect(cell.locator(".peek-pill")).toHaveCount(0);
+    await cell.hover();
+    const appearance = await play.evaluate((button) => {
+      const play = getComputedStyle(button, "::before");
+      const boostButton = button.closest("article")?.querySelector(".boost");
+      if (!boostButton) throw new Error("Missing Boost button");
+      const boost = getComputedStyle(boostButton);
+      return {
+        play: [play.backgroundColor, play.border, play.borderRadius],
+        boost: [boost.backgroundColor, boost.border, boost.borderRadius],
+      };
+    });
+    expect(appearance.play).toEqual(appearance.boost);
+    await play.hover();
+    if (width === 1280) {
+      const overlaps = await cell.evaluate((el) => {
+        const players = [
+          ...el.querySelectorAll("button.video-play, .peek-pill"),
+        ].map((button) => button.getBoundingClientRect());
+        return [...el.querySelectorAll(".cell-actions button")].some(
+          (button) => {
+            const action = button.getBoundingClientRect();
+            return players.some(
+              (play) =>
+                action.left < play.right &&
+                action.right > play.left &&
+                action.top < play.bottom &&
+                action.bottom > play.top,
+            );
+          },
+        );
+      });
+      expect(overlaps).toBe(false);
+    }
+    await expect(play.locator(".icon")).toHaveCSS(
+      "color",
+      await play.evaluate((el) => getComputedStyle(el).color),
+    );
+    await page.screenshot({ path: `/tmp/sema-video-glyph-${width}-hover.png` });
+    await play.focus();
+    await expect(play).toBeFocused();
+    await expect
+      .poll(() =>
+        play.evaluate((el) => getComputedStyle(el, "::before").outlineStyle),
+      )
+      .toBe("solid");
+    await page.screenshot({ path: `/tmp/sema-video-glyph-${width}-focus.png` });
+  });
+}

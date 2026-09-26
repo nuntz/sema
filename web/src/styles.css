@@ -2133,9 +2133,17 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .drawer-reddit-collect + .mute-row { margin-top: 0; border-top: 0; }
 
 .video-play { position: absolute; top: 9px; left: 9px; z-index: 2; color: var(--play-color); filter: var(--play-shadow); pointer-events: none; }
-.video-play .icon { color: currentColor; stroke-width: var(--icon-stroke-filled); }
+.video-play .icon, button.video-play:hover .icon { color: currentColor; stroke-width: var(--icon-stroke-filled); }
 .hero-cell .video-play, .pair-cell .video-play { width: 26px; height: 26px; display: grid; place-items: center; }
 .video-cell.size-s .video-play { top: 7px; left: 7px; }
+.grid-cell button.video-play { top: -2px; left: -2px; z-index: 4; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; justify-content: center; align-content: center; border: 0; background: none; color: var(--signal-action-fg); filter: none; isolation: isolate; cursor: pointer; pointer-events: auto; }
+.grid-cell button.video-play::before { content: ""; position: absolute; inset: 9px; z-index: -1; border-radius: 6px; border: 1px solid var(--signal-action-border); background: var(--signal-action-bg); transition: background 120ms ease-out, border-color 120ms ease-out; }
+.grid-cell button.video-play .icon { width: 14px; height: 14px; color: inherit; transform: translateX(1px); }
+.grid-cell button.video-play:hover { color: var(--signal-action-hover-fg); }
+.grid-cell button.video-play:hover::before { background: var(--signal-action-hover-bg); border-color: var(--signal-action-active-border); }
+.grid-cell button.video-play:focus-visible { outline: none; box-shadow: none; }
+.grid-cell button.video-play:focus-visible::before { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
+.grid-cell:has(> button.video-play) .cell-actions { top: 7px; right: 7px; left: auto; }
 .video-cell .cell-scrim { z-index: 3; }
 .video-cell .cell-main { z-index: 1; }
 .video-cell.media-failed > img { display: none; }
@@ -2696,8 +2704,5 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
 .video-failure a { display: inline-flex; align-items: center; gap: 8px; color: inherit; }
 .video-peek { display: grid; place-items: center; }
 .video-peek-frame { position: relative; width: min(100vw, calc(100dvh * 16 / 9)); }
-.video-reader-link { padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; text-align: inherit; pointer-events: auto; }
-.playable-cell .cell-copy { z-index: 4; }
-.playable-cell .video-reader-link { position: relative; }
 .article-body .reader-video { margin: 30px 0; }
 .article-body .video-media-band > img { height: 100%; border-radius: 0; }

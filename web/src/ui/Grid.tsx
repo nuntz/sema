@@ -1255,6 +1255,25 @@ function GridContent(props: GridProps) {
                   const primaryRoute = createMemo(() =>
                     redditPrimaryRoute(item()),
                   );
+                  const playIcon = () => (
+                    <Icon
+                      name="play"
+                      size={
+                        row.kind === "hero" ||
+                        row.kind === "pair" ||
+                        row.kind === "tile"
+                          ? 24
+                          : cell.span === 2
+                            ? 20
+                            : cell.effectiveSize === "L"
+                              ? 15
+                              : cell.effectiveSize === "M"
+                                ? 14
+                                : 12
+                      }
+                      filled={true}
+                    />
+                  );
                   return (
                     <article
                       class="grid-cell"
@@ -1267,7 +1286,6 @@ function GridContent(props: GridProps) {
                         "text-cell": !item().media_url,
                         "video-cell":
                           item().media_type === "video" || isVideoItem(item()),
-                        "playable-cell": isVideoItem(item()),
                         "reddit-cell": isRedditItem(item()),
                         [`reddit-${item().post_type ?? "unknown"}`]:
                           isRedditItem(item()),
@@ -1296,10 +1314,7 @@ function GridContent(props: GridProps) {
                         if (!pageFocus) props.actions.onFocus(item().item_id);
                       }}
                       onDblClick={() => {
-                        if (
-                          !isVideoItem(item()) &&
-                          primaryRoute().kind !== "external"
-                        )
+                        if (primaryRoute().kind !== "external")
                           openPrimary(item());
                       }}
                       onPointerDown={(event) => startLongPress(event, item())}
@@ -1325,34 +1340,38 @@ function GridContent(props: GridProps) {
                         />
                       </Show>
                       <Show
-                        when={
-                          isVideoItem(item()) ||
-                          item().media_type === "video" ||
-                          item().post_type === "video"
+                        when={isVideoItem(item()) && item().media_url}
+                        fallback={
+                          <Show
+                            when={
+                              !isVideoItem(item()) &&
+                              (item().media_type === "video" ||
+                                item().post_type === "video")
+                            }
+                          >
+                            <span
+                              class="video-play destination-glyph"
+                              aria-hidden="true"
+                            >
+                              {playIcon()}
+                            </span>
+                          </Show>
                         }
                       >
-                        <span
-                          class="video-play destination-glyph"
-                          aria-hidden="true"
+                        <button
+                          type="button"
+                          class="video-play"
+                          aria-label={`Play ${headlineText(item().title)}`}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onDblClick={(event) => event.stopPropagation()}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            props.actions.onFocus(item().item_id);
+                            void openPeek(item());
+                          }}
                         >
-                          <Icon
-                            name="play"
-                            size={
-                              row.kind === "hero" ||
-                              row.kind === "pair" ||
-                              row.kind === "tile"
-                                ? 24
-                                : cell.span === 2
-                                  ? 20
-                                  : cell.effectiveSize === "L"
-                                    ? 15
-                                    : cell.effectiveSize === "M"
-                                      ? 14
-                                      : 12
-                            }
-                            filled={true}
-                          />
-                        </span>
+                          {playIcon()}
+                        </button>
                       </Show>
                       <Show
                         when={
@@ -1438,25 +1457,12 @@ function GridContent(props: GridProps) {
                                   suppressOpenID = "";
                                   return;
                                 }
-                                if (isVideoItem(item()) && item().media_url)
-                                  void openPeek(item());
-                                else openPrimary(item());
+                                openPrimary(item());
                               }}
-                              aria-label={`${isVideoItem(item()) && item().media_url ? "Play" : "Open"} ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                              aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                             />
                             <CellCopy
                               item={item()}
-                              onOpen={
-                                isVideoItem(item())
-                                  ? () => {
-                                      if (suppressOpenID === item().item_id) {
-                                        suppressOpenID = "";
-                                        return;
-                                      }
-                                      openPrimary(item());
-                                    }
-                                  : undefined
-                              }
                               refined={true}
                               unreadDot={readVisuals().unreadDot}
                               archive={props.model.archive}
@@ -1517,14 +1523,16 @@ function GridContent(props: GridProps) {
                           <Icon name="discussion" size={13} />
                         </a>
                       </Show>
-                      <PeekPill
-                        item={item()}
-                        size={cell.effectiveSize}
-                        onPeek={() => {
-                          props.actions.onFocus(item().item_id);
-                          void openPeek(item());
-                        }}
-                      />
+                      <Show when={!isVideoItem(item()) || !item().media_url}>
+                        <PeekPill
+                          item={item()}
+                          size={cell.effectiveSize}
+                          onPeek={() => {
+                            props.actions.onFocus(item().item_id);
+                            void openPeek(item());
+                          }}
+                        />
+                      </Show>
                       <SignalActions
                         item={item()}
                         size={cell.effectiveSize}
@@ -2001,7 +2009,6 @@ export function CellCopy(props: {
   onApplyFeed?(): void;
   story?: boolean;
   onUndo?(): void;
-  onOpen?(): void;
 }) {
   const reddit = () => isRedditItem(props.item);
   const domain = () =>
@@ -2011,15 +2018,7 @@ export function CellCopy(props: {
   return (
     <div class="cell-copy">
       <h2 classList={{ read: props.dimmed }}>
-        <Show when={props.onOpen} fallback={headlineText(props.item.title)}>
-          <button
-            type="button"
-            class="video-reader-link"
-            onClick={props.onOpen}
-          >
-            {headlineText(props.item.title)}
-          </button>
-        </Show>
+        {headlineText(props.item.title)}
       </h2>
       <Show when={reddit() && domain()}>
         <div class="reddit-domain">{domain()}</div>
@@ -2032,17 +2031,7 @@ export function CellCopy(props: {
           (!reddit() || props.item.post_type === "text")
         }
       >
-        <p>
-          <Show when={props.onOpen} fallback={props.item.summary}>
-            <button
-              type="button"
-              class="video-reader-link"
-              onClick={props.onOpen}
-            >
-              {props.item.summary}
-            </button>
-          </Show>
-        </p>
+        <p>{props.item.summary}</p>
       </Show>
       <div class="cell-meta">
         <Show when={props.refined && !props.archive}>
