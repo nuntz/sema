@@ -166,7 +166,7 @@ func Sanitize(raw string, pageURL *url.URL) (string, error) {
 	policy := bluemonday.NewPolicy()
 	policy.AllowElements("p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "pre", "code", "figure", "figcaption", "strong", "b", "i", "em", "small", "span", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "br", "hr")
 	policy.AllowAttrs("href", "title").OnElements("a")
-	policy.AllowAttrs("src", "srcset", "alt", "title", "width", "height", "loading").OnElements("img")
+	policy.AllowAttrs("src", "srcset", "alt", "title", "width", "height", "loading", "referrerpolicy").OnElements("img")
 	policy.AllowAttrs("colspan", "rowspan", "scope").OnElements("th", "td")
 	policy.AllowAttrs("class").Matching(regexp.MustCompile(`^(?:media-card|media-card-thumbnail|media-provider|media-card-info|media-card-external|media-card-open|video-card-play|video-provider-strip)$`)).OnElements("a", "span")
 	policy.AllowAttrs("class").Matching(regexp.MustCompile(`^(?:language-[A-Za-z0-9_+.-]+|lang-[A-Za-z0-9_+.-]+)$`)).OnElements("pre", "code")
@@ -224,7 +224,7 @@ func ResolveMediaCards(raw string, resolver func(MediaCard) (string, error)) (st
 					failures = append(failures, resolveErr)
 				} else if cached != "" && thumbnail != nil {
 					thumbnail.AppendChild(&html.Node{Type: html.ElementNode, Data: "img", DataAtom: atom.Img, Attr: []html.Attribute{
-						{Key: "src", Val: cached}, {Key: "alt", Val: ""}, {Key: "loading", Val: "lazy"},
+						{Key: "src", Val: cached}, {Key: "alt", Val: ""}, {Key: "loading", Val: "lazy"}, {Key: "referrerpolicy", Val: "no-referrer"},
 					}})
 				}
 			}
@@ -484,7 +484,7 @@ func replaceEmbeds(node *html.Node, pageURL *url.URL) {
 	}
 	frame := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "media-card-thumbnail"}}}
 	if thumbnail != "" {
-		frame.AppendChild(&html.Node{Type: html.ElementNode, Data: "img", DataAtom: atom.Img, Attr: []html.Attribute{{Key: "src", Val: thumbnail}, {Key: "alt", Val: ""}}})
+		frame.AppendChild(&html.Node{Type: html.ElementNode, Data: "img", DataAtom: atom.Img, Attr: []html.Attribute{{Key: "src", Val: thumbnail}, {Key: "alt", Val: ""}, {Key: "loading", Val: "lazy"}, {Key: "referrerpolicy", Val: "no-referrer"}}})
 	}
 	play := &html.Node{Type: html.ElementNode, Data: "span", DataAtom: atom.Span, Attr: []html.Attribute{{Key: "class", Val: "video-card-play"}, {Key: "aria-hidden", Val: "true"}}}
 	frame.AppendChild(play)

@@ -46,20 +46,20 @@ test("Reddit YouTube link replaces destination card and leaves description unpar
 test("reader dwell continues after iframe blur and pauses on player pause", async ({
   page,
 }) => {
-  await stubYouTube(page);
+  await stubYouTube(page, false, true);
   await page.clock.install();
   await page.goto("/e2e/header-fixture.html?view=reader&media=video");
   await page.keyboard.press("i");
-  await expect(page.locator("iframe")).toHaveCount(1);
+  await expect(page.locator("iframe")).toHaveAttribute("data-state", "1");
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await page.clock.runFor(31_000);
   const elapsed = Number(await page.locator("body").getAttribute("data-dwell"));
   expect(elapsed).toBeGreaterThanOrEqual(30_000);
   await page
-    .locator("iframe")
-    .evaluate((frame) =>
-      frame.dispatchEvent(new CustomEvent("test-state", { detail: 2 })),
-    );
+    .frameLocator("iframe")
+    .getByRole("button", { name: "Pause", exact: true })
+    .click();
+  await expect(page.locator("iframe")).toHaveAttribute("data-state", "2");
   const paused = await page.locator("body").getAttribute("data-dwell");
   await page.clock.runFor(10_000);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -68,12 +68,10 @@ test("reader dwell continues after iframe blur and pauses on player pause", asyn
   expect(await page.locator("body").getAttribute("data-dwell")).toBe(paused);
 });
 
-test("failed API loading shows Open without restoring the Poster", async ({
+test("failed embed loading shows Open without restoring the Poster", async ({
   page,
 }) => {
-  await page.route("https://www.youtube.com/iframe_api", (route) =>
-    route.abort(),
-  );
+  await stubYouTube(page, true);
   await page.goto("/e2e/header-fixture.html?view=reader&media=video");
   await page.getByRole("button", { name: "Play", exact: true }).click();
   await expect(page.locator(".video-failure")).toContainText(
@@ -87,7 +85,7 @@ const extractedVideo = (id: string, title: string) =>
   `<a class="media-card" href="https://www.youtube.com/watch?v=${id}" title="${title}" target="_blank"><span class="media-card-thumbnail"><img src="/media/e2e/reader-media/0.svg" alt="" loading="lazy"><span class="video-card-play" aria-hidden="true"></span></span><span class="video-provider-strip"><b>YOUTUBE</b><i></i><span>www.youtube.com/watch?v=${id}</span><strong>Watch<span class="media-card-open"></span></strong></span></a>`;
 
 async function openArticleWithVideos(page: Page, failure = false) {
-  await stubYouTube(page, failure);
+  await stubYouTube(page, failure, true);
   await page.route("**/e2e/reader-body.html", (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -162,12 +160,14 @@ test("article videos share reader dwell while any video keeps playing", async ({
     .click();
   const players = page.locator(".reader-video iframe");
   await expect(players).toHaveCount(2);
+  await expect(players.last()).toHaveAttribute("data-state", "1");
   await expect(page.locator("body")).toHaveAttribute("data-plays", "2");
   await players
     .first()
-    .evaluate((frame) =>
-      frame.dispatchEvent(new CustomEvent("test-state", { detail: 2 })),
-    );
+    .contentFrame()
+    .getByRole("button", { name: "Pause", exact: true })
+    .click();
+  await expect(players.first()).toHaveAttribute("data-state", "2");
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await page.clock.runFor(31_000);
   expect(
@@ -175,11 +175,13 @@ test("article videos share reader dwell while any video keeps playing", async ({
   ).toBeGreaterThanOrEqual(30_000);
   await players
     .last()
-    .evaluate((frame) =>
-      frame.dispatchEvent(new CustomEvent("test-state", { detail: 2 })),
-    );
+    .contentFrame()
+    .getByRole("button", { name: "Pause", exact: true })
+    .click();
+  await expect(players.last()).toHaveAttribute("data-state", "2");
   const paused = await page.locator("body").getAttribute("data-dwell");
   await page.clock.runFor(10_000);
+  await page.locator(".article-body p").first().click();
   await page.keyboard.press("Escape");
   await expect(page.locator(".reader")).toHaveCount(0);
   expect(await page.locator("body").getAttribute("data-dwell")).toBe(paused);

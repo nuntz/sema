@@ -1,80 +1,34 @@
 import type { Page } from "@playwright/test";
 
-/** Stub the API boundary; production loading, player lifecycle and UI still run. */
+/** Serve the player protocol from its real cross-origin iframe boundary. */
 export async function stubYouTube(
   page: Page,
   failure = false,
   controls = false,
 ) {
-  if (controls)
-    await page.route(
-      "https://www.youtube-nocookie.com/sema-test-player",
-      (route) =>
-        route.fulfill({
-          contentType: "text/html",
-          body: `<button onclick="parent.postMessage({ state: 3 }, '*'); setTimeout(() => parent.postMessage({ state: 1 }, '*'), 20)">Seek</button><button onclick="parent.postMessage({ state: 2 }, '*')">Pause</button><button>Mute</button>`,
-        }),
-    );
-  await page.addInitScript(
-    ({ failure, controls }) => {
-      window.YT = {
-        Player: class {
-          frame: HTMLIFrameElement;
-          seconds = 0;
-          options: ConstructorParameters<
-            NonNullable<Window["YT"]>["Player"]
-          >[1];
-          constructor(
-            host: HTMLElement,
-            options: ConstructorParameters<
-              NonNullable<Window["YT"]>["Player"]
-            >[1],
-          ) {
-            this.options = options;
-            this.frame = document.createElement("iframe");
-            this.frame.title = "YouTube test player";
-            this.frame.dataset.videoId = options.videoId;
-            this.frame.dataset.host = options.host;
-            if (controls) {
-              this.frame.src =
-                "https://www.youtube-nocookie.com/sema-test-player";
-              window.addEventListener("message", (event) => {
-                if (
-                  event.source === this.frame.contentWindow &&
-                  event.origin === "https://www.youtube-nocookie.com"
-                ) {
-                  this.frame.dataset.state = String(event.data.state);
-                  options.events.onStateChange({ data: event.data.state });
-                }
-              });
-            }
-            host.replaceWith(this.frame);
-            this.frame.addEventListener("test-state", (event) =>
-              options.events.onStateChange({
-                data: (event as CustomEvent<number>).detail,
-              }),
-            );
-            queueMicrotask(() => {
-              if (failure) options.events.onError();
-              else options.events.onReady({ target: this });
-            });
-          }
-          playVideo() {
-            this.options.events.onStateChange({ data: 1 });
-          }
-          seekTo(seconds: number) {
-            this.seconds = seconds;
-            this.frame.dataset.seconds = String(seconds);
-          }
-          getCurrentTime() {
-            return this.seconds || 87;
-          }
-          destroy() {
-            this.frame.remove();
-          }
-        },
-      };
-    },
-    { failure, controls },
+  await page.route("https://www.youtube-nocookie.com/embed/*", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `${controls ? '<button onclick="seek()">Seek</button><button onclick="state(2)">Pause</button><button>Mute</button>' : ""}<script>
+      const params = new URLSearchParams(location.search);
+      const origin = params.get('origin');
+      let seconds = Number(params.get('start')) || 87;
+      const send = message => parent.postMessage(JSON.stringify(message), origin);
+      const state = playerState => send({event:'infoDelivery', info:{playerState, currentTime:seconds}});
+      const seek = () => { state(3); setTimeout(() => state(1), 20); };
+      addEventListener('message', event => {
+        if (event.source !== parent || event.origin !== origin) return;
+        let message; try { message = JSON.parse(event.data); } catch { return; }
+        if (message.event === 'listening') {
+          if (${failure}) send({event:'onError', info:150});
+          else { send({event:'onReady'}); state(1); }
+        } else if (message.event === 'command') {
+          if (message.func === 'playVideo') state(1);
+          if (message.func === 'pauseVideo') state(2);
+          if (message.func === 'seekTo') { seconds = message.args[0]; seek(); }
+        }
+      });
+    </script>`,
+    }),
   );
 }

@@ -11,152 +11,133 @@ export interface PlayerOptions {
   onState(state: PlaybackState): void;
   onFailure(): void;
 }
-interface YouTubePlayer {
-  playVideo(): void;
-  seekTo(seconds: number, allowSeekAhead: boolean): void;
-  getCurrentTime(): number;
-  destroy(): void;
-}
-interface YouTubeAPI {
-  Player: new (
-    host: HTMLElement,
-    options: {
-      host: string;
-      videoId: string;
-      playerVars: Record<string, string | number>;
-      events: {
-        onReady(event: { target: YouTubePlayer }): void;
-        onStateChange(event: { data: number }): void;
-        onError(): void;
-      };
-    },
-  ) => YouTubePlayer;
-}
-declare global {
-  interface Window {
-    YT?: YouTubeAPI;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-let apiPromise: Promise<YouTubeAPI> | undefined;
-function loadAPI(): Promise<YouTubeAPI> {
-  if (window.YT?.Player) return Promise.resolve(window.YT);
-  if (apiPromise) return apiPromise;
-  apiPromise = new Promise<YouTubeAPI>((resolve, reject) => {
-    const script = document.createElement("script");
-    const previous = window.onYouTubeIframeAPIReady;
-    const finish = (error?: Error) => {
-      clearTimeout(timeout);
-      window.onYouTubeIframeAPIReady = previous;
-      script.onerror = null;
-      if (error) {
-        script.remove();
-        reject(error);
-      } else if (window.YT?.Player) resolve(window.YT);
-      else reject(new Error("YouTube API unavailable"));
-    };
-    const timeout = window.setTimeout(
-      () => finish(new Error("YouTube API timed out")),
-      15_000,
-    );
-    window.onYouTubeIframeAPIReady = () => {
-      finish();
-      previous?.();
-    };
-    script.onerror = () => finish(new Error("YouTube API unavailable"));
-    script.src = "https://www.youtube.com/iframe_api";
-    document.head.append(script);
-  }).catch((error) => {
-    apiPromise = undefined;
-    throw error;
-  });
-  return apiPromise;
-}
+const EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+let nextPlayerID = 0;
 
 export function createVideoPlayer(
   host: HTMLElement,
   options: PlayerOptions,
 ): VideoPlayer {
-  let player: YouTubePlayer | undefined;
+  const iframe = document.createElement("iframe");
+  const id = `sema-video-${++nextPlayerID}`;
   let disposed = false;
   let failed = false;
   let ready = false;
-  let position = options.start;
-  let timeout = 0;
+  let listening = false;
+  let position = Math.max(0, options.start);
+  let pendingSeek: number | undefined = position > 0 ? position : undefined;
+  const send = (message: object) =>
+    iframe.contentWindow?.postMessage(
+      JSON.stringify({ ...message, id, channel: "widget" }),
+      EMBED_ORIGIN,
+    );
+  const command = (func: string, args: unknown[] = []) =>
+    send({ event: "command", func, args });
+  const cleanup = () => {
+    clearTimeout(timeout);
+    window.removeEventListener("offline", fail);
+    window.removeEventListener("message", receive);
+    iframe.removeEventListener("load", loaded);
+    iframe.remove();
+  };
   const fail = () => {
     if (disposed || failed) return;
     failed = true;
-    clearTimeout(timeout);
-    player?.destroy();
-    player = undefined;
+    cleanup();
     options.onFailure();
   };
-  const offline = () => fail();
-  window.addEventListener("offline", offline);
+  const loaded = () => {
+    if (disposed || failed) return;
+    listening = true;
+    send({ event: "listening" });
+  };
+  const receive = (event: MessageEvent) => {
+    if (
+      disposed ||
+      failed ||
+      !listening ||
+      event.origin !== EMBED_ORIGIN ||
+      event.source !== iframe.contentWindow ||
+      typeof event.data !== "string"
+    )
+      return;
+    let message: {
+      event?: unknown;
+      info?: { currentTime?: unknown; playerState?: unknown };
+    } | null;
+    try {
+      message = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (!message || typeof message !== "object") return;
+    if (message.event === "onError") {
+      fail();
+      return;
+    }
+    if (message.event !== "onReady" && message.event !== "infoDelivery") return;
+    if (message.event === "infoDelivery") {
+      const info = message.info;
+      if (
+        typeof info?.currentTime === "number" &&
+        Number.isFinite(info.currentTime) &&
+        info.currentTime >= 0
+      ) {
+        position = info.currentTime;
+        iframe.dataset.seconds = String(position);
+      }
+      const state = (
+        {
+          0: "ended",
+          1: "playing",
+          2: "paused",
+          3: "buffering",
+          5: "paused",
+        } as const
+      )[info?.playerState as 0 | 1 | 2 | 3 | 5];
+      if (typeof info?.playerState === "number" && state) {
+        iframe.dataset.state = String(info.playerState);
+        options.onState(state);
+      }
+    }
+    if (!ready) {
+      ready = true;
+      clearTimeout(timeout);
+      if (pendingSeek !== undefined) command("seekTo", [pendingSeek, true]);
+      pendingSeek = undefined;
+      command("playVideo");
+    }
+  };
+  const timeout = window.setTimeout(fail, 15_000);
+  iframe.title = "YouTube video player";
+  iframe.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media";
+  iframe.referrerPolicy = "strict-origin-when-cross-origin";
+  iframe.allowFullscreen = true;
+  iframe.dataset.videoId = options.videoID;
+  iframe.dataset.host = EMBED_ORIGIN;
+  iframe.dataset.seconds = String(position);
+  iframe.src = `${EMBED_ORIGIN}/embed/${encodeURIComponent(options.videoID)}?enablejsapi=1&autoplay=1&playsinline=1&start=${Math.floor(position)}&origin=${encodeURIComponent(location.origin)}`;
+  iframe.addEventListener("load", loaded);
+  window.addEventListener("message", receive);
+  window.addEventListener("offline", fail);
   if (!navigator.onLine) queueMicrotask(fail);
-  else
-    void loadAPI()
-      .then((api) => {
-        if (disposed || failed) return;
-        // The API replaces this child, leaving Solid's host under Solid's ownership.
-        const mount = document.createElement("div");
-        host.append(mount);
-        timeout = window.setTimeout(fail, 15_000);
-        player = new api.Player(mount, {
-          host: "https://www.youtube-nocookie.com",
-          videoId: options.videoID,
-          playerVars: {
-            autoplay: 1,
-            playsinline: 1,
-            start: Math.floor(position),
-            origin: location.origin,
-          },
-          events: {
-            onReady: ({ target }) => {
-              if (disposed || failed) {
-                target.destroy();
-                return;
-              }
-              clearTimeout(timeout);
-              ready = true;
-              target.seekTo(position, true);
-              target.playVideo();
-            },
-            onStateChange: ({ data }) => {
-              if (disposed || failed) return;
-              const state = (
-                {
-                  0: "ended",
-                  1: "playing",
-                  2: "paused",
-                  3: "buffering",
-                  5: "paused",
-                } as const
-              )[data as 0 | 1 | 2 | 3 | 5];
-              if (state) options.onState(state);
-            },
-            onError: fail,
-          },
-        });
-      })
-      .catch(fail);
+  else host.append(iframe);
   return {
     play(seconds) {
       if (disposed || failed) return;
-      if (seconds !== undefined) position = Math.max(0, seconds);
+      if (seconds !== undefined && Number.isFinite(seconds))
+        pendingSeek = Math.max(0, seconds);
       if (ready) {
-        if (seconds !== undefined) player?.seekTo(position, true);
-        player?.playVideo();
+        if (pendingSeek !== undefined) command("seekTo", [pendingSeek, true]);
+        pendingSeek = undefined;
+        command("playVideo");
       }
     },
-    position: () =>
-      ready && !failed ? (player?.getCurrentTime() ?? position) : position,
+    position: () => position,
     destroy() {
       if (disposed) return;
       disposed = true;
-      clearTimeout(timeout);
-      window.removeEventListener("offline", offline);
-      player?.destroy();
+      if (!failed) cleanup();
     },
   };
 }

@@ -62,6 +62,7 @@ func TestMediaCardsAreProviderLinksWithoutThirdPartyLoadsAfterResolution(t *test
 	}
 	for _, want := range []string{
 		`class="media-card"`,
+		`loading="lazy" referrerpolicy="no-referrer"`,
 		`data-provider="YouTube"`,
 		`href="https://www.youtube.com/watch?v=abc123"`,
 		`title="A useful talk"`,
@@ -82,7 +83,7 @@ func TestMediaCardsAreProviderLinksWithoutThirdPartyLoadsAfterResolution(t *test
 		}
 		return "/media/user/item/embed-0.webp", nil
 	})
-	resolvedThumbnail := `<span class="media-card-thumbnail"><span class="video-card-play" aria-hidden="true"></span><img src="/media/user/item/embed-0.webp" alt="" loading="lazy"/></span>`
+	resolvedThumbnail := `<span class="media-card-thumbnail"><span class="video-card-play" aria-hidden="true"></span><img src="/media/user/item/embed-0.webp" alt="" loading="lazy" referrerpolicy="no-referrer"/></span>`
 	if len(failures) != 0 || !strings.Contains(resolved, resolvedThumbnail) || strings.Contains(resolved, "i.ytimg.com") || strings.Contains(resolved, "data-thumbnail") {
 		t.Fatalf("resolved card = %s, failures = %v", resolved, failures)
 	}

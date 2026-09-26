@@ -617,6 +617,7 @@ for (const control of ["Seek", "Pause"]) {
         "data-state",
         control === "Seek" ? "1" : "2",
       );
+      await expect(page.locator(".video-peek")).toBeFocused();
       await page.keyboard.press(key);
       await expect(page.locator(".video-peek")).toHaveCount(0);
       if (key === "o")

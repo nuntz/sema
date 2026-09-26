@@ -1235,3 +1235,81 @@ func TestLinkItemAccountingAndRollingFeedHistory(t *testing.T) {
 		t.Fatalf("recovered feed=%+v", repository.feed)
 	}
 }
+
+type privacyMedia struct {
+	readyMedia
+	fail       bool
+	embedCalls int
+}
+
+func (m *privacyMedia) FetchVideoLead(ctx context.Context, urls []string) (media.Lead, error) {
+	return m.FetchLead(ctx, urls)
+}
+func (m *privacyMedia) FetchEmbed(_ context.Context, source string) (media.Image, error) {
+	m.embedCalls++
+	if m.fail {
+		return media.Image{}, errors.New("thumbnail unavailable")
+	}
+	return media.Image{Bytes: []byte("cached thumbnail"), ContentType: "image/jpeg", Extension: ".jpg"}, nil
+}
+
+type privacyStore struct {
+	recordingItemStore
+	bodies []string
+}
+
+func (s *privacyStore) ContentURL(key string) string { return "/media/" + key }
+func (s *privacyStore) PutContent(_ context.Context, key, contentType string, body []byte) error {
+	if strings.HasPrefix(contentType, "text/html") {
+		s.bodies = append(s.bodies, string(body))
+	}
+	s.contentKeys = append(s.contentKeys, key)
+	return nil
+}
+
+func TestStoredYouTubeCardsOnlyUseCachedThumbnails(t *testing.T) {
+	for _, failure := range []bool{false, true} {
+		t.Run(strconv.FormatBool(failure), func(t *testing.T) {
+			repository := &privacyStore{}
+			resolver := &privacyMedia{fail: failure}
+			h := &Processor{Store: repository, Media: resolver, Embedder: stubEmbedder{}, ScoringVersion: "1", Vectors: &stubVectorBatchStore{}}
+			raw := `<p>` + strings.Repeat("This article explains a useful video in detail. ", 40) + `</p><iframe src="https://www.youtube.com/embed/dQw4w9WgXcQ"></iframe>`
+			message := `{"user":"user","feed_id":"feed","item_id":"privacy","title":"Article","content_raw":` + strconv.Quote(raw) + `,"published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+			if _, err := h.process(context.Background(), message); err != nil {
+				t.Fatal(err)
+			}
+			if resolver.embedCalls != 1 || len(repository.bodies) != 1 {
+				t.Fatalf("embed calls=%d bodies=%v", resolver.embedCalls, repository.bodies)
+			}
+			body := repository.bodies[0]
+			if strings.Contains(body, "ytimg.com") || strings.Contains(body, "data-thumbnail-url") {
+				t.Fatalf("remote thumbnail survived: %s", body)
+			}
+			if !strings.Contains(body, `class="media-card"`) {
+				t.Fatalf("missing card: %s", body)
+			}
+			if failure && strings.Contains(body, "<img") {
+				t.Fatalf("failed thumbnail survived: %s", body)
+			}
+			if !failure && (!strings.Contains(body, `src="/media/`) || !strings.Contains(body, `referrerpolicy="no-referrer"`)) {
+				t.Fatalf("cached thumbnail missing: %s", body)
+			}
+		})
+	}
+}
+
+func TestVideoItemNeverStoresBody(t *testing.T) {
+	repository := &privacyStore{}
+	resolver := &privacyMedia{}
+	h := &Processor{Store: repository, Media: resolver, Embedder: stubEmbedder{}, ScoringVersion: "1", Vectors: &stubVectorBatchStore{}, Extraction: extractionStage(func(ExtractionInput) (extract.Result, error) {
+		t.Fatal("video item must not extract a body")
+		return extract.Result{}, nil
+	})}
+	message := `{"user":"user","feed_id":"feed","item_id":"video","title":"Video","video_id":"dQw4w9WgXcQ","url":"https://www.youtube.com/watch?v=dQw4w9WgXcQ","content_raw":"<p>Video description</p>","published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+	if _, err := h.process(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.bodies) != 0 || resolver.embedCalls != 0 || len(repository.items) != 1 || repository.items[0].BodyKey != "" {
+		t.Fatalf("unexpected body: %+v", repository)
+	}
+}

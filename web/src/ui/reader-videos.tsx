@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import { youtubeVideoID } from "../video-item";
 import type { PlaybackState } from "../youtube-player";
+import { firstPartyThumbnail } from "./reader-content";
 import { VideoPlayer } from "./VideoPlayer";
 
 /** Upgrade extracted YouTube cards without treating body links as Video Items. */
@@ -21,13 +22,18 @@ export function mountReaderVideos(
     if (!videoID) continue;
     const host = document.createElement("div");
     host.className = "reader-video";
-    const poster = link.querySelector("img")?.cloneNode(true);
+    const image = link.querySelector("img");
+    const poster =
+      image && firstPartyThumbnail(image) ? image.cloneNode(true) : undefined;
     const url = link.href;
     link.replaceWith(host);
     const dispose = render(() => {
       const [playing, setPlaying] = createSignal(false);
       return (
-        <div class="video-media-card">
+        <div
+          class="video-media-card"
+          classList={{ "video-media-card-empty": !poster && !playing() }}
+        >
           <Show
             when={playing()}
             fallback={
