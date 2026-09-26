@@ -46,7 +46,7 @@ const groups = [
       ["u", "Undo last read batch / grid clear"],
       ["c", "Copy or share original"],
       ["v", "Open original"],
-      ["i", "Toggle Peek"],
+      ["i", "Toggle Peek in grid · Play in reader"],
       ["r", "Show related coverage"],
     ],
   },

@@ -154,6 +154,9 @@ function ReaderFixture() {
     title: `Reader media item ${index}`,
     summary: `Summary for reader media item ${index}.`,
     media_type: media === "video" ? "video" : "image",
+    video_id: media === "video" ? "dQw4w9WgXcQ" : undefined,
+    description: "0:00 Introduction\n1:30 Middle\n3:45 Ending",
+    connector: media === "video" ? "youtube" : item.connector,
     media_url: `/media/e2e/reader-media/${index}.svg`,
     media_variants: [
       {
@@ -185,7 +188,10 @@ function ReaderFixture() {
           ...mediaItem(0),
           connector: "reddit",
           post_type: reddit === "link" ? "link" : "image",
-          external_url: "https://i.redd.it/fixture.png",
+          external_url:
+            media === "video"
+              ? "https://youtu.be/dQw4w9WgXcQ"
+              : "https://i.redd.it/fixture.png",
           url: "https://www.reddit.com/r/pics/comments/fixture/image/",
         }
       : media
@@ -229,11 +235,17 @@ function ReaderFixture() {
           }))
         }
         onCopy={() => undefined}
-        onOriginal={() => undefined}
+        onOriginal={() => {
+          document.body.dataset.plays = String(
+            Number(document.body.dataset.plays || 0) + 1,
+          );
+        }}
         onRelated={() => undefined}
         onApplyFeed={() => undefined}
         onRetry={() => undefined}
-        onDwell={() => undefined}
+        onDwell={(_id, ms) => {
+          document.body.dataset.dwell = String(ms);
+        }}
       />
     </Show>
   );

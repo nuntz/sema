@@ -1,6 +1,7 @@
 import { Show } from "solid-js";
 import { Icon } from "../components/Icon";
 import type { Item } from "../types";
+import { isVideoItem } from "../video-item";
 
 export function PeekPill(props: {
   item: Item;
@@ -11,14 +12,14 @@ export function PeekPill(props: {
     <Show
       when={
         props.size !== "S" &&
-        props.item.media_url &&
-        props.item.media_type !== "video"
+        (isVideoItem(props.item) ||
+          (props.item.media_url && props.item.media_type !== "video"))
       }
     >
       <button
         type="button"
         class="peek-pill"
-        aria-label="View images"
+        aria-label={isVideoItem(props.item) ? "Play" : "View images"}
         onPointerDown={(event) => event.stopPropagation()}
         onDblClick={(event) => event.stopPropagation()}
         onClick={(event) => {
@@ -27,7 +28,7 @@ export function PeekPill(props: {
         }}
       >
         <span>
-          <Icon name="expand" size={14} />
+          <Icon name={isVideoItem(props.item) ? "play" : "expand"} size={14} />
         </span>
       </button>
     </Show>

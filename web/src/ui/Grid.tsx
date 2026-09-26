@@ -50,6 +50,7 @@ import { whyText } from "../ranking-display";
 import type { ReadGeometry } from "../read-state";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Story } from "../types";
+import { isVideoItem } from "../video-item";
 import { ExpiryPill } from "./ExpiryPill";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
@@ -86,6 +87,7 @@ import {
   moveLongPress,
 } from "./touch-gestures";
 import { useSheetDrag } from "./use-sheet-drag";
+import { VideoPeek } from "./VideoPeek";
 
 interface GridProps {
   model: GridModel;
@@ -186,6 +188,7 @@ function GridContent(props: GridProps) {
   const [scrollTop, setScrollTop] = createSignal(
     Math.max(0, props.layout.initialScrollTop ?? 0),
   );
+  const [videoPeek, setVideoPeek] = createSignal<Item>();
   const [lightbox, setLightbox] = createSignal<{
     item: Item;
     images: LightboxImage[];
@@ -193,21 +196,23 @@ function GridContent(props: GridProps) {
   }>();
   let imageRequest: AbortController | undefined;
   let imageOrigin: HTMLElement | undefined;
-  const closeGridLightbox = (restoreFocus = true) => {
+  const closePeek = (restoreFocus = true) => {
     imageRequest?.abort();
     imageRequest = undefined;
     setLightbox();
+    setVideoPeek();
     if (restoreFocus) imageOrigin?.focus({ preventScroll: true });
   };
   onCleanup(() => imageRequest?.abort());
-  // Yield Grid shortcuts to its lightbox without cancelling that preview.
-  const imagePreviewActive = () =>
+  // Yield Grid shortcuts while its Peek owns the keyboard.
+  const peekActive = () =>
     props.active ||
-    (Boolean(lightbox()) && keyOwnership().owner === "lightbox");
+    ((Boolean(lightbox()) || Boolean(videoPeek())) &&
+      keyOwnership().owner === "lightbox");
   createEffect(() => {
-    if (!imagePreviewActive()) closeGridLightbox(false);
+    if (!peekActive()) closePeek(false);
   });
-  const openImages = async (item: Item) => {
+  const openPeek = async (item: Item) => {
     imageRequest?.abort();
     const request = new AbortController();
     imageRequest = request;
@@ -220,17 +225,18 @@ function GridContent(props: GridProps) {
       : (cell?.querySelector<HTMLElement>(".story-lead, .cell-main") ??
         cell ??
         undefined);
+    if (isVideoItem(item)) {
+      props.actions.onPlay?.(item);
+      setVideoPeek(item);
+      return;
+    }
     const lead = gridLightboxLead(
       item,
       cell?.querySelector("img") ?? new Image(),
     );
     if (lead) setLightbox({ item, images: [lead], index: 0 });
     const images = await loadGridLightboxImages(item, lead, request.signal);
-    if (
-      request.signal.aborted ||
-      imageRequest !== request ||
-      !imagePreviewActive()
-    )
+    if (request.signal.aborted || imageRequest !== request || !peekActive())
       return;
     if (images.length) setLightbox({ item, images, index: 0 });
   };
@@ -1049,7 +1055,7 @@ function GridContent(props: GridProps) {
         if (item) props.actions.onCopy(item);
         break;
       case "image":
-        if (item) void openImages(item);
+        if (item) void openPeek(item);
         break;
       case "original":
         if (item) props.actions.onOriginal(item);
@@ -1200,7 +1206,7 @@ function GridContent(props: GridProps) {
                           const lead = story.items[0];
                           if (!lead) return;
                           props.actions.onFocus(`story:${story.story_id}`);
-                          void openImages(lead);
+                          void openPeek(lead);
                         }}
                         onOpen={props.actions.onOpen}
                         onExternalOpen={props.actions.onExternalOpen}
@@ -1259,7 +1265,9 @@ function GridContent(props: GridProps) {
                         "all-items-cell": readContext() === "all-items",
                         "archive-cell": props.model.archive,
                         "text-cell": !item().media_url,
-                        "video-cell": item().media_type === "video",
+                        "video-cell":
+                          item().media_type === "video" || isVideoItem(item()),
+                        "playable-cell": isVideoItem(item()),
                         "reddit-cell": isRedditItem(item()),
                         [`reddit-${item().post_type ?? "unknown"}`]:
                           isRedditItem(item()),
@@ -1288,7 +1296,10 @@ function GridContent(props: GridProps) {
                         if (!pageFocus) props.actions.onFocus(item().item_id);
                       }}
                       onDblClick={() => {
-                        if (primaryRoute().kind !== "external")
+                        if (
+                          !isVideoItem(item()) &&
+                          primaryRoute().kind !== "external"
+                        )
                           openPrimary(item());
                       }}
                       onPointerDown={(event) => startLongPress(event, item())}
@@ -1315,6 +1326,7 @@ function GridContent(props: GridProps) {
                       </Show>
                       <Show
                         when={
+                          isVideoItem(item()) ||
                           item().media_type === "video" ||
                           item().post_type === "video"
                         }
@@ -1426,12 +1438,25 @@ function GridContent(props: GridProps) {
                                   suppressOpenID = "";
                                   return;
                                 }
-                                openPrimary(item());
+                                if (isVideoItem(item()) && item().media_url)
+                                  void openPeek(item());
+                                else openPrimary(item());
                               }}
-                              aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                              aria-label={`${isVideoItem(item()) && item().media_url ? "Play" : "Open"} ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                             />
                             <CellCopy
                               item={item()}
+                              onOpen={
+                                isVideoItem(item())
+                                  ? () => {
+                                      if (suppressOpenID === item().item_id) {
+                                        suppressOpenID = "";
+                                        return;
+                                      }
+                                      openPrimary(item());
+                                    }
+                                  : undefined
+                              }
                               refined={true}
                               unreadDot={readVisuals().unreadDot}
                               archive={props.model.archive}
@@ -1497,7 +1522,7 @@ function GridContent(props: GridProps) {
                         size={cell.effectiveSize}
                         onPeek={() => {
                           props.actions.onFocus(item().item_id);
-                          void openImages(item());
+                          void openPeek(item());
                         }}
                       />
                       <SignalActions
@@ -1678,18 +1703,32 @@ function GridContent(props: GridProps) {
           </section>
         </Show>
       </div>
+      <Show when={videoPeek()} keyed>
+        {(item) => (
+          <VideoPeek
+            item={item}
+            onClose={closePeek}
+            onOriginal={() => props.actions.onPlay?.(item)}
+            onFlip={(seconds) => {
+              if (props.actions.onVideoFlip)
+                props.actions.onVideoFlip(item, seconds);
+              else openPrimary(item);
+            }}
+          />
+        )}
+      </Show>
       <Show when={lightbox()}>
         {(state) => (
           <Lightbox
             images={state().images}
             initialIndex={state().index}
-            onClose={closeGridLightbox}
+            onClose={closePeek}
             onOpenReader={
               redditPrimaryRoute(state().item).kind === "external"
                 ? undefined
                 : () => {
                     const item = state().item;
-                    closeGridLightbox(false);
+                    closePeek(false);
                     openPrimary(item);
                   }
             }
@@ -1809,6 +1848,7 @@ function GridContent(props: GridProps) {
                 </Show>
                 <Show
                   when={
+                    isVideoItem(item) ||
                     item.has_body ||
                     (item.media_url &&
                       item.media_type !== "video" &&
@@ -1817,10 +1857,10 @@ function GridContent(props: GridProps) {
                 >
                   <button
                     type="button"
-                    onClick={() => runSheetAction(() => void openImages(item))}
+                    onClick={() => runSheetAction(() => void openPeek(item))}
                   >
                     <Icon name="expand" size={20} />
-                    View images
+                    {isVideoItem(item) ? "Play" : "View images"}
                   </button>
                 </Show>
                 <Show when={!isRedditItem(item)}>
@@ -1961,6 +2001,7 @@ export function CellCopy(props: {
   onApplyFeed?(): void;
   story?: boolean;
   onUndo?(): void;
+  onOpen?(): void;
 }) {
   const reddit = () => isRedditItem(props.item);
   const domain = () =>
@@ -1970,7 +2011,15 @@ export function CellCopy(props: {
   return (
     <div class="cell-copy">
       <h2 classList={{ read: props.dimmed }}>
-        {headlineText(props.item.title)}
+        <Show when={props.onOpen} fallback={headlineText(props.item.title)}>
+          <button
+            type="button"
+            class="video-reader-link"
+            onClick={props.onOpen}
+          >
+            {headlineText(props.item.title)}
+          </button>
+        </Show>
       </h2>
       <Show when={reddit() && domain()}>
         <div class="reddit-domain">{domain()}</div>
@@ -1983,7 +2032,17 @@ export function CellCopy(props: {
           (!reddit() || props.item.post_type === "text")
         }
       >
-        <p>{props.item.summary}</p>
+        <p>
+          <Show when={props.onOpen} fallback={props.item.summary}>
+            <button
+              type="button"
+              class="video-reader-link"
+              onClick={props.onOpen}
+            >
+              {props.item.summary}
+            </button>
+          </Show>
+        </p>
       </Show>
       <div class="cell-meta">
         <Show when={props.refined && !props.archive}>

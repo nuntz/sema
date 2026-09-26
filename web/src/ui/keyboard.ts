@@ -28,6 +28,7 @@ export type AppCommand =
   | "toggle-archive"
   | "toggle-unread";
 export type ReaderCommand =
+  | "play"
   | "close"
   | "next"
   | "previous"
@@ -80,6 +81,7 @@ const appBindings: Record<string, AppCommand> = {
 };
 
 const readerBindings: Record<string, ReaderCommand> = {
+  i: "play",
   Escape: "close",
   n: "next",
   j: "next",

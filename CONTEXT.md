@@ -129,11 +129,11 @@ A surface opened over the grid or reader that owns the keyboard and the back but
 _Avoid_: Modal, dialog, sheet, popup, panel
 
 **Peek**:
-An Overlay that shows an Item's images over the grid without marking the Item Read. A Peek on a Story shows the Lead's images.
-_Avoid_: Lightbox, preview, image viewer, gallery
+An Overlay that shows an Item's images, or Plays a Video Item, over the grid without marking the Item Read. A Peek on a Story acts on the Lead.
+_Avoid_: Lightbox, preview, image viewer, gallery, player overlay
 
 **Flip**:
-Leaving a Peek for the reader of the same Item.
+Leaving a Peek for the reader of the same Item. Flipping a playing Video Item keeps its playback position.
 _Avoid_: Open, expand, go to article
 
 ### Feedback
@@ -157,3 +157,17 @@ _Avoid_: Like, upvote, heart, +1
 **Bury**:
 Explicit feedback that the user wants fewer Items like this one. Never applies to a Kept Item.
 _Avoid_: Dislike, downvote, hide, -1
+
+### Video
+
+**Video Item**:
+An Item whose link is a YouTube video, whichever Feed it came from. A Reddit post that links to YouTube is a Video Item; a Reddit-hosted video is not.
+_Avoid_: Video, YouTube item, clip, embed
+
+**Poster**:
+The thumbnail card that stands in for a Video Item's player until the user Plays it.
+_Avoid_: Facade, placeholder, thumbnail, preview
+
+**Play**:
+The user action that starts a Video Item's video inside Sema in place of its Poster. Playing is Behaviour, counted like a click-through.
+_Avoid_: Watch, embed, autoplay, open

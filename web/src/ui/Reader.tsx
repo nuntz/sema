@@ -3,6 +3,7 @@ import {
   createMemo,
   createSignal,
   For,
+  type JSX,
   onCleanup,
   onMount,
   Show,
@@ -30,6 +31,12 @@ import {
 } from "../reddit-item";
 import { signalActionLabel } from "../signal-feedback";
 import type { Item } from "../types";
+import { isVideoItem, videoItemID, videoItemURL } from "../video-item";
+import {
+  type PlaybackState,
+  type VideoPlayer as Player,
+  videoDwellActive,
+} from "../youtube-player";
 import { ExpiryPill } from "./ExpiryPill";
 import { relativeTime } from "./Grid";
 import { isEditingTarget, readerCommand } from "./keyboard";
@@ -39,6 +46,7 @@ import { closeOverlay, pushOverlay } from "./overlay-history";
 import { animatePageScroll } from "./page-scroll";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { type PreparedReaderBody, prepareReaderBody } from "./reader-content";
+import { mountReaderVideos } from "./reader-videos";
 import { SourceBadge } from "./SourceBadge";
 import {
   expandToolbar,
@@ -55,6 +63,7 @@ import {
   swipeOffset,
 } from "./touch-gestures";
 import { useSheetDrag } from "./use-sheet-drag";
+import { VideoPlayer } from "./VideoPlayer";
 import {
   type DescriptionToken,
   parseVideoDescription,
@@ -64,6 +73,7 @@ interface ReaderProps {
   loadBody(url: string, signal?: AbortSignal): Promise<string>;
   item: Item;
   active: boolean;
+  initialPlayback?: { itemID: string; seconds: number };
   archive: boolean;
   hearted: boolean;
   linkActionActive: boolean;
@@ -87,6 +97,59 @@ interface ReaderProps {
 
 export function Reader(props: ReaderProps) {
   const now = useClock();
+  const [playback, setPlayback] = createSignal<{
+    itemID: string;
+    seconds: number;
+  }>();
+  const playbackForItem = () =>
+    playback()?.itemID === props.item.item_id ? playback() : undefined;
+  let player: Player | undefined;
+  let playbackState: PlaybackState | "poster" | "loading" | "failed" = "poster";
+  const inlinePlayback = new Map<
+    Element,
+    PlaybackState | "loading" | "failed"
+  >();
+  const play = (seconds?: number) => {
+    if (!isVideoItem(props.item)) return;
+    props.onOriginal();
+    if (playbackForItem()) player?.play(seconds);
+    else {
+      playbackState = "loading";
+      syncDwell();
+      setPlayback({ itemID: props.item.item_id, seconds: seconds ?? 0 });
+    }
+  };
+  createEffect(() => {
+    const initial = props.initialPlayback;
+    if (initial?.itemID === props.item.item_id && !playbackForItem()) {
+      playbackState = "loading";
+      syncDwell();
+      setPlayback(initial);
+    }
+  });
+  const videoMedia = () => (
+    <VideoMediaCard
+      item={props.item}
+      onOriginal={props.onOriginal}
+      onPlay={() => play()}
+      playing={!!playbackForItem()}
+      renderPlayer={() => (
+        <VideoPlayer
+          videoID={videoItemID(props.item) || ""}
+          start={playbackForItem()?.seconds ?? 0}
+          onOriginal={props.onOriginal}
+          onReady={(value) => {
+            player = value;
+          }}
+          onState={(state) => {
+            playbackState = state;
+            syncDwell();
+          }}
+        />
+      )}
+    />
+  );
+
   const showLifetime = () =>
     feedbackEligibility(
       { ...props.item, hearted: props.hearted || props.item.hearted },
@@ -129,13 +192,15 @@ export function Reader(props: ReaderProps) {
       itemID: props.item.item_id,
       url: props.item.body_url,
       hasBody: props.item.has_body,
+      video: isVideoItem(props.item),
     }),
     undefined,
     {
       equals: (previous, next) =>
         previous?.itemID === next.itemID &&
         previous?.url === next.url &&
-        previous?.hasBody === next.hasBody,
+        previous?.hasBody === next.hasBody &&
+        previous?.video === next.video,
     },
   );
   createEffect(() => {
@@ -175,8 +240,16 @@ export function Reader(props: ReaderProps) {
       ? "titles-only"
       : "extraction";
 
+  const canDwell = (focused = document.hasFocus()) => {
+    const states = [playbackState, ...inlinePlayback.values()];
+    const visible = document.visibilityState !== "hidden";
+    return states.some((state) => state === "playing" || state === "buffering")
+      ? visible
+      : states.every((state) => videoDwellActive(state, visible, focused));
+  };
+
   const startDwell = () => {
-    if (activeSince || document.visibilityState === "hidden") return;
+    if (activeSince || !canDwell()) return;
     activeSince = performance.now();
   };
 
@@ -196,6 +269,14 @@ export function Reader(props: ReaderProps) {
     props.onDwell(trackedID, elapsed);
   };
 
+  const syncDwell = () => {
+    if (canDwell()) startDwell();
+    else {
+      pauseDwell();
+      reportDwell();
+    }
+  };
+
   createEffect(() => {
     const itemID = props.item.item_id;
     if (itemID === trackedID) return;
@@ -203,6 +284,10 @@ export function Reader(props: ReaderProps) {
     pauseDwell();
     reportDwell();
     trackedID = itemID;
+    player = undefined;
+    playbackState = "poster";
+    inlinePlayback.clear();
+    setPlayback(undefined);
     dwellMS = 0;
     lastReported = 0;
     thresholdReported = false;
@@ -235,6 +320,8 @@ export function Reader(props: ReaderProps) {
         const prepared = markup.trim()
           ? await prepareReaderBody(markup)
           : undefined;
+        if (source.video && prepared?.leadingImage)
+          prepared.element.querySelector("img")?.remove();
         if (!controller.signal.aborted) setBody(prepared);
       })
       .catch((error) => {
@@ -245,6 +332,22 @@ export function Reader(props: ReaderProps) {
         if (!controller.signal.aborted) setLoading(false);
       });
     onCleanup(() => controller.abort());
+  });
+
+  createEffect(() => {
+    const prepared = body();
+    if (!prepared) return;
+    const dispose = mountReaderVideos(prepared.element, {
+      onPlay: () => props.onOriginal(),
+      onState: (card, state) => {
+        inlinePlayback.set(card, state);
+        syncDwell();
+      },
+    });
+    onCleanup(() => {
+      dispose();
+      inlinePlayback.clear();
+    });
   });
 
   const focusMoreButton = () => {
@@ -638,6 +741,9 @@ export function Reader(props: ReaderProps) {
       case "copy":
         props.onCopy();
         break;
+      case "play":
+        play();
+        break;
       case "original":
         props.onOriginal();
         window.open(props.item.url, "_blank", "noopener,noreferrer");
@@ -661,7 +767,10 @@ export function Reader(props: ReaderProps) {
       else startDwell();
     };
     const onFocus = () => startDwell();
-    const onBlur = () => pauseAndReport();
+    const onBlur = () => {
+      if (!canDwell(false)) pauseAndReport();
+    };
+
     startDwell();
     dwellTimer = window.setInterval(() => {
       if (!thresholdReported && currentDwell() >= 30_000) {
@@ -970,11 +1079,7 @@ export function Reader(props: ReaderProps) {
         ref={article}
       >
         <article class="article">
-          <Show
-            when={
-              props.item.media_type !== "video" && !isRedditItem(props.item)
-            }
-          >
+          <Show when={!isVideoItem(props.item) && !isRedditItem(props.item)}>
             <div class="article-kicker">
               ARTICLE ·{" "}
               {Math.max(
@@ -1001,7 +1106,7 @@ export function Reader(props: ReaderProps) {
           </Show>
           <Show when={!isRedditItem(props.item)}>
             <Show
-              when={props.item.media_type === "video"}
+              when={isVideoItem(props.item)}
               fallback={
                 <p class="byline">
                   {props.item.author
@@ -1013,7 +1118,7 @@ export function Reader(props: ReaderProps) {
                 </p>
               }
             >
-              <VideoMediaCard item={props.item} onOriginal={props.onOriginal} />
+              {videoMedia()}
               <div class="video-channel-line">
                 <SourceBadge
                   connector={props.item.connector}
@@ -1045,6 +1150,8 @@ export function Reader(props: ReaderProps) {
               <RedditReaderIntro
                 item={props.item}
                 onClickThrough={props.onOriginal}
+                video={isVideoItem(props.item)}
+                renderVideo={videoMedia}
                 onImageChange={setRedditImageAttempt}
               />
             )}
@@ -1065,7 +1172,7 @@ export function Reader(props: ReaderProps) {
           </Show>
           <Show
             when={
-              props.item.media_type !== "video" &&
+              !isVideoItem(props.item) &&
               !isRedditItem(props.item) &&
               props.item.media_url &&
               !loading() &&
@@ -1093,18 +1200,21 @@ export function Reader(props: ReaderProps) {
               </div>
             )}
           </Show>
-          <Show when={props.item.media_type === "video"}>
+          <Show
+            when={props.item.connector === "youtube" && isVideoItem(props.item)}
+          >
             <VideoDescription
               description={props.item.description || ""}
               videoURL={props.item.url}
+              onSeek={play}
               onOriginal={props.onOriginal}
             />
           </Show>
           <Show
-            when={props.item.media_type !== "video" && body()}
+            when={props.item.connector !== "youtube" && body()}
             fallback={
               <Show
-                when={props.item.media_type === "video" || !loading()}
+                when={props.item.connector === "youtube" || !loading()}
                 fallback={
                   <p class="extraction-loading">
                     Loading the extracted article…
@@ -1113,7 +1223,7 @@ export function Reader(props: ReaderProps) {
               >
                 <Show
                   when={
-                    props.item.media_type !== "video" &&
+                    !isVideoItem(props.item) &&
                     showsReaderOriginalFallback(props.item)
                   }
                 >
@@ -1136,7 +1246,7 @@ export function Reader(props: ReaderProps) {
           <Show
             when={
               props.archive &&
-              props.item.media_type !== "video" &&
+              !isVideoItem(props.item) &&
               !isRedditItem(props.item)
             }
           >
@@ -1352,6 +1462,8 @@ function RedditReaderIntro(props: {
   item: Item;
   onClickThrough(): void;
   onImageChange(attempt: RedditResolvedImageAttempt | undefined): void;
+  video: boolean;
+  renderVideo(): JSX.Element;
 }) {
   const destination = () => props.item.external_url || "";
   const textPost = () => props.item.post_type === "text";
@@ -1363,21 +1475,28 @@ function RedditReaderIntro(props: {
         <RedditSourceLine item={props.item} />
       </Show>
       <Show
-        when={imagePost()}
+        when={props.video}
         fallback={
-          <Show when={destination()}>
-            <RedditDestinationCard
+          <Show
+            when={imagePost()}
+            fallback={
+              <Show when={destination()}>
+                <RedditDestinationCard
+                  item={props.item}
+                  onClickThrough={props.onClickThrough}
+                />
+              </Show>
+            }
+          >
+            <RedditImageCard
+              onImageChange={props.onImageChange}
               item={props.item}
               onClickThrough={props.onClickThrough}
             />
           </Show>
         }
       >
-        <RedditImageCard
-          onImageChange={props.onImageChange}
-          item={props.item}
-          onClickThrough={props.onClickThrough}
-        />
+        {props.renderVideo()}
       </Show>
       <div class="reddit-reader-actions">
         <a
@@ -1632,43 +1751,63 @@ function RedditSourceLine(props: { item: Item }) {
   );
 }
 
-function VideoMediaCard(props: { item: Item; onOriginal(): void }) {
+function VideoMediaCard(props: {
+  item: Item;
+  onOriginal(): void;
+  onPlay(): void;
+  playing: boolean;
+  renderPlayer(): JSX.Element;
+}) {
   const displayURL = () =>
-    props.item.url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    videoItemURL(props.item)
+      .replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
   return (
-    <a
-      class="video-media-card"
-      href={props.item.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={props.onOriginal}
-    >
-      <span class="video-media-band">
-        <Show when={props.item.media_url && props.item.item_id} keyed>
-          {(_itemID) => (
-            <ResponsiveImage
-              item={props.item}
-              sizes="(max-width: 700px) calc(100vw - 44px), 640px"
-              alt=""
-              width={props.item.media_w}
-              height={props.item.media_h}
-            />
-          )}
-        </Show>
-        <span class="video-card-play" aria-hidden="true">
-          <Icon name="play" size={20} filled />
-        </span>
-      </span>
-      <span class="video-provider-strip">
+    <div class="video-media-card">
+      <Show
+        when={props.playing}
+        fallback={
+          <button
+            type="button"
+            class="video-media-band"
+            aria-label="Play"
+            onClick={props.onPlay}
+          >
+            <Show when={props.item.media_url && props.item.item_id} keyed>
+              {(_itemID) => (
+                <ResponsiveImage
+                  item={props.item}
+                  sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                  alt=""
+                  width={props.item.media_w}
+                  height={props.item.media_h}
+                />
+              )}
+            </Show>
+            <span class="video-card-play" aria-hidden="true">
+              <Icon name="play" size={20} filled />
+            </span>
+          </button>
+        }
+      >
+        {props.renderPlayer()}
+      </Show>
+      <a
+        class="video-provider-strip"
+        href={videoItemURL(props.item)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={props.onOriginal}
+      >
         <b>YOUTUBE</b>
         <i />
         <span>{displayURL()}</span>
         <strong>
-          Watch
+          Open
           <Icon name="open-original" />
         </strong>
-      </span>
-    </a>
+      </a>
+    </div>
   );
 }
 
@@ -1676,6 +1815,7 @@ function VideoDescription(props: {
   description: string;
   videoURL: string;
   onOriginal(): void;
+  onSeek(seconds: number): void;
 }) {
   const blocks = () => parseVideoDescription(props.description, props.videoURL);
   return (
@@ -1694,6 +1834,7 @@ function VideoDescription(props: {
                           <DescriptionTokenView
                             token={row.timestamp}
                             onOriginal={props.onOriginal}
+                            onSeek={props.onSeek}
                           />
                           <span>
                             <For each={row.tokens}>
@@ -1701,6 +1842,7 @@ function VideoDescription(props: {
                                 <DescriptionTokenView
                                   token={token}
                                   onOriginal={props.onOriginal}
+                                  onSeek={props.onSeek}
                                 />
                               )}
                             </For>
@@ -1720,6 +1862,7 @@ function VideoDescription(props: {
                     <DescriptionTokenView
                       token={token}
                       onOriginal={props.onOriginal}
+                      onSeek={props.onSeek}
                     />
                   )}
                 </For>
@@ -1735,6 +1878,7 @@ function VideoDescription(props: {
 function DescriptionTokenView(props: {
   token: DescriptionToken;
   onOriginal(): void;
+  onSeek(seconds: number): void;
 }) {
   return (
     <Show when={props.token.kind !== "text"} fallback={props.token.text}>
@@ -1743,7 +1887,12 @@ function DescriptionTokenView(props: {
         href={props.token.kind === "text" ? undefined : props.token.href}
         target="_blank"
         rel="noopener noreferrer"
-        onClick={props.onOriginal}
+        onClick={(event) => {
+          if (props.token.kind === "timestamp") {
+            event.preventDefault();
+            props.onSeek(props.token.seconds);
+          } else props.onOriginal();
+        }}
       >
         {props.token.text}
       </a>

@@ -2146,7 +2146,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .video-media-band { position: relative; aspect-ratio: 16 / 9; display: block; overflow: hidden; background: var(--surface-2); }
 .video-media-band > img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .video-card-play { position: absolute; inset: 0; display: grid; place-items: center; color: var(--play-color); filter: var(--play-shadow); }
-.video-card-play .icon { width: 28px; height: 28px; color: currentColor; stroke-width: var(--icon-stroke-filled); }
+.video-media-band .video-card-play .icon { width: 28px; height: 28px; color: currentColor; stroke-width: var(--icon-stroke-filled); }
 .video-provider-strip { height: 44px; padding: 0 12px; display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--line); }
 .video-provider-strip > b { color: var(--fg-quaternary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: 0.06em; }
 .video-provider-strip > i { width: 1px; height: 18px; background: var(--line-strong); }
@@ -2686,3 +2686,18 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @media (prefers-reduced-motion: reduce) { .scope-header-chip, .filter-switch, .filter-switch::after { transition: none; } }
 /* iOS Safari zooms into focused fields under 16px and never zooms back out. */
 @media (pointer: coarse) { :root :is(input:not([type="checkbox"], [type="radio"], [type="range"]), select, textarea) { font-size: max(16px, 1em); } }
+
+/* Play stays in the article flow; both reader and Peek use the same frame. */
+button.video-media-band { width: 100%; max-height: none; padding: 0; border: 0; border-radius: 0; }
+a.video-provider-strip { color: inherit; text-decoration: none; }
+.video-embed { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+.video-player-host, .video-player-host iframe { display: block; width: 100%; height: 100%; border: 0; }
+.video-failure { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #fff; font: 400 13px/1.5 "IBM Plex Mono", monospace; }
+.video-failure a { display: inline-flex; align-items: center; gap: 8px; color: inherit; }
+.video-peek { display: grid; place-items: center; }
+.video-peek-frame { position: relative; width: min(100vw, calc(100dvh * 16 / 9)); }
+.video-reader-link { padding: 0; border: 0; border-radius: 0; background: none; color: inherit; font: inherit; text-align: inherit; pointer-events: auto; }
+.playable-cell .cell-copy { z-index: 4; }
+.playable-cell .video-reader-link { position: relative; }
+.article-body .reader-video { margin: 30px 0; }
+.article-body .video-media-band > img { height: 100%; border-radius: 0; }

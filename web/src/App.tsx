@@ -898,7 +898,12 @@ export function App(props: {
     return Promise.all([flushRead(keepalive), flushEvents(keepalive)]);
   };
 
+  const [videoPlayback, setVideoPlayback] = createSignal<{
+    itemID: string;
+    seconds: number;
+  }>();
   const markOpened = (item: Item, archive = item.archived === true) => {
+    setVideoPlayback(undefined);
     openReaderHistory();
     setReaderItem(item);
     recordOpened(item, archive);
@@ -907,6 +912,7 @@ export function App(props: {
   };
 
   const markStoryOpened = (story: Story) => {
+    setVideoPlayback(undefined);
     const lead = story.items[0];
     if (!lead) return;
     openReaderHistory();
@@ -1694,6 +1700,11 @@ export function App(props: {
                 onSelectView: (view) => void selectWindow(view),
                 onFocus: setFocusedID,
                 onOpen: markOpened,
+                onPlay: recordClickThrough,
+                onVideoFlip: (item, seconds) => {
+                  markOpened(item);
+                  setVideoPlayback({ itemID: item.item_id, seconds });
+                },
                 onOpenStoryLead: markStoryOpened,
                 onExternalOpen: openExternalItem,
                 onDiscussion: recordClickThrough,
@@ -1783,6 +1794,7 @@ export function App(props: {
             <Reader
               loadBody={(url, signal) => api.body(url, signal)}
               item={item()}
+              initialPlayback={videoPlayback()}
               active={
                 keyboard().owner === "reader" ||
                 (keyboard().owner === "action-sheet" &&

@@ -50,6 +50,8 @@ export interface GridActions {
   onSelectView(view: "today" | "yesterday"): void;
   onFocus(id: string): void;
   onOpen(item: Item): void;
+  onPlay?(item: Item): void;
+  onVideoFlip?(item: Item, seconds: number): void;
   onOpenStoryLead(story: Story): void;
   onExternalOpen(item: Item): void;
   onDiscussion(item: Item): void;

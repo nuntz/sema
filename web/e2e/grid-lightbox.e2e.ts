@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { stubYouTube } from "./youtube-stub";
 
 async function openGrid(
   page: Page,
@@ -18,7 +19,10 @@ async function openGrid(
     item_id: "peek",
     feed_id: "daily",
     feed_title: "Daily",
-    url: "https://example.com/peek",
+    url:
+      kind === "youtube"
+        ? "https://youtu.be/dQw4w9WgXcQ"
+        : "https://example.com/peek",
     title: "Image article",
     summary: "An article with images",
     published_ts: new Date().toISOString(),
@@ -515,3 +519,131 @@ for (const view of ["Front Page", "chrono", "tag", "Archive"]) {
     expect(mutations.slice(before)).toEqual([]);
   });
 }
+
+for (const entry of ["thumbnail", "key", "pill", "sheet", "story"]) {
+  test(`Video Item Peek from ${entry} records Play without Read, then Flips with position`, async ({
+    page,
+  }) => {
+    await stubYouTube(page);
+    const events: string[] = [];
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/api/"))
+        events.push(request.postData() || "");
+    });
+    const { cell } = await openGrid(page, "youtube", false, "M", {
+      story: entry === "story",
+    });
+    if (entry === "thumbnail")
+      await cell.locator(".cell-main").click({ position: { x: 50, y: 50 } });
+    else if (entry === "pill" || entry === "story") {
+      await cell.hover();
+      await cell.locator(".peek-pill").click();
+    } else if (entry === "sheet") {
+      await page.keyboard.press("Shift+F10");
+      await page
+        .locator(".action-sheet-layer")
+        .getByRole("button", { name: "Play", exact: true })
+        .click();
+    } else await page.keyboard.press("i");
+    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await expect(cell).not.toHaveClass(/is-read/);
+    await expect(page.locator(".reader")).toHaveCount(0);
+    await expect
+      .poll(() => events.join(" "), { timeout: 10_000 })
+      .toContain('"clicked_through":true');
+    expect(events.join(" ")).not.toContain('"opened":true');
+    await page.keyboard.press("o");
+    await expect(page.locator(".video-peek")).toHaveCount(0);
+    await expect(page.locator(".reader iframe")).toHaveAttribute(
+      "data-seconds",
+      "87",
+    );
+    await expect(page.locator(".video-media-band")).toHaveCount(0);
+    await page.screenshot({ path: `/tmp/sema-video-flip-${entry}.png` });
+  });
+}
+
+test("Video Item text opens the Poster; Play failure stays in the frame", async ({
+  page,
+}) => {
+  await stubYouTube(page, true);
+  const { cell } = await openGrid(page, "youtube");
+  await cell.locator(".video-reader-link").first().click();
+  await expect(page.locator(".video-media-card")).toBeVisible();
+  await expect(page.locator(".article-body")).toContainText("Article body");
+  await page.keyboard.press("i");
+  await expect(page.locator(".video-failure")).toContainText(
+    "Plays on YouTube only",
+  );
+  await expect(page.locator(".video-failure a")).toHaveAttribute(
+    "href",
+    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  );
+  await expect(page.locator(".video-media-band")).toHaveCount(0);
+  expect(page.context().pages()).toHaveLength(1);
+});
+
+for (const key of ["Escape", "i"]) {
+  test(`Video Peek closes and destroys playback with ${key}`, async ({
+    page,
+  }) => {
+    await stubYouTube(page);
+    const { cell } = await openGrid(page, "youtube");
+    await page.keyboard.press("i");
+    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await page.locator(".video-peek iframe").focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(page.locator(".video-peek")).toBeFocused();
+    await page.keyboard.press(key);
+    await expect(page.locator(".video-peek")).toHaveCount(0);
+    await expect(cell.locator(".cell-main")).toBeFocused();
+    await expect(cell).not.toHaveClass(/is-read/);
+  });
+}
+
+for (const control of ["Seek", "Pause"]) {
+  for (const key of ["Escape", "i", "o"]) {
+    test(`${key} works in Video Peek after seeking or pausing with ${control}`, async ({
+      page,
+    }) => {
+      await stubYouTube(page, false, true);
+      const { cell } = await openGrid(page, "youtube");
+      await page.keyboard.press("i");
+      await page
+        .frameLocator(".video-peek iframe")
+        .getByRole("button", { name: control })
+        .click();
+      await expect(page.locator(".video-peek iframe")).toHaveAttribute(
+        "data-state",
+        control === "Seek" ? "1" : "2",
+      );
+      await page.keyboard.press(key);
+      await expect(page.locator(".video-peek")).toHaveCount(0);
+      if (key === "o")
+        await expect(page.locator(".reader iframe")).toHaveAttribute(
+          "data-seconds",
+          "87",
+        );
+      else {
+        await expect(cell.locator(".cell-main")).toBeFocused();
+        await expect(cell).not.toHaveClass(/is-read/);
+      }
+    });
+  }
+}
+
+test("Escape closes Video Peek after leaving other YouTube controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await stubYouTube(page, false, true);
+  await openGrid(page, "youtube");
+  await page.keyboard.press("i");
+  await page
+    .frameLocator(".video-peek iframe")
+    .getByRole("button", { name: "Mute" })
+    .click();
+  await page.mouse.move(1, 1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".video-peek")).toHaveCount(0);
+});
