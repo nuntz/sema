@@ -674,7 +674,7 @@ for (const gesture of ["click", "double-click"]) {
 }
 
 for (const width of [1280, 390]) {
-  test(`Video Item Play glyph has a 44px target on small cells at ${width}`, async ({
+  test(`Video Item Play button has a 40px target on small cells at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -685,8 +685,8 @@ for (const width of [1280, 390]) {
       exact: true,
     });
     const box = await play.boundingBox();
-    expect(box?.width).toBeGreaterThanOrEqual(44);
-    expect(box?.height).toBeGreaterThanOrEqual(44);
+    expect(box?.width).toBe(40);
+    expect(box?.height).toBe(40);
     await expect(cell.locator(".cell-main")).toHaveAccessibleName(
       /^Open Image article/,
     );
@@ -695,61 +695,143 @@ for (const width of [1280, 390]) {
     await expect(page.locator(".reader")).toHaveCount(0);
   });
 
-  test(`Video Item Play glyph hover and focus at ${width}`, async ({
+  test(`Video Item centred Play is visible at rest and keyboard accessible at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
+    await stubYouTube(page);
     const { cell } = await openGrid(page, "youtube");
     const play = cell.getByRole("button", {
       name: "Play Image article",
       exact: true,
     });
-    await expect(cell.locator(".peek-pill")).toHaveCount(0);
-    await cell.hover();
-    const appearance = await play.evaluate((button) => {
-      const play = getComputedStyle(button, "::before");
-      const boostButton = button.closest("article")?.querySelector(".boost");
-      if (!boostButton) throw new Error("Missing Boost button");
-      const boost = getComputedStyle(boostButton);
-      return {
-        play: [play.backgroundColor, play.border, play.borderRadius],
-        boost: [boost.backgroundColor, boost.border, boost.borderRadius],
-      };
-    });
-    expect(appearance.play).toEqual(appearance.boost);
-    await play.hover();
-    if (width === 1280) {
-      const overlaps = await cell.evaluate((el) => {
-        const players = [
-          ...el.querySelectorAll("button.video-play, .peek-pill"),
-        ].map((button) => button.getBoundingClientRect());
-        return [...el.querySelectorAll(".cell-actions button")].some(
-          (button) => {
-            const action = button.getBoundingClientRect();
-            return players.some(
-              (play) =>
-                action.left < play.right &&
-                action.right > play.left &&
-                action.top < play.bottom &&
-                action.bottom > play.top,
-            );
-          },
-        );
-      });
-      expect(overlaps).toBe(false);
-    }
-    await expect(play.locator(".icon")).toHaveCSS(
-      "color",
-      await play.evaluate((el) => getComputedStyle(el).color),
+    await page.mouse.move(1, 1);
+    await expect(play).toBeVisible();
+    await expect(play).toHaveCSS("opacity", "0.65");
+    const bounds = await play.boundingBox();
+    const media = await cell.locator(":scope > img").boundingBox();
+    expect(bounds?.width).toBe(48);
+    expect(bounds?.height).toBe(48);
+    if (!bounds || !media) throw new Error("Missing media bounds");
+    expect(bounds.x + bounds.width / 2).toBeCloseTo(
+      media.x + media.width / 2,
+      0,
     );
-    await page.screenshot({ path: `/tmp/sema-video-glyph-${width}-hover.png` });
+    expect(bounds.y + bounds.height / 2).toBeCloseTo(
+      media.y + media.height / 2,
+      0,
+    );
+    await cell.hover();
+    await expect(play).toHaveCSS("opacity", "1");
+    await expect(cell.locator(".peek-pill")).toHaveCount(0);
+    await expect(cell.getByRole("button", { name: /^Play/ })).toHaveCount(1);
+    if (width === 1280) {
+      const cellBox = await cell.boundingBox();
+      const actions = await cell.locator(".cell-actions").boundingBox();
+      if (!cellBox || !actions) throw new Error("Missing control bounds");
+      expect(actions.x - cellBox.x).toBeLessThan(12);
+    }
     await play.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
     await expect(play).toBeFocused();
-    await expect
-      .poll(() =>
-        play.evaluate((el) => getComputedStyle(el, "::before").outlineStyle),
-      )
-      .toBe("solid");
-    await page.screenshot({ path: `/tmp/sema-video-glyph-${width}-focus.png` });
+    await expect(play).toHaveCSS("outline-style", "solid");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await expect(page.locator(".reader")).toHaveCount(0);
+  });
+}
+
+for (const width of [1280, 390]) {
+  test(`video cell appearance at rest and hover at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const { cell } = await openGrid(page, "youtube");
+    await cell.hover();
+    await page.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement)
+        document.activeElement.blur();
+    });
+    await page.mouse.move(1, 1);
+    await cell.screenshot({
+      path: `/tmp/sema-video-centred-${process.env.VIDEO_SCREENSHOT_PHASE || "after"}-${width}-rest.png`,
+    });
+    await cell.hover();
+    await cell.screenshot({
+      path: `/tmp/sema-video-centred-${process.env.VIDEO_SCREENSHOT_PHASE || "after"}-${width}-hover.png`,
+    });
+  });
+}
+
+test.describe("touch video Play", () => {
+  test.use({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  for (const gesture of ["tap", "hold"]) {
+    test(`centred Play stays visible on touch and ${gesture} only opens Peek`, async ({
+      page,
+    }) => {
+      await stubYouTube(page);
+      const { cell } = await openGrid(page, "youtube");
+      const play = cell.getByRole("button", {
+        name: "Play Image article",
+        exact: true,
+      });
+      await expect(play).toBeVisible();
+      await expect(play).toHaveCSS("opacity", "1");
+      await expect(cell.locator(".peek-pill")).toHaveCount(0);
+      if (gesture === "tap") await play.tap();
+      else {
+        const box = await play.boundingBox();
+        if (!box) throw new Error("Missing Play bounds");
+        const session = await page.context().newCDPSession(page);
+        await session.send("Input.dispatchTouchEvent", {
+          type: "touchStart",
+          touchPoints: [
+            { x: box.x + box.width / 2, y: box.y + box.height / 2 },
+          ],
+        });
+        await page.waitForTimeout(650);
+        await expect(cell).not.toHaveClass(/pressed/);
+        await expect(page.locator(".action-sheet-layer")).toHaveCount(0);
+        await expect(page.locator(".reader")).toHaveCount(0);
+        await session.send("Input.dispatchTouchEvent", {
+          type: "touchEnd",
+          touchPoints: [],
+        });
+      }
+      await expect(page.locator(".video-peek iframe")).toBeVisible();
+      await expect(page.locator(".reader")).toHaveCount(0);
+      await expect(page.locator(".action-sheet-layer")).toHaveCount(0);
+      await expect(cell).not.toHaveClass(/is-read/);
+    });
+  }
+});
+
+for (const kind of ["youtube", "image"]) {
+  test(`${kind} short thumbnails put feedback in More and larger thumbnails retain the action row`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const { cell } = await openGrid(page, kind);
+    await cell.hover();
+    await expect(cell.locator(".cell-actions button")).toHaveCount(1);
+    const more = cell.getByRole("button", {
+      name: "More actions",
+      exact: true,
+    });
+    await more.click();
+    const sheet = page.locator(".action-sheet-layer");
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole("button", { name: /Boost/ })).toBeVisible();
+    await expect(sheet.getByRole("button", { name: /Bury/ })).toBeVisible();
+    await expect(sheet.getByRole("button", { name: /Keep/ })).toBeVisible();
+    await page.keyboard.press("Escape");
+    const large = await openGrid(page, kind, false, "L");
+    await large.cell.hover();
+    await expect(large.cell.locator(".cell-actions button")).toHaveCount(4);
   });
 }

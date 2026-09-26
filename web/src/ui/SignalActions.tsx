@@ -12,13 +12,18 @@ export function SignalActions(props: {
   item: Item;
   size: "S" | "M" | "L";
   archive?: boolean;
+  compact?: boolean;
   story?: boolean;
   onSignal(item: Item, value: SignalValue): void;
   onHeart(item: Item): void;
   onMore(): void;
 }) {
   const actions = () =>
-    props.archive ? (["keep", "more"] as const) : clusterActions(props.size);
+    props.compact
+      ? (["more"] as const)
+      : props.archive
+        ? (["keep", "more"] as const)
+        : clusterActions(props.size);
   return (
     <div
       class="cell-actions signal-actions"

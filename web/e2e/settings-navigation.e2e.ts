@@ -215,9 +215,7 @@ test("desktop grid actions appear only while their cell is hovered", async ({
   );
 });
 
-test("Reddit grid cells omit the external-link destination glyph", async ({
-  page,
-}) => {
+test("Reddit grid cells omit decorative corner glyphs", async ({ page }) => {
   const redditItems = items.map((item, index) => {
     if (index === 0)
       return {
@@ -249,7 +247,7 @@ test("Reddit grid cells omit the external-link destination glyph", async ({
   ).toHaveCount(0);
   await expect(
     page.locator('[data-item-id="item-1"] .destination-glyph'),
-  ).toHaveCount(1);
+  ).toHaveCount(0);
 });
 
 test("desktop-width touch profiles do not force grid actions visible", async ({

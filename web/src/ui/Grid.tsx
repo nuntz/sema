@@ -503,7 +503,11 @@ function GridContent(props: GridProps) {
 
   const startLongPress = (event: PointerEvent, item: Item, story?: Story) => {
     if (event.pointerType !== "touch") return;
-    if ((event.target as HTMLElement).closest(".cell-actions, .peek-pill"))
+    if (
+      (event.target as HTMLElement).closest(
+        ".cell-actions, .peek-pill, .video-play",
+      )
+    )
       return;
     cancelLongPress();
     longPress = beginLongPress(event.clientX, event.clientY, performance.now());
@@ -916,7 +920,7 @@ function GridContent(props: GridProps) {
       return;
     if (
       target.closest(
-        ".story-heart, .story-more, .story-more-action, .cell-actions, .peek-pill, .signal-why, .signal-hint",
+        ".story-heart, .story-more, .story-more-action, .cell-actions, .peek-pill, .video-play, .signal-why, .signal-hint",
       ) &&
       (event.key === "Enter" || event.key === " ")
     )
@@ -1255,25 +1259,7 @@ function GridContent(props: GridProps) {
                   const primaryRoute = createMemo(() =>
                     redditPrimaryRoute(item()),
                   );
-                  const playIcon = () => (
-                    <Icon
-                      name="play"
-                      size={
-                        row.kind === "hero" ||
-                        row.kind === "pair" ||
-                        row.kind === "tile"
-                          ? 24
-                          : cell.span === 2
-                            ? 20
-                            : cell.effectiveSize === "L"
-                              ? 15
-                              : cell.effectiveSize === "M"
-                                ? 14
-                                : 12
-                      }
-                      filled={true}
-                    />
-                  );
+                  const [mediaHeight, setMediaHeight] = createSignal(0);
                   return (
                     <article
                       class="grid-cell"
@@ -1324,6 +1310,14 @@ function GridContent(props: GridProps) {
                     >
                       <Show when={item().media_url}>
                         <ResponsiveImage
+                          ref={(image) => {
+                            const observer = new ResizeObserver(([entry]) => {
+                              if (entry)
+                                setMediaHeight(entry.contentRect.height);
+                            });
+                            observer.observe(image);
+                            onCleanup(() => observer.disconnect());
+                          }}
                           item={item()}
                           sizes={cell.width}
                           alt=""
@@ -1339,28 +1333,11 @@ function GridContent(props: GridProps) {
                           }
                         />
                       </Show>
-                      <Show
-                        when={isVideoItem(item()) && item().media_url}
-                        fallback={
-                          <Show
-                            when={
-                              !isVideoItem(item()) &&
-                              (item().media_type === "video" ||
-                                item().post_type === "video")
-                            }
-                          >
-                            <span
-                              class="video-play destination-glyph"
-                              aria-hidden="true"
-                            >
-                              {playIcon()}
-                            </span>
-                          </Show>
-                        }
-                      >
+                      <Show when={isVideoItem(item()) && item().media_url}>
                         <button
                           type="button"
                           class="video-play"
+                          style={{ top: `${mediaHeight() / 2}px` }}
                           aria-label={`Play ${headlineText(item().title)}`}
                           onPointerDown={(event) => event.stopPropagation()}
                           onDblClick={(event) => event.stopPropagation()}
@@ -1370,7 +1347,11 @@ function GridContent(props: GridProps) {
                             void openPeek(item());
                           }}
                         >
-                          {playIcon()}
+                          <Icon
+                            name="play"
+                            size={cell.effectiveSize === "S" ? 20 : 24}
+                            filled
+                          />
                         </button>
                       </Show>
                       <Show
@@ -1534,6 +1515,7 @@ function GridContent(props: GridProps) {
                         />
                       </Show>
                       <SignalActions
+                        compact={!!item().media_url && mediaHeight() < 126}
                         item={item()}
                         size={cell.effectiveSize}
                         archive={props.model.archive}

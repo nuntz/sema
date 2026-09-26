@@ -2132,20 +2132,14 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .drawer-reddit-collect:disabled { opacity: var(--disabled-opacity-muted); }
 .drawer-reddit-collect + .mute-row { margin-top: 0; border-top: 0; }
 
-.video-play { position: absolute; top: 9px; left: 9px; z-index: 2; color: var(--play-color); filter: var(--play-shadow); pointer-events: none; }
-.video-play .icon, button.video-play:hover .icon { color: currentColor; stroke-width: var(--icon-stroke-filled); }
-.hero-cell .video-play, .pair-cell .video-play { width: 26px; height: 26px; display: grid; place-items: center; }
-.video-cell.size-s .video-play { top: 7px; left: 7px; }
-.grid-cell button.video-play { top: -2px; left: -2px; z-index: 4; width: 44px; height: 44px; padding: 0; display: grid; place-items: center; justify-content: center; align-content: center; border: 0; background: none; color: var(--signal-action-fg); filter: none; isolation: isolate; cursor: pointer; pointer-events: auto; }
-.grid-cell button.video-play::before { content: ""; position: absolute; inset: 9px; z-index: -1; border-radius: 6px; border: 1px solid var(--signal-action-border); background: var(--signal-action-bg); transition: background 120ms ease-out, border-color 120ms ease-out; }
-.grid-cell button.video-play .icon { width: 14px; height: 14px; color: inherit; transform: translateX(1px); }
-.grid-cell button.video-play:hover { color: var(--signal-action-hover-fg); }
-.grid-cell button.video-play:hover::before { background: var(--signal-action-hover-bg); border-color: var(--signal-action-active-border); }
-.grid-cell button.video-play:focus-visible { outline: none; box-shadow: none; }
-.grid-cell button.video-play:focus-visible::before { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
-.grid-cell:has(> button.video-play) .cell-actions { top: 7px; right: 7px; left: auto; }
-.video-cell .cell-scrim { z-index: 3; }
-.video-cell .cell-main { z-index: 1; }
+.grid-cell button.video-play { position: absolute; left: 50%; transform: translate(-50%, -50%); z-index: 4; width: 48px; height: 48px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--lb-control); color: var(--fg-primary); backdrop-filter: blur(12px); cursor: pointer; opacity: .65; transition: opacity 120ms ease-out, background 120ms ease-out; }
+.grid-cell.size-s button.video-play { width: 40px; height: 40px; }
+.grid-cell button.video-play .icon { color: inherit; stroke-width: var(--icon-stroke-filled); transform: translateX(1px); }
+.grid-cell:hover button.video-play, .grid-cell button.video-play:focus-visible { opacity: 1; }
+.grid-cell button.video-play:hover { background: var(--lb-control-hover); }
+.grid-cell button.video-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) { .grid-cell button.video-play { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .grid-cell button.video-play { transition: none; } }
 .video-cell.media-failed > img { display: none; }
 .video-cell.media-failed { background: var(--surface); }
 
@@ -2261,10 +2255,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .mute-row > i { width: 40px; height: 24px; border-radius: 12px; }
   .mute-row > i::after { top: 3px; left: 3px; width: 18px; height: 18px; }
   .mute-row input:checked + i::after { transform: translateX(16px); }
-  .video-play { top: 9px; left: 9px; }
-  .video-play .icon { width: 15px; height: 15px; }
-  .hero-cell .video-play, .pair-cell .video-play { width: 22px; height: 22px; }
-  .hero-cell .video-play .icon, .pair-cell .video-play .icon { width: 20px; height: 20px; }
   .video-media-band { max-height: 250px; }
   .video-provider-strip { padding: 0 10px; gap: 8px; }
   .video-channel-line > span { overflow: hidden; text-overflow: ellipsis; }

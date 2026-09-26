@@ -11,7 +11,7 @@ const groups = [
     bindings: [
       ["h / ← · l / →", "Previous / next cell"],
       ["j / ↓ · k / ↑", "Next / previous row"],
-      ["Enter / o", "Open in reader"],
+      ["Enter / o", "Open cell in reader"],
       ["n / j · p / k", "Next / previous item in reader"],
       ["Space / PageDown", "Page down"],
       ["Shift+Space / PageUp", "Page up"],
