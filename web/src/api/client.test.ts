@@ -376,3 +376,118 @@ describe("item page limits", () => {
     ).toEqual(["20", "100", "100"]);
   });
 });
+
+describe("send client", () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+
+  it("sends an item and returns the delivery outcome", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        json({ outcome: "queued", status: 503 }),
+    );
+    vi.stubGlobal("fetch", request);
+
+    const result = await new APIClient().send("item/with slash");
+
+    expect(result).toEqual({ outcome: "queued", status: 503 });
+    const [path, init] = request.mock.calls[0];
+    expect(path).toBe("/api/items/item%2Fwith%20slash/send");
+    expect(init?.method).toBe("POST");
+  });
+
+  it("surfaces the rate limit as an API error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json({ error: "too many sends" }, 429)),
+    );
+
+    await expect(new APIClient().send("item")).rejects.toMatchObject({
+      status: 429,
+    });
+  });
+
+  it("omits the secret when saving without a new one", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        json({
+          url: "https://receiver.example/hook",
+          label: "Send",
+          enabled: true,
+          secret_set: true,
+        }),
+    );
+    vi.stubGlobal("fetch", request);
+    const client = new APIClient();
+
+    await client.saveDestination({
+      url: "https://receiver.example/hook",
+      label: "Send",
+      enabled: true,
+    });
+    await client.saveDestination({
+      url: "https://receiver.example/hook",
+      label: "Send",
+      enabled: true,
+      secret: "s".repeat(32),
+    });
+
+    expect(
+      request.mock.calls.map(([path, init]) => [
+        path,
+        init?.method,
+        init?.body,
+      ]),
+    ).toEqual([
+      [
+        "/api/destination",
+        "PUT",
+        JSON.stringify({
+          url: "https://receiver.example/hook",
+          label: "Send",
+          enabled: true,
+        }),
+      ],
+      [
+        "/api/destination",
+        "PUT",
+        JSON.stringify({
+          url: "https://receiver.example/hook",
+          label: "Send",
+          enabled: true,
+          secret: "s".repeat(32),
+        }),
+      ],
+    ]);
+  });
+
+  it("reads, pings, and removes the destination", async () => {
+    const request = vi
+      .fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json(null))
+      .mockResolvedValueOnce(json(null))
+      .mockResolvedValueOnce(
+        json({ outcome: "failed", reason: "blocked address" }),
+      )
+      .mockResolvedValueOnce(json({ ok: true }));
+    vi.stubGlobal("fetch", request);
+    const client = new APIClient();
+
+    expect(await client.destination()).toBeNull();
+    expect(await client.pingDestination()).toEqual({
+      outcome: "failed",
+      reason: "blocked address",
+    });
+    await client.deleteDestination();
+
+    expect(
+      request.mock.calls.map(([path, init]) => [path, init?.method ?? "GET"]),
+    ).toEqual([
+      ["/api/destination", "GET"],
+      ["/api/destination/ping", "POST"],
+      ["/api/destination", "DELETE"],
+    ]);
+  });
+});

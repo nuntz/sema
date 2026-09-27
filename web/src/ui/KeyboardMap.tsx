@@ -45,6 +45,7 @@ const groups = [
       ["Shift+m", "Mark read from here on Front page; below here in Latest"],
       ["u", "Undo last read batch / grid clear"],
       ["c", "Copy or share original"],
+      ["s", "Send (set up in Feeds & settings)"],
       ["v", "Open original"],
       ["i", "Toggle Peek in grid · Play in reader"],
       ["r", "Show related coverage"],

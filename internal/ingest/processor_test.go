@@ -1313,3 +1313,26 @@ func TestVideoItemNeverStoresBody(t *testing.T) {
 		t.Fatalf("unexpected body: %+v", repository)
 	}
 }
+
+// sourcedMedia returns a lead that remembers the origin URL it came from.
+type sourcedMedia struct{ blockingMedia }
+
+func (*sourcedMedia) FetchLead(context.Context, []string) (media.Lead, error) {
+	image := media.Image{Bytes: []byte("jpeg"), ContentType: "image/jpeg", Extension: ".jpg", SourceURL: "https://publisher.example/lead.jpg", Width: 1280, Height: 720}
+	return media.Lead{Image: image, Variants: []media.Image{image}}, nil
+}
+
+func TestProcessStoresTheLeadImageOriginURL(t *testing.T) {
+	repository := &recordingItemStore{}
+	h := &Processor{Store: repository, Media: &sourcedMedia{}, Embedder: stubEmbedder{}, ScoringVersion: "1", Vectors: &stubVectorBatchStore{}}
+	raw := `<p>A first factual paragraph about the subject that runs long enough to count as an article body.</p>`
+	body := `{"user":"user","feed_id":"feed","item_id":"item","title":"Title","content_raw":` + strconv.Quote(raw) +
+		`,"published_ts":"` + domain.Timestamp(time.Now().UTC()) + `"}`
+
+	if _, err := h.process(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.items) != 1 || repository.items[0].MediaSourceURL != "https://publisher.example/lead.jpg" {
+		t.Fatalf("written items = %#v", repository.items)
+	}
+}

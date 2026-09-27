@@ -26,6 +26,31 @@ export interface MeResponse {
   signal_count: number;
   heart_count: number;
   model: RankingModel;
+  /** Names the Send button; null when no enabled Destination exists. */
+  send_label?: string | null;
+}
+
+export interface Destination {
+  url: string;
+  label: string;
+  enabled: boolean;
+  secret_set: boolean;
+  last_delivery_at?: string;
+  last_status?: string;
+}
+
+export interface DestinationInput {
+  url: string;
+  label: string;
+  enabled: boolean;
+  /** Omitted to keep the stored secret. */
+  secret?: string;
+}
+
+export interface SendResult {
+  outcome: "sent" | "queued" | "failed";
+  status?: number;
+  reason?: string;
 }
 
 export interface RankingModel {

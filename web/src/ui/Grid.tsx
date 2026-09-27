@@ -105,6 +105,8 @@ interface GridProps {
     readerDragging: boolean;
   };
   actions: GridActions;
+  /** Names the Send action; absent when the user has no enabled Destination. */
+  sendLabel?: string;
   onPassed(geometry: ReadGeometry): void;
   onFinishAndClear(): void;
   onReachedEnd(): void;
@@ -1058,6 +1060,11 @@ function GridContent(props: GridProps) {
       case "copy":
         if (item) props.actions.onCopy(item);
         break;
+      case "send": {
+        const lead = focusedStory()?.items[0] ?? item;
+        if (lead && props.sendLabel) props.actions.onSend?.(lead);
+        break;
+      }
       case "image":
         if (item) void openPeek(item);
         break;
@@ -1970,6 +1977,19 @@ function GridContent(props: GridProps) {
                   <Icon name="copy-link" size={20} />
                   Copy link
                 </button>
+                <Show when={props.sendLabel}>
+                  {(label) => (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        runSheetAction(() => props.actions.onSend?.(item))
+                      }
+                    >
+                      <Icon name="send" size={20} />
+                      {label()}
+                    </button>
+                  )}
+                </Show>
               </section>
             </div>
           )}

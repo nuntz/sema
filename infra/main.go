@@ -185,6 +185,8 @@ func main() {
 				// that must never inherit the rolling seven-day expiry.
 				&s3.BucketLifecycleConfigurationV2RuleArgs{Id: pulumi.String("expire-bodies"), Status: pulumi.String("Enabled"), Filter: &s3.BucketLifecycleConfigurationV2RuleFilterArgs{Prefix: pulumi.String("bodies/")}, Expiration: &s3.BucketLifecycleConfigurationV2RuleExpirationArgs{Days: pulumi.Int(7)}},
 				&s3.BucketLifecycleConfigurationV2RuleArgs{Id: pulumi.String("expire-media"), Status: pulumi.String("Enabled"), Filter: &s3.BucketLifecycleConfigurationV2RuleFilterArgs{Prefix: pulumi.String("media/")}, Expiration: &s3.BucketLifecycleConfigurationV2RuleExpirationArgs{Days: pulumi.Int(7)}},
+				// Send copies are only fetched within the hour their signed URL lives.
+				&s3.BucketLifecycleConfigurationV2RuleArgs{Id: pulumi.String("expire-send-copies"), Status: pulumi.String("Enabled"), Filter: &s3.BucketLifecycleConfigurationV2RuleFilterArgs{Prefix: pulumi.String("send/")}, Expiration: &s3.BucketLifecycleConfigurationV2RuleExpirationArgs{Days: pulumi.Int(1)}},
 			},
 		}); err != nil {
 			return err
@@ -195,6 +197,10 @@ func main() {
 			return err
 		}
 		itemsDLQ, itemsQueue, err := queues(ctx, "items", itemQueueVisibilitySeconds)
+		if err != nil {
+			return err
+		}
+		deliveriesDLQ, deliveriesQueue, err := queues(ctx, "deliveries", deliveryQueueVisibilitySeconds)
 		if err != nil {
 			return err
 		}
@@ -229,6 +235,13 @@ func main() {
 		if err != nil {
 			return err
 		}
+		deliveryRole, err := lambdaRole(ctx, "delivery-worker", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, "")
+		if err != nil {
+			return err
+		}
+		if err := deliveryQueuePolicies(ctx, apiRole, deliveryRole, deliveriesQueue.Arn); err != nil {
+			return err
+		}
 		cleanupRole, err := lambdaRole(ctx, "vector-cleanup", table.Arn, contentBucket.Arn, feedsQueue.Arn, itemsQueue.Arn, vectorIndex.IndexArn, imageVectorIndex.IndexArn, "")
 		if err != nil {
 			return err
@@ -256,8 +269,17 @@ func main() {
 		if err != nil {
 			return err
 		}
-		apiLambda, err := function(ctx, "api", apiRole, 1024, 29, 0, merge(common, storyEnvironment, pulumi.StringMap{
-			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
+		deliveryWorker, err := function(ctx, "delivery-worker", deliveryRole, 128, deliveryWorkerTimeoutSeconds, 0, merge(common, pulumi.StringMap{"DELIVERIES_QUEUE_URL": deliveriesQueue.Url}))
+		if err != nil {
+			return err
+		}
+		apiEnvironment := pulumi.StringMap{}
+		if domainName != "" {
+			// Absolute origin for the signed image copies Send hands to receivers.
+			apiEnvironment["PUBLIC_ORIGIN"] = pulumi.String("https://" + domainName)
+		}
+		apiLambda, err := function(ctx, "api", apiRole, 1024, 29, 0, merge(common, storyEnvironment, apiEnvironment, pulumi.StringMap{
+			"FEEDS_QUEUE_URL": feedsQueue.Url, "ITEMS_QUEUE_URL": itemsQueue.Url, "DELIVERIES_QUEUE_URL": deliveriesQueue.Url, "CF_PRIVATE_KEY": signingKey.PrivateKeyPem, "CF_KEY_PAIR_ID": publicKey.ID(), "RESCORE_FUNCTION_NAME": rescoreLambda.Name,
 			"GOOGLE_CLIENT_ID": pulumi.String(googleClientID), "YOUTUBE_DISCOVERY_ENABLED": pulumi.Sprintf("%t", youtubeDiscoveryEnabled),
 		}))
 		if err != nil {
@@ -281,6 +303,9 @@ func main() {
 			return err
 		}
 		if _, err := awslambda.NewEventSourceMapping(ctx, "item-events", itemQueueEventSourceMappingArgs(itemsQueue.Arn, itemWorker.Arn)); err != nil {
+			return err
+		}
+		if _, err := awslambda.NewEventSourceMapping(ctx, "delivery-events", queueEventSourceMappingArgs(deliveriesQueue.Arn, deliveryWorker.Arn, deliveryBatchSize)); err != nil {
 			return err
 		}
 
@@ -408,7 +433,7 @@ func main() {
 			},
 			DefaultCacheBehavior: defaultBehavior,
 			OrderedCacheBehaviors: cloudfront.DistributionOrderedCacheBehaviorArray{
-				contentBehavior("/bodies/*", "content", keyGroup.ID()), contentBehavior("/media/*", "content", keyGroup.ID()), contentBehavior("/archive/*", "content", keyGroup.ID()), contentBehavior("/favicons/*", "content", nil), apiBehavior("/api/*", "api"),
+				contentBehavior("/bodies/*", "content", keyGroup.ID()), contentBehavior("/media/*", "content", keyGroup.ID()), contentBehavior("/archive/*", "content", keyGroup.ID()), contentBehavior("/send/*", "content", keyGroup.ID()), contentBehavior("/favicons/*", "content", nil), apiBehavior("/api/*", "api"),
 			},
 			Restrictions:      &cloudfront.DistributionRestrictionsArgs{GeoRestriction: &cloudfront.DistributionRestrictionsGeoRestrictionArgs{RestrictionType: pulumi.String("none")}},
 			ViewerCertificate: viewerCertificate,
@@ -447,7 +472,7 @@ func main() {
 		for _, entry := range []struct {
 			name  string
 			queue *sqs.Queue
-		}{{"feeds", feedsDLQ}, {"items", itemsDLQ}} {
+		}{{"feeds", feedsDLQ}, {"items", itemsDLQ}, {"deliveries", deliveriesDLQ}} {
 			alarm, alarmErr := cloudwatch.NewMetricAlarm(ctx, entry.name+"-dlq-alarm", &cloudwatch.MetricAlarmArgs{
 				Namespace: pulumi.String("AWS/SQS"), MetricName: pulumi.String("ApproximateNumberOfMessagesVisible"), Statistic: pulumi.String("Maximum"), Period: pulumi.Int(60), EvaluationPeriods: pulumi.Int(1), ComparisonOperator: pulumi.String("GreaterThanThreshold"), Threshold: pulumi.Float64(0),
 				Dimensions: pulumi.StringMap{"QueueName": entry.queue.Name}, AlarmDescription: pulumi.String(entry.name + " dead-letter queue contains messages"),
@@ -548,6 +573,7 @@ func main() {
 		ctx.Export("feedsDlqArn", feedsDLQ.Arn)
 		ctx.Export("itemsQueueArn", itemsQueue.Arn)
 		ctx.Export("itemsDlqArn", itemsDLQ.Arn)
+		ctx.Export("deliveriesDlqArn", deliveriesDLQ.Arn)
 		ctx.Export("rescoreFunction", rescoreLambda.Name)
 		ctx.Export("modelVersion", pulumi.String(modelVersion))
 		ctx.Export("imageModelVersion", pulumi.String(imageModelVersion))
@@ -673,6 +699,11 @@ const (
 	// The worker processes two records concurrently. Keep batches to a single
 	// wave so each item can use most of the Lambda budget on image-heavy pages.
 	itemBatchSize = 2
+	// Records are attempted one after another with a 10s timeout each, so a
+	// batch of five fits the worker budget with room for a slow Destination.
+	deliveryBatchSize              = 5
+	deliveryWorkerTimeoutSeconds   = 60
+	deliveryQueueVisibilitySeconds = 90
 )
 
 func itemQueueEventSourceMappingArgs(eventSourceArn, functionName pulumi.StringInput) *awslambda.EventSourceMappingArgs {
@@ -741,12 +772,18 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 				map[string]any{"Effect": "Allow", "Action": "s3:GetObject", "Resource": []string{values[1].(string) + "/bodies/*", values[1].(string) + "/media/*"}},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3:GetObject", "s3:PutObject", "s3:DeleteObject"}, "Resource": values[1].(string) + "/archive/*"},
 				map[string]any{"Effect": "Allow", "Action": "s3:PutObject", "Resource": values[1].(string) + "/favicons/*"},
+				// Send copies stored images to neutral keys that receivers fetch.
+				map[string]any{"Effect": "Allow", "Action": "s3:PutObject", "Resource": values[1].(string) + "/send/*"},
 				map[string]any{"Effect": "Allow", "Action": "sqs:SendMessage", "Resource": []string{values[2].(string), values[3].(string)}},
 				map[string]any{"Effect": "Allow", "Action": []string{"s3vectors:PutVectors", "s3vectors:DeleteVectors", "s3vectors:QueryVectors", "s3vectors:GetVectors"}, "Resource": []string{values[4].(string), values[5].(string)}},
 			)
 		case "rescore":
 			statements = append(statements,
 				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem"}, "Resource": tableResources},
+			)
+		case "delivery-worker":
+			statements = append(statements,
+				map[string]any{"Effect": "Allow", "Action": []string{"dynamodb:GetItem", "dynamodb:UpdateItem"}, "Resource": tableResources},
 			)
 		case "vector-cleanup":
 			statements = append(statements,
@@ -767,6 +804,22 @@ func lambdaRole(ctx *pulumi.Context, name string, tableArn, bucketArn, feedsArn,
 	}).(pulumi.StringOutput)
 	_, err = iam.NewRolePolicy(ctx, name+"-policy", &iam.RolePolicyArgs{Role: role.ID(), Policy: policy})
 	return role, err
+}
+
+// deliveryQueuePolicies lets the API queue Send retries and the delivery
+// worker consume them and schedule the next attempt.
+func deliveryQueuePolicies(ctx *pulumi.Context, apiRole, workerRole *iam.Role, queueArn pulumi.StringOutput) error {
+	if _, err := iam.NewRolePolicy(ctx, "api-deliveries-send", &iam.RolePolicyArgs{
+		Role:   apiRole.ID(),
+		Policy: pulumi.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sqs:SendMessage","Resource":"%s"}]}`, queueArn),
+	}); err != nil {
+		return err
+	}
+	_, err := iam.NewRolePolicy(ctx, "delivery-worker-queue", &iam.RolePolicyArgs{
+		Role:   workerRole.ID(),
+		Policy: pulumi.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:ChangeMessageVisibility","sqs:SendMessage"],"Resource":"%s"}]}`, queueArn),
+	})
+	return err
 }
 
 func function(ctx *pulumi.Context, name string, role *iam.Role, memory, timeout, concurrency int, environment pulumi.StringMap) (*awslambda.Function, error) {

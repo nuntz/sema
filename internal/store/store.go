@@ -547,7 +547,7 @@ func (s *Store) OverwriteItem(ctx context.Context, item domain.Item) error {
 	values := map[string]types.AttributeValue{}
 	sets, removes := []string{}, []string{}
 	// Include omitted fields so replay can clear obsolete extraction metadata.
-	for _, field := range strings.Fields("feed_pk item_id story_id feed_id feed_title connector favicon_key url external_url post_type title summary search_text summary_source description author display_date published_ts fetched_ts media_key media_variants media_w media_h media_type video_id is_short body_key has_body extract_quality score size model_version why ttl") {
+	for _, field := range strings.Fields("feed_pk item_id story_id feed_id feed_title connector favicon_key url external_url post_type title summary search_text summary_source description author display_date published_ts fetched_ts media_key media_variants media_source_url media_w media_h media_type video_id is_short body_key has_body extract_quality score size model_version why ttl") {
 		name := "#" + field
 		names[name] = field
 		if value, ok := encoded[field]; ok {

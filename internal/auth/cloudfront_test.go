@@ -1,11 +1,15 @@
 package auth
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/pem"
 	"net/http"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -92,5 +96,47 @@ func TestClearContentCookiesMatchesSignedCookiePaths(t *testing.T) {
 	}
 	if len(seen) != 12 {
 		t.Fatal(seen)
+	}
+}
+
+func TestSignedURLGrantsOneObjectUntilItExpires(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := x509.MarshalPKCS8PrivateKey(key)
+	signer, err := NewCookieSigner(string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: encoded})), "K123", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := "https://sema.example/archive/google-sub/item/lead-1280.jpg"
+
+	signed, err := signer.SignedURL(resource, time.Unix(1_800_003_600, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := url.Parse(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	if parsed.Scheme+"://"+parsed.Host+parsed.Path != resource || query.Get("Key-Pair-Id") != "K123" || query.Get("Hash-Algorithm") != "SHA256" {
+		t.Fatalf("signed url = %s", signed)
+	}
+	decode := func(value string) []byte {
+		raw, err := base64.StdEncoding.DecodeString(strings.NewReplacer("-", "+", "_", "=", "~", "/").Replace(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	policy := decode(query.Get("Policy"))
+	if want := `{"Statement":[{"Condition":{"DateLessThan":{"AWS:EpochTime":1800003600}},"Resource":"https://sema.example/archive/google-sub/item/lead-1280.jpg"}]}`; string(policy) != want {
+		t.Fatalf("policy = %s", policy)
+	}
+	digest := sha256.Sum256(policy)
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, digest[:], decode(query.Get("Signature"))); err != nil {
+		t.Fatalf("signature does not verify: %v", err)
 	}
 }

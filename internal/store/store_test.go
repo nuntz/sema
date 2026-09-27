@@ -1665,6 +1665,7 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 			item := domain.Item{
 				PK: "U#user", SK: domain.ItemSK(time.Now(), "item"), ItemID: "item", FeedID: "feed", Title: "TITLE", Summary: "Summary", TTL: time.Now().Add(time.Hour).Unix(),
 				Vector: score.EncodeVector([]float32{1, 0}), ModelVersion: "text-v1", ImageVector: score.EncodeVector([]float32{1, 0}), ImageModelVersion: "image-v1",
+				MediaSourceURL: "https://publisher.example/lead.jpg",
 			}
 			encodedItem, err := attributevalue.MarshalMap(item)
 			if err != nil {
@@ -1771,6 +1772,9 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 				}
 				if value, ok := write.Put.Item["SK"].(*types.AttributeValueMemberS); ok && strings.HasPrefix(value.Value, "A#") {
 					archiveSearch = write.Put.Item["search_text"].(*types.AttributeValueMemberS).Value
+					if source, _ := write.Put.Item["media_source_url"].(*types.AttributeValueMemberS); source == nil || source.Value != "https://publisher.example/lead.jpg" {
+						t.Fatalf("archive row lost the lead image origin URL: %#v", write.Put.Item["media_source_url"])
+					}
 				} else if ok && strings.HasPrefix(value.Value, "S#") {
 					signalImage = write.Put.Item["image_vector"].(*types.AttributeValueMemberB).Value
 				}
@@ -2367,5 +2371,22 @@ func TestBodyHistoryRetryDoesNotReuseIdempotencyToken(t *testing.T) {
 	written, err := New(db, nil, "table", "", "").PutItem(context.Background(), item)
 	if err != nil || !written || calls != 2 {
 		t.Fatalf("written=%v calls=%d err=%v", written, calls, err)
+	}
+}
+
+func TestReplayOverwriteWritesTheLeadImageOriginURL(t *testing.T) {
+	var update *types.Update
+	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		update = input.TransactItems[0].Update
+		return &dynamodb.TransactWriteItemsOutput{}, nil
+	}}
+	item := domain.Item{PK: "U#user", SK: "I#item", ItemID: "item", MediaSourceURL: "https://publisher.example/lead.jpg"}
+
+	if err := New(db, nil, "table", "", "").OverwriteItem(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	value, _ := update.ExpressionAttributeValues[":media_source_url"].(*types.AttributeValueMemberS)
+	if value == nil || value.Value != "https://publisher.example/lead.jpg" {
+		t.Fatalf("update = %s, values %#v", aws.ToString(update.UpdateExpression), update.ExpressionAttributeValues)
 	}
 }

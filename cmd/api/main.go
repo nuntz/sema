@@ -44,6 +44,7 @@ import (
 	"github.com/nuntz/sema/internal/media"
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/score"
+	"github.com/nuntz/sema/internal/send"
 	"github.com/nuntz/sema/internal/store"
 	storycluster "github.com/nuntz/sema/internal/story"
 	"github.com/nuntz/sema/internal/vectorstore"
@@ -81,6 +82,14 @@ type server struct {
 	imageSearchFloor int
 	emit             func(map[string]float64, map[string]string)
 	storyConfig      storycluster.Config
+	destinations     destinationStore
+	sender           send.Attempter
+	retries          send.RetryQueue
+	newID            func() string
+	now              func() time.Time
+	contentSigner    urlSigner
+	publicOrigin     string
+	imageCopier      imageCopier
 }
 
 type fusedMatch struct {
@@ -229,6 +238,8 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 		result = s.addFeed(ctx, claims.Subject, request.Body)
 	case method == http.MethodPost && path == "/feeds/import":
 		result = s.importFeeds(ctx, claims.Subject, request)
+	case path == "/destination" || strings.HasPrefix(path, "/destination/"):
+		result = s.destinationRoute(ctx, claims.Subject, method, strings.TrimPrefix(strings.TrimPrefix(path, "/destination"), "/"), request.Body)
 	case strings.HasPrefix(path, "/feeds/"):
 		result = s.feedRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
 	default:
@@ -258,7 +269,7 @@ func apiRouteTemplate(method, path string) string {
 	method = boundedMethod(method)
 	for _, static := range []string{
 		"/", "/session", "/me", "/items", "/stories", "/search", "/items/read-batch", "/ranking/recompute",
-		"/archive", "/feeds", "/feeds/counts", "/feeds/export.opml", "/feeds/discover", "/feeds/import",
+		"/archive", "/feeds", "/feeds/counts", "/feeds/export.opml", "/feeds/discover", "/feeds/import", "/destination", "/destination/ping",
 	} {
 		if path == static {
 			return method + " " + static
@@ -271,7 +282,7 @@ func apiRouteTemplate(method, path string) string {
 		return method + " /items/{item_id}"
 	} else if len(parts) == 2 {
 		switch parts[1] {
-		case "similar", "retry", "heart", "signal", "read", "behaviour", "events":
+		case "similar", "retry", "heart", "signal", "read", "behaviour", "events", "send":
 			return method + " /items/{item_id}/" + parts[1]
 		default:
 			return method + " /items/{item_id}/{action}"
@@ -624,7 +635,7 @@ func (s *server) getMe(ctx context.Context, userID string) events.APIGatewayV2HT
 	if modelErr != nil && !errors.Is(modelErr, score.ErrModelNotFound) {
 		return s.failure("get ranking model", modelErr)
 	}
-	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": user.SignalCount, "heart_count": user.HeartCount, "model": model})
+	return response(http.StatusOK, map[string]any{"profile": user, "signal_count": user.SignalCount, "heart_count": user.HeartCount, "model": model, "send_label": s.sendLabel(ctx, userID)})
 }
 
 func (s *server) recomputeRanking(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
@@ -1161,6 +1172,8 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 		return response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
 	switch parts[1] {
+	case "send":
+		return s.sendItem(ctx, userID, itemID)
 	case "retry":
 		item, err := s.store.Item(ctx, userID, itemID)
 		if err != nil {
@@ -1687,6 +1700,10 @@ func main() {
 	if itemsURL == "" {
 		panic("ITEMS_QUEUE_URL is required")
 	}
+	deliveriesURL := strings.TrimSpace(os.Getenv("DELIVERIES_QUEUE_URL"))
+	if deliveriesURL == "" {
+		panic("DELIVERIES_QUEUE_URL is required")
+	}
 	signer, err := auth.NewCookieSigner(os.Getenv("CF_PRIVATE_KEY"), os.Getenv("CF_KEY_PAIR_ID"), time.Hour)
 	if err != nil {
 		panic(err)
@@ -1723,17 +1740,24 @@ func main() {
 	}
 	runtime := bedrockruntime.NewFromConfig(config)
 	vectorClient := s3vectors.NewFromConfig(config)
+	queueClient := sqs.NewFromConfig(config)
 	s := &server{
 		store: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
 			return auth.VerifyGoogle(ctx, credential, googleClientID)
-		}, queue: sqs.NewFromConfig(config), feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
+		}, queue: queueClient, feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, media.MaxDownloadBytes)), feedCache: make(map[string]cachedFeedList),
 		embedder: bedrockembed.NewWithModel(runtime, modelVersion),
 		vectors:  vectorstore.NewS3(vectorClient, vectorBucket, vectorIndex), imageSearchFloor: imageSearchFloor, storyConfig: storycluster.FromEnv(),
+		destinations: repository, sender: send.NewSender(), retries: &send.SQSQueue{Client: queueClient, URL: deliveriesURL}, newID: send.NewID, now: time.Now,
 	}
 	if imageVectorIndex := strings.TrimSpace(os.Getenv("IMAGE_VECTOR_INDEX")); imageVectorIndex != "" {
 		s.imageEmbedder = titanimage.NewWithModel(runtime, imageModelVersion)
 		s.imageVectors = vectorstore.NewS3(vectorClient, vectorBucket, imageVectorIndex)
+	}
+	// Signed copies need an absolute URL, which only a custom domain provides
+	// without a dependency cycle between the API and the distribution.
+	if origin := strings.TrimSpace(os.Getenv("PUBLIC_ORIGIN")); origin != "" && signer != nil {
+		s.contentSigner, s.publicOrigin, s.imageCopier = signer, origin, repository
 	}
 	lambda.Start(s.handle)
 }

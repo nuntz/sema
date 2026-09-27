@@ -76,6 +76,23 @@ func (s *CookieSigner) Cookies(userID string, now time.Time) ([]string, error) {
 	return append([]string(nil), cookies...), nil
 }
 
+// SignedURL grants access to exactly one object until expires, for handing a
+// stored image to a Send receiver that has no signed cookies.
+func (s *CookieSigner) SignedURL(resource string, expires time.Time) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("CloudFront signing is not configured")
+	}
+	policy, err := s.policy(resource, expires)
+	if err != nil {
+		return "", err
+	}
+	separator := "?"
+	if strings.Contains(resource, "?") {
+		separator = "&"
+	}
+	return resource + separator + "Policy=" + policy.encoded + "&Signature=" + policy.signature + "&Key-Pair-Id=" + s.keyPairID + "&Hash-Algorithm=SHA256", nil
+}
+
 type signedPolicy struct {
 	encoded   string
 	signature string

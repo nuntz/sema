@@ -146,6 +146,7 @@ type Item struct {
 	FetchedTS         string         `dynamodbav:"fetched_ts" json:"fetched_ts"`
 	MediaKey          string         `dynamodbav:"media_key,omitempty" json:"media_url,omitempty"`
 	MediaVariants     []MediaVariant `dynamodbav:"media_variants,omitempty" json:"media_variants,omitempty"`
+	MediaSourceURL    string         `dynamodbav:"media_source_url,omitempty" json:"-"`
 	MediaW            int            `dynamodbav:"media_w,omitempty" json:"media_w,omitempty"`
 	MediaH            int            `dynamodbav:"media_h,omitempty" json:"media_h,omitempty"`
 	MediaType         string         `dynamodbav:"media_type,omitempty" json:"media_type,omitempty"`
@@ -387,3 +388,23 @@ func ItemSK(published time.Time, id string) string {
 // Timestamp has a fixed-width fractional component so lexical DynamoDB order
 // is identical to chronological order.
 func Timestamp(value time.Time) string { return value.UTC().Format(TimeLayout) }
+
+const (
+	DestinationSK = "DESTINATION"
+	// SendQuotaSK holds the hourly Send count apart from the Destination.
+	SendQuotaSK = "SEND_QUOTA"
+)
+
+// Destination is where a user Sends Items. It lives in its own row so the
+// secret is only read on the Send, ping, and settings paths.
+type Destination struct {
+	PK             string `dynamodbav:"PK" json:"-"`
+	SK             string `dynamodbav:"SK" json:"-"`
+	URL            string `dynamodbav:"url" json:"url"`
+	Secret         string `dynamodbav:"secret" json:"-"`
+	Label          string `dynamodbav:"label" json:"label"`
+	Enabled        bool   `dynamodbav:"enabled" json:"enabled"`
+	ReceiverUserID string `dynamodbav:"receiver_user_id" json:"-"`
+	LastDeliveryAt string `dynamodbav:"last_delivery_at,omitempty" json:"last_delivery_at,omitempty"`
+	LastStatus     string `dynamodbav:"last_status,omitempty" json:"last_status,omitempty"`
+}

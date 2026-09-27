@@ -28,6 +28,7 @@ import Play from "lucide-solid/icons/play";
 import Plus from "lucide-solid/icons/plus";
 import RotateCw from "lucide-solid/icons/rotate-cw";
 import Search from "lucide-solid/icons/search";
+import Send from "lucide-solid/icons/send";
 import Settings from "lucide-solid/icons/settings";
 import SlidersHorizontal from "lucide-solid/icons/sliders-horizontal";
 import Sun from "lucide-solid/icons/sun";
@@ -105,6 +106,7 @@ const glyphs = {
   "remove-feed": Trash2,
   retry: RotateCw,
   search: Search,
+  send: Send,
   settings: Settings,
   sort: ArrowUpDown,
   stack: Layers,

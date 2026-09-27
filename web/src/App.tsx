@@ -10,7 +10,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { type AppAPI, UnauthorizedError } from "./api/client";
+import { APIError, type AppAPI, UnauthorizedError } from "./api/client";
 import { completeArchiveRemoval, shouldConfirmArchiveRemoval } from "./archive";
 import {
   type BehaviourEvent,
@@ -42,6 +42,7 @@ import { createReadState } from "./read-state";
 import { resolveReaderItem } from "./reader-item";
 import { scopeCellModel, windowScopeCounts } from "./scope-cell";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
+import { sendFailureToast, sendToast } from "./send-action";
 import { nextSignalNotice, type SignalNotice } from "./signal-feedback";
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
@@ -106,6 +107,8 @@ export function App(props: {
   const [signalNotice, setSignalNotice] = createSignal<SignalNotice>();
   let signalNoticeID = 0;
   const [heartCount, setHeartCount] = createSignal(0);
+  const [sendLabel, setSendLabel] = createSignal<string | null>(null);
+  const [sendingID, setSendingID] = createSignal("");
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
   const [feedItemCounts, setFeedItemCounts] = createSignal<FeedItemCounts>({});
   const [scopeCountsWindowKey, setScopeCountsWindowKey] =
@@ -301,6 +304,25 @@ export function App(props: {
     }
   };
 
+  const sendItem = async (item: Item) => {
+    const label = sendLabel();
+    if (!label || sendingID()) return;
+    setSendingID(item.item_id);
+    try {
+      const toast = sendToast(await api.send(item.item_id));
+      showToast(toast.kind, toast.message);
+    } catch (caught) {
+      if (caught instanceof UnauthorizedError) return handleError(caught);
+      const toast = sendFailureToast(caught);
+      // The Destination was removed or disabled elsewhere.
+      if (caught instanceof APIError && caught.status === 409)
+        setSendLabel(null);
+      showToast(toast.kind, toast.message);
+    } finally {
+      setSendingID("");
+    }
+  };
+
   const scopeCell = createMemo(() => {
     if (mode() === "archive" || searchActive()) return undefined;
     const model = scopeCellModel(
@@ -377,6 +399,7 @@ export function App(props: {
       setProfile(me.profile);
       setSignalCount(me.signal_count);
       setHeartCount(me.heart_count ?? me.profile.heart_count ?? 0);
+      setSendLabel(me.send_label ?? null);
       setOrder(me.profile.order_pref || "interest");
       const profileScope: GridScope = me.profile.feed_pref
         ? { kind: "feed", value: me.profile.feed_pref }
@@ -1229,6 +1252,7 @@ export function App(props: {
             onCharacterShortcuts={changeCharacterShortcuts}
             onSignOut={props.signOut}
             onFeedsChanged={noteFeedsChanged}
+            onSendLabel={setSendLabel}
             onToast={showToast}
           />
           <ToastNotice notice={toast()} />
@@ -1676,6 +1700,7 @@ export function App(props: {
           >
             <Grid
               model={gridModel()}
+              sendLabel={sendLabel() ?? undefined}
               pendingNewCount={pendingNew().length}
               layout={{
                 scrollTarget: scrollTarget(),
@@ -1713,6 +1738,7 @@ export function App(props: {
                 onToggleRead: toggleRead,
                 onToggleStoryRead: toggleStoryRead,
                 onCopy: copyLink,
+                onSend: (item) => void sendItem(item),
                 onOriginal: openOriginal,
                 onRelated: openRelated,
                 onApplyFeed: (item) => void applyFeed(item.feed_id),
@@ -1820,6 +1846,9 @@ export function App(props: {
               onSignal={(value) => setSignal(item(), value)}
               onHeart={() => toggleHeart(item())}
               onCopy={() => copyLink(item())}
+              sendLabel={sendLabel() ?? undefined}
+              sending={sendingID() === item().item_id}
+              onSend={() => void sendItem(item())}
               onOriginal={() =>
                 !readerArchive() &&
                 queueEvent(item().item_id, { clicked_through: true })

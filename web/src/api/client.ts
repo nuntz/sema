@@ -1,5 +1,7 @@
 import type { FetchWindow } from "../item-view";
 import type {
+  Destination,
+  DestinationInput,
   Feed,
   FeedCandidate,
   FeedItemCounts,
@@ -10,6 +12,7 @@ import type {
   Order,
   Profile,
   SearchResponse,
+  SendResult,
   StoriesResponse,
 } from "../types";
 
@@ -197,6 +200,31 @@ export class APIClient {
       method: "POST",
       body: JSON.stringify({ hearted }),
     });
+  }
+
+  send(itemID: string): Promise<SendResult> {
+    return this.request(`/items/${encodeURIComponent(itemID)}/send`, {
+      method: "POST",
+    });
+  }
+
+  destination(): Promise<Destination | null> {
+    return this.request("/destination");
+  }
+
+  saveDestination(input: DestinationInput): Promise<Destination> {
+    return this.request("/destination", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  }
+
+  deleteDestination(): Promise<void> {
+    return this.request("/destination", { method: "DELETE" });
+  }
+
+  pingDestination(): Promise<SendResult> {
+    return this.request("/destination/ping", { method: "POST" });
   }
 
   signal(itemID: string, value: -1 | 0 | 1): Promise<void> {

@@ -60,6 +60,7 @@ export interface GridActions {
   onToggleRead(item: Item): void;
   onToggleStoryRead(story: Story): void;
   onCopy(item: Item): void;
+  onSend?(item: Item): void;
   onOriginal(item: Item): void;
   onRelated(item: Item): void;
   onApplyFeed(item: Item): void;

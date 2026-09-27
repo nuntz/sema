@@ -31,6 +31,7 @@ import {
   redditSubreddit,
 } from "../reddit-feed";
 import type { Feed, FeedCandidate, FeedItemCounts } from "../types";
+import { DestinationSettings } from "./DestinationSettings";
 import {
   type DiscoveryState,
   discoveredCandidateState,
@@ -53,6 +54,7 @@ export function Feeds(props: {
   onCharacterShortcuts?(enabled: boolean): void;
   onSignOut(): void;
   onFeedsChanged?(): void;
+  onSendLabel?(label: string | null): void;
   onToast(kind: "success" | "error", message: string): void;
 }) {
   const [feeds, { refetch, mutate: setFeeds }] = createResource(() =>
@@ -644,6 +646,12 @@ export function Feeds(props: {
             View keyboard shortcuts
           </button>
         </section>
+
+        <DestinationSettings
+          api={props.api}
+          onSendLabel={(label) => props.onSendLabel?.(label)}
+          onToast={props.onToast}
+        />
 
         <details class="feed-operations">
           <summary>Ranking &amp; storage</summary>

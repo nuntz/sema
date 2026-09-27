@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 GO_CACHE ?= /tmp/sema-go-build
 GO_MOD_CACHE ?= /tmp/sema-go-mod
-LAMBDAS := scheduler feed-worker item-worker api rescore vector-cleanup
+LAMBDAS := scheduler feed-worker item-worker api rescore vector-cleanup delivery-worker
 GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
 STACK ?= dev
 AWS_REGION ?= us-east-1

@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,10 @@ import (
 )
 
 const DefaultUserAgent = "Sema/0.1 (+https://sema.app)"
+
+// ErrBlockedAddress reports a dial refused because the host resolved to a
+// private, loopback, link-local, or otherwise non-public address.
+var ErrBlockedAddress = errors.New("refusing non-public address")
 
 type Client struct {
 	http    *http.Client
@@ -35,7 +40,7 @@ func New(timeout time.Duration, maxBody int64) *Client {
 		}
 		for _, address := range addresses {
 			if !safeIP(address) {
-				return nil, fmt.Errorf("refusing non-public address for %s", host)
+				return nil, fmt.Errorf("%w for %s", ErrBlockedAddress, host)
 			}
 		}
 		return dialer.DialContext(ctx, network, net.JoinHostPort(addresses[0].String(), port))
@@ -158,5 +163,39 @@ func (c *Client) Head(ctx context.Context, rawURL string, headers http.Header) (
 		return Response{}, err
 	}
 	defer resp.Body.Close()
+	return Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), FinalURL: req.URL}, nil
+}
+
+// Post sends body and returns the first response's status and headers without
+// following redirects, so a Destination cannot bounce a signed request
+// elsewhere. The response body is not read.
+func (c *Client) Post(ctx context.Context, rawURL string, headers http.Header, body []byte) (Response, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return Response{}, fmt.Errorf("invalid HTTP URL %q", rawURL)
+	}
+	if c.http.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.http.Timeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	if err != nil {
+		return Response{}, err
+	}
+	req.Header.Set("User-Agent", c.agent)
+	for key, values := range headers {
+		req.Header.Del(key)
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	resp, err := c.http.Transport.RoundTrip(req)
+	if err != nil {
+		return Response{}, err
+	}
+	// Callers act on the status alone; a slow or broken body must not turn a
+	// delivered request into a failure, so it is closed unread.
+	resp.Body.Close()
 	return Response{StatusCode: resp.StatusCode, Header: resp.Header.Clone(), FinalURL: req.URL}, nil
 }

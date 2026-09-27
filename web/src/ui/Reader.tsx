@@ -88,6 +88,10 @@ interface ReaderProps {
   onSignal(value: -1 | 0 | 1): void;
   onHeart(): void;
   onCopy(): void;
+  /** Names the Send action; absent when the user has no enabled Destination. */
+  sendLabel?: string;
+  sending?: boolean;
+  onSend?(): void;
   onOriginal(): void;
   onRelated(): void;
   onApplyFeed(): void;
@@ -741,6 +745,9 @@ export function Reader(props: ReaderProps) {
       case "copy":
         props.onCopy();
         break;
+      case "send":
+        if (props.sendLabel) props.onSend?.();
+        break;
       case "play":
         play();
         break;
@@ -953,6 +960,22 @@ export function Reader(props: ReaderProps) {
               {props.hearted ? "kept" : "keep"}
             </span>
           </button>
+          <Show when={props.sendLabel}>
+            {(label) => (
+              <button
+                type="button"
+                class="chrome-btn chrome-btn--quiet chrome-btn--collapse-1"
+                data-action="send"
+                aria-label={label()}
+                aria-busy={props.sending}
+                disabled={props.sending}
+                onClick={() => props.onSend?.()}
+              >
+                <Icon name="send" />
+                <span class="chrome-btn__label">{label().toLowerCase()}</span>
+              </button>
+            )}
+          </Show>
         </div>
         <div class="chrome-group chrome-group--secondary">
           <button
@@ -1343,6 +1366,21 @@ export function Reader(props: ReaderProps) {
           >
             <Icon name="keep" filled={props.hearted} />
           </button>
+          <Show when={props.sendLabel}>
+            {(label) => (
+              <button
+                type="button"
+                class="reader-toolbar-action"
+                data-action="send"
+                aria-label={label()}
+                aria-busy={props.sending}
+                disabled={props.sending}
+                onClick={() => props.onSend?.()}
+              >
+                <Icon name="send" />
+              </button>
+            )}
+          </Show>
           <button
             ref={moreButton}
             type="button"

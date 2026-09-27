@@ -2,11 +2,13 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -47,5 +49,53 @@ func TestGetCallerHeadersReplaceDefaults(t *testing.T) {
 	}
 	if len(accept) != 1 || accept[0] != "image/*" {
 		t.Fatalf("Accept = %v, want [image/*]", accept)
+	}
+}
+
+func TestPostReturnsRedirectsWithoutFollowingThem(t *testing.T) {
+	var requests []string
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(request.Body)
+		requests = append(requests, request.Method+" "+request.URL.String()+" "+string(body))
+		return &http.Response{
+			StatusCode: http.StatusFound,
+			Header:     http.Header{"Location": []string{"https://elsewhere.example/"}},
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    request,
+		}, nil
+	})
+	client := &Client{http: &http.Client{Transport: transport}, maxBody: 1024, agent: DefaultUserAgent}
+
+	got, err := client.Post(context.Background(), "https://example.com/hook", http.Header{"Content-Type": []string{"application/json"}}, []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StatusCode != http.StatusFound || len(requests) != 1 || requests[0] != "POST https://example.com/hook {}" {
+		t.Fatalf("status = %d, requests = %v", got.StatusCode, requests)
+	}
+}
+
+func TestPostRefusesNonPublicAddressesWithATypedError(t *testing.T) {
+	_, err := New(time.Second, 1024).Post(context.Background(), "https://127.0.0.1:9/hook", nil, []byte(`{}`))
+	if !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("err = %v, want ErrBlockedAddress", err)
+	}
+}
+
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
+func (failingBody) Close() error             { return nil }
+
+func TestPostReportsTheStatusEvenWhenTheBodyCannotBeRead(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusAccepted, Header: make(http.Header), Body: failingBody{}, Request: request}, nil
+	})
+	client := &Client{http: &http.Client{Transport: transport}, maxBody: 1024, agent: DefaultUserAgent}
+
+	got, err := client.Post(context.Background(), "https://example.com/hook", nil, []byte(`{}`))
+
+	if err != nil || got.StatusCode != http.StatusAccepted {
+		t.Fatalf("Post = %d, %v; want 202 without error", got.StatusCode, err)
 	}
 }

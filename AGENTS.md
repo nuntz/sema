@@ -6,6 +6,8 @@
 
 Ranking uses parallel text and lead-image embedding channels; image embeddings use the largest stored JPEG variant at or below 768px, and videos are always excluded.
 
+Send posts one Item to the user's Destination under a public webhook contract; within `version: 1` only add optional fields, and never name a specific Destination in code or docs. Payload fields follow `CONTEXT.md` (`kept`, `feed`, feed `tags`), and `images` lists the stored origin lead URL first, then a one-hour CloudFront-signed URL to a per-Send copy of Sema's largest stored image under `send/`, so receivers never depend on publisher pages that block them; stored keys embed the Google subject, so never sign them for a receiver. The first attempt runs inline in the API request so the user sees the real status; retryable failures go to the deliveries queue, re-signed with the current secret on each attempt. The Destination and its secret live in a separate `DESTINATION` row, never the profile, and the secret is write-only over the API.
+
 ## Build, Test, and Development Commands
 
 - `make test` runs root Go, Pulumi, and frontend unit tests.

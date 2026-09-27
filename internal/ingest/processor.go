@@ -348,6 +348,7 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 		summary, summarySource, summaryMetrics = h.chooseSummary(ctx, message.Title, fallbackRaw, summaryArticle, force)
 	}
 	mediaKey, mediaW, mediaH := existing.MediaKey, existing.MediaW, existing.MediaH
+	mediaSourceURL := existing.MediaSourceURL
 	mediaVariants := existing.MediaVariants
 	var freshImageJPEG []byte
 	embedMediaSucceeded, embedMediaFailed := 0, 0
@@ -366,7 +367,7 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 		if isVideo {
 			candidates = append([]string{"https://i.ytimg.com/vi/" + url.PathEscape(message.VideoID) + "/maxresdefault.jpg"}, candidates...)
 		}
-		mediaKey, mediaW, mediaH, mediaVariants = "", 0, 0, nil
+		mediaKey, mediaW, mediaH, mediaVariants, mediaSourceURL = "", 0, 0, nil, ""
 		var lead media.Lead
 		var mediaErr error
 		// Selection and the variant uploads share one budget so a slow upload
@@ -392,7 +393,7 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 		}
 		leadCancel()
 		if mediaErr == nil {
-			mediaW, mediaH = lead.Width, lead.Height
+			mediaW, mediaH, mediaSourceURL = lead.Width, lead.Height, lead.SourceURL
 			freshImageJPEG = selectEncodedImage(lead.Variants)
 			if cleaned, removed := extract.RemoveLeadImage(article.HTML, lead.SourceURL); removed {
 				article.HTML = cleaned
@@ -550,7 +551,7 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 	item := Build(work, existing, domain.Item{
 		FeedTitle: feedTitle, Connector: domain.FeedConnector(feed), FaviconKey: feed.FaviconKey,
 		Title: embedTitle, Summary: summary, SummarySource: summarySource, Description: videoDescription(isVideo, message.ContentRaw, existing.Description), Author: author, DisplayDate: displayDate,
-		MediaKey: mediaKey, MediaVariants: mediaVariants, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
+		MediaKey: mediaKey, MediaVariants: mediaVariants, MediaSourceURL: mediaSourceURL, MediaW: mediaW, MediaH: mediaH, MediaType: message.MediaType, VideoID: message.VideoID, IsShort: message.IsShort, BodyKey: bodyKey, HasBody: hasBody, ExtractQuality: extractQuality,
 		Score: value, Vector: score.EncodeVector(vector), ModelVersion: h.ModelVersion,
 		ImageVector: imageVector, ImageModelVersion: imageModelVersion, Why: why,
 	}, started, h.ScoringVersion, model)

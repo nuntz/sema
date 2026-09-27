@@ -171,3 +171,13 @@ _Avoid_: Facade, placeholder, thumbnail, preview
 **Play**:
 The user action that starts a Video Item's video inside Sema in place of its Poster. Playing is Behaviour, counted like a click-through.
 _Avoid_: Watch, embed, autoplay, open
+
+### Sending
+
+**Send**:
+The user action that pushes one Item to their Destination, on demand. Sending counts as Behaviour, like sharing, and never Keeps the Item. A Send on a Story acts on its Lead. Sending the same Item again is allowed.
+_Avoid_: Forward, push, export, share (for this action), webhook (as a verb)
+
+**Destination**:
+The single address a user has chosen to Send Items to, with its signing secret and button label. Each user has at most one Destination, and Sema says nothing about what the Destination does with an Item.
+_Avoid_: Webhook, target, integration, endpoint, receiver

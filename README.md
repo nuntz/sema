@@ -102,6 +102,12 @@ Scheduled and discovery requests send the fixed `User-Agent: linux:sema:rss`. Fe
 
 Reddit items preserve the thread permalink separately from an external article or media destination. Link posts use the normal article extraction pipeline and open in Reader, text posts render sanitized selftext already present in Atom, and image and gallery posts render in Reader with a cached lead image. For Reddit-owned preview thumbnails, Sema prefers the corresponding full-size `i.redd.it` asset and keeps the signed Atom thumbnail as a fallback; gallery replays recover missing enclosure metadata from the public per-post Atom feed. Reddit-hosted video remains external because `v.redd.it` media is delivered as split DASH streams. The message-square action on every Reddit cell opens its comment thread externally. Titles and cleaned excerpts enter the existing embedding and ranking pipeline unchanged.
 
+## Send
+
+Send pushes one Item, on demand, to an HTTPS address the user chooses under "Send to…" in Feeds & settings. Sema signs every request with the user's secret so the receiver can verify it; what the receiver does with the Item is up to it. Send is available from the reader, the grid action sheet, and the `s` key once a Destination is saved and enabled.
+
+The first attempt runs while the user waits, so the toast reports what the receiver actually answered. Retryable failures (timeouts, network errors, `429`, `5xx`) are retried three more times through the deliveries queue, and Settings shows the latest result. Each user may make 60 Sends and tests an hour. Outbound requests refuse private and loopback addresses and never follow redirects.
+
 ## Prerequisites
 
 - Go 1.26+
@@ -346,6 +352,10 @@ make backfill-reddit-connector STACK=prod BACKFILL_ARGS=--apply
 ```
 
 The idempotent backfill recognizes only supported subreddit feed URLs. It keeps each existing feed ID, tags, mute state, items, archive pointers, ranking history, and read state while changing the connector to `reddit`, canonicalizing the selected Hot/Top-Day/New URL, setting its cadence, and clearing URL-specific HTTP validators when required. Unsupported Reddit listing types are left unchanged.
+
+### Send rollout
+
+Send adds the `deliveries` queue with its dead-letter queue and alarm, the `delivery-worker` Lambda, and the `DELIVERIES_QUEUE_URL` variable on the API. `make deploy` creates all of them; no configuration is required. Items start recording the origin URL of their lead image on ingest or replay, and there is no backfill; every Item with a stored lead image also sends a one-hour signed URL to a per-Send copy of Sema's image under `send/`, which a lifecycle rule deletes after a day. That copy needs the `sema:domain` custom domain, which becomes the API's `PUBLIC_ORIGIN`; without one, Items ingested before the rollout send an empty `images` list.
 
 ## Operations
 
