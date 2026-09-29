@@ -16,7 +16,7 @@ describe("video dwell", () => {
     expect(videoDwellActive("paused", true, true)).toBe(false);
   });
 });
-function setup(start = 0) {
+function setup(start = 0, tabbable?: boolean) {
   vi.useFakeTimers();
   const listeners = new Map<string, (event: unknown) => void>();
   const loads = new Map<string, () => void>();
@@ -42,6 +42,7 @@ function setup(start = 0) {
   const player = createVideoPlayer(host, {
     videoID: "dQw4w9WgXcQ",
     start,
+    tabbable,
     onFailure,
     onState,
   });
@@ -96,6 +97,13 @@ it("uses only the privacy embed and queues the latest seek until ready", () => {
   for (const [, target] of frame.contentWindow.postMessage.mock.calls)
     expect(target).toBe(url.origin);
   player.destroy();
+});
+
+it("keeps the iframe out of the Tab order only when asked", () => {
+  expect(setup().frame).not.toHaveProperty("tabIndex");
+  vi.unstubAllGlobals();
+  const { frame } = setup(0, false);
+  expect(frame).toHaveProperty("tabIndex", -1);
 });
 
 it("rejects spoofed and malformed messages and accepts infoDelivery as ready", () => {

@@ -9,6 +9,7 @@ import {
 export function VideoPlayer(props: {
   videoID: string;
   start: number;
+  tabbable?: boolean;
   onReady?(player: Player): void;
   onState?(state: PlaybackState | "failed"): void;
   onOriginal(): void;
@@ -19,6 +20,7 @@ export function VideoPlayer(props: {
     const player = createVideoPlayer(host, {
       videoID: props.videoID,
       start: props.start,
+      tabbable: props.tabbable,
       onState: (state) => props.onState?.(state),
       onFailure: () => {
         setFailed(true);

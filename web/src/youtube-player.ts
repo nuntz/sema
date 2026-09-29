@@ -8,6 +8,8 @@ export type PlaybackState = "playing" | "paused" | "ended" | "buffering";
 export interface PlayerOptions {
   videoID: string;
   start: number;
+  /** False keeps the iframe, and YouTube's controls, out of the Tab order. */
+  tabbable?: boolean;
   onState(state: PlaybackState): void;
   onFailure(): void;
 }
@@ -113,6 +115,7 @@ export function createVideoPlayer(
   iframe.allow = "autoplay; fullscreen; picture-in-picture; encrypted-media";
   iframe.referrerPolicy = "strict-origin-when-cross-origin";
   iframe.allowFullscreen = true;
+  if (options.tabbable === false) iframe.tabIndex = -1;
   iframe.dataset.videoId = options.videoID;
   iframe.dataset.host = EMBED_ORIGIN;
   iframe.dataset.seconds = String(position);

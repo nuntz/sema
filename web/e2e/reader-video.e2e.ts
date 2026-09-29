@@ -68,6 +68,58 @@ test("reader dwell continues after iframe blur and pauses on player pause", asyn
   expect(await page.locator("body").getAttribute("data-dwell")).toBe(paused);
 });
 
+test("Escape closes the reader after using the player's own controls", async ({
+  page,
+}) => {
+  await stubYouTube(page, false, true);
+  await page.goto(
+    "/e2e/header-fixture.html?view=reader&media=video&lightbox=1",
+  );
+  await page.keyboard.press("i");
+  const player = page.locator(".video-embed iframe");
+  await expect(player).toHaveAttribute("data-state", "1");
+  await player
+    .contentFrame()
+    .getByRole("button", { name: "Mute", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.activeElement?.tagName === "IFRAME"),
+    )
+    .toBe(false);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".reader")).toHaveCount(0);
+});
+
+test("Tab moves past the reader player instead of looping back into it", async ({
+  page,
+}) => {
+  await stubYouTube(page, false, true);
+  await page.goto("/e2e/header-fixture.html?view=reader&media=video");
+  await page.keyboard.press("i");
+  const player = page.locator(".video-embed iframe");
+  await expect(player).toHaveAttribute("data-state", "1");
+  await player
+    .contentFrame()
+    .getByRole("button", { name: "Mute", exact: true })
+    .click();
+  await expect(page.locator(".reader-scroll")).toBeFocused();
+  const visited: string[] = [];
+  for (let step = 0; step < 8; step++) {
+    await page.keyboard.press("Tab");
+    visited.push(
+      await page.evaluate(
+        () =>
+          `${document.activeElement?.tagName}.${document.activeElement?.className}`,
+      ),
+    );
+  }
+  expect(visited.filter((name) => name.startsWith("IFRAME"))).toEqual([]);
+  expect(visited.some((name) => name.includes("video-provider-strip"))).toBe(
+    true,
+  );
+});
+
 test("failed embed loading shows Open without restoring the Poster", async ({
   page,
 }) => {

@@ -1325,6 +1325,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-overflow-menu .chrome-btn + .chrome-btn { margin-left: 0; }
 .reader-overflow-menu a.chrome-btn:last-child { justify-content: space-between; }
 .reader-scroll { flex: 1; overflow: auto; overscroll-behavior-y: none; touch-action: pan-y; transition: transform 200ms cubic-bezier(.2, .75, .2, 1); }
+.reader-scroll:focus { outline: none; }
 .reader-scroll.swiping { transition: none; }
 .article { width: min(640px, calc(100% - 44px)); margin: 0 auto; padding: 56px 0 64px; }
 .article-kicker { margin-bottom: 14px; color: var(--fg-quaternary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: 0.07em; }

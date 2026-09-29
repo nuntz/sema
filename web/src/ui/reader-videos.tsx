@@ -57,6 +57,7 @@ export function mountReaderVideos(
             <VideoPlayer
               videoID={videoID}
               start={0}
+              tabbable={false}
               onOriginal={callbacks.onPlay}
               onState={(state) => callbacks.onState(host, state)}
             />

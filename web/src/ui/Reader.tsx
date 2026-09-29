@@ -141,6 +141,7 @@ export function Reader(props: ReaderProps) {
         <VideoPlayer
           videoID={videoItemID(props.item) || ""}
           start={playbackForItem()?.seconds ?? 0}
+          tabbable={false}
           onOriginal={props.onOriginal}
           onReady={(value) => {
             player = value;
@@ -774,8 +775,25 @@ export function Reader(props: ReaderProps) {
       else startDwell();
     };
     const onFocus = () => startDwell();
+    // YouTube's cross-origin controls keep every key, Escape included. Take
+    // focus straight back unless fullscreen leaves the player as the only UI;
+    // reader players stay out of the Tab order so Tab cannot loop into them.
+    let reclaimTimer = 0;
+    const reclaimFocus = () => {
+      const active = document.activeElement;
+      if (
+        props.active &&
+        !document.fullscreenElement &&
+        active instanceof HTMLIFrameElement &&
+        article.contains(active)
+      )
+        article.focus({ preventScroll: true });
+    };
     const onBlur = () => {
       if (!canDwell(false)) pauseAndReport();
+      // Focus reaches the iframe only after the window blurs.
+      window.clearTimeout(reclaimTimer);
+      reclaimTimer = window.setTimeout(reclaimFocus);
     };
 
     startDwell();
@@ -788,6 +806,7 @@ export function Reader(props: ReaderProps) {
     window.addEventListener("keydown", onKey);
     window.addEventListener("focus", onFocus);
     window.addEventListener("blur", onBlur);
+    document.addEventListener("fullscreenchange", reclaimFocus);
     document.addEventListener("visibilitychange", onVisibility);
     article.addEventListener("scroll", updateProgress, { passive: true });
     article.addEventListener("wheel", stopPageScroll, { passive: true });
@@ -803,6 +822,7 @@ export function Reader(props: ReaderProps) {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("blur", onBlur);
+      document.removeEventListener("fullscreenchange", reclaimFocus);
       document.removeEventListener("visibilitychange", onVisibility);
       stopPageScroll();
       article.removeEventListener("wheel", stopPageScroll);
@@ -817,6 +837,7 @@ export function Reader(props: ReaderProps) {
       window.clearInterval(dwellTimer);
       window.clearTimeout(carryTimer);
       window.clearTimeout(toolbarTapTimer);
+      window.clearTimeout(reclaimTimer);
       cancelAnimationFrame(carryFrame);
       cancelAnimationFrame(sheetFocusFrame);
       if (sheetOpen()) closeOverlay("action-sheet");
@@ -1098,6 +1119,7 @@ export function Reader(props: ReaderProps) {
       <div
         class="reader-scroll"
         classList={{ swiping: swiping() }}
+        tabIndex={-1}
         style={{ transform: `translate3d(${dragOffset()}px, 0, 0)` }}
         ref={article}
       >
