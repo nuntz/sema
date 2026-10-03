@@ -94,23 +94,28 @@ function GridHeaderFixture() {
             Unread
           </button>
         </div>
-        <button
-          type="button"
-          class="chrome-btn scope-header-chip scope-header-chip--visible"
-          classList={{ "is-hidden": !compactDisplayControls() }}
-        >
-          <span>All · Unread</span>
-          <Icon name="chevron-down" />
-        </button>
       </div>
       <span class="header-spacer" />
       <div class="chrome-group chrome-group--icons">
         <button
           type="button"
           class="chrome-icon"
+          classList={{ "is-hidden": compactDisplayControls() }}
           aria-label="Filter by tag or feed"
         >
           <Icon name="tag" />
+        </button>
+        <button
+          type="button"
+          class="chrome-btn filter-button header-filter-summary"
+          classList={{ "is-hidden": !compactDisplayControls() }}
+          aria-haspopup="dialog"
+          aria-label="Filter: Front page, All dates, Unread only, 183 items"
+        >
+          <Icon name="filter" size={15} />
+          <span class="header-filter-summary__label">Unread</span>
+          <span class="scope-count">183</span>
+          <Icon name="chevron-down" size={13} />
         </button>
         <button type="button" class="chrome-icon" aria-label="Search">
           <Icon name="search" />

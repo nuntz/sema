@@ -13,6 +13,7 @@ import Download from "lucide-solid/icons/download";
 import Ellipsis from "lucide-solid/icons/ellipsis";
 import Expand from "lucide-solid/icons/expand";
 import ExternalLink from "lucide-solid/icons/external-link";
+import Hash from "lucide-solid/icons/hash";
 import Heart from "lucide-solid/icons/heart";
 import ImageIcon from "lucide-solid/icons/image";
 import Layers from "lucide-solid/icons/layers";
@@ -91,7 +92,9 @@ const glyphs = {
   keep: Heart,
   "image-match": ImageIcon,
   "chevron-down": ChevronDown,
+  "chevron-right": ChevronRight,
   "chevron-up": ChevronUp,
+  hash: Hash,
   menu: Menu,
   lock: Lock,
   filter: SlidersHorizontal,

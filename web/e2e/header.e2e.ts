@@ -401,12 +401,17 @@ test("segmented pills preserve v1 gaps while items own the hit target", async ({
     expect(track.heights.every((height) => height >= 30)).toBe(true);
   }
 
+  // Phones hide the segments; the header summary takes over the touch target.
   await page.setViewportSize({ width: 390, height: 780 });
+  await expect(page.locator(".segmented__item").first()).toBeHidden();
   const phoneHeights = await page
-    .locator(".segmented__item")
+    .locator(".header-filter-summary, .chrome-icon")
     .evaluateAll((items) =>
-      items.map((item) => item.getBoundingClientRect().height),
+      items
+        .filter((item) => item.getClientRects().length > 0)
+        .map((item) => item.getBoundingClientRect().height),
     );
+  expect(phoneHeights.length).toBeGreaterThan(0);
   expect(phoneHeights.every((height) => height >= 44)).toBe(true);
 });
 
@@ -720,7 +725,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
       };
     });
     const phoneReader = view === "reader" && width < 620;
-    expect(geometry.header.height).toBe(phoneReader ? 44 : 56);
+    expect(geometry.header.height).toBe(phoneReader || width <= 430 ? 44 : 56);
     if (width > 430 && !phoneReader) {
       expect(geometry.mark.x).toBe(20);
       expect(geometry.mark.y).toBe(18);
@@ -739,7 +744,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
 
   await page.setViewportSize({ width: 1544, height: 780 });
   await openFixture(page, "grid");
-  await expect(page.locator(".scope-header-chip")).toBeHidden();
+  await expect(page.locator(".header-filter-summary")).toBeHidden();
   await openFixture(page, "reader");
   await expect(page.locator(".chrome-overflow")).toBeHidden();
 
@@ -770,7 +775,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
 
   await page.setViewportSize({ width: 390, height: 780 });
   await openFixture(page, "grid");
-  await expect(page.locator(".scope-header-chip")).toBeVisible();
+  await expect(page.locator(".header-filter-summary")).toBeVisible();
   await expect(page.locator(".header-segments")).toBeHidden();
 });
 
@@ -865,7 +870,7 @@ for (const width of [620, 860, 900, 1024]) {
         width - 20,
       );
     }
-    await expect(page.locator(".scope-header-chip")).toBeVisible({
+    await expect(page.locator(".header-filter-summary")).toBeVisible({
       visible: width < 860,
     });
   });

@@ -446,27 +446,30 @@ test("dates and unread are independent, session-only settings", async ({
   await expect(unread).toBeChecked();
 });
 
-test("compact scope chip appears on scroll-up and opens the filter", async ({
+test("tag strip collapses on scroll down and returns on scroll up", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 500 });
   await openGrid(page);
-  const chip = page.locator(".scope-header-chip");
+  const strip = page.locator(".tag-strip");
   const scroller = page.locator(".grid-scroll");
-  await expect(chip).toBeHidden();
+  await expect(strip).toBeVisible();
+  await expect(strip).not.toHaveClass(/tag-strip--collapsed/);
   await scroller.evaluate((element) => {
-    element.scrollTop = 300;
+    element.scrollTop = 200;
   });
   await page.clock.runFor(50);
-  await expect(chip).toBeHidden();
-  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(300);
+  await expect(strip).toHaveClass(/tag-strip--collapsed/);
+  await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBe(200);
   await scroller.evaluate((element) => {
-    element.scrollTop = 299;
+    element.scrollTop = 199;
   });
   await page.clock.runFor(50);
-  await expect(chip).toBeVisible();
-  await expect(chip).toHaveText("All · Unread");
-  await chip.click();
+  await expect(strip).not.toHaveClass(/tag-strip--collapsed/);
+  // The header never collapses: the summary stays reachable while scrolled.
+  const summary = page.locator(".header-filter-summary");
+  await expect(summary).toContainText("Unread");
+  await summary.click();
   await expect(
     page.getByRole("dialog", { name: "Filter", exact: true }),
   ).toBeVisible();
@@ -474,8 +477,7 @@ test("compact scope chip appears on scroll-up and opens the filter", async ({
   await scroller.evaluate((element) => {
     element.scrollTop = 0;
   });
-  await expect(chip).toBeHidden();
-  await expect(page.locator(".filter-button")).toBeVisible();
+  await expect(strip).not.toHaveClass(/tag-strip--collapsed/);
 });
 
 test("compact sheet combines dates and unread and supports dismissal", async ({
@@ -491,7 +493,7 @@ test("compact sheet combines dates and unread and supports dismissal", async ({
   await sheet.getByRole("radio", { name: "Today", exact: true }).click();
   await expect(sheet).toHaveCount(0);
   await expect(page.locator(".filter-button")).toHaveAccessibleName(
-    "Today · Unread",
+    /Today, Unread only/,
   );
   await page.locator(".filter-button").click();
   await sheet.getByRole("switch", { name: "Unread only" }).uncheck();
@@ -501,7 +503,9 @@ test("compact sheet combines dates and unread and supports dismissal", async ({
   ).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
-  await expect(page.locator(".filter-button")).toHaveAccessibleName("Today");
+  await expect(page.locator(".filter-button")).toHaveAccessibleName(
+    /Today, All items/,
+  );
   await page.locator(".filter-button").click();
   await page.locator(".action-sheet-layer").click({ position: { x: 5, y: 5 } });
   await expect(sheet).toHaveCount(0);

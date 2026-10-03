@@ -23,7 +23,7 @@ Format Go with `gofmt`; use tabs and lowercase package names. Use kebab-case for
 
 ## UI Contracts
 
-At viewports 620px and wider, keep grid and reader headers on a 56px shell with 20px edge padding, a 60px brand slot, and a 2px bottom band. The phone reader uses a 44px translucent nav bar and a toolbar sharing one material, with 0.5px hairlines and content scrolling under both. At 1200px and wider, align reader identity to the 640px article measure; collapse the shim below 1200px. Trailing icons navigate elsewhere; leading icons act on the current item. At 620px and wider, the reader read-progress gauge is 2px inside the header band, centred on the article measure, and quiet by default. The scrolled header title is the one sans-serif text in the header; all other header text stays mono.
+At viewports 620px and wider, keep grid and reader headers on a 56px shell with 20px edge padding, a 60px brand slot, and a 2px bottom band. The phone reader uses a 44px translucent nav bar and a toolbar sharing one material, with 0.5px hairlines and content scrolling under both. At 1200px and wider, align reader identity to the 640px article measure; collapse the shim below 1200px. Trailing icons navigate elsewhere; leading icons act on the current item. At 620px and wider, the reader read-progress gauge is 2px inside the header band, centred on the article measure, and quiet by default. The scrolled header title is the one sans-serif text in the header; all other header text stays mono. Below 860px the grid header carries the active Scope chip and a filter summary, with a 52px tag strip under it that collapses on scroll while the header never does; at 430px and below the grid header is 44px.
 
 ## Testing Guidelines
 

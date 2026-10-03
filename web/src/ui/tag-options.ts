@@ -1,5 +1,8 @@
 import type { Feed, FeedItemCounts, GridScope } from "../types";
 
+/** Pseudo-tag for Items whose Feed carries no Tag. */
+export const UNTAGGED_TAG = "untagged";
+
 export interface TagOption {
   tag: string;
   count: number;
@@ -45,7 +48,7 @@ export function feedTagOptions(
     ...[...tagCounts]
       .sort(([first], [second]) => first.localeCompare(second))
       .map(([tag, count]) => ({ tag, count })),
-    { tag: "untagged", count: untagged },
+    { tag: UNTAGGED_TAG, count: untagged },
   ];
 }
 

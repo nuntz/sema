@@ -1,20 +1,29 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The compact control contract uses button-based radio controls.
-import { For, onCleanup, onMount } from "solid-js";
+import { createUniqueId, For, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import { ITEM_WINDOWS, type ItemWindow } from "../item-view";
+import type { Order } from "../types";
 import { useSheetDrag } from "./use-sheet-drag";
 
 export function FilterSheet(props: {
+  order: Order;
+  feedScoped: boolean;
   window: ItemWindow;
   unreadOnly: boolean;
   counts: Partial<Record<ItemWindow, number>>;
+  onOrder(order: Order): void;
   onWindow(window: ItemWindow): void;
   onUnreadOnly(next: boolean): void;
   onClose(): void;
 }) {
   let panel: HTMLElement | undefined;
   let closeButton: HTMLButtonElement | undefined;
+  const lockID = createUniqueId();
+  const orders: { value: Order; label: string }[] = [
+    { value: "interest", label: "Front page" },
+    { value: "chrono", label: "Latest" },
+  ];
   const previousFocus = document.activeElement;
   const drag = useSheetDrag({
     panel: () => panel,
@@ -89,6 +98,38 @@ export function FilterSheet(props: {
               <Icon name="close" size={20} />
             </button>
           </header>
+          <p class="filter-section-label">Order</p>
+          <div
+            role="radiogroup"
+            aria-label="Item order"
+            aria-describedby={props.feedScoped ? lockID : undefined}
+          >
+            <For each={orders}>
+              {(option) => (
+                <button
+                  class="filter-date filter-order"
+                  type="button"
+                  role="radio"
+                  aria-label={option.label}
+                  aria-checked={props.order === option.value}
+                  disabled={props.feedScoped && option.value === "interest"}
+                  onClick={() => props.onOrder(option.value)}
+                >
+                  <Icon name="check" size={18} />
+                  <span>{option.label}</span>
+                </button>
+              )}
+            </For>
+          </div>
+          <Show when={props.feedScoped}>
+            <p class="scope-order-lock" id={lockID}>
+              <Icon name="lock" size={14} />
+              <span>
+                Newest first while filtering by feed. Clear the feed to use
+                Front page.
+              </span>
+            </p>
+          </Show>
           <p class="filter-section-label">Dates</p>
           <div role="radiogroup" aria-label="Items shown">
             <For each={ITEM_WINDOWS}>

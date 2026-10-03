@@ -140,16 +140,19 @@ for (const width of [1440, 393]) {
   test(`scope counts and geometry at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const requests = await openGrid(page);
-    const cell = page.locator(width < 860 ? ".scope-bar" : ".scope-cell");
+    const cell = page.locator(
+      width < 860 ? ".header-filter-summary" : ".scope-cell",
+    );
     const count = page.locator(
       width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
     );
     await expect(cell).toHaveText(
-      width < 860
-        ? "Front pageLatestAll · Unread30"
-        : "All30 unread items · 2 feeds",
+      width < 860 ? "Latest · Unread30" : "All30 unread items · 2 feeds",
     );
-    const heading = await cell.boundingBox();
+    const heading = await (width < 860
+      ? page.locator(".tag-strip")
+      : cell
+    ).boundingBox();
     const first = await page
       .locator('[data-item-id="Today unread"]')
       .boundingBox();
@@ -162,7 +165,7 @@ for (const width of [1440, 393]) {
     await page.keyboard.press("g");
     await page.keyboard.press("t");
     await expect(cell).toHaveText(
-      width < 860 ? "Front pageLatestToday18" : "Today18 items · 2 feeds",
+      width < 860 ? "Latest · Today18" : "Today18 items · 2 feeds",
     );
     const request = requests.findLast(
       (url) => url.pathname === "/api/feeds/counts",
@@ -175,37 +178,43 @@ for (const width of [1440, 393]) {
     );
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^design/ }).click();
-    await expect(cell).toHaveText(
-      width < 860
-        ? "#designFront pageLatestToday18"
-        : "#design18 items today · 2 feeds",
-    );
+    if (width < 860) {
+      await expect(page.locator(".active-tag-chip .tag-chip-name")).toHaveText(
+        "design",
+      );
+      await expect(cell).toHaveText("Latest · Today18");
+    } else await expect(cell).toHaveText("#design18 items today · 2 feeds");
     await page.keyboard.press("Escape");
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^Daily/ }).click();
-    await expect(
-      cell.locator(
-        width < 860
-          ? ".scope-bar-chip > span:not(.source-badge)"
-          : ".scope-cell__title",
-      ),
-    ).toHaveText("Daily");
+    const scopeTitle = page.locator(
+      width < 860 ? ".active-tag-chip .tag-chip-name" : ".scope-cell__title",
+    );
+    await expect(scopeTitle).toHaveText("Daily");
     if (width < 860) {
       await expect(count).toHaveText("10");
+      await page.locator(".filter-button").click();
+      const sheet = page.getByRole("dialog", { name: "Filter", exact: true });
       await expect(
-        cell.getByRole("radio", { name: "Front page" }),
+        sheet.getByRole("radio", { name: "Front page", exact: true }),
       ).toBeDisabled();
-      await expect(cell.locator(".scope-order-lock")).toHaveText(
+      await expect(sheet.locator(".scope-order-lock")).toHaveText(
         "Newest first while filtering by feed. Clear the feed to use Front page.",
       );
-    } else
+      await page.getByRole("button", { name: "Close filter" }).click();
+      await expect(
+        page.locator(".active-tag-chip .source-badge"),
+      ).toBeVisible();
+    } else {
       await expect(cell.locator(".scope-cell__meta")).toHaveText(
         "10 items today",
       );
-    await expect(cell.locator(".source-badge")).toBeVisible();
+      await expect(cell.locator(".source-badge")).toBeVisible();
+    }
     await page.keyboard.press("g");
     await page.keyboard.press("r");
     await expect(cell).toHaveCount(0);
+    await expect(page.locator(".tag-strip")).toHaveCount(0);
   });
   test(`empty scopes at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -222,7 +231,7 @@ for (const width of [1440, 393]) {
       );
     else
       await expect(page.locator(".filter-button")).toHaveAccessibleName(
-        "Today · Unread",
+        /Today, Unread only/,
       );
     await expect(
       page.getByRole("heading", { name: "Nothing unread today" }),
@@ -230,7 +239,7 @@ for (const width of [1440, 393]) {
     if (width < 620) {
       await page.getByRole("button", { name: "Show all", exact: true }).click();
       await expect(page.locator(".filter-button")).toHaveAccessibleName(
-        "All · Unread",
+        /All dates, Unread only/,
       );
     }
     await page.keyboard.press("#");
@@ -245,7 +254,7 @@ for (const width of [1440, 393]) {
         .click();
     else await page.keyboard.press("Escape");
     if (width < 860)
-      await expect(page.locator(".scope-bar-chip")).toHaveCount(0);
+      await expect(page.locator(".active-tag-chip")).toHaveCount(0);
     else
       await expect(page.locator(".scope-cell__title")).not.toHaveText(
         "#design",
@@ -449,7 +458,7 @@ for (const [width, height, theme] of [
     else
       await expect(page.locator(".filter-button .scope-count")).toHaveText("0");
     const cell = await page
-      .locator(width < 860 ? ".scope-bar" : ".scope-cell")
+      .locator(width < 860 ? ".tag-strip-spacer" : ".scope-cell")
       .boundingBox();
     const rect = await section.boundingBox();
     if (!cell || !rect) throw new Error("Missing section or scope cell");
@@ -465,6 +474,120 @@ for (const [width, height, theme] of [
     });
   });
 }
+
+test("phone tag strip hops scopes in one tap and the sheet owns order", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGrid(page);
+  await page.route("**/api/feeds", (route) =>
+    route.fulfill({
+      json: {
+        feeds: [
+          {
+            feed_id: "daily",
+            title: "Daily",
+            url: "https://example.com/feed",
+            tags: ["design"],
+          },
+          {
+            feed_id: "other",
+            title: "Other",
+            url: "https://example.org/feed",
+            tags: ["news"],
+          },
+          {
+            feed_id: "quiet",
+            title: "Quiet",
+            url: "https://example.net/feed",
+            tags: ["quiet"],
+          },
+        ],
+      },
+    }),
+  );
+  await page.reload();
+  const chips = page.locator(
+    ".tag-strip__chip:not(.tag-strip__chip--hash):not(.tag-strip__chip--feeds)",
+  );
+  // Ranked by count; the zero-count tag stays out of the strip.
+  await expect(chips).toHaveText(["design24", "news6"]);
+  await chips.nth(1).click();
+  await expect(page.locator(".active-tag-chip .tag-chip-name")).toHaveText(
+    "news",
+  );
+  await expect(chips).toHaveText(["design24"]);
+  await expect(page.locator(".header-filter-summary")).toHaveText(
+    "Latest · Unread6",
+  );
+  await page.locator(".active-tag-chip .tag-chip-close").click();
+  await expect(page.locator(".active-tag-chip")).toHaveCount(0);
+  await expect(chips).toHaveText(["design24", "news6"]);
+  await page
+    .getByRole("button", { name: "Filter by feed", exact: true })
+    .click();
+  await expect(page.getByRole("option")).toHaveText([
+    /Daily/,
+    /Other/,
+    /Quiet/,
+  ]);
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Filter by tag or feed", exact: true })
+    .click();
+  await expect(page.getByRole("option", { name: /^quiet/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator(".filter-button").click();
+  const sheet = page.getByRole("dialog", { name: "Filter", exact: true });
+  await sheet.getByRole("radio", { name: "Front page", exact: true }).click();
+  await expect(sheet).toBeVisible();
+  await expect(
+    sheet.getByRole("radio", { name: "Front page", exact: true }),
+  ).toBeChecked();
+  await page.getByRole("button", { name: "Close filter" }).click();
+  await expect(page.locator(".header-filter-summary")).toHaveText("Unread30");
+});
+
+test("scoped header fits at 360 with the longest summary", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await openGrid(page, false, true);
+  await page.keyboard.press("g");
+  await page.keyboard.press("y");
+  const summary = page.locator(".header-filter-summary");
+  await expect(summary).toContainText("Latest · Yesterday · Unread");
+  const chip = await page.locator(".active-tag-chip").boundingBox();
+  const menu = await page.getByRole("button", { name: "More" }).boundingBox();
+  const search = await page
+    .getByRole("button", { name: "Search", exact: true })
+    .boundingBox();
+  if (!chip || !menu || !search) throw new Error("Header controls missing");
+  expect(chip.width).toBeGreaterThanOrEqual(84);
+  expect(menu.x + menu.width).toBeLessThanOrEqual(360);
+  expect(search.x).toBeGreaterThanOrEqual(chip.x + chip.width);
+  await expect(page.locator(".active-tag-chip .tag-chip-close")).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(360);
+});
+
+test("the Archive keeps a scope trigger on phones", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGrid(page);
+  const trigger = page.getByRole("button", {
+    name: "Filter by tag or feed",
+    exact: true,
+  });
+  // Live grid: the strip's hash chip is the one trigger.
+  await expect(trigger).toHaveCount(1);
+  await expect(page.locator(".tag-strip")).toBeVisible();
+  await page.keyboard.press("g");
+  await page.keyboard.press("r");
+  await expect(page.locator(".tag-strip")).toHaveCount(0);
+  await expect(page.locator(".app-header .tag-trigger")).toBeVisible();
+  await page.locator(".app-header .tag-trigger").click();
+  await expect(page.getByRole("option", { name: /^design/ })).toBeVisible();
+  await page.keyboard.press("Escape");
+});
 
 test("same-window counts stay numeric while a new window shows counting", async ({
   page,

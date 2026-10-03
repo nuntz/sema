@@ -21,13 +21,23 @@ import {
   scopeOptionID,
 } from "./tag-options";
 
+export type TagFilterMode = "all" | "feeds";
+export interface TagFilterOpenRequest {
+  id: number;
+  mode: TagFilterMode;
+}
+
 export function TagFilter(props: {
   feeds: Feed[];
   itemCounts: FeedItemCounts;
   unreadOnly: boolean;
   value: GridScope;
   active: boolean;
-  openRequest?: number;
+  openRequest?: TagFilterOpenRequest;
+  /** Compact header: the chip body opens the palette and only × clears. */
+  chipOpensPalette?: boolean;
+  /** The tag strip is on screen and owns the way in; show no trigger. */
+  hideTrigger?: boolean;
   tooltipDisabled?: boolean;
   onOpenChange?(open: boolean): void;
   onChange(scope: GridScope): void;
@@ -35,17 +45,21 @@ export function TagFilter(props: {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const [highlight, setHighlight] = createSignal(0);
+  const [mode, setMode] = createSignal<TagFilterMode>("all");
   let input!: HTMLInputElement;
-  let previousOpenRequest = props.openRequest;
+  let previousOpenRequest = props.openRequest?.id;
 
-  const matches = createMemo(() =>
-    scopeFilterOptions(
+  const matches = createMemo(() => {
+    const options = scopeFilterOptions(
       props.feeds,
       query(),
       props.itemCounts,
       props.unreadOnly,
-    ),
-  );
+    );
+    return mode() === "feeds"
+      ? options.filter((option) => option.kind === "feed")
+      : options;
+  });
   const tagMatches = createMemo(() =>
     matches().filter(
       (option): option is Extract<ScopeFilterOption, { kind: "tag" }> =>
@@ -60,7 +74,8 @@ export function TagFilter(props: {
   );
   const activeFeed = createMemo(() => feedScopeChip(props.value, props.feeds));
 
-  const begin = () => {
+  const begin = (nextMode: TagFilterMode = "all") => {
+    setMode(nextMode);
     setQuery("");
     setHighlight(0);
     setOpen(true);
@@ -76,8 +91,8 @@ export function TagFilter(props: {
   createEffect(() => props.onOpenChange?.(open()));
   createEffect(() => {
     const request = props.openRequest;
-    if (request !== undefined && request !== previousOpenRequest) begin();
-    previousOpenRequest = request;
+    if (request && request.id !== previousOpenRequest) begin(request.mode);
+    previousOpenRequest = request?.id;
   });
 
   onMount(() => {
@@ -100,7 +115,7 @@ export function TagFilter(props: {
         return;
       if (event.key === "#") {
         event.preventDefault();
-        begin();
+        begin("all");
       } else if (event.key === "Escape" && !open()) {
         const next = scopeForClosedEscape(props.value);
         if (next !== undefined) {
@@ -154,79 +169,144 @@ export function TagFilter(props: {
           <Show
             when={props.value}
             fallback={
-              <Tooltip
-                name="Filter by tag or feed"
-                shortcut="#"
-                disabled={props.tooltipDisabled}
-              >
-                <button
-                  type="button"
-                  class="chrome-icon header-icon-button tag-trigger"
-                  aria-label="Filter by tag or feed"
-                  onClick={begin}
+              <Show when={!props.hideTrigger}>
+                <Tooltip
+                  name="Filter by tag or feed"
+                  shortcut="#"
+                  disabled={props.tooltipDisabled}
                 >
-                  <Icon name="tag" size={18} />
-                </button>
-              </Tooltip>
+                  <button
+                    type="button"
+                    class="chrome-icon header-icon-button tag-trigger"
+                    aria-label="Filter by tag or feed"
+                    onClick={() => begin("all")}
+                  >
+                    <Icon name="tag" size={18} />
+                  </button>
+                </Tooltip>
+              </Show>
             }
           >
             {(scope) => (
               <Show
                 when={scope().kind === "feed"}
                 fallback={
-                  <Tooltip
-                    name={`Clear tag filter: #${scope().value}`}
-                    disabled={props.tooltipDisabled}
+                  <Show
+                    when={props.chipOpensPalette}
+                    fallback={
+                      <Tooltip
+                        name={`Clear tag filter: #${scope().value}`}
+                        disabled={props.tooltipDisabled}
+                      >
+                        <button
+                          type="button"
+                          class="active-tag-chip"
+                          aria-label={`Clear tag filter: #${scope().value}`}
+                          onClick={clear}
+                        >
+                          <span class="tag-chip-hash">#</span>
+                          <span class="tag-chip-name">{scope().value}</span>
+                          <span class="tag-chip-close" aria-hidden="true">
+                            <Icon name="close" size={13} />
+                          </span>
+                        </button>
+                      </Tooltip>
+                    }
                   >
-                    <button
-                      type="button"
-                      class="active-tag-chip"
-                      aria-label={`Clear tag filter: #${scope().value}`}
-                      onClick={clear}
-                    >
-                      <span class="tag-chip-hash">#</span>
-                      <span class="tag-chip-name">{scope().value}</span>
-                      <span class="tag-chip-close" aria-hidden="true">
+                    <div class="active-tag-chip active-tag-chip--split">
+                      <button
+                        type="button"
+                        class="tag-chip-body"
+                        aria-label={`Change scope: #${scope().value}`}
+                        onClick={() => begin("all")}
+                      >
+                        <span class="tag-chip-hash">#</span>
+                        <span class="tag-chip-name">{scope().value}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="tag-chip-close"
+                        aria-label="Clear tag"
+                        onClick={clear}
+                      >
                         <Icon name="close" size={13} />
-                      </span>
-                    </button>
-                  </Tooltip>
+                      </button>
+                    </div>
+                  </Show>
                 }
               >
-                <Tooltip
-                  name={activeFeed()?.ariaLabel ?? "Clear feed filter"}
-                  disabled={props.tooltipDisabled}
+                <Show
+                  when={props.chipOpensPalette}
+                  fallback={
+                    <Tooltip
+                      name={activeFeed()?.ariaLabel ?? "Clear feed filter"}
+                      disabled={props.tooltipDisabled}
+                    >
+                      <button
+                        type="button"
+                        class="active-tag-chip active-feed-chip"
+                        aria-label={
+                          activeFeed()?.ariaLabel ?? "Clear feed filter"
+                        }
+                        onClick={clear}
+                      >
+                        <SourceBadge
+                          connector={activeFeed()?.option?.connector}
+                          imageURL={activeFeed()?.option?.faviconURL}
+                          title={activeFeed()?.title ?? scope().value}
+                          size={16}
+                        />
+                        <span class="tag-chip-name">
+                          {activeFeed()?.title ?? scope().value}
+                        </span>
+                        <span class="tag-chip-close" aria-hidden="true">
+                          <Icon name="close" size={13} />
+                        </span>
+                      </button>
+                    </Tooltip>
+                  }
                 >
-                  <button
-                    type="button"
-                    class="active-tag-chip active-feed-chip"
-                    aria-label={activeFeed()?.ariaLabel ?? "Clear feed filter"}
-                    onClick={clear}
-                  >
-                    <SourceBadge
-                      connector={activeFeed()?.option?.connector}
-                      imageURL={activeFeed()?.option?.faviconURL}
-                      title={activeFeed()?.title ?? scope().value}
-                      size={16}
-                    />
-                    <span class="tag-chip-name">
-                      {activeFeed()?.title ?? scope().value}
-                    </span>
-                    <span class="tag-chip-close" aria-hidden="true">
+                  <div class="active-tag-chip active-feed-chip active-tag-chip--split">
+                    <button
+                      type="button"
+                      class="tag-chip-body"
+                      aria-label={`Change scope: ${activeFeed()?.title ?? scope().value}`}
+                      onClick={() => begin("feeds")}
+                    >
+                      <SourceBadge
+                        connector={activeFeed()?.option?.connector}
+                        imageURL={activeFeed()?.option?.faviconURL}
+                        title={activeFeed()?.title ?? scope().value}
+                        size={16}
+                      />
+                      <span class="tag-chip-name">
+                        {activeFeed()?.title ?? scope().value}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      class="tag-chip-close"
+                      aria-label="Clear feed"
+                      onClick={clear}
+                    >
                       <Icon name="close" size={13} />
-                    </span>
-                  </button>
-                </Tooltip>
+                    </button>
+                  </div>
+                </Show>
               </Show>
             )}
           </Show>
         }
       >
         <div class="tag-combobox">
-          <span>#</span>
+          <span>
+            {mode() === "feeds" ? <Icon name="newspaper" size={14} /> : "#"}
+          </span>
           <input
             ref={input}
-            aria-label="Filter by tag or feed"
+            aria-label={
+              mode() === "feeds" ? "Filter by feed" : "Filter by tag or feed"
+            }
             role="combobox"
             aria-expanded="true"
             aria-controls="grid-scope-options"

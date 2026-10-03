@@ -111,7 +111,6 @@ interface GridProps {
   onFinishAndClear(): void;
   onReachedEnd(): void;
   topSlot?: JSX.Element;
-  onTopSlotHeight?(height: number): void;
   active: boolean;
   onHomeReady?(action: (() => void) | undefined): void;
   onRefresh(): Promise<number>;
@@ -312,7 +311,6 @@ function GridContent(props: GridProps) {
     const measure = () => {
       const height = element.getBoundingClientRect().height;
       setTopSlotHeight(height);
-      props.onTopSlotHeight?.(height);
     };
     const observer = new ResizeObserver(measure);
     observer.observe(element);

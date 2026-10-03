@@ -6,9 +6,11 @@ import {
   createMemo,
   createSignal,
   For,
+  on,
   onCleanup,
   onMount,
   Show,
+  untrack,
 } from "solid-js";
 import { APIError, type AppAPI, UnauthorizedError } from "./api/client";
 import { completeArchiveRemoval, shouldConfirmArchiveRemoval } from "./archive";
@@ -58,6 +60,10 @@ import type {
 import { ConfirmRemove } from "./ui/ConfirmRemove";
 import { Feeds } from "./ui/Feeds";
 import { FilterSheet } from "./ui/FilterSheet";
+import {
+  filterSummaryDescription,
+  filterSummaryLabel,
+} from "./ui/filter-summary";
 import { frontPageEntriesForState, frontPageSequence } from "./ui/front-page";
 import { Grid } from "./ui/Grid";
 import { KeyboardMap } from "./ui/KeyboardMap";
@@ -74,15 +80,23 @@ import {
 import { closeOverlay, keyOwnership, pushOverlay } from "./ui/overlay-history";
 import { Reader } from "./ui/Reader";
 import { RelatedPanel } from "./ui/RelatedPanel";
-import { ScopeBar } from "./ui/ScopeBar";
 import { SearchResults } from "./ui/SearchResults";
 import { SignalHint } from "./ui/SignalHint";
-import { TagFilter } from "./ui/TagFilter";
-import { displayFeedTitle, feedScopeChip } from "./ui/tag-options";
+import {
+  TagFilter,
+  type TagFilterMode,
+  type TagFilterOpenRequest,
+} from "./ui/TagFilter";
+import { TagStrip } from "./ui/TagStrip";
+import {
+  displayFeedTitle,
+  feedScopeChip,
+  feedTagOptions,
+} from "./ui/tag-options";
+import { rankStripTags, tagSetKey, tagStripChips } from "./ui/tag-strip";
 import {
   expandToolbar,
   initialToolbarCollapseState,
-  scopeChipVisible,
   updateToolbarCollapse,
 } from "./ui/toolbar-collapse";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
@@ -113,6 +127,9 @@ export function App(props: {
   const [feedItemCounts, setFeedItemCounts] = createSignal<FeedItemCounts>({});
   const [scopeCountsWindowKey, setScopeCountsWindowKey] =
     createSignal<string>();
+  // Counts on hand describe the current Window, not one being swapped in.
+  const windowCountsReady = () =>
+    scopeCountsWindowKey() === (windowRange(itemWindow())?.from ?? "");
   const scopePhone = createMediaQuery("(max-width: 619px)");
 
   const [expandedStoryIDs, setExpandedStoryIDs] = createSignal<Set<string>>(
@@ -142,7 +159,6 @@ export function App(props: {
   const [windowCounts, setWindowCounts] = createSignal<
     Partial<Record<ItemWindow, FeedItemCounts>>
   >({});
-  const [barHeight, setBarHeight] = createSignal(0);
   const [scopeCollapse, setScopeCollapse] = createSignal(
     initialToolbarCollapseState(),
   );
@@ -150,7 +166,10 @@ export function App(props: {
   const phoneHeader = createMediaQuery("(max-width: 430px)");
   const compactDisplayControls = createMediaQuery("(max-width: 859px)");
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
-  const [tagOpenRequest, setTagOpenRequest] = createSignal(0);
+  const [tagOpenRequest, setTagOpenRequest] =
+    createSignal<TagFilterOpenRequest>();
+  const openTagPalette = (mode: TagFilterMode) =>
+    setTagOpenRequest((current) => ({ id: (current?.id ?? 0) + 1, mode }));
   let feedItemCountVersion = 0;
   let searchVersion = 0;
   let relatedVersion = 0;
@@ -330,9 +349,7 @@ export function App(props: {
       itemWindow(),
       unreadOnly(),
       feedFilters(),
-      scopeCountsWindowKey() === (windowRange(itemWindow())?.from ?? "")
-        ? feedItemCounts()
-        : undefined,
+      windowCountsReady() ? feedItemCounts() : undefined,
       readAdjust(),
       scopePhone(),
     );
@@ -347,12 +364,26 @@ export function App(props: {
       ? undefined
       : scopeCell(),
   );
-  const showScopeChip = createMemo(() =>
-    scopeChipVisible(
-      scopeCollapse().lastScrollTop,
-      barHeight(),
-      scopeCollapse(),
+  const compactControls = createMemo(
+    () => compactDisplayControls() && mode() === "live" && !searchActive(),
+  );
+  const stripTagOptions = createMemo(() =>
+    feedTagOptions(feedFilters(), feedItemCounts(), unreadOnly()),
+  );
+  const stripTagKey = createMemo(() => tagSetKey(feedFilters()));
+  // Frozen per session so chips never move after a tap; re-ranked only when
+  // the Window, the unread setting, or the tag set changes.
+  const [stripOrder, setStripOrder] = createSignal<string[]>([]);
+  createEffect(
+    on(
+      [itemWindow, unreadOnly, stripTagKey, windowCountsReady],
+      ([, , , ready]) => {
+        if (ready) setStripOrder(rankStripTags(untrack(stripTagOptions)));
+      },
     ),
+  );
+  const stripChips = createMemo(() =>
+    tagStripChips(stripTagOptions(), stripOrder(), scope()),
   );
   const pendingWindowCounts = new Map<ItemWindow, number>();
   createEffect(() => {
@@ -1148,8 +1179,7 @@ export function App(props: {
     clearGo();
     closeKeys();
     setView("grid");
-    if (scopeCountsWindowKey() !== (windowRange(itemWindow())?.from ?? ""))
-      void refreshFeedItemCounts();
+    if (!windowCountsReady()) void refreshFeedItemCounts();
     if (!feedsGridDirty) return;
     feedsGridDirty = false;
     await feedFilterRefresh;
@@ -1231,6 +1261,29 @@ export function App(props: {
       unreadOnly: unreadOnly(),
       order: gridOrder(),
     }),
+  );
+
+  const scopePicker = (chipOpensPalette: boolean) => (
+    <TagFilter
+      feeds={feedFilters()}
+      itemCounts={feedItemCounts()}
+      unreadOnly={unreadOnly()}
+      value={scope()}
+      active={
+        !headerMenu() &&
+        ["grid", "search", "transient"].includes(keyboard().owner)
+      }
+      openRequest={tagOpenRequest()}
+      chipOpensPalette={chipOpensPalette}
+      hideTrigger={chipOpensPalette && compactControls()}
+      tooltipDisabled={headerTooltipDisabled()}
+      onOpenChange={(open) => {
+        setTagFilterOpen(open);
+        if (open && mode() === "live")
+          void flushRead().then(refreshFeedItemCounts);
+      }}
+      onChange={(nextScope) => void applyScope(nextScope)}
+    />
   );
 
   return (
@@ -1354,43 +1407,38 @@ export function App(props: {
                   Unread
                 </button>
               </div>
-              <Show when={compactDisplayControls() && !searchActive()}>
-                <button
-                  type="button"
-                  class="chrome-btn scope-header-chip"
-                  classList={{ "scope-header-chip--visible": showScopeChip() }}
-                  aria-hidden={!showScopeChip()}
-                  tabIndex={showScopeChip() ? 0 : -1}
-                  aria-haspopup="dialog"
-                  onClick={openFilter}
-                >
-                  {scopeSummary(itemWindow(), unreadOnly())}
-                  <Icon name="chevron-down" size={13} />
-                </button>
-              </Show>
             </div>
           </Show>
 
+          <Show when={compactDisplayControls()}>{scopePicker(true)}</Show>
           <div class="header-spacer" />
           <div class="chrome-group chrome-group--icons header-tools">
-            <TagFilter
-              feeds={feedFilters()}
-              itemCounts={feedItemCounts()}
-              unreadOnly={unreadOnly()}
-              value={scope()}
-              active={
-                !headerMenu() &&
-                ["grid", "search", "transient"].includes(keyboard().owner)
-              }
-              openRequest={tagOpenRequest()}
-              tooltipDisabled={headerTooltipDisabled()}
-              onOpenChange={(open) => {
-                setTagFilterOpen(open);
-                if (open && mode() === "live")
-                  void flushRead().then(refreshFeedItemCounts);
-              }}
-              onChange={(nextScope) => void applyScope(nextScope)}
-            />
+            <Show when={!compactDisplayControls()}>{scopePicker(false)}</Show>
+            <Show when={compactControls()}>
+              <button
+                type="button"
+                class="chrome-btn filter-button header-filter-summary"
+                aria-haspopup="dialog"
+                aria-label={filterSummaryDescription(
+                  gridOrder(),
+                  itemWindow(),
+                  unreadOnly(),
+                  scopeCell()?.count,
+                )}
+                onClick={openFilter}
+              >
+                <Icon name="filter" size={15} />
+                <span class="header-filter-summary__label">
+                  {filterSummaryLabel(gridOrder(), itemWindow(), unreadOnly())}
+                </span>
+                <span class="scope-count">
+                  {scopeCell()?.count?.toLocaleString("en-US") ?? "–"}
+                </span>
+                <Show when={!scope()}>
+                  <Icon name="chevron-down" size={13} />
+                </Show>
+              </button>
+            </Show>
             <div class="search-slot" classList={{ open: searchOpen() }}>
               <Show
                 when={searchOpen()}
@@ -1511,6 +1559,15 @@ export function App(props: {
             <Icon name="menu" size={18} />
           </button>
         </AppHeader>
+        <Show when={compactControls()}>
+          <TagStrip
+            chips={stripChips()}
+            scope={scope()}
+            collapsed={scopeCollapse().collapsed}
+            onTag={(tag) => void applyTag(tag)}
+            onOpenPalette={openTagPalette}
+          />
+        </Show>
         <SignalHint
           notice={signalNotice()}
           visible={
@@ -1542,6 +1599,8 @@ export function App(props: {
         </Show>
         <Show when={filterOpen()}>
           <FilterSheet
+            order={gridOrder()}
+            feedScoped={feedScoped()}
             window={itemWindow()}
             unreadOnly={unreadOnly()}
             counts={{
@@ -1553,6 +1612,7 @@ export function App(props: {
               ),
               [itemWindow()]: scopeCell()?.count,
             }}
+            onOrder={(next) => void selectOrder(next)}
             onWindow={(next) => void selectWindow(next)}
             onUnreadOnly={(next) => void setUnreadOnlyState(next)}
             onClose={() => setFilterOpen(false)}
@@ -1572,25 +1632,6 @@ export function App(props: {
               aria-modal="true"
               aria-label="More options"
             >
-              <button
-                type="button"
-                onClick={() => {
-                  setHeaderMenu();
-                  setTagOpenRequest((value) => value + 1);
-                }}
-              >
-                <Icon name="tag" size={18} />
-                <span>Filter by tag or feed</span>
-                <Show when={scope()}>
-                  {(activeScope) => (
-                    <span class="mobile-active-tag">
-                      {activeScope().kind === "tag"
-                        ? `#${activeScope().value}`
-                        : activeFeedTitle()}
-                    </span>
-                  )}
-                </Show>
-              </button>
               <button
                 type="button"
                 classList={{ active: mode() === "archive" }}
@@ -1762,22 +1803,8 @@ export function App(props: {
                 gridHome = action;
               }}
               topSlot={
-                compactDisplayControls() &&
-                mode() === "live" &&
-                !searchActive() ? (
-                  <ScopeBar
-                    scope={scope()}
-                    model={scopeCell()}
-                    window={itemWindow()}
-                    unreadOnly={unreadOnly()}
-                    order={gridOrder()}
-                    onClearScope={() => void applyScope(null)}
-                    onOrder={(next) => void selectOrder(next)}
-                    onFilter={openFilter}
-                  />
-                ) : undefined
+                compactControls() ? <div class="tag-strip-spacer" /> : undefined
               }
-              onTopSlotHeight={setBarHeight}
               onRefresh={() => pollNew(true)}
               onScrollPosition={(top) => {
                 session.scrollTop = top;

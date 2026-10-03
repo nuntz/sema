@@ -90,6 +90,14 @@ _Avoid_: Seen, cleared, dismissed, skipped
 The live grid in interest order, where Stories and single Items interleave by rank. Chrono order, tag views, and the Archive are plain Item lists and never contain Stories.
 _Avoid_: Feed, timeline, home, grid (when Stories are meant)
 
+**Scope**:
+The one Tag or Feed the grid is currently restricted to, if any. A user has at most one Scope at a time, it is remembered between sessions, and a Feed Scope always shows newest first.
+_Avoid_: Filter, tag view, feed view, selection
+
+**Window**:
+The publication range the grid shows: Today, Yesterday, or All of the Live Window. The Window is chosen per session and combines with Scope and with showing unread Items only.
+_Avoid_: Date filter, range, period, Live Window (which is retention, not display)
+
 **Size**:
 The visual weight of a cell on the grid: small, medium, or large, cut at the 60th and 90th percentile of the user's scores. A Story is never small.
 _Avoid_: Tier, rank, priority

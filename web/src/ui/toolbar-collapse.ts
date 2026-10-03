@@ -39,11 +39,3 @@ export function expandToolbar(
 ): ToolbarCollapseState {
   return initialToolbarCollapseState(state.lastScrollTop);
 }
-
-export function scopeChipVisible(
-  scrollTop: number,
-  barHeight: number,
-  state: ToolbarCollapseState,
-): boolean {
-  return barHeight > 0 && scrollTop > barHeight && !state.collapsed;
-}
