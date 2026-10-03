@@ -263,13 +263,18 @@ func TestOnlyItemsQueueHasBatchingWindow(t *testing.T) {
 func TestOperationalQueriesParseNonEmpty(t *testing.T) {
 	aggregate := regexp.MustCompile(`^(sum|avg|max)\([A-Za-z][A-Za-z0-9]*\) as [a-z][a-z0-9_]*$`)
 	group := regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*|bin\(1h\))$`)
+	presence := regexp.MustCompile(`^filter ispresent\([A-Za-z][A-Za-z0-9]*\) \| `)
 	seen := map[string]bool{}
 	for _, entry := range operationalQueries {
 		if entry.name == "" || seen[entry.name] || len(entry.functions) == 0 {
 			t.Fatalf("invalid query entry: %#v", entry)
 		}
 		seen[entry.name] = true
-		query, ok := strings.CutPrefix(strings.TrimSpace(entry.query), "stats ")
+		query := strings.TrimSpace(entry.query)
+		if filter := presence.FindString(query); filter != "" {
+			query = strings.TrimPrefix(query, filter)
+		}
+		query, ok := strings.CutPrefix(query, "stats ")
 		if !ok {
 			t.Fatalf("%s: missing stats command", entry.name)
 		}
@@ -288,7 +293,7 @@ func TestOperationalQueriesParseNonEmpty(t *testing.T) {
 			}
 		}
 	}
-	for _, area := range []string{"fetch-outcomes", "items", "summaries", "vector-puts", "image-embeds", "stories", "rescore-volume", "centroid-drift", "feed-failures", "api"} {
+	for _, area := range []string{"fetch-outcomes", "items", "summaries", "vector-puts", "image-embeds", "stories", "rescore-volume", "centroid-drift", "feed-failures", "api", "sends", "items-latency"} {
 		if !seen[area] {
 			t.Errorf("missing query area %s", area)
 		}

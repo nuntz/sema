@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,17 @@ const (
 	sendOutcomeQueued  = "queued"
 	sendOutcomeFailed  = "failed"
 	errorNoDestination = "no destination"
+)
+
+// Outcomes recorded on the request event for Sends that never reach the
+// Destination, or whose retry could not be queued. They are not part of the
+// response contract.
+const (
+	sendOutcomeError         = "error"
+	sendOutcomeRateLimited   = "rate_limited"
+	sendOutcomeNoDestination = "no_destination"
+	sendOutcomeItemNotFound  = "item_not_found"
+	sendOutcomeTooLarge      = "too_large"
 )
 
 type destinationStore interface {
@@ -141,19 +153,23 @@ func (s *server) putDestination(ctx context.Context, userID, body string) events
 func (s *server) reserveSend(ctx context.Context, userID string, requireEnabled bool) (domain.Destination, *events.APIGatewayV2HTTPResponse) {
 	destination, err := s.destinations.Destination(ctx, userID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && requireEnabled && !destination.Enabled) {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeNoDestination)
 		result := response(http.StatusConflict, map[string]string{"error": errorNoDestination})
 		return destination, &result
 	}
 	if err != nil {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeError)
 		result := s.failure("get destination", err)
 		return destination, &result
 	}
 	allowed, err := s.destinations.ReserveSend(ctx, userID, s.now(), sendsPerHour)
 	if err != nil {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeError)
 		result := s.failure("reserve send", err)
 		return destination, &result
 	}
 	if !allowed {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeRateLimited)
 		result := response(http.StatusTooManyRequests, map[string]string{"error": "too many sends"})
 		return destination, &result
 	}
@@ -173,6 +189,7 @@ func (s *server) pingDestination(ctx context.Context, userID string) events.APIG
 	if err := s.destinations.RecordDelivery(ctx, userID, s.now(), outcome.Label()); err != nil {
 		slog.WarnContext(ctx, "record ping status failed", "user", userID, "error", err)
 	}
+	annotateSend(ctx, outcome, false, nil)
 	return response(http.StatusOK, sendResult(outcome, false))
 }
 
@@ -183,9 +200,11 @@ func (s *server) sendItem(ctx context.Context, userID, itemID string) events.API
 		item, err = s.store.ArchiveItem(ctx, userID, itemID)
 	}
 	if errors.Is(err, store.ErrNotFound) {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeItemNotFound)
 		return response(http.StatusNotFound, map[string]string{"error": "item not found"})
 	}
 	if err != nil {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeError)
 		return s.failure("get item for send", err)
 	}
 	destination, blocked := s.reserveSend(ctx, userID, true)
@@ -194,10 +213,12 @@ func (s *server) sendItem(ctx context.Context, userID, itemID string) events.API
 	}
 	feed, err := s.store.Feed(ctx, userID, item.FeedID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeError)
 		return s.failure("get feed for send", err)
 	}
 	body, err := send.ItemPayload(item, feed, destination.ReceiverUserID, s.now(), s.copyImage(ctx, item))
 	if err != nil {
+		annotateRequest(ctx, "SendOutcome", sendOutcomeTooLarge)
 		return response(http.StatusUnprocessableEntity, map[string]string{"error": "item is too large to send"})
 	}
 	deliverer := &send.Deliverer{Destinations: s.destinations, Sender: s.sender, Queue: s.retries, Now: s.now}
@@ -210,6 +231,7 @@ func (s *server) sendItem(ctx context.Context, userID, itemID string) events.API
 			slog.WarnContext(ctx, "record send behaviour failed", "user", userID, "item_id", itemID, "error", behaviourErr)
 		}
 	}
+	annotateSend(ctx, result.Outcome, result.Queued, err)
 	return response(http.StatusOK, sendResult(result.Outcome, result.Queued))
 }
 
@@ -244,14 +266,34 @@ func (s *server) copyImage(ctx context.Context, item domain.Item) *send.CopyImag
 	return &send.CopyImage{URL: signed, Width: chosen.Width, Height: chosen.Height, ExpiresAt: expires}
 }
 
-func sendResult(outcome send.Outcome, queued bool) map[string]any {
-	result := map[string]any{"outcome": sendOutcomeFailed}
+// annotateSend puts the attempt's outcome on the request event, because the
+// response is 200 whether or not the Destination accepted it. A delivery error
+// means the Send neither arrived nor was queued for a retry.
+func annotateSend(ctx context.Context, outcome send.Outcome, queued bool, deliverErr error) {
+	label := sendOutcomeLabel(outcome, queued)
+	if deliverErr != nil && outcome.Kind != send.Delivered {
+		label = sendOutcomeError
+	}
+	annotateRequest(ctx, "SendOutcome", label)
+	if outcome.Status != 0 {
+		annotateRequest(ctx, "SendStatus", strconv.Itoa(outcome.Status))
+	}
+	annotateRequest(ctx, "SendReason", outcome.Reason)
+}
+
+func sendOutcomeLabel(outcome send.Outcome, queued bool) string {
 	switch {
 	case outcome.Kind == send.Delivered:
-		result["outcome"] = sendOutcomeSent
+		return sendOutcomeSent
 	case queued:
-		result["outcome"] = sendOutcomeQueued
+		return sendOutcomeQueued
+	default:
+		return sendOutcomeFailed
 	}
+}
+
+func sendResult(outcome send.Outcome, queued bool) map[string]any {
+	result := map[string]any{"outcome": sendOutcomeLabel(outcome, queued)}
 	if outcome.Status != 0 {
 		result["status"] = outcome.Status
 	}

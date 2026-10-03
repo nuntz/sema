@@ -669,6 +669,8 @@ var operationalQueries = []struct {
 	{"feed-failures", []string{"item-worker"}, `stats sum(ExtractionFailed) as extraction_failed, sum(MediaFailed) as media_failed, sum(BodyImageFailed) as body_image_failed by FeedID`},
 	{"item-deadlines", []string{"item-worker"}, `stats sum(ItemDeadlineExceeded) as deadlines by feed_id, item_id`},
 	{"api", []string{"api"}, `stats sum(APIRequests) as requests, sum(APIServerErrors) as server_errors, avg(APIRequestDurationMs) as duration_ms by Route, Status`},
+	{"sends", []string{"api"}, `filter ispresent(SendOutcome) | stats sum(APIRequests) as attempts, avg(APIRequestDurationMs) as duration_ms by Route, SendOutcome, SendStatus, SendReason`},
+	{"items-latency", []string{"api"}, `filter ispresent(Order) | stats sum(APIRequests) as requests, avg(APIRequestDurationMs) as duration_ms, max(APIRequestDurationMs) as max_ms by Order, Filtered, ExcludeStories, ReadCache`},
 }
 
 func createOperationalQueries(ctx *pulumi.Context, functions map[string]pulumi.StringInput) error {

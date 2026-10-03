@@ -159,6 +159,7 @@ type importFeedsResult struct {
 
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	started := time.Now()
+	ctx, fields := withRequestFields(ctx)
 	result, err := s.handleRequest(ctx, request)
 	status := result.StatusCode
 	if err != nil || status == 0 {
@@ -172,10 +173,9 @@ func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequ
 	if emit == nil {
 		emit = observability.Emit
 	}
-	emit(metrics, map[string]string{
-		"Route":  apiRouteTemplate(request.RequestContext.HTTP.Method, apiPath(request.RawPath)),
-		"Status": strconv.Itoa(status),
-	})
+	fields["Route"] = apiRouteTemplate(request.RequestContext.HTTP.Method, apiPath(request.RawPath))
+	fields["Status"] = strconv.Itoa(status)
+	emit(metrics, fields)
 	return result, err
 }
 
@@ -715,6 +715,16 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		return badRequest(err)
 	}
 	limit, _ := strconv.Atoi(query["limit"])
+	excludeStories, err := parseBool(query["exclude_stories"], "exclude_stories")
+	if err != nil {
+		return badRequest(err)
+	}
+	// Record the query shape before any store call, so slow or failed
+	// requests stay visible to the sema-prod/items-latency query.
+	filtered := query["tag"] != "" || query["feed"] != ""
+	annotateRequest(ctx, "Order", string(order))
+	annotateRequest(ctx, "Filtered", strconv.FormatBool(filtered))
+	annotateRequest(ctx, "ExcludeStories", strconv.FormatBool(excludeStories))
 	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
 	if err != nil {
 		if errors.Is(err, errInvalidFeedTag) {
@@ -723,10 +733,6 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		return s.failure("load feeds for item filtering", err)
 	}
 	tag := normalizedSizeTag(query["tag"])
-	excludeStories, err := parseBool(query["exclude_stories"], "exclude_stories")
-	if err != nil {
-		return badRequest(err)
-	}
 	var model domain.Model
 	if excludeStories || tag != "" {
 		model, err = s.loadRankingModel(ctx, userID)
@@ -748,7 +754,6 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("render stories for item filtering", err)
 		}
 	}
-	filtered := query["tag"] != "" || query["feed"] != ""
 	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, snapshot)
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
@@ -756,6 +761,7 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 		return s.failure("list items", err)
 	}
+	annotateRequest(ctx, "ItemCount", strconv.Itoa(len(items)))
 	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
 		return s.failure("apply feed presentation", err)
 	}
@@ -841,7 +847,10 @@ func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string
 	defer s.readMu.Unlock()
 	now := time.Now()
 	entry, ok := s.readCache[userID]
-	if !ok || now.Sub(entry.loaded) >= readCacheTTL {
+	if ok && now.Sub(entry.loaded) < readCacheTTL {
+		annotateRequest(ctx, "ReadCache", "hit")
+	} else {
+		annotateRequest(ctx, "ReadCache", "miss")
 		ids, err := s.store.LoadReadMarkers(ctx, userID)
 		if err != nil {
 			delete(s.readCache, userID)
