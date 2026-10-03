@@ -9,7 +9,7 @@ describe("item view calendar windows", () => {
   });
 
   it("uses local dates even when UTC has reached the next day", () => {
-    vi.stubEnv("TZ", "America/Vancouver");
+    vi.stubEnv("TZ", "America/Los_Angeles");
     const now = new Date("2026-09-08T02:00:00Z");
     expect(windowRange("today", now)).toEqual({
       from: "2026-09-07T07:00:00.000Z",
@@ -38,7 +38,7 @@ describe("item view calendar windows", () => {
       "2027-01-01T08:00:00.000Z",
     ],
   ])("handles clock and year changes on %s", (now, from, before) => {
-    vi.stubEnv("TZ", "America/Vancouver");
+    vi.stubEnv("TZ", "America/Los_Angeles");
     expect(windowRange("yesterday", new Date(now))).toEqual({
       from,
       before,
