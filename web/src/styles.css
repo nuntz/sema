@@ -867,7 +867,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 .app-shell { position: relative; height: 100%; display: flex; flex-direction: column; background: var(--bg); }
 .app-mark { height: 44px; min-width: 20px; display: inline-flex; align-items: center; gap: 9px; color: var(--fg-tertiary); text-decoration: none; }
-.app-mark > .icon { width: 20px; height: 20px; display: block; flex: none; color: currentColor; }
+.app-mark > .icon, .app-mark:hover > .icon { width: 20px; height: 20px; display: block; flex: none; color: currentColor; }
 .app-mark > span { color: var(--fg-primary); font-family: "Instrument Sans", sans-serif; font-size: var(--type-md); font-weight: 600; letter-spacing: var(--wordmark-tracking); }
 .app-mark:focus-visible { outline: 0; border-radius: 7px; box-shadow: 0 0 0 2px var(--accent); }
 .app-header { position: relative; z-index: 30; height: var(--header-h); min-height: var(--header-h); padding: 0 var(--header-pad-x); display: flex; align-items: center; gap: 0; background: var(--surface-chrome); font-family: "IBM Plex Mono", monospace; }
@@ -875,7 +875,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .app-header > .tooltip-wrap:first-child { width: var(--brand-w); flex: none; }
 .app-header__brand { width: var(--brand-w); height: 44px; flex: none; gap: var(--brand-gap); }
 .app-header__brand > .icon { width: var(--brand-mark); height: var(--brand-mark); }
-.app-header .app-mark { color: var(--chrome-brand-mark); }
+.app-header .app-mark { color: var(--chrome-brand-mark); --sema-mark-rows: var(--chrome-fg-tertiary); }
 .app-header .app-mark > span { color: var(--chrome-fg-primary); }
 .app-header .app-mark:focus-visible { box-shadow: 0 0 0 2px var(--accent-loud); }
 .app-header :is(button, input), .app-header .tooltip-bubble { font-family: "IBM Plex Mono", monospace; }
@@ -1579,7 +1579,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 .feeds-view { height: 100%; overflow: auto; background: var(--bg); }
 .feeds-header { height: var(--hdr-h); min-height: var(--hdr-h); padding: 0 var(--hdr-pad-x); display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--settings-header-rule); background: var(--settings-header-bg); }
-.feeds-header .app-mark { color: var(--accent-loud); }
+.feeds-header .app-mark { color: var(--accent-loud); --sema-mark-rows: var(--chrome-fg-tertiary); }
 .feeds-header .app-mark > span { color: var(--chrome-fg-primary); }
 .feeds-header .app-mark:focus-visible { box-shadow: 0 0 0 2px var(--accent-loud); }
 .feeds-header button:focus-visible { outline-color: var(--accent-loud); }

@@ -74,6 +74,61 @@ function SemaRows(props: SemaRowsProps) {
   );
 }
 
+// The D2 app icon's bars on the 32px favicon grid: the signal bar takes
+// currentColor, the others --sema-mark-rows, fading with distance from it.
+function SemaMark(props: SemaRowsProps) {
+  const [local, rest] = splitProps(props, ["size", "strokeWidth", "fill"]);
+  return (
+    <svg
+      {...rest}
+      xmlns="http://www.w3.org/2000/svg"
+      width={local.size ?? 24}
+      height={local.size ?? 24}
+      viewBox="4 4 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect
+        x="9"
+        y="7"
+        width="17"
+        height="2"
+        rx="1"
+        fill="var(--sema-mark-rows, currentColor)"
+        opacity=".4"
+      />
+      <rect
+        x="6"
+        y="11"
+        width="9"
+        height="2"
+        rx="1"
+        fill="var(--sema-mark-rows, currentColor)"
+        opacity=".65"
+      />
+      <rect x="6" y="15" width="20" height="2" rx="1" />
+      <rect
+        x="17"
+        y="19"
+        width="9"
+        height="2"
+        rx="1"
+        fill="var(--sema-mark-rows, currentColor)"
+        opacity=".65"
+      />
+      <rect
+        x="6"
+        y="23"
+        width="17"
+        height="2"
+        rx="1"
+        fill="var(--sema-mark-rows, currentColor)"
+        opacity=".4"
+      />
+    </svg>
+  );
+}
+
 const glyphs = {
   "zoom-in": ZoomIn,
   "zoom-out": ZoomOut,
@@ -109,6 +164,7 @@ const glyphs = {
   "remove-feed": Trash2,
   retry: RotateCw,
   search: Search,
+  "sema-mark": SemaMark,
   send: Send,
   settings: Settings,
   sort: ArrowUpDown,
