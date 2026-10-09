@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 
 for (const width of [1280, 390]) {
   test(`reader lightbox navigation, history and focus at ${width}px`, async ({
@@ -548,4 +549,57 @@ test("Reddit decode failure removes the lead affordance before external load", a
     "href",
     "https://i.redd.it/fixture.png",
   );
+});
+
+test("installed phone lightbox clears the edge blur and tints the status bar", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+  await simulateStatusBar(page, 47);
+  await activateStandalone(page);
+  await page.locator(".lb-openable").first().click();
+  const overlay = page.locator(".lb-overlay");
+  const bar = ["rgb(209, 207, 203)", "rgb(209, 207, 203)"];
+  const scrim = ["rgb(34, 35, 36)", "rgb(34, 35, 36)"];
+
+  // Controls sit below the strongest part of the blur, which takes the bar's colour.
+  await expect
+    .poll(() =>
+      page
+        .locator(".lb-top")
+        .evaluate((top) => top.getBoundingClientRect().height),
+    )
+    .toBe(44 + 47 + 16);
+  expect(await rootTint(page)).toEqual(bar);
+
+  // Once the controls idle away, the bare scrim over the reader is on top.
+  await expect(overlay).toHaveAttribute("data-idle", "", { timeout: 4000 });
+  expect(await rootTint(page)).toEqual(scrim);
+
+  // Zoomed controls never idle away, so the bar tint holds.
+  await page.mouse.dblclick(195, 422);
+  await expect(overlay).toHaveAttribute("data-zoom", "");
+  await expect(overlay).toHaveAttribute("data-idle", "", { timeout: 4000 });
+  expect(await rootTint(page)).toEqual(bar);
+});
+
+test("lightbox fits images to an overlay taller than the window", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+  // Installed iOS apps size the overlay to the screen, past innerHeight.
+  await page.addStyleTag({
+    content: ".lb-overlay { bottom: auto; height: calc(100vh + 62px); }",
+  });
+  await page.locator(".lb-openable").first().click();
+  const frame = page.locator(".lb-frame");
+  await expect
+    .poll(async () => {
+      const box = await frame.boundingBox();
+      return box ? Math.round(box.y + box.height / 2) : 0;
+    })
+    .toBe((844 + 62) / 2);
 });

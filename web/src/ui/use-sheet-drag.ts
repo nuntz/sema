@@ -94,9 +94,10 @@ export function useSheetDrag(options: {
       return;
     }
     const rect = panel?.getBoundingClientRect();
-    setOffset(
-      rect ? offset() + window.innerHeight - rect.top : window.innerHeight,
-    );
+    // Slide past the layer's bottom, which can sit below innerHeight in installed iOS apps.
+    const bottom =
+      panel?.offsetParent?.getBoundingClientRect().bottom ?? window.innerHeight;
+    setOffset(rect ? offset() + bottom - rect.top : bottom);
     const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
       .matches
       ? 0

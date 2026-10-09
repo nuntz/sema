@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { stubYouTube } from "./youtube-stub";
 
 async function openGrid(
@@ -835,3 +836,37 @@ for (const kind of ["youtube", "image"]) {
     await expect(large.cell.locator(".cell-actions button")).toHaveCount(4);
   });
 }
+
+test("installed phone peeks tint the status bar from the grid", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await stubYouTube(page);
+  const scrim = ["rgb(12, 13, 15)", "rgb(12, 13, 15)"];
+
+  await openGrid(page, "youtube");
+  await simulateStatusBar(page, 47);
+  await activateStandalone(page);
+  // Video Peek has no top bar, so its scrim over the grid's chrome is on top.
+  await page.keyboard.press("i");
+  await expect(page.locator(".video-peek")).toBeVisible();
+  expect(await rootTint(page)).toEqual(scrim);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".video-peek")).toHaveCount(0);
+
+  await page.goto("about:blank");
+  await openGrid(page);
+  await simulateStatusBar(page, 47);
+  await activateStandalone(page);
+  await page.keyboard.press("i");
+  await expect(page.locator(".lb-overlay")).toBeVisible();
+  expect(await rootTint(page)).toEqual([
+    "rgb(209, 207, 203)",
+    "rgb(209, 207, 203)",
+  ]);
+  await expect(page.locator(".lb-overlay")).toHaveAttribute("data-idle", "", {
+    timeout: 4000,
+  });
+  expect(await rootTint(page)).toEqual(scrim);
+});

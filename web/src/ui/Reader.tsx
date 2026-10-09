@@ -432,17 +432,34 @@ export function Reader(props: ReaderProps) {
     }
     if (typeof IntersectionObserver === "undefined") return;
 
-    const navHeight = Math.ceil(readerHeader.getBoundingClientRect().height);
-    const observer = new IntersectionObserver(
-      ([entry]) => setHeadlineVisible(entry?.isIntersecting ?? true),
-      {
-        root: article,
-        rootMargin: `-${navHeight}px 0px 0px 0px`,
-        threshold: 0,
-      },
-    );
-    observer.observe(heading);
-    onCleanup(() => observer.disconnect());
+    let observer: IntersectionObserver | undefined;
+    let navHeight = -1;
+    const observeHeadline = () => {
+      const height = Math.ceil(readerHeader.getBoundingClientRect().height);
+      if (height === navHeight) return;
+      navHeight = height;
+      observer?.disconnect();
+      observer = new IntersectionObserver(
+        ([entry]) => setHeadlineVisible(entry?.isIntersecting ?? true),
+        {
+          root: article,
+          rootMargin: `-${height}px 0px 0px 0px`,
+          threshold: 0,
+        },
+      );
+      observer.observe(heading);
+    };
+    observeHeadline();
+    // The bar grows with the status-bar inset, which can change while the reader stays open.
+    const resize =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(observeHeadline);
+    resize?.observe(readerHeader, { box: "border-box" });
+    onCleanup(() => {
+      resize?.disconnect();
+      observer?.disconnect();
+    });
   });
 
   const updateProgress = () => {

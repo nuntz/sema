@@ -32,8 +32,16 @@ export function Lightbox(props: {
   const origin = props.images[props.initialIndex].element;
   const [index, setIndex] = createSignal(props.initialIndex);
   const current = () => props.images[index()];
+  // The overlay, not the window: installed iOS apps size it to the screen,
+  // which can be taller than innerHeight.
+  const [view, setView] = createSignal({
+    width: innerWidth,
+    height: innerHeight,
+  });
+  const viewWidth = () => view().width;
+  const viewHeight = () => view().height;
   const [rect, setRect] = createSignal(
-    fittedRect(current(), innerWidth, innerHeight),
+    fittedRect(current(), viewWidth(), viewHeight()),
   );
   const [zoom, setZoom] = createSignal(1);
   const [native, setNative] = createSignal(1);
@@ -80,7 +88,11 @@ export function Lightbox(props: {
   const shownIndex = () =>
     imageIndex(
       index(),
-      Math.abs(travel()) >= (innerWidth + 24) / 2 ? (travel() < 0 ? 1 : -1) : 0,
+      Math.abs(travel()) >= (viewWidth() + 24) / 2
+        ? travel() < 0
+          ? 1
+          : -1
+        : 0,
       props.images.length,
     );
   const wake = () => {
@@ -94,23 +106,27 @@ export function Lightbox(props: {
     mapTimer = window.setTimeout(() => setMapVisible(false), 1200);
   };
   const constrainPan = (x: number, y: number, scale = zoom()) => {
-    const maxX = Math.max(0, (rect().width * scale - innerWidth) / 2);
-    const maxY = Math.max(0, (rect().height * scale - innerHeight) / 2);
+    const maxX = Math.max(0, (rect().width * scale - viewWidth()) / 2);
+    const maxY = Math.max(0, (rect().height * scale - viewHeight()) / 2);
     setPan({
       x: Math.max(-maxX, Math.min(maxX, x)),
       y: Math.max(-maxY, Math.min(maxY, y)),
     });
     showMap();
   };
-  const setScale = (scale: number, x = innerWidth / 2, y = innerHeight / 2) => {
+  const setScale = (
+    scale: number,
+    x = viewWidth() / 2,
+    y = viewHeight() / 2,
+  ) => {
     if (native() <= 1) return;
     const next = Math.max(1, Math.min(phone() ? 6 : native(), scale));
     const ratio = next / zoom();
     const previous = pan();
     setZoom(next);
     constrainPan(
-      (previous.x - x + innerWidth / 2) * ratio + x - innerWidth / 2,
-      (previous.y - y + innerHeight / 2) * ratio + y - innerHeight / 2,
+      (previous.x - x + viewWidth() / 2) * ratio + x - viewWidth() / 2,
+      (previous.y - y + viewHeight() / 2) * ratio + y - viewHeight() / 2,
       next,
     );
     wake();
@@ -184,7 +200,7 @@ export function Lightbox(props: {
       setPan({ x: 0, y: 0 });
       setTravel(0);
       setDown(0);
-      setRect(fittedRect(props.images[target], innerWidth, innerHeight));
+      setRect(fittedRect(props.images[target], viewWidth(), viewHeight()));
       setIndex(target);
     });
     frame.getBoundingClientRect();
@@ -258,7 +274,7 @@ export function Lightbox(props: {
                 !member.element.isConnected &&
                 !(member.width && member.height)
               )
-                setRect(fittedRect(member, innerWidth, innerHeight));
+                setRect(fittedRect(member, viewWidth(), viewHeight()));
               setNative(
                 Math.max(1, member.element.naturalWidth / rect().width),
               );
@@ -361,6 +377,27 @@ export function Lightbox(props: {
     document.addEventListener("focusin", keepFocus);
     closeButton.focus();
     wake();
+    const measure = () => {
+      const box = dialog.getBoundingClientRect();
+      return { width: box.width, height: box.height };
+    };
+    const fitTo = (next: { width: number; height: number }) =>
+      batch(() => {
+        setView(next);
+        setRect(fittedRect(current(), next.width, next.height));
+      });
+    fitTo(measure());
+    const resize =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(() => {
+            const next = measure();
+            if (next.width === viewWidth() && next.height === viewHeight())
+              return;
+            fitTo(next);
+            constrainPan(pan().x, pan().y);
+          });
+    resize?.observe(dialog);
     const from = origin.getBoundingClientRect();
     const to = rect();
     frame.animate(
@@ -384,6 +421,7 @@ export function Lightbox(props: {
       duration: reduced() ? 90 : 180,
     });
     onCleanup(() => {
+      resize?.disconnect();
       window.removeEventListener("keydown", onKey, true);
       document.removeEventListener("focusin", keepFocus);
       closeOverlay("lightbox");
@@ -497,7 +535,7 @@ export function Lightbox(props: {
       const distance = event.clientX - previous.x;
       const next = imageIndex(
         index(),
-        Math.abs(distance) >= (innerWidth + 24) / 2 ||
+        Math.abs(distance) >= (viewWidth() + 24) / 2 ||
           Math.abs(distance) / Math.max(1, performance.now() - previous.time) >
             0.5
           ? distance < 0
@@ -507,7 +545,7 @@ export function Lightbox(props: {
         props.images.length,
       );
       swipeTarget = next;
-      setTravel((index() - next) * (innerWidth + 24));
+      setTravel((index() - next) * (viewWidth() + 24));
       // transitionend owns the handoff; the timer covers absent transitions
       // (including reduced motion or releasing at the exact destination).
       swipeTimer = window.setTimeout(finishSwipe, reduced() ? 0 : 280);
@@ -575,7 +613,7 @@ export function Lightbox(props: {
               return (
                 <Show when={neighbour()}>
                   {(member) => {
-                    const r = fittedRect(member(), innerWidth, innerHeight);
+                    const r = fittedRect(member(), viewWidth(), viewHeight());
                     return (
                       <img
                         class="lb-neighbour"
@@ -586,7 +624,7 @@ export function Lightbox(props: {
                           top: `${r.top}px`,
                           width: `${r.width}px`,
                           height: `${r.height}px`,
-                          transform: `translateX(${offset * (innerWidth + 24) + travel()}px)`,
+                          transform: `translateX(${offset * (viewWidth() + 24) + travel()}px)`,
                         }}
                       />
                     );
@@ -795,18 +833,18 @@ export function Lightbox(props: {
           when={
             !phone() &&
             zoom() > 1 &&
-            rect().width * zoom() > innerWidth &&
-            rect().height * zoom() > innerHeight
+            rect().width * zoom() > viewWidth() &&
+            rect().height * zoom() > viewHeight()
           }
         >
           <div class="lb-minimap" style={{ opacity: mapVisible() ? 1 : 0 }}>
             <img src={current().element.currentSrc || current().src} alt="" />
             <i
               style={{
-                width: `${(100 * innerWidth) / (rect().width * zoom())}%`,
-                height: `${(100 * innerHeight) / (rect().height * zoom())}%`,
-                left: `${50 - (100 * (innerWidth / 2 + pan().x)) / (rect().width * zoom())}%`,
-                top: `${50 - (100 * (innerHeight / 2 + pan().y)) / (rect().height * zoom())}%`,
+                width: `${(100 * viewWidth()) / (rect().width * zoom())}%`,
+                height: `${(100 * viewHeight()) / (rect().height * zoom())}%`,
+                left: `${50 - (100 * (viewWidth() / 2 + pan().x)) / (rect().width * zoom())}%`,
+                top: `${50 - (100 * (viewHeight() / 2 + pan().y)) / (rect().height * zoom())}%`,
               }}
             />
           </div>

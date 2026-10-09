@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { activateStandalone, simulateStatusBar } from "./standalone";
 
 async function openFixture(
   page: Page,
@@ -413,6 +414,112 @@ test("segmented pills preserve v1 gaps while items own the hit target", async ({
     );
   expect(phoneHeights.length).toBeGreaterThan(0);
   expect(phoneHeights.every((height) => height >= 44)).toBe(true);
+});
+
+const headerHeight = (page: Page) =>
+  page
+    .locator(".app-header")
+    .evaluate((header) => header.getBoundingClientRect().height);
+
+test("headers clear the status bar and tint it in standalone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await openFixture(page, "grid");
+  await simulateStatusBar(page, 47);
+  await expect.poll(() => headerHeight(page)).toBe(44 + 47);
+  expect(
+    (await page.locator(".header-filter-summary").boundingBox())?.y,
+  ).toBeGreaterThanOrEqual(47);
+
+  // iOS tints the status bar from the root background, so it must match the header.
+  await activateStandalone(page);
+  const chrome = await page
+    .locator(".app-header")
+    .evaluate((header) => getComputedStyle(header).backgroundColor);
+  expect(
+    await page.evaluate(() => [
+      getComputedStyle(document.documentElement).backgroundColor,
+      getComputedStyle(document.body).backgroundColor,
+    ]),
+  ).toEqual([chrome, chrome]);
+
+  await simulateStatusBar(page, 0);
+  await expect.poll(() => headerHeight(page)).toBe(44);
+
+  await page.setViewportSize({ width: 1024, height: 700 });
+  await openFixture(page, "reader");
+  await simulateStatusBar(page, 47);
+  await expect.poll(() => headerHeight(page)).toBe(56 + 47);
+
+  await page.setViewportSize({ width: 390, height: 780 });
+  await openFixture(page, "reader");
+  await simulateStatusBar(page, 47, 34);
+  await expect.poll(() => headerHeight(page)).toBe(44 + 47);
+  expect(
+    await page
+      .locator(".reader .article")
+      .evaluate((article) => getComputedStyle(article).paddingTop),
+  ).toBe(`${44 + 47}px`);
+  // The toolbar gives back 12px of the home-indicator inset.
+  await expect
+    .poll(() =>
+      page
+        .locator(".reader-bottom-actions")
+        .evaluate((bar) => bar.getBoundingClientRect().height),
+    )
+    .toBe(56 + 34 - 12);
+
+  // The phone reader's light bar is page material, so the status bar tint follows it.
+  await activateStandalone(page);
+  const material = await page
+    .locator(".reader")
+    .evaluate((reader) => getComputedStyle(reader).backgroundColor);
+  expect(
+    await page.evaluate(() => [
+      getComputedStyle(document.documentElement).backgroundColor,
+      getComputedStyle(document.body).backgroundColor,
+    ]),
+  ).toEqual([material, material]);
+
+  // Its source label clears the strongest part of the iOS edge blur too.
+  const readerTop = 44 + 47 + 16;
+  await expect.poll(() => headerHeight(page)).toBe(readerTop);
+  expect(
+    await page
+      .locator(".reader .article")
+      .evaluate((article) => getComputedStyle(article).paddingTop),
+  ).toBe(`${readerTop}px`);
+
+  // No status bar, no clearance.
+  await simulateStatusBar(page, 0, 34);
+  await expect.poll(() => headerHeight(page)).toBe(44);
+});
+
+test("phone reader title tracks a nav bar that grows while open", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await openFixture(page, "reader");
+  await page.locator("#reader-last-line").waitFor();
+  await simulateStatusBar(page, 47);
+  await expect.poll(() => headerHeight(page)).toBe(44 + 47);
+
+  // Park the headline's bottom edge under the grown bar but below the old 44px one.
+  await page.locator(".reader-scroll").evaluate(
+    (article, park) => {
+      const heading = article.querySelector("h1") as HTMLElement;
+      const bottom =
+        heading.getBoundingClientRect().bottom -
+        article.getBoundingClientRect().top;
+      article.scrollTop += bottom - park;
+    },
+    44 + 47 - 10,
+  );
+  await expect(page.locator(".app-header")).toHaveAttribute(
+    "data-scrolled",
+    "",
+  );
 });
 
 test("reader title overlays the crumb and crossfades with hysteresis", async ({
@@ -908,5 +1015,39 @@ test.describe("touch text fields", () => {
     });
     for (const [field, size] of Object.entries(sizes))
       expect(size, field).toBeGreaterThanOrEqual(16);
+  });
+});
+
+test("phone floating controls drop by the standalone viewport gap", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await openFixture(page, "grid");
+  // Stand in for WebKit bug 301994: the layout viewport ends 62px above the screen.
+  await page.addStyleTag({ content: ":root { --viewport-gap: 62px; }" });
+  const bottoms = await page.evaluate(() =>
+    Object.fromEntries(
+      [
+        "page-loader",
+        "link-toast",
+        "finish-undo-toast",
+        "feed-undo",
+        "signal-hint",
+      ].map((name) => {
+        const probe = document.createElement("div");
+        probe.className = name;
+        document.body.append(probe);
+        const bottom = getComputedStyle(probe).bottom;
+        probe.remove();
+        return [name, bottom];
+      }),
+    ),
+  );
+  expect(bottoms).toEqual({
+    "page-loader": `${12 - 62}px`,
+    "link-toast": `${70 - 62}px`,
+    "finish-undo-toast": `${14 - 62}px`,
+    "feed-undo": `${26 - 62}px`,
+    "signal-hint": `${20 - 62}px`,
   });
 });

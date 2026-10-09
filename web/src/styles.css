@@ -31,6 +31,11 @@
   --scope-title-max-sm: 250px;
   --scope-count-ink: var(--accent-loud);
   --lb-scrim: rgba(6, 7, 8, 0.94);
+  /* Opaque status-bar tints for the phone lightbox: its top bar composited over the scrim,
+     and the bare scrim over the grid's chrome header or over the reader's page. */
+  --lb-tint-bar: #060708;
+  --lb-tint-scrim: #060708;
+  --lb-tint-scrim-reader: #060708;
   --lb-control: rgba(23, 24, 26, 0.72);
   --lb-control-hover: rgba(31, 33, 36, 0.86);
   --lb-control-light: rgba(237, 235, 230, 0.9);
@@ -311,6 +316,11 @@
 
   /* Shared grid/reader header geometry. */
   --header-h: 56px;
+  /* Standalone iOS draws the status bar over the page (black-translucent). */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --bar-top: var(--safe-top);
+  /* How far the layout viewport stops above the screen bottom (WebKit bug 301994). */
+  --viewport-gap: 0px;
   --header-pad-x: 20px;
   --header-band: 2px;
   --brand-mark: 20px;
@@ -344,6 +354,8 @@
   --crumb-gap: 9px;
   --measure-w: 640px;
   --reader-bottom-h: 56px;
+  /* Sit the phone toolbar lower, as native toolbars do; 44pt targets still clear the home indicator. */
+  --reader-bottom-pad: max(0px, env(safe-area-inset-bottom, 0px) - 12px);
   --chrome-font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace;
   --chrome-font-regular: 400 var(--type-xs)/1 "IBM Plex Mono", monospace;
   --chrome-tracking: 0.01em;
@@ -406,6 +418,9 @@
 
   --scope-count-ink: var(--fg-accent);
   --lb-scrim: rgba(11, 12, 14, 0.9);
+  --lb-tint-bar: #d1cfcb;
+  --lb-tint-scrim: #0c0d0f;
+  --lb-tint-scrim-reader: #222324;
   --lb-control: var(--lb-control-light);
   --lb-control-hover: rgba(237, 235, 230, 0.96);
   --lb-control-light: rgba(237, 235, 230, 0.9);
@@ -639,6 +654,9 @@
 
     --scope-count-ink: var(--fg-accent);
     --lb-scrim: rgba(11, 12, 14, 0.9);
+    --lb-tint-bar: #d1cfcb;
+    --lb-tint-scrim: #0c0d0f;
+    --lb-tint-scrim-reader: #222324;
     --lb-control: var(--lb-control-light);
     --lb-control-hover: rgba(237, 235, 230, 0.96);
     --lb-control-light: rgba(237, 235, 230, 0.9);
@@ -846,6 +864,21 @@
 * { box-sizing: border-box; }
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 body { background: var(--bg); }
+/* iOS 26+ tints the status bar and its edge blur from the root background, not theme-color. */
+@media (display-mode: standalone) {
+  :root, body { background: var(--surface-chrome); }
+}
+/* Phone reader and lightbox bars carry small text, so they sit below the strongest part of
+   the iOS 26+ edge blur (only under a status bar), and the tint follows whatever is on top:
+   the reader's page material; a lightbox or Video Peek scrim; the image lightbox's top bar
+   while its controls show (awake, or zoomed, where they never idle away). */
+@media (display-mode: standalone) and (max-width: 619px) {
+  :root { --bar-top: calc(var(--safe-top) + min(var(--safe-top) * 1000, 16px)); }
+  :root:has(.reader), :root:has(.reader) body { background: var(--bg); }
+  :root:has(.lb-overlay), :root:has(.lb-overlay) body { background: var(--lb-tint-scrim); }
+  :root:has(.reader):has(.lb-overlay), :root:has(.reader):has(.lb-overlay) body { background: var(--lb-tint-scrim-reader); }
+  :root:has(.lb-overlay:not([data-idle]) .lb-top, .lb-overlay[data-zoom] .lb-top), :root:has(.lb-overlay:not([data-idle]) .lb-top, .lb-overlay[data-zoom] .lb-top) body { background: var(--lb-tint-bar); }
+}
 button, input { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 button { border: 0; color: inherit; cursor: pointer; }
@@ -870,7 +903,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .app-mark > .icon, .app-mark:hover > .icon { width: 20px; height: 20px; display: block; flex: none; color: currentColor; }
 .app-mark > span { color: var(--fg-primary); font-family: "Instrument Sans", sans-serif; font-size: var(--type-md); font-weight: 600; letter-spacing: var(--wordmark-tracking); }
 .app-mark:focus-visible { outline: 0; border-radius: 7px; box-shadow: 0 0 0 2px var(--accent); }
-.app-header { position: relative; z-index: 30; height: var(--header-h); min-height: var(--header-h); padding: 0 var(--header-pad-x); display: flex; align-items: center; gap: 0; background: var(--surface-chrome); font-family: "IBM Plex Mono", monospace; }
+.app-header { position: relative; z-index: 30; height: calc(var(--header-h) + var(--safe-top)); min-height: calc(var(--header-h) + var(--safe-top)); padding: var(--safe-top) var(--header-pad-x) 0; display: flex; align-items: center; gap: 0; background: var(--surface-chrome); font-family: "IBM Plex Mono", monospace; }
 .app-header::after { content: ""; position: absolute; right: 0; bottom: 0; left: 0; height: var(--header-band); background: var(--chrome-rule); }
 .app-header > .tooltip-wrap:first-child { width: var(--brand-w); flex: none; }
 .app-header__brand { width: var(--brand-w); height: 44px; flex: none; gap: var(--brand-gap); }
@@ -969,8 +1002,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .header-overflow-sheet > button.active .icon { color: var(--fg-primary); }
 .header-overflow-sheet kbd { color: var(--fg-quaternary); font: 400 var(--type-chip)/1 "IBM Plex Mono", monospace; }
 .keys-chip { min-width: 22px; height: 22px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--line); color: var(--fg-secondary); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; }
-.new-items-pill { position: absolute; top: var(--header-h); left: 50%; z-index: 20; min-width: 54px; height: 44px; padding: 0 12px; display: flex; align-items: center; gap: 7px; transform: translateX(-50%); background: transparent; color: var(--chrome-fg-primary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; isolation: isolate; }
-.new-items-pill--scope { top: calc(var(--header-h) + 10px); }
+.new-items-pill { position: absolute; top: calc(var(--header-h) + var(--safe-top)); left: 50%; z-index: 20; min-width: 54px; height: 44px; padding: 0 12px; display: flex; align-items: center; gap: 7px; transform: translateX(-50%); background: transparent; color: var(--chrome-fg-primary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; isolation: isolate; }
+.new-items-pill--scope { top: calc(var(--header-h) + var(--safe-top) + 10px); }
 .new-items-pill::before { content: ""; position: absolute; height: 26px; inset: 9px 0; z-index: -1; border: 1px solid var(--chrome-rule); border-radius: 13px; background: var(--surface-chrome-raised); }
 .new-items-pill::after { content: ""; width: 7px; height: 7px; order: -1; flex: none; border-radius: 50%; background: var(--accent-loud); }
 .new-items-pill:hover::before { background: var(--surface-chrome-hover); }
@@ -979,7 +1012,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-scroll.reader-underlay { transform: translate3d(calc((var(--reader-reveal, 0) - 1) * 20vw), 0, 0); filter: brightness(calc(.9 + var(--reader-reveal, 0) * .1)); transition: transform 220ms cubic-bezier(.2, .75, .2, 1), filter 220ms ease-out; }
 .grid-scroll.reader-underlay-dragging { transition: none; }
 .searching > .grid-scroll, .searching > .cold-start, .searching > .archive-empty, .searching > .filtered-empty { visibility: hidden; }
-.search-results { position: absolute; inset: var(--hdr-h) 0 0; z-index: 16; overflow: auto; padding: 0 16px 42px; background: var(--bg); scrollbar-color: var(--scrollbar-thumb) transparent; }
+.search-results { position: absolute; inset: calc(var(--hdr-h) + var(--safe-top)) 0 0; z-index: 16; overflow: auto; padding: 0 16px 42px; background: var(--bg); scrollbar-color: var(--scrollbar-thumb) transparent; }
 .search-section { margin-top: 26px; }
 .search-section > header { height: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; color: var(--fg-tertiary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: .1em; text-transform: uppercase; }
 .search-section > header i { height: 1px; flex: 1; background: var(--control-wash-strong); }
@@ -1198,7 +1231,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .related-panel { position: relative; z-index: 1; width: min(var(--drawer-w), 100%); height: 100%; display: flex; flex-direction: column; border-left: 1px solid var(--control-wash-strong); background: var(--surface-page); box-shadow: var(--shadow-related); animation: related-in 200ms ease-out; transition: transform 180ms ease-out; }
 @keyframes related-in { from { transform: translateX(100%); } }
 .related-grabber { display: none; }
-.related-panel > header { min-height: 72px; padding: 13px 15px 12px 18px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--hairline); }
+.related-panel > header { min-height: calc(72px + var(--safe-top)); padding: calc(13px + var(--safe-top)) 15px 12px 18px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--hairline); }
 .related-panel > header > div { min-width: 0; flex: 1; }
 .related-panel > header small { display: block; margin-bottom: 6px; color: var(--fg-quaternary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; letter-spacing: .06em; }
 .related-panel > header h2 { margin: 0; overflow: hidden; color: var(--fg-primary); font: 400 var(--type-lg)/1.2 "Newsreader", Georgia, serif; white-space: nowrap; text-overflow: ellipsis; }
@@ -1270,7 +1303,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 .error-banner { min-height: 34px; padding: 7px 16px; display: flex; justify-content: center; gap: 16px; align-items: center; background: var(--error-wash); color: var(--error-banner-fg); font-size: var(--type-xs); z-index: 30; }
 .error-banner button { padding: 0 4px; background: transparent; color: inherit; font-size: var(--type-lg); }
-.page-loader { position: fixed; bottom: 12px; left: 50%; z-index: 10; transform: translateX(-50%); padding: 6px 10px; border-radius: 5px; background: var(--tooltip-bg); color: var(--tooltip-muted); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; }
+.page-loader { position: fixed; bottom: calc(12px - var(--viewport-gap)); left: 50%; z-index: 10; transform: translateX(-50%); padding: 6px 10px; border-radius: 5px; background: var(--tooltip-bg); color: var(--tooltip-muted); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .loading-screen { flex: 1; display: grid; place-content: center; justify-items: center; gap: 16px; color: var(--fg-tertiary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .loading-screen i { width: 28px; height: 28px; border: 2px solid var(--accent-wash-15); border-top-color: var(--accent); border-radius: 50%; animation: spin 700ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1361,7 +1394,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .lb-overlay[data-zoom][data-dragging] .lb-frame { cursor: grabbing; }
 .lb-overlay[data-dragging] :is(.lb-frame, .lb-neighbour, .lb-scrim) { transition: none; }
 .lb-overlay[data-rebasing] :is(.lb-frame, .lb-neighbour) { transition: none; }
-.lb-top { position: absolute; top: 20px; left: 20px; right: 20px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
+.lb-top { position: absolute; top: calc(20px + var(--safe-top)); left: 20px; right: 20px; display: flex; align-items: center; justify-content: space-between; pointer-events: none; }
 .lb-identity, .lb-actions { display: flex; gap: 8px; align-items: center; }
 .lb-actions { pointer-events: auto; }
 .lb-control { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 8px; background: var(--lb-control); color: var(--fg-secondary); backdrop-filter: blur(14px); cursor: pointer; }
@@ -1412,7 +1445,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 @media (prefers-color-scheme: light) and (min-width: 620px) { :root:not([data-theme="dark"]) .lb-caption p { color: var(--lb-glyph-light); } }
 @media (max-width: 619px) {
-  .lb-top { top: 0; left: 0; right: 0; height: 44px; padding: 0 12px; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-bottom: .5px solid rgba(244,242,238,.14); }
+  .lb-top { top: 0; left: 0; right: 0; height: calc(44px + var(--bar-top)); padding: var(--bar-top) 12px 0; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-bottom: .5px solid rgba(244,242,238,.14); }
   .lb-caption { padding: 16px 20px 30px; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-top: .5px solid rgba(244,242,238,.14); }
   .lb-caption p { color: #c7ccd3; }
   .lb-caption .lb-caption-previous { top: 16px; }
@@ -1518,7 +1551,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .article-next button { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); font-size: var(--type-md); }
 .reader-bottom-actions { display: none; }
 
-.link-toast { --toast-x: -50%; position: fixed; left: 50%; bottom: 26px; z-index: 70; height: 36px; padding: 0 15px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--control-wash-strong); border-radius: 8px; background: var(--surface-2); box-shadow: var(--shadow-toast); color: var(--fg-primary); font: 400 var(--type-sm)/1 "Instrument Sans", sans-serif; pointer-events: none; opacity: 0; transform: translate(var(--toast-x), 6px); animation: toast-in 140ms ease-out forwards, toast-out 180ms ease-in 2.14s forwards; }
+.link-toast { --toast-x: -50%; position: fixed; left: 50%; bottom: calc(26px - var(--viewport-gap)); z-index: 70; height: 36px; padding: 0 15px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--control-wash-strong); border-radius: 8px; background: var(--surface-2); box-shadow: var(--shadow-toast); color: var(--fg-primary); font: 400 var(--type-sm)/1 "Instrument Sans", sans-serif; pointer-events: none; opacity: 0; transform: translate(var(--toast-x), 6px); animation: toast-in 140ms ease-out forwards, toast-out 180ms ease-in 2.14s forwards; }
 .link-toast .toast-icon { color: var(--fg-tertiary); }
 .link-toast.error { border-color: var(--error-line); }
 .link-toast.error .toast-icon { color: var(--error); }
@@ -1526,14 +1559,14 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @keyframes toast-in { to { opacity: 1; transform: translate(var(--toast-x), 0); } }
 @keyframes toast-out { from { opacity: 1; transform: translate(var(--toast-x), 0); } to { opacity: 0; transform: translate(var(--toast-x), 0); } }
 
-.finish-undo-toast { position: fixed; left: 50%; bottom: 26px; z-index: 75; height: 40px; padding: 0 8px 0 16px; display: flex; align-items: center; gap: 14px; overflow: hidden; border: 1px solid var(--finish-toast-border); border-radius: 10px; background: var(--finish-toast-bg); box-shadow: var(--shadow-finish-toast); color: var(--fg-tertiary); font: 400 var(--type-sm)/1 "Instrument Sans", sans-serif; transform: translateX(-50%); }
+.finish-undo-toast { position: fixed; left: 50%; bottom: calc(26px - var(--viewport-gap)); z-index: 75; height: 40px; padding: 0 8px 0 16px; display: flex; align-items: center; gap: 14px; overflow: hidden; border: 1px solid var(--finish-toast-border); border-radius: 10px; background: var(--finish-toast-bg); box-shadow: var(--shadow-finish-toast); color: var(--fg-tertiary); font: 400 var(--type-sm)/1 "Instrument Sans", sans-serif; transform: translateX(-50%); }
 .finish-undo-toast strong { color: var(--fg-primary); font-weight: 500; }
 .finish-undo-toast button { height: 28px; padding: 0 10px; border-radius: 6px; background: var(--finish-toast-action); color: var(--fg-primary); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .finish-undo-toast__progress { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: var(--finish-toast-progress); animation: finish-undo-drain 8s linear forwards; }
 .finish-undo-toast:hover .finish-undo-toast__progress, .finish-undo-toast:focus-within .finish-undo-toast__progress { animation-play-state: paused; }
 @keyframes finish-undo-drain { to { width: 0; } }
 
-.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 20px; background: var(--modal-scrim); backdrop-filter: blur(4px); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: calc(20px + var(--safe-top)) 20px 20px; background: var(--modal-scrim); backdrop-filter: blur(4px); }
 .confirm-scrim { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: transparent; }
 .confirm-card { position: relative; z-index: 1; width: min(352px, 100%); padding: 22px 22px 18px; border: 1px solid var(--control-wash-strong); border-radius: 10px; background: var(--surface-2); box-shadow: var(--shadow-confirm); animation: confirm-card-in 140ms ease-out; transition: transform 180ms ease-out; }
 .confirm-grabber { display: none; }
@@ -1546,7 +1579,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .confirm-card button.remove:focus-visible { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash-22); background: var(--control-wash-medium); }
 @keyframes confirm-scrim-in { from { opacity: 0; } }
 @keyframes confirm-card-in { from { opacity: 0; transform: translateY(4px); } }
-.keys-card { max-height: calc(100dvh - 32px); overflow: auto; width: min(860px, 100%); padding: 24px 26px 26px; border: 1px solid var(--control-wash-strong); border-radius: 8px; background: var(--raised); box-shadow: var(--shadow-keys); }
+.keys-card { max-height: calc(100dvh + var(--viewport-gap) - 40px - var(--safe-top)); overflow: auto; width: min(860px, 100%); padding: 24px 26px 26px; border: 1px solid var(--control-wash-strong); border-radius: 8px; background: var(--raised); box-shadow: var(--shadow-keys); }
 .keys-card header { margin-bottom: 18px; display: flex; align-items: baseline; justify-content: space-between; }
 .keys-card h2 { margin: 0; color: var(--fg-primary); font: 400 var(--type-xl)/1 "Newsreader", Georgia, serif; }
 .keys-card header button { background: transparent; color: var(--fg-tertiary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
@@ -1578,7 +1611,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .key-row span { color: var(--fg-tertiary); font-size: var(--type-sm); }
 
 .feeds-view { height: 100%; overflow: auto; background: var(--bg); }
-.feeds-header { height: var(--hdr-h); min-height: var(--hdr-h); padding: 0 var(--hdr-pad-x); display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--settings-header-rule); background: var(--settings-header-bg); }
+.feeds-header { height: calc(var(--hdr-h) + var(--safe-top)); min-height: calc(var(--hdr-h) + var(--safe-top)); padding: var(--safe-top) var(--hdr-pad-x) 0; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--settings-header-rule); background: var(--settings-header-bg); }
 .feeds-header .app-mark { color: var(--accent-loud); --sema-mark-rows: var(--chrome-fg-tertiary); }
 .feeds-header .app-mark > span { color: var(--chrome-fg-primary); }
 .feeds-header .app-mark:focus-visible { box-shadow: 0 0 0 2px var(--accent-loud); }
@@ -1672,9 +1705,9 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
     right: 0;
     left: 0;
     z-index: 60;
-    height: calc(44px + env(safe-area-inset-top));
-    min-height: calc(44px + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top) 14px 0;
+    height: calc(44px + var(--bar-top));
+    min-height: calc(44px + var(--bar-top));
+    padding: var(--bar-top) 14px 0;
     background-color: var(--reader-bar-bg);
   }
   .reader .app-header--reader::after {
@@ -1704,15 +1737,15 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .app-header--reader[data-scrolled] .read-progress { opacity: 1; }
   .app-header--reader .read-progress > i { background: var(--accent); }
   .reader-scroll { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .reader .article { padding: calc(44px + env(safe-area-inset-top)) 22px calc(var(--reader-bottom-h) + env(safe-area-inset-bottom) + 22px); }
+  .reader .article { padding: calc(44px + var(--bar-top)) 22px calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + 22px); }
   .reader-bottom-actions {
     position: absolute;
     right: 0;
     bottom: 0;
     left: 0;
     z-index: 60;
-    height: calc(var(--reader-bottom-h) + env(safe-area-inset-bottom));
-    padding: 0 0 env(safe-area-inset-bottom);
+    height: calc(var(--reader-bottom-h) + var(--reader-bottom-pad));
+    padding: 0 0 var(--reader-bottom-pad);
     display: block;
     overflow: hidden;
     transition: height 200ms cubic-bezier(.32, .72, 0, 1);
@@ -1729,11 +1762,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .reader-toolbar-action:active { background: transparent; opacity: .4; transform: none; }
   .reader-toolbar-action:focus-visible { border-radius: var(--control-radius); outline: 2px solid var(--accent); outline-offset: 2px; }
   .reader-bottom-actions__gap { width: 34px; flex: none; }
-  .reader-bottom-actions.collapsed { height: calc(28px + env(safe-area-inset-bottom)); }
+  .reader-bottom-actions.collapsed { height: calc(28px + var(--reader-bottom-pad)); }
   .reader-bottom-actions.collapsed .reader-bottom-actions__row { height: 28px; opacity: .35; }
   .reader-bottom-actions.collapsed .reader-toolbar-action .icon { width: 18px; height: 18px; }
   .reader-action-sheet { border: .5px solid var(--border-hairline); border-bottom: 0; border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--surface-page) 92%, transparent); box-shadow: none; -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%); }
-  body .link-toast { bottom: calc(var(--reader-bottom-h) + env(safe-area-inset-bottom) + 14px); }
+  body .link-toast { bottom: calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + 14px - var(--viewport-gap)); }
 }
 
 @supports not (backdrop-filter: blur(1px)) {
@@ -1748,7 +1781,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 @media (max-width: 430px) {
   .app-shell, .app-header:not(.app-header--reader) { --header-h: 44px; --hdr-h: 44px; }
-  .app-header:not(.app-header--reader) { padding: 0 4px 0 12px; }
+  .app-header:not(.app-header--reader) { padding: var(--safe-top) 4px 0 12px; }
   .app-header:not(.app-header--reader) > .tooltip-wrap:first-child { display: none; }
   .header-display-controls { margin-left: 0; }
   .header-segments { position: absolute; width: 0; height: var(--control-h-touch); overflow: hidden; visibility: hidden; pointer-events: none; }
@@ -1863,13 +1896,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .article-fallback > p { font-size: 19px; line-height: 1.66; }
   .article-body blockquote { font-size: 20px; }
   .article-next { display: none; }
-  .link-toast { --toast-x: 0; left: 14px; right: 14px; bottom: 70px; height: 38px; justify-content: center; border-radius: 9px; font-size: var(--type-sm); }
+  .link-toast { --toast-x: 0; left: 14px; right: 14px; bottom: calc(70px - var(--viewport-gap)); height: 38px; justify-content: center; border-radius: 9px; font-size: var(--type-sm); }
   .key-groups { grid-template-columns: 1fr; }
-  .keys-card { max-height: calc(100vh - 32px); overflow: auto; }
-  .feeds-header { height: var(--hdr-h-compact); min-height: var(--hdr-h-compact); padding: 0 var(--hdr-pad-x-mobile); }
+  .feeds-header { height: calc(var(--hdr-h-compact) + var(--safe-top)); min-height: calc(var(--hdr-h-compact) + var(--safe-top)); padding: var(--safe-top) var(--hdr-pad-x-mobile) 0; }
   .feeds-summary { display: none; }
   .feeds-content { width: calc(100% - 28px); }
-  .archive-empty { min-height: calc(100vh - var(--hdr-h-compact)); }
+  .archive-empty { min-height: calc(100vh - var(--hdr-h-compact) - var(--safe-top)); }
   .archive-empty h1 { font-size: var(--type-xl); }
   .archive-empty p { font-size: var(--type-sm); }
   .confirm-scrim { align-items: end; padding: 14px; }
@@ -1919,7 +1951,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .finish-card--all-read .finish-card__copy p { padding-left: 0; }
   .finish-card__mark { margin-bottom: 11px; }
   .finish-card__hint { display: none; }
-  .finish-undo-toast { right: 12px; bottom: 14px; left: 12px; height: 44px; transform: none; }
+  .finish-undo-toast { right: 12px; bottom: calc(14px - var(--viewport-gap)); left: 12px; height: 44px; transform: none; }
   .finish-undo-toast > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .finish-undo-toast button { height: 32px; }
 }
@@ -1982,14 +2014,14 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .feed-operations summary { padding: 12px 0; cursor: pointer; }
 .feed-operations > div { padding-bottom: 12px; display: flex; align-items: center; gap: 18px; }
 .feed-operations button { margin-left: auto; }
-.feed-undo { position: fixed; left: 50%; bottom: 26px; z-index: 110; height: 36px; padding: 0 10px 0 14px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--control-wash-strong); border-radius: 8px; background: var(--surface-2); box-shadow: var(--shadow-toast); transform: translateX(-50%); color: var(--bone); font-size: var(--type-xs); }
+.feed-undo { position: fixed; left: 50%; bottom: calc(26px - var(--viewport-gap)); z-index: 110; height: 36px; padding: 0 10px 0 14px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--control-wash-strong); border-radius: 8px; background: var(--surface-2); box-shadow: var(--shadow-toast); transform: translateX(-50%); color: var(--bone); font-size: var(--type-xs); }
 .feed-undo button { background: transparent; color: var(--accent); font: 500 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 
 .feed-drawer-layer { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: flex-end; background: var(--drawer-scrim); animation: drawer-scrim-in 180ms ease-out; }
-.feed-drawer { position: relative; width: min(420px, 100%); height: 100%; padding: 24px 24px 30px; overflow-y: auto; background: var(--feed-drawer-bg); box-shadow: var(--shadow-drawer); animation: drawer-in 180ms ease-out; }
+.feed-drawer { position: relative; width: min(420px, 100%); height: 100%; padding: calc(24px + var(--safe-top)) 24px 30px; overflow-y: auto; background: var(--feed-drawer-bg); box-shadow: var(--shadow-drawer); animation: drawer-in 180ms ease-out; }
 @keyframes drawer-in { from { transform: translateX(20px); opacity: .8; } }
 @keyframes drawer-scrim-in { from { background: transparent; } }
-.drawer-close { position: absolute; top: 15px; right: 15px; width: 30px; height: 30px; display: grid; place-items: center; background: transparent; color: var(--fg-disabled); }
+.drawer-close { position: absolute; top: calc(15px + var(--safe-top)); right: 15px; width: 30px; height: 30px; display: grid; place-items: center; background: transparent; color: var(--fg-disabled); }
 .feed-drawer > header { padding: 2px 34px 20px 0; display: flex; gap: 12px; border-bottom: 1px solid var(--line); }
 .feed-drawer > header .feed-icon { width: 24px; height: 24px; }
 .feed-drawer > header > div { min-width: 0; flex: 1; }
@@ -2274,7 +2306,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .feed-drawer { width: 100%; height: 90%; padding: 20px 18px 28px; border-radius: 12px 12px 0 0; }
   .drawer-reddit-collect { grid-template-columns: 1fr; gap: 10px; }
   .drawer-close, .drawer-actions button, .remove-confirm button { min-height: 44px; }
-  .drawer-close { width: 44px; }
+  .drawer-close { top: 15px; width: 44px; }
   .drawer-close .icon, .add-feed-dialog header button .icon { width: var(--icon-20); height: var(--icon-20); stroke-width: var(--icon-stroke-20); }
   .last-error code { max-height: 48px; overflow: auto; }
   .add-feed-layer { align-items: end; padding: 0; }
@@ -2592,7 +2624,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .signal-hint button { padding: 0; color: var(--signal-label-ink); background: transparent; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .signal-hint button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 3px; }
 @media (max-width: 619px) {
-  .signal-hint { position: fixed; z-index: 110; left: 14px; right: 14px; bottom: calc(20px + env(safe-area-inset-bottom)); height: 46px; padding: 0 14px; gap: 8px; border-radius: 11px; background: var(--surface-raised-hover); border: 1px solid var(--line-rule); font-size: 13px; }
+  .signal-hint { position: fixed; z-index: 110; left: 14px; right: 14px; bottom: calc(20px + env(safe-area-inset-bottom) - var(--viewport-gap)); height: 46px; padding: 0 14px; gap: 8px; border-radius: 11px; background: var(--surface-raised-hover); border: 1px solid var(--line-rule); font-size: 13px; }
   .signal-hint > i { display: none; }
   .signal-hint button { margin-left: auto; min-height: 44px; }
   .signal-hint--expired { display: none; }
@@ -2686,7 +2718,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-top-slot { display: flow-root; }
 .grid-top-slot > .scope-cell { position: relative; left: auto; right: auto; margin: 0 16px 10px; }
 .tag-strip-spacer { height: var(--tag-strip-h); }
-.tag-strip { position: absolute; top: var(--header-h); right: 0; left: 0; z-index: 25; height: var(--tag-strip-h); background: var(--bg); transition: transform 160ms ease-out, visibility 160ms; }
+.tag-strip { position: absolute; top: calc(var(--header-h) + var(--safe-top)); right: 0; left: 0; z-index: 25; height: var(--tag-strip-h); background: var(--bg); transition: transform 160ms ease-out, visibility 160ms; }
 .tag-strip--collapsed { transform: translateY(-100%); visibility: hidden; pointer-events: none; }
 .tag-strip__scroller { height: 100%; padding: 0 12px; display: flex; align-items: center; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); }
 .tag-strip__scroller::-webkit-scrollbar { display: none; }
@@ -2697,7 +2729,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .tag-strip__chip--hash { width: 40px; padding: 0; justify-content: center; border-style: dashed; background: transparent; color: var(--fg-secondary); }
 .tag-strip__chip--feeds { border-color: transparent; background: var(--surface-sunken); color: var(--fg-secondary); }
 .app-shell:has(> .tag-strip:not(.tag-strip--collapsed)) .pull-refresh { top: var(--tag-strip-h); }
-.app-shell:has(> .tag-strip:not(.tag-strip--collapsed)) .new-items-pill { top: calc(var(--header-h) + var(--tag-strip-h)); }
+.app-shell:has(> .tag-strip:not(.tag-strip--collapsed)) .new-items-pill { top: calc(var(--header-h) + var(--safe-top) + var(--tag-strip-h)); }
 .scope-order-lock { margin: 8px 0 0; display: flex; align-items: flex-start; gap: 6px; color: var(--fg-quaternary); font: var(--chrome-font-regular); font-size: calc(var(--type-xs) - 1px); line-height: 1.5; }
 .scope-order-lock .icon { flex: none; margin-top: 2px; }
 .scope-count { margin-left: auto; color: var(--fg-quaternary); font: var(--chrome-font-regular); font-variant-numeric: tabular-nums; }
@@ -2737,3 +2769,11 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
 .video-media-card-empty .video-media-band { aspect-ratio: auto; width: 44px; min-height: 44px; flex-shrink: 0; }
 .video-media-card-empty .video-provider-strip { min-width: 0; flex: 1; border-top: 0; }
 .video-media-card-empty .video-card-play { color: var(--fg-primary); filter: none; }
+
+/* Installed iOS apps report a layout viewport one status bar short of the screen
+   (WebKit bug 301994), so 100% and inset: 0 stop above the bottom edge; lvh spans it. */
+@media (display-mode: standalone) {
+  :root { --viewport-gap: calc(100lvh - 100dvh); }
+  html, body, #root { height: 100lvh; }
+  :is(.overflow-sheet-layer, .action-sheet-layer, .related-layer, .reader, .lb-overlay, .modal-backdrop, .confirm-scrim, .feed-drawer-layer, .add-feed-layer) { bottom: auto; height: 100lvh; }
+}
