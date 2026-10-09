@@ -1449,6 +1449,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .lb-caption { padding: 16px 20px 30px; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-top: .5px solid rgba(244,242,238,.14); }
   .lb-caption p { color: #c7ccd3; }
   .lb-caption .lb-caption-previous { top: 16px; }
+  .lb-strip { bottom: calc(var(--lb-caption-h, 78px) + 10px); }
   .lb-counter, .lb-ratio { padding: 0; background: none; backdrop-filter: none; }
   .lb-actions { gap: 0; }
   .lb-actions .lb-control { background: none; backdrop-filter: none; }

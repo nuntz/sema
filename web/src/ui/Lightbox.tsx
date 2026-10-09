@@ -85,6 +85,15 @@ export function Lightbox(props: {
   let pinchDistance = 0;
   let pinchZoom = 1;
   const caption = () => current().caption || current().alt;
+  // The phone filmstrip sits on the caption bar, whose height follows its text.
+  const trackCaptionHeight = (footer: HTMLElement) => {
+    if (typeof ResizeObserver === "undefined") return;
+    const resize = new ResizeObserver(() =>
+      dialog.style.setProperty("--lb-caption-h", `${footer.offsetHeight}px`),
+    );
+    resize.observe(footer, { box: "border-box" });
+    onCleanup(() => resize.disconnect());
+  };
   const shownIndex = () =>
     imageIndex(
       index(),
@@ -775,7 +784,7 @@ export function Lightbox(props: {
           </div>
         </header>
         <Show when={caption() || previousCaption() || phone()}>
-          <footer class="lb-caption lb-chrome">
+          <footer class="lb-caption lb-chrome" ref={trackCaptionHeight}>
             <Show when={caption()} keyed>
               {(text) => <p id="lb-caption">{text}</p>}
             </Show>

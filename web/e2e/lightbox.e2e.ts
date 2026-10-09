@@ -603,3 +603,27 @@ test("lightbox fits images to an overlay taller than the window", async ({
     })
     .toBe((844 + 62) / 2);
 });
+
+test("phone filmstrip sits above a wrapping caption", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/reader-body.html", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: Array.from(
+        { length: 12 },
+        (_, index) =>
+          `<img src="/media/e2e/lightbox-images/1.svg?image=${index}" width="1600" height="1000" alt="A caption long enough to wrap onto a second line on a phone, image ${index + 1}">`,
+      ).join(""),
+    }),
+  );
+  await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+  await page.locator(".lb-openable").first().click();
+  await expect(page.locator(".lb-strip button")).toHaveCount(12);
+  await expect
+    .poll(async () => {
+      const strip = await page.locator(".lb-strip").boundingBox();
+      const caption = await page.locator(".lb-caption").boundingBox();
+      return strip && caption ? caption.y - (strip.y + strip.height) : -1;
+    })
+    .toBeGreaterThanOrEqual(8);
+});
