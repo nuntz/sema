@@ -70,10 +70,15 @@ describe("reader swipe", () => {
     expect(closeCommand(fast, 140, 60, 400)).toBe("close");
   });
 
-  it("reserves the left edge in tabs but accepts it in standalone mode", () => {
-    expect(beginSwipe(20, 100, 0, 390).eligible).toBe(false);
-    expect(beginSwipe(20, 100, 0, 390, true).eligible).toBe(true);
-    expect(beginSwipe(380, 100, 0, 390, true).eligible).toBe(false);
+  it("reserves both edges for browser history gestures", () => {
+    for (const x of [0, 20, 23, 367, 380, 390]) {
+      const edge = beginSwipe(x, 100, 0, 390);
+      expect(lockSwipeAxis(edge, x + 160, 100)).toBe("pending");
+      expect(panelOffset(edge, x + 160, 390)).toBe(0);
+      expect(closeCommand(edge, x + 160, 200, 390)).toBeUndefined();
+    }
+    expect(beginSwipe(24, 100, 0, 390).eligible).toBe(true);
+    expect(beginSwipe(366, 100, 0, 390).eligible).toBe(true);
   });
 
   it("does not close after the gesture locks vertically", () => {

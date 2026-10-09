@@ -489,8 +489,6 @@ export function Reader(props: ReaderProps) {
       touch.clientY,
       performance.now(),
       window.innerWidth,
-      window.matchMedia("(display-mode: standalone)").matches ||
-        (navigator as Navigator & { standalone?: boolean }).standalone === true,
     );
   };
 

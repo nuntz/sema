@@ -46,14 +46,15 @@ export function beginSwipe(
   y: number,
   startedAt: number,
   viewportWidth: number,
-  standalone = false,
 ): SwipeGesture {
   return {
     startX: x,
     startY: y,
     startedAt,
     axis: "pending",
-    eligible: (standalone || x >= 24) && x <= viewportWidth - 24,
+    // iOS also owns edge history gestures in the installed app. Handling
+    // those here slides the reader inside an already-moving webview.
+    eligible: x >= 24 && x <= viewportWidth - 24,
   };
 }
 
