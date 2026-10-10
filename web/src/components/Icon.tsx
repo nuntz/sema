@@ -13,6 +13,7 @@ import Download from "lucide-solid/icons/download";
 import Ellipsis from "lucide-solid/icons/ellipsis";
 import Expand from "lucide-solid/icons/expand";
 import ExternalLink from "lucide-solid/icons/external-link";
+import Funnel from "lucide-solid/icons/funnel";
 import Hash from "lucide-solid/icons/hash";
 import Heart from "lucide-solid/icons/heart";
 import ImageIcon from "lucide-solid/icons/image";
@@ -33,7 +34,6 @@ import Send from "lucide-solid/icons/send";
 import Settings from "lucide-solid/icons/settings";
 import SlidersHorizontal from "lucide-solid/icons/sliders-horizontal";
 import Sun from "lucide-solid/icons/sun";
-import Tag from "lucide-solid/icons/tag";
 import Trash2 from "lucide-solid/icons/trash-2";
 import Unplug from "lucide-solid/icons/unplug";
 import Upload from "lucide-solid/icons/upload";
@@ -163,6 +163,7 @@ const glyphs = {
   play: Play,
   "remove-feed": Trash2,
   retry: RotateCw,
+  "scope-filter": Funnel,
   search: Search,
   "sema-mark": SemaMark,
   send: Send,
@@ -173,7 +174,6 @@ const glyphs = {
   "status-muted": Pause,
   "status-ok": Check,
   "status-slowed": Clock,
-  tag: Tag,
   "theme-dark": Moon,
   "theme-light": Sun,
   "theme-system": Monitor,

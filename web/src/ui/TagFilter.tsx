@@ -181,7 +181,7 @@ export function TagFilter(props: {
                     aria-label="Filter by tag or feed"
                     onClick={() => begin("all")}
                   >
-                    <Icon name="tag" size={18} />
+                    <Icon name="scope-filter" size={18} />
                   </button>
                 </Tooltip>
               </Show>

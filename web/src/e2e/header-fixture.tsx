@@ -103,7 +103,7 @@ function GridHeaderFixture() {
           classList={{ "is-hidden": compactDisplayControls() }}
           aria-label="Filter by tag or feed"
         >
-          <Icon name="tag" />
+          <Icon name="scope-filter" />
         </button>
         <button
           type="button"
