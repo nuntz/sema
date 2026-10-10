@@ -180,6 +180,14 @@ _Avoid_: Facade, placeholder, thumbnail, preview
 The user action that starts a Video Item's video inside Sema in place of its Poster. Playing is Behaviour, counted like a click-through.
 _Avoid_: Watch, embed, autoplay, open
 
+**Dock**:
+The small corner frame where a Video Item keeps playing after its Peek or reader goes away. At most one Video Item is Docked at a time, a Dock is not an Overlay, and Docking never changes whether the Item is Read.
+_Avoid_: Mini player, picture-in-picture, PiP, float, popover, corner player
+
+**Expand**:
+Leaving the Dock for the surface the Video Item was Docked from: its Peek or its reader. While another Item's reader is open, Expand opens the Docked Item's reader in its place instead.
+_Avoid_: Restore, maximise, un-dock, reopen
+
 ### Sending
 
 **Send**:

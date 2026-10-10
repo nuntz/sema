@@ -87,7 +87,6 @@ import {
   moveLongPress,
 } from "./touch-gestures";
 import { useSheetDrag } from "./use-sheet-drag";
-import { VideoPeek } from "./VideoPeek";
 
 interface GridProps {
   model: GridModel;
@@ -189,7 +188,6 @@ function GridContent(props: GridProps) {
   const [scrollTop, setScrollTop] = createSignal(
     Math.max(0, props.layout.initialScrollTop ?? 0),
   );
-  const [videoPeek, setVideoPeek] = createSignal<Item>();
   const [lightbox, setLightbox] = createSignal<{
     item: Item;
     images: LightboxImage[];
@@ -201,15 +199,13 @@ function GridContent(props: GridProps) {
     imageRequest?.abort();
     imageRequest = undefined;
     setLightbox();
-    setVideoPeek();
     if (restoreFocus) imageOrigin?.focus({ preventScroll: true });
   };
   onCleanup(() => imageRequest?.abort());
   // Yield Grid shortcuts while its Peek owns the keyboard.
   const peekActive = () =>
     props.active ||
-    ((Boolean(lightbox()) || Boolean(videoPeek())) &&
-      keyOwnership().owner === "lightbox");
+    (Boolean(lightbox()) && keyOwnership().owner === "lightbox");
   createEffect(() => {
     if (!peekActive()) closePeek(false);
   });
@@ -227,8 +223,8 @@ function GridContent(props: GridProps) {
         cell ??
         undefined);
     if (isVideoItem(item)) {
-      props.actions.onPlay?.(item);
-      setVideoPeek(item);
+      if (props.actions.onVideoPeek) props.actions.onVideoPeek(item);
+      else openPrimary(item);
       return;
     }
     const lead = gridLightboxLead(
@@ -1698,20 +1694,6 @@ function GridContent(props: GridProps) {
           </section>
         </Show>
       </div>
-      <Show when={videoPeek()} keyed>
-        {(item) => (
-          <VideoPeek
-            item={item}
-            onClose={closePeek}
-            onOriginal={() => props.actions.onPlay?.(item)}
-            onFlip={(seconds) => {
-              if (props.actions.onVideoFlip)
-                props.actions.onVideoFlip(item, seconds);
-              else openPrimary(item);
-            }}
-          />
-        )}
-      </Show>
       <Show when={lightbox()}>
         {(state) => (
           <Lightbox

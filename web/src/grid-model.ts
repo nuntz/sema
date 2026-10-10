@@ -50,8 +50,8 @@ export interface GridActions {
   onSelectView(view: "today" | "yesterday"): void;
   onFocus(id: string): void;
   onOpen(item: Item): void;
-  onPlay?(item: Item): void;
-  onVideoFlip?(item: Item, seconds: number): void;
+  /** Peeks a Video Item on the shared stage, Expanding it if it is Docked. */
+  onVideoPeek?(item: Item): void;
   onOpenStoryLead(story: Story): void;
   onExternalOpen(item: Item): void;
   onDiscussion(item: Item): void;

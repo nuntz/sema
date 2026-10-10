@@ -2761,8 +2761,6 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
 .video-player-host, .video-player-host iframe { display: block; width: 100%; height: 100%; border: 0; }
 .video-failure { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #fff; font: 400 13px/1.5 "IBM Plex Mono", monospace; }
 .video-failure a { display: inline-flex; align-items: center; gap: 8px; color: inherit; }
-.video-peek { display: grid; place-items: center; }
-.video-peek-frame { position: relative; width: min(100vw, calc(100dvh * 16 / 9)); }
 .article-body .reader-video { margin: 30px 0; }
 .article-body .video-media-band > img { height: 100%; border-radius: 0; }
 
@@ -2770,6 +2768,41 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
 .video-media-card-empty .video-media-band { aspect-ratio: auto; width: 44px; min-height: 44px; flex-shrink: 0; }
 .video-media-card-empty .video-provider-strip { min-width: 0; flex: 1; border-top: 0; }
 .video-media-card-empty .video-card-play { color: var(--fg-primary); filter: none; }
+
+/* One stage hosts the Peeked or Docked video and is restyled, never moved,
+   because moving a cross-origin iframe reloads it. */
+.video-stage { --dock-gap: 12px; --dock-w: min(46vw, 320px); position: fixed; z-index: 65; background: #000; }
+.video-stage[data-mode="peek"] { z-index: 101; inset: 0; width: min(100vw, calc(100dvh * 16 / 9)); height: min(calc(100vw * 9 / 16), 100dvh); margin: auto; }
+.video-stage[data-mode="dock"] {
+  right: max(var(--dock-gap), env(safe-area-inset-right));
+  bottom: calc(var(--dock-gap) + env(safe-area-inset-bottom) - var(--viewport-gap));
+  width: var(--dock-w);
+  overflow: hidden;
+  border: 1px solid var(--chrome-rule);
+  border-radius: 10px;
+  background: var(--surface-chrome-raised);
+  box-shadow: var(--shadow-toast);
+  transition: bottom 200ms cubic-bezier(.32, .72, 0, 1), filter 160ms ease-out;
+}
+.video-stage.is-covered { filter: brightness(.45); }
+.video-dock-strip { height: 32px; padding-left: 10px; display: flex; align-items: center; gap: 2px; color: var(--chrome-fg-secondary); font: var(--chrome-font); }
+.video-dock-strip[hidden] { display: none; }
+.video-dock-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video-dock-action { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; flex: none; border: 0; border-radius: 0; background: transparent; color: var(--chrome-fg-primary); }
+.video-dock-action:hover { background: var(--control-wash-strong); }
+.video-dock-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.video-stage[data-mode="dock"] .video-failure { gap: 6px; font-size: 11px; text-align: center; }
+@media (min-width: 620px) {
+  .video-stage { --dock-gap: 20px; --dock-w: 320px; }
+}
+/* The phone reader's toolbar owns the bottom edge; the Dock rides above it. */
+@media (max-width: 619px) {
+  body:has(.reader:not(.closing) .reader-bottom-actions) .video-stage[data-mode="dock"] { bottom: calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + var(--dock-gap) - var(--viewport-gap)); }
+  body:has(.reader:not(.closing) .reader-bottom-actions.collapsed) .video-stage[data-mode="dock"] { bottom: calc(28px + var(--reader-bottom-pad) + var(--dock-gap) - var(--viewport-gap)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .video-stage { transition: none; }
+}
 
 /* Installed iOS apps report a layout viewport one status bar short of the screen
    (WebKit bug 301994), so 100% and inset: 0 stop above the bottom edge; lvh spans it. */

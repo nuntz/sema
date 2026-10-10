@@ -99,7 +99,9 @@ import {
   initialToolbarCollapseState,
   updateToolbarCollapse,
 } from "./ui/toolbar-collapse";
+import { VideoStage } from "./ui/VideoStage";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
+import { createVideoDock, expandTarget } from "./video-dock";
 import { listenForWindowReturn } from "./window-activity";
 
 type Toast = {
@@ -702,6 +704,7 @@ export function App(props: {
       window.clearTimeout(linkActionTimer);
       window.clearTimeout(toastTimer);
       readState.dispose();
+      dock.close(); // Queues the Dock's dwell before the final flush.
       void flushPending(true);
     });
   });
@@ -955,9 +958,19 @@ export function App(props: {
   const [videoPlayback, setVideoPlayback] = createSignal<{
     itemID: string;
     seconds: number;
+    dwellMS?: number;
   }>();
+  const dock = createVideoDock();
+  dock.setReporter((itemID, dwellMS) =>
+    queueEvent(itemID, { dwell_ms: dwellMS }),
+  );
+  // A reader opening the Peeked or Docked Item resumes its video there.
+  const resumeVideo = (itemID: string) => {
+    const handoff = dock.take(itemID);
+    setVideoPlayback(handoff && { itemID, ...handoff });
+  };
   const markOpened = (item: Item, archive = item.archived === true) => {
-    setVideoPlayback(undefined);
+    resumeVideo(item.item_id);
     openReaderHistory();
     setReaderItem(item);
     recordOpened(item, archive);
@@ -966,9 +979,9 @@ export function App(props: {
   };
 
   const markStoryOpened = (story: Story) => {
-    setVideoPlayback(undefined);
     const lead = story.items[0];
     if (!lead) return;
+    resumeVideo(lead.item_id);
     openReaderHistory();
     setReaderItem({ ...lead, read: true });
     setReaderArchive(false);
@@ -984,6 +997,40 @@ export function App(props: {
   const recordClickThrough = (item: Item) => {
     if (!item.archived) queueEvent(item.item_id, { clicked_through: true });
   };
+
+  const peekVideo = (item: Item) => {
+    if (dock.peek(item)) recordClickThrough(item);
+  };
+
+  // Peeks and the reader live over the grid, so Settings & Feeds steps aside
+  // first. Leaving switches the view at once; any reload finishes behind.
+  const leaveFeedsForVideo = () => {
+    if (view() === "feeds") void closeFeedsAndSettings();
+  };
+
+  const flipVideo = (item: Item) => {
+    leaveFeedsForVideo();
+    markOpened(item);
+  };
+
+  const expandDock = () => {
+    const video = dock.current();
+    if (!video) return;
+    leaveFeedsForVideo();
+    const readerOpen = !!readerID() && !readerClosing();
+    if (expandTarget(video, readerOpen) === "peek") dock.expandToPeek();
+    else markOpened(video.item, video.archive);
+  };
+
+  // Overlays cover the Dock, except those that act as pages beside it.
+  const dockCovered = () =>
+    keyboard().overlays.some(
+      (overlay) =>
+        overlay !== "reader" &&
+        overlay !== "search" &&
+        overlay !== "feeds" &&
+        !(overlay === "lightbox" && dock.mode() === "peek"),
+    );
 
   const openOriginal = (item: Item) => {
     if (!item.archived) queueEvent(item.item_id, { clicked_through: true });
@@ -1287,28 +1334,644 @@ export function App(props: {
   );
 
   return (
-    <Show
-      when={view() === "grid"}
-      fallback={
-        <>
-          <Feeds
-            api={api}
-            itemCounts={
-              scopeCountsWindowKey() === "" ? feedItemCounts() : undefined
+    <>
+      <Show
+        when={view() === "grid"}
+        fallback={
+          <>
+            <Feeds
+              api={api}
+              itemCounts={
+                scopeCountsWindowKey() === "" ? feedItemCounts() : undefined
+              }
+              onRefreshCounts={refreshFeedItemCounts}
+              focusSearch={focusFeedSearch()}
+              heartCount={heartCount()}
+              onBack={() => void closeFeedsAndSettings()}
+              onKeys={openKeys}
+              characterShortcuts={characterShortcuts()}
+              onCharacterShortcuts={changeCharacterShortcuts}
+              onSignOut={props.signOut}
+              onFeedsChanged={noteFeedsChanged}
+              onSendLabel={setSendLabel}
+              onToast={showToast}
+            />
+            <ToastNotice notice={toast()} />
+            <Show when={keysOpen()}>
+              <KeyboardMap
+                onClose={closeKeys}
+                characterShortcuts={characterShortcuts()}
+                onCharacterShortcuts={changeCharacterShortcuts}
+              />
+            </Show>
+          </>
+        }
+      >
+        <main
+          class="app-shell"
+          classList={{
+            searching: searchActive(),
+            "search-focused": searchFocused(),
+            "search-open": searchOpen(),
+            "tag-filter-open": tagFilterOpen(),
+          }}
+        >
+          <AppHeader
+            view="grid"
+            onHome={() => void backToTop()}
+            tooltipDisabled={headerTooltipDisabled()}
+          >
+            <Show when={mode() === "live"}>
+              <span class="sr-only" aria-live="polite">
+                {scopeSummary(itemWindow(), unreadOnly())}
+              </span>
+              <div class="header-display-controls">
+                <div class="header-segments">
+                  <div
+                    class="segmented segmented-control"
+                    role="radiogroup"
+                    aria-label="Item order"
+                    aria-disabled={feedScoped()}
+                    title={
+                      feedScoped()
+                        ? "Newest first while filtering by feed"
+                        : undefined
+                    }
+                  >
+                    <button
+                      type="button"
+                      class="segmented__item"
+                      classList={{ active: gridOrder() === "interest" }}
+                      role="radio"
+                      aria-checked={gridOrder() === "interest"}
+                      disabled={feedScoped()}
+                      title="Toggle order (t)"
+                      onClick={() => void selectOrder("interest")}
+                    >
+                      <span>Front page</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="segmented__item"
+                      classList={{ active: gridOrder() === "chrono" }}
+                      role="radio"
+                      aria-checked={gridOrder() === "chrono"}
+                      disabled={feedScoped()}
+                      title="Toggle order (t)"
+                      onClick={() => void selectOrder("chrono")}
+                    >
+                      <span>Latest</span>
+                    </button>
+                  </div>
+                  <div
+                    class="segmented segmented-control"
+                    role="radiogroup"
+                    aria-label="Items shown"
+                  >
+                    <For each={ITEM_WINDOWS}>
+                      {(option) => (
+                        <button
+                          type="button"
+                          class="segmented__item"
+                          classList={{ active: itemWindow() === option.value }}
+                          role="radio"
+                          aria-checked={itemWindow() === option.value}
+                          title={`${option.label} (${scopeShortcuts[option.value]})`}
+                          onClick={() => void selectWindow(option.value)}
+                        >
+                          <span>{option.label}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                  <button
+                    type="button"
+                    class="chrome-btn"
+                    classList={{ "chrome-btn--on": unreadOnly() }}
+                    role="switch"
+                    aria-checked={unreadOnly()}
+                    onClick={() => void toggleUnread()}
+                  >
+                    Unread
+                  </button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={compactDisplayControls()}>{scopePicker(true)}</Show>
+            <div class="header-spacer" />
+            <div class="chrome-group chrome-group--icons header-tools">
+              <Show when={!compactDisplayControls()}>{scopePicker(false)}</Show>
+              <Show when={compactControls()}>
+                <button
+                  type="button"
+                  class="chrome-btn filter-button header-filter-summary"
+                  aria-haspopup="dialog"
+                  aria-label={filterSummaryDescription(
+                    gridOrder(),
+                    itemWindow(),
+                    unreadOnly(),
+                    scopeCell()?.count,
+                  )}
+                  onClick={openFilter}
+                >
+                  <Icon name="filter" size={15} />
+                  <span class="header-filter-summary__label">
+                    {filterSummaryLabel(
+                      gridOrder(),
+                      itemWindow(),
+                      unreadOnly(),
+                    )}
+                  </span>
+                  <span class="scope-count">
+                    {scopeCell()?.count?.toLocaleString("en-US") ?? "–"}
+                  </span>
+                  <Show when={!scope()}>
+                    <Icon name="chevron-down" size={13} />
+                  </Show>
+                </button>
+              </Show>
+              <div class="search-slot" classList={{ open: searchOpen() }}>
+                <Show
+                  when={searchOpen()}
+                  fallback={
+                    <Tooltip
+                      name="Search"
+                      shortcut="/"
+                      disabled={headerTooltipDisabled()}
+                    >
+                      <button
+                        type="button"
+                        class="chrome-icon header-icon-button search-trigger"
+                        aria-label="Search"
+                        onClick={focusSearch}
+                      >
+                        <Icon name="search" size={18} />
+                      </button>
+                    </Tooltip>
+                  }
+                >
+                  <label
+                    class="search-field"
+                    classList={{
+                      focused: searchFocused(),
+                      typing: searchQuery().length > 0,
+                    }}
+                  >
+                    <Show
+                      when={!searchLoading()}
+                      fallback={<i class="search-ring" />}
+                    >
+                      <Icon name="search" size={14} />
+                    </Show>
+                    <input
+                      ref={searchInput}
+                      type="search"
+                      value={searchQuery()}
+                      placeholder="Search or describe a topic"
+                      aria-label="Search window and archive"
+                      onFocus={() => setSearchFocused(true)}
+                      onBlur={() => setSearchFocused(false)}
+                      onInput={(event) =>
+                        setSearchQuery(event.currentTarget.value)
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          clearSearch();
+                        }
+                      }}
+                    />
+                    <Show when={searchQuery()} fallback={<kbd>esc</kbd>}>
+                      <button
+                        type="button"
+                        aria-label="Clear search"
+                        onClick={clearSearch}
+                      >
+                        <Icon name="close" size={14} />
+                      </button>
+                    </Show>
+                  </label>
+                </Show>
+              </div>
+              <Tooltip
+                name="Archive"
+                shortcut="g → r · Shift+a"
+                disabled={headerTooltipDisabled()}
+              >
+                <button
+                  type="button"
+                  class="chrome-icon header-icon-button archive-toggle"
+                  classList={{ active: mode() === "archive" }}
+                  aria-pressed={mode() === "archive"}
+                  aria-label="Archive"
+                  onClick={() => void toggleArchive()}
+                >
+                  <Icon name="archive" size={18} />
+                </button>
+              </Tooltip>
+            </div>
+            <span
+              class="chrome-divider header-tools-divider"
+              aria-hidden="true"
+            />
+            <ThemeToggle
+              theme={props.theme}
+              tooltipDisabled={headerTooltipDisabled()}
+            />
+            <Tooltip
+              name="Feeds & settings"
+              shortcut="g → s"
+              disabled={headerTooltipDisabled()}
+              align="end"
+            >
+              <button
+                type="button"
+                class="chrome-icon header-icon-button settings-trigger"
+                aria-label="Feeds & settings"
+                onClick={() => openFeedsAndSettings()}
+              >
+                <Icon name="settings" size={18} />
+              </button>
+            </Tooltip>
+            <button
+              type="button"
+              class="chrome-btn chrome-btn--icon grid-overflow-trigger"
+              classList={{ "is-hidden": !phoneHeader() }}
+              aria-label="More"
+              aria-haspopup="dialog"
+              aria-expanded={headerMenu() === "overflow"}
+              onClick={() =>
+                setHeaderMenu((current) =>
+                  current === "overflow" ? undefined : "overflow",
+                )
+              }
+            >
+              <Icon name="menu" size={18} />
+            </button>
+          </AppHeader>
+          <Show when={compactControls()}>
+            <TagStrip
+              chips={stripChips()}
+              scope={scope()}
+              collapsed={scopeCollapse().collapsed}
+              onTag={(tag) => void applyTag(tag)}
+              onOpenPalette={openTagPalette}
+            />
+          </Show>
+          <SignalHint
+            notice={signalNotice()}
+            visible={
+              view() === "grid" &&
+              mode() !== "archive" &&
+              !readerID() &&
+              !searchActive()
             }
-            onRefreshCounts={refreshFeedItemCounts}
-            focusSearch={focusFeedSearch()}
-            heartCount={heartCount()}
-            onBack={() => void closeFeedsAndSettings()}
-            onKeys={openKeys}
-            characterShortcuts={characterShortcuts()}
-            onCharacterShortcuts={changeCharacterShortcuts}
-            onSignOut={props.signOut}
-            onFeedsChanged={noteFeedsChanged}
-            onSendLabel={setSendLabel}
-            onToast={showToast}
+            onUndo={(notice) => {
+              const item =
+                items().find(
+                  (candidate) => candidate.item_id === notice.itemID,
+                ) ??
+                stories()
+                  .flatMap((story) => story.items)
+                  .find((candidate) => candidate.item_id === notice.itemID);
+              if (item) setSignal(item, 0);
+            }}
           />
-          <ToastNotice notice={toast()} />
+          <Show
+            when={updateState()?.available && !readerID() && !readerClosing()}
+          >
+            <UpdateNotice
+              state={updateState() as UpdateState}
+              announcedBuilds={announcedUpdateBuilds}
+              onReload={() => void updateNotice?.reload()}
+              onDismiss={() => updateNotice?.dismiss()}
+            />
+          </Show>
+          <Show when={filterOpen()}>
+            <FilterSheet
+              order={gridOrder()}
+              feedScoped={feedScoped()}
+              window={itemWindow()}
+              unreadOnly={unreadOnly()}
+              counts={{
+                ...windowScopeCounts(
+                  scope(),
+                  unreadOnly(),
+                  feedFilters(),
+                  windowCounts(),
+                ),
+                [itemWindow()]: scopeCell()?.count,
+              }}
+              onOrder={(next) => void selectOrder(next)}
+              onWindow={(next) => void selectWindow(next)}
+              onUnreadOnly={(next) => void setUnreadOnlyState(next)}
+              onClose={() => setFilterOpen(false)}
+            />
+          </Show>
+          <Show when={headerMenu() === "overflow"}>
+            <div class="overflow-sheet-layer">
+              <button
+                type="button"
+                class="overflow-sheet-backdrop"
+                aria-label="Close more options"
+                onClick={() => setHeaderMenu()}
+              />
+              <section
+                class="overflow-sheet header-overflow-sheet"
+                role="dialog"
+                aria-modal="true"
+                aria-label="More options"
+              >
+                <button
+                  type="button"
+                  classList={{ active: mode() === "archive" }}
+                  aria-pressed={mode() === "archive"}
+                  onClick={() => {
+                    setHeaderMenu();
+                    void toggleArchive();
+                  }}
+                >
+                  <Icon name="archive" size={18} />
+                  <span>Archive</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Theme: ${props.theme.preference()} — switch to ${nextThemePreference(props.theme.preference())}`}
+                  onClick={props.theme.cyclePreference}
+                >
+                  <Icon
+                    name={
+                      props.theme.preference() === "system"
+                        ? "theme-system"
+                        : props.theme.preference() === "light"
+                          ? "theme-light"
+                          : "theme-dark"
+                    }
+                    size={18}
+                  />
+                  <span>Theme: {props.theme.preference()}</span>
+                  <kbd>next</kbd>
+                </button>
+                <button type="button" onClick={() => openFeedsAndSettings()}>
+                  <Icon name="settings" size={18} />
+                  <span>Feeds &amp; settings</span>
+                  <kbd>G S</kbd>
+                </button>
+              </section>
+            </div>
+          </Show>
+          <Show
+            when={
+              mode() === "live" &&
+              pendingNew().length > 0 &&
+              !searchActive() &&
+              !readerID() &&
+              !relatedSource()
+            }
+          >
+            <button
+              type="button"
+              class="new-items-pill"
+              classList={{
+                "new-items-pill--scope": Boolean(visibleScopeCell()),
+              }}
+              onClick={insertPendingNew}
+            >
+              {pendingNew().length} new
+            </button>
+          </Show>
+          <Show when={error()}>
+            <div class="error-banner" role="alert">
+              <span>{error()}</span>
+              <button
+                type="button"
+                aria-label="Dismiss error"
+                onClick={() => setError("")}
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+          </Show>
+          <Show
+            when={!loading() || items().length > 0 || stories().length > 0}
+            fallback={
+              <div class="loading-screen">
+                <i />
+                <span>
+                  {mode() === "archive"
+                    ? "Loading your archive…"
+                    : "Loading your feed…"}
+                </span>
+              </div>
+            }
+          >
+            <Show
+              when={
+                items().length > 0 ||
+                stories().length > 0 ||
+                Boolean(readAnchor()) ||
+                (mode() === "live" &&
+                  (feedFilters().length > 0 ||
+                    Boolean(scope()) ||
+                    !unreadOnly() ||
+                    itemWindow() !== "all"))
+              }
+              fallback={
+                scope() ? (
+                  <FilteredEmpty
+                    scope={scope()}
+                    archive={mode() === "archive"}
+                    feedTitle={activeFeedTitle()}
+                    onClear={() => void applyScope(null)}
+                  />
+                ) : mode() === "archive" ? (
+                  <ArchiveEmpty />
+                ) : (
+                  <ColdStart onImport={openFeedsAndSettings} />
+                )
+              }
+            >
+              <Grid
+                model={gridModel()}
+                sendLabel={sendLabel() ?? undefined}
+                pendingNewCount={pendingNew().length}
+                layout={{
+                  scrollTarget: scrollTarget(),
+                  focusedID: focusedID(),
+                  scrollToTopKey: scrollTopVersion(),
+                  initialScrollTop: session.scrollTop,
+                  layoutKey: layoutVersion(),
+                }}
+                reader={{
+                  readerReveal: readerReveal(),
+                  readerOpen: Boolean(readerID()),
+                  readerDragging: readerDragging(),
+                }}
+                actions={{
+                  onClearScope: () =>
+                    scope()?.kind === "feed"
+                      ? void applyFeed("")
+                      : void applyTag(""),
+                  onShowAll: () => void selectWindow("all"),
+                  onShowRead: () => void setUnreadOnlyState(false),
+                  onOpenArchive: () => void navigateByKey("archive"),
+                  onSelectView: (view) => void selectWindow(view),
+                  onFocus: setFocusedID,
+                  onOpen: markOpened,
+                  onVideoPeek: peekVideo,
+                  onOpenStoryLead: markStoryOpened,
+                  onExternalOpen: openExternalItem,
+                  onDiscussion: recordClickThrough,
+                  onSignal: setSignal,
+                  onHeart: toggleHeart,
+                  onToggleRead: toggleRead,
+                  onToggleStoryRead: toggleStoryRead,
+                  onCopy: copyLink,
+                  onSend: (item) => void sendItem(item),
+                  onOriginal: openOriginal,
+                  onRelated: openRelated,
+                  onApplyFeed: (item) => void applyFeed(item.feed_id),
+                  onMarkBelow: markBelow,
+                  onMarkStoryBelow: markStoryBelow,
+                  onExpandStory: (storyID) =>
+                    setExpandedStoryIDs((current) => {
+                      const next = new Set(current);
+                      if (next.has(storyID)) next.delete(storyID);
+                      else next.add(storyID);
+                      return next;
+                    }),
+                  onToggleOrder: toggleOrder,
+                  onUndo: undoLast,
+                }}
+                onPassed={readState.onPassed}
+                onFinishAndClear={() => finishAndClear()}
+                onReachedEnd={loadMore}
+                active={keyboard().owner === "grid"}
+                onHomeReady={(action) => {
+                  gridHome = action;
+                }}
+                topSlot={
+                  compactControls() ? (
+                    <div class="tag-strip-spacer" />
+                  ) : undefined
+                }
+                onRefresh={() => pollNew(true)}
+                onScrollPosition={(top) => {
+                  session.scrollTop = top;
+                  setScopeCollapse((current) =>
+                    updateToolbarCollapse(current, top, false),
+                  );
+                }}
+              />
+            </Show>
+          </Show>
+          <Show when={loadingMore()}>
+            <div class="page-loader">fetching more…</div>
+          </Show>
+          <Show when={searchActive()}>
+            <SearchResults
+              scopeLabel={
+                scope()?.kind === "tag"
+                  ? `#${scope()?.value}`
+                  : feedScopeChip(scope(), feedFilters())?.title
+              }
+              query={searchQuery().trim()}
+              response={searchResponse()}
+              loading={searchLoading()}
+              focusedID={searchFocusedID()}
+              active={keyboard().owner === "search"}
+              linkActionID={linkActionID()}
+              onFocus={setSearchFocusedID}
+              onOpen={(item, archive) => markOpened(item, archive)}
+              onExternalOpen={openExternalItem}
+              onDiscussion={recordClickThrough}
+              onSignal={setSignal}
+              onHeart={toggleHeart}
+              onCopy={copyLink}
+              onRelated={openRelated}
+              onEscape={clearSearch}
+            />
+          </Show>
+          <Show when={selected()}>
+            {(item) => (
+              <Reader
+                loadBody={(url, signal) => api.body(url, signal)}
+                item={item()}
+                initialPlayback={videoPlayback()}
+                active={
+                  keyboard().owner === "reader" ||
+                  (keyboard().owner === "action-sheet" &&
+                    keyboard().overlays.includes("reader"))
+                }
+                archive={readerArchive()}
+                hearted={item().hearted}
+                linkActionActive={linkActionID() === item().item_id}
+                canPrevious={selectedIndex() > 0}
+                canNext={
+                  selectedIndex() >= 0 &&
+                  selectedIndex() < frontPageItems().length - 1
+                }
+                closing={readerClosing()}
+                onClose={closeReader}
+                onReveal={(progress, dragging) => {
+                  setReaderReveal(progress);
+                  setReaderDragging(dragging);
+                }}
+                onHome={() => void backToTop()}
+                onPrevious={() => moveReader(-1)}
+                onNext={() => moveReader(1)}
+                onSignal={(value) => setSignal(item(), value)}
+                onHeart={() => toggleHeart(item())}
+                onCopy={() => copyLink(item())}
+                sendLabel={sendLabel() ?? undefined}
+                sending={sendingID() === item().item_id}
+                onSend={() => void sendItem(item())}
+                onOriginal={() =>
+                  !readerArchive() &&
+                  queueEvent(item().item_id, { clicked_through: true })
+                }
+                onRelated={() => openRelated(item())}
+                onApplyFeed={() => void applyFeed(item().feed_id)}
+                onRetry={() => {
+                  api
+                    .retryItem(item().item_id)
+                    .then(() => showToast("success", "Extraction queued"))
+                    .catch(handleError);
+                }}
+                onDwell={(itemID, dwellMS) =>
+                  !readerArchive() && queueEvent(itemID, { dwell_ms: dwellMS })
+                }
+                onPlay={() => dock.close()}
+                onDock={(docked, seconds, dwellMS, archive) =>
+                  dock.dockFromReader(docked, seconds, dwellMS, archive)
+                }
+              />
+            )}
+          </Show>
+          <Show when={relatedSource()}>
+            {(source) => (
+              <RelatedPanel
+                source={source()}
+                items={relatedItems()}
+                loading={relatedLoading()}
+                active={keyboard().owner === "related"}
+                linkActionID={linkActionID()}
+                onClose={closeRelated}
+                onWalk={openRelated}
+                onOpen={(item) => {
+                  closeRelated();
+                  markOpened(item, item.archived === true);
+                }}
+                onExternalOpen={openExternalItem}
+                onDiscussion={recordClickThrough}
+                onSignal={setSignal}
+                onHeart={toggleHeart}
+                onCopy={copyLink}
+              />
+            )}
+          </Show>
           <Show when={keysOpen()}>
             <KeyboardMap
               onClose={closeKeys}
@@ -1316,665 +1979,68 @@ export function App(props: {
               onCharacterShortcuts={changeCharacterShortcuts}
             />
           </Show>
-        </>
-      }
-    >
-      <main
-        class="app-shell"
-        classList={{
-          searching: searchActive(),
-          "search-focused": searchFocused(),
-          "search-open": searchOpen(),
-          "tag-filter-open": tagFilterOpen(),
-        }}
-      >
-        <AppHeader
-          view="grid"
-          onHome={() => void backToTop()}
-          tooltipDisabled={headerTooltipDisabled()}
-        >
-          <Show when={mode() === "live"}>
-            <span class="sr-only" aria-live="polite">
-              {scopeSummary(itemWindow(), unreadOnly())}
-            </span>
-            <div class="header-display-controls">
-              <div class="header-segments">
-                <div
-                  class="segmented segmented-control"
-                  role="radiogroup"
-                  aria-label="Item order"
-                  aria-disabled={feedScoped()}
-                  title={
-                    feedScoped()
-                      ? "Newest first while filtering by feed"
-                      : undefined
-                  }
-                >
-                  <button
-                    type="button"
-                    class="segmented__item"
-                    classList={{ active: gridOrder() === "interest" }}
-                    role="radio"
-                    aria-checked={gridOrder() === "interest"}
-                    disabled={feedScoped()}
-                    title="Toggle order (t)"
-                    onClick={() => void selectOrder("interest")}
-                  >
-                    <span>Front page</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="segmented__item"
-                    classList={{ active: gridOrder() === "chrono" }}
-                    role="radio"
-                    aria-checked={gridOrder() === "chrono"}
-                    disabled={feedScoped()}
-                    title="Toggle order (t)"
-                    onClick={() => void selectOrder("chrono")}
-                  >
-                    <span>Latest</span>
-                  </button>
-                </div>
-                <div
-                  class="segmented segmented-control"
-                  role="radiogroup"
-                  aria-label="Items shown"
-                >
-                  <For each={ITEM_WINDOWS}>
-                    {(option) => (
-                      <button
-                        type="button"
-                        class="segmented__item"
-                        classList={{ active: itemWindow() === option.value }}
-                        role="radio"
-                        aria-checked={itemWindow() === option.value}
-                        title={`${option.label} (${scopeShortcuts[option.value]})`}
-                        onClick={() => void selectWindow(option.value)}
-                      >
-                        <span>{option.label}</span>
-                      </button>
-                    )}
-                  </For>
-                </div>
-                <button
-                  type="button"
-                  class="chrome-btn"
-                  classList={{ "chrome-btn--on": unreadOnly() }}
-                  role="switch"
-                  aria-checked={unreadOnly()}
-                  onClick={() => void toggleUnread()}
-                >
-                  Unread
-                </button>
-              </div>
-            </div>
-          </Show>
-
-          <Show when={compactDisplayControls()}>{scopePicker(true)}</Show>
-          <div class="header-spacer" />
-          <div class="chrome-group chrome-group--icons header-tools">
-            <Show when={!compactDisplayControls()}>{scopePicker(false)}</Show>
-            <Show when={compactControls()}>
-              <button
-                type="button"
-                class="chrome-btn filter-button header-filter-summary"
-                aria-haspopup="dialog"
-                aria-label={filterSummaryDescription(
-                  gridOrder(),
-                  itemWindow(),
-                  unreadOnly(),
-                  scopeCell()?.count,
-                )}
-                onClick={openFilter}
-              >
-                <Icon name="filter" size={15} />
-                <span class="header-filter-summary__label">
-                  {filterSummaryLabel(gridOrder(), itemWindow(), unreadOnly())}
-                </span>
-                <span class="scope-count">
-                  {scopeCell()?.count?.toLocaleString("en-US") ?? "–"}
-                </span>
-                <Show when={!scope()}>
-                  <Icon name="chevron-down" size={13} />
-                </Show>
-              </button>
-            </Show>
-            <div class="search-slot" classList={{ open: searchOpen() }}>
-              <Show
-                when={searchOpen()}
-                fallback={
-                  <Tooltip
-                    name="Search"
-                    shortcut="/"
-                    disabled={headerTooltipDisabled()}
-                  >
-                    <button
-                      type="button"
-                      class="chrome-icon header-icon-button search-trigger"
-                      aria-label="Search"
-                      onClick={focusSearch}
-                    >
-                      <Icon name="search" size={18} />
-                    </button>
-                  </Tooltip>
+          <Show when={confirmRemove()}>
+            {(item) => (
+              <ConfirmRemove
+                onCancel={closeConfirmRemove}
+                onConfirm={() =>
+                  completeArchiveRemoval(item, closeConfirmRemove, performHeart)
                 }
-              >
-                <label
-                  class="search-field"
-                  classList={{
-                    focused: searchFocused(),
-                    typing: searchQuery().length > 0,
-                  }}
-                >
-                  <Show
-                    when={!searchLoading()}
-                    fallback={<i class="search-ring" />}
-                  >
-                    <Icon name="search" size={14} />
-                  </Show>
-                  <input
-                    ref={searchInput}
-                    type="search"
-                    value={searchQuery()}
-                    placeholder="Search or describe a topic"
-                    aria-label="Search window and archive"
-                    onFocus={() => setSearchFocused(true)}
-                    onBlur={() => setSearchFocused(false)}
-                    onInput={(event) =>
-                      setSearchQuery(event.currentTarget.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        clearSearch();
-                      }
-                    }}
-                  />
-                  <Show when={searchQuery()} fallback={<kbd>esc</kbd>}>
-                    <button
-                      type="button"
-                      aria-label="Clear search"
-                      onClick={clearSearch}
-                    >
-                      <Icon name="close" size={14} />
-                    </button>
-                  </Show>
-                </label>
-              </Show>
-            </div>
-            <Tooltip
-              name="Archive"
-              shortcut="g → r · Shift+a"
-              disabled={headerTooltipDisabled()}
-            >
-              <button
-                type="button"
-                class="chrome-icon header-icon-button archive-toggle"
-                classList={{ active: mode() === "archive" }}
-                aria-pressed={mode() === "archive"}
-                aria-label="Archive"
-                onClick={() => void toggleArchive()}
-              >
-                <Icon name="archive" size={18} />
-              </button>
-            </Tooltip>
-          </div>
-          <span
-            class="chrome-divider header-tools-divider"
-            aria-hidden="true"
-          />
-          <ThemeToggle
-            theme={props.theme}
-            tooltipDisabled={headerTooltipDisabled()}
-          />
-          <Tooltip
-            name="Feeds & settings"
-            shortcut="g → s"
-            disabled={headerTooltipDisabled()}
-            align="end"
-          >
-            <button
-              type="button"
-              class="chrome-icon header-icon-button settings-trigger"
-              aria-label="Feeds & settings"
-              onClick={() => openFeedsAndSettings()}
-            >
-              <Icon name="settings" size={18} />
-            </button>
-          </Tooltip>
-          <button
-            type="button"
-            class="chrome-btn chrome-btn--icon grid-overflow-trigger"
-            classList={{ "is-hidden": !phoneHeader() }}
-            aria-label="More"
-            aria-haspopup="dialog"
-            aria-expanded={headerMenu() === "overflow"}
-            onClick={() =>
-              setHeaderMenu((current) =>
-                current === "overflow" ? undefined : "overflow",
-              )
-            }
-          >
-            <Icon name="menu" size={18} />
-          </button>
-        </AppHeader>
-        <Show when={compactControls()}>
-          <TagStrip
-            chips={stripChips()}
-            scope={scope()}
-            collapsed={scopeCollapse().collapsed}
-            onTag={(tag) => void applyTag(tag)}
-            onOpenPalette={openTagPalette}
-          />
-        </Show>
-        <SignalHint
-          notice={signalNotice()}
-          visible={
-            view() === "grid" &&
-            mode() !== "archive" &&
-            !readerID() &&
-            !searchActive()
-          }
-          onUndo={(notice) => {
-            const item =
-              items().find(
-                (candidate) => candidate.item_id === notice.itemID,
-              ) ??
-              stories()
-                .flatMap((story) => story.items)
-                .find((candidate) => candidate.item_id === notice.itemID);
-            if (item) setSignal(item, 0);
-          }}
-        />
-        <Show
-          when={updateState()?.available && !readerID() && !readerClosing()}
-        >
-          <UpdateNotice
-            state={updateState() as UpdateState}
-            announcedBuilds={announcedUpdateBuilds}
-            onReload={() => void updateNotice?.reload()}
-            onDismiss={() => updateNotice?.dismiss()}
-          />
-        </Show>
-        <Show when={filterOpen()}>
-          <FilterSheet
-            order={gridOrder()}
-            feedScoped={feedScoped()}
-            window={itemWindow()}
-            unreadOnly={unreadOnly()}
-            counts={{
-              ...windowScopeCounts(
-                scope(),
-                unreadOnly(),
-                feedFilters(),
-                windowCounts(),
-              ),
-              [itemWindow()]: scopeCell()?.count,
-            }}
-            onOrder={(next) => void selectOrder(next)}
-            onWindow={(next) => void selectWindow(next)}
-            onUnreadOnly={(next) => void setUnreadOnlyState(next)}
-            onClose={() => setFilterOpen(false)}
-          />
-        </Show>
-        <Show when={headerMenu() === "overflow"}>
-          <div class="overflow-sheet-layer">
-            <button
-              type="button"
-              class="overflow-sheet-backdrop"
-              aria-label="Close more options"
-              onClick={() => setHeaderMenu()}
-            />
-            <section
-              class="overflow-sheet header-overflow-sheet"
-              role="dialog"
-              aria-modal="true"
-              aria-label="More options"
-            >
-              <button
-                type="button"
-                classList={{ active: mode() === "archive" }}
-                aria-pressed={mode() === "archive"}
-                onClick={() => {
-                  setHeaderMenu();
-                  void toggleArchive();
+              />
+            )}
+          </Show>
+          <Show when={finishUndo()} keyed>
+            {(operation) => (
+              <div
+                class="finish-undo-toast"
+                role="status"
+                aria-live="polite"
+                onPointerEnter={() => {
+                  readState.pauseUndo("hover", true);
+                }}
+                onPointerLeave={() => {
+                  readState.pauseUndo("hover", false);
+                }}
+                onFocusIn={() => {
+                  readState.pauseUndo("focus", true);
+                }}
+                onFocusOut={(event) => {
+                  if (
+                    !event.relatedTarget ||
+                    !event.currentTarget.contains(event.relatedTarget as Node)
+                  ) {
+                    readState.pauseUndo("focus", false);
+                  }
                 }}
               >
-                <Icon name="archive" size={18} />
-                <span>Archive</span>
-              </button>
-              <button
-                type="button"
-                aria-label={`Theme: ${props.theme.preference()} — switch to ${nextThemePreference(props.theme.preference())}`}
-                onClick={props.theme.cyclePreference}
-              >
-                <Icon
-                  name={
-                    props.theme.preference() === "system"
-                      ? "theme-system"
-                      : props.theme.preference() === "light"
-                        ? "theme-light"
-                        : "theme-dark"
-                  }
-                  size={18}
-                />
-                <span>Theme: {props.theme.preference()}</span>
-                <kbd>next</kbd>
-              </button>
-              <button type="button" onClick={() => openFeedsAndSettings()}>
-                <Icon name="settings" size={18} />
-                <span>Feeds &amp; settings</span>
-                <kbd>G S</kbd>
-              </button>
-            </section>
-          </div>
-        </Show>
-        <Show
-          when={
-            mode() === "live" &&
-            pendingNew().length > 0 &&
-            !searchActive() &&
-            !readerID() &&
-            !relatedSource()
-          }
-        >
-          <button
-            type="button"
-            class="new-items-pill"
-            classList={{ "new-items-pill--scope": Boolean(visibleScopeCell()) }}
-            onClick={insertPendingNew}
-          >
-            {pendingNew().length} new
-          </button>
-        </Show>
-        <Show when={error()}>
-          <div class="error-banner" role="alert">
-            <span>{error()}</span>
-            <button
-              type="button"
-              aria-label="Dismiss error"
-              onClick={() => setError("")}
-            >
-              <Icon name="close" />
-            </button>
-          </div>
-        </Show>
-        <Show
-          when={!loading() || items().length > 0 || stories().length > 0}
-          fallback={
-            <div class="loading-screen">
-              <i />
-              <span>
-                {mode() === "archive"
-                  ? "Loading your archive…"
-                  : "Loading your feed…"}
-              </span>
-            </div>
-          }
-        >
-          <Show
-            when={
-              items().length > 0 ||
-              stories().length > 0 ||
-              Boolean(readAnchor()) ||
-              (mode() === "live" &&
-                (feedFilters().length > 0 ||
-                  Boolean(scope()) ||
-                  !unreadOnly() ||
-                  itemWindow() !== "all"))
-            }
-            fallback={
-              scope() ? (
-                <FilteredEmpty
-                  scope={scope()}
-                  archive={mode() === "archive"}
-                  feedTitle={activeFeedTitle()}
-                  onClear={() => void applyScope(null)}
-                />
-              ) : mode() === "archive" ? (
-                <ArchiveEmpty />
-              ) : (
-                <ColdStart onImport={openFeedsAndSettings} />
-              )
-            }
-          >
-            <Grid
-              model={gridModel()}
-              sendLabel={sendLabel() ?? undefined}
-              pendingNewCount={pendingNew().length}
-              layout={{
-                scrollTarget: scrollTarget(),
-                focusedID: focusedID(),
-                scrollToTopKey: scrollTopVersion(),
-                initialScrollTop: session.scrollTop,
-                layoutKey: layoutVersion(),
-              }}
-              reader={{
-                readerReveal: readerReveal(),
-                readerOpen: Boolean(readerID()),
-                readerDragging: readerDragging(),
-              }}
-              actions={{
-                onClearScope: () =>
-                  scope()?.kind === "feed"
-                    ? void applyFeed("")
-                    : void applyTag(""),
-                onShowAll: () => void selectWindow("all"),
-                onShowRead: () => void setUnreadOnlyState(false),
-                onOpenArchive: () => void navigateByKey("archive"),
-                onSelectView: (view) => void selectWindow(view),
-                onFocus: setFocusedID,
-                onOpen: markOpened,
-                onPlay: recordClickThrough,
-                onVideoFlip: (item, seconds) => {
-                  markOpened(item);
-                  setVideoPlayback({ itemID: item.item_id, seconds });
-                },
-                onOpenStoryLead: markStoryOpened,
-                onExternalOpen: openExternalItem,
-                onDiscussion: recordClickThrough,
-                onSignal: setSignal,
-                onHeart: toggleHeart,
-                onToggleRead: toggleRead,
-                onToggleStoryRead: toggleStoryRead,
-                onCopy: copyLink,
-                onSend: (item) => void sendItem(item),
-                onOriginal: openOriginal,
-                onRelated: openRelated,
-                onApplyFeed: (item) => void applyFeed(item.feed_id),
-                onMarkBelow: markBelow,
-                onMarkStoryBelow: markStoryBelow,
-                onExpandStory: (storyID) =>
-                  setExpandedStoryIDs((current) => {
-                    const next = new Set(current);
-                    if (next.has(storyID)) next.delete(storyID);
-                    else next.add(storyID);
-                    return next;
-                  }),
-                onToggleOrder: toggleOrder,
-                onUndo: undoLast,
-              }}
-              onPassed={readState.onPassed}
-              onFinishAndClear={() => finishAndClear()}
-              onReachedEnd={loadMore}
-              active={keyboard().owner === "grid"}
-              onHomeReady={(action) => {
-                gridHome = action;
-              }}
-              topSlot={
-                compactControls() ? <div class="tag-strip-spacer" /> : undefined
-              }
-              onRefresh={() => pollNew(true)}
-              onScrollPosition={(top) => {
-                session.scrollTop = top;
-                setScopeCollapse((current) =>
-                  updateToolbarCollapse(current, top, false),
-                );
-              }}
-            />
+                <span>
+                  <Show
+                    when={operation.count > 0}
+                    fallback={<strong>Grid cleared</strong>}
+                  >
+                    Marked {operation.count} read{" "}
+                    <strong>· grid cleared</strong>
+                  </Show>
+                </span>
+                <button type="button" onClick={undoLast}>
+                  Undo
+                </button>
+                <i class="finish-undo-toast__progress" aria-hidden="true" />
+              </div>
+            )}
           </Show>
-        </Show>
-        <Show when={loadingMore()}>
-          <div class="page-loader">fetching more…</div>
-        </Show>
-        <Show when={searchActive()}>
-          <SearchResults
-            scopeLabel={
-              scope()?.kind === "tag"
-                ? `#${scope()?.value}`
-                : feedScopeChip(scope(), feedFilters())?.title
-            }
-            query={searchQuery().trim()}
-            response={searchResponse()}
-            loading={searchLoading()}
-            focusedID={searchFocusedID()}
-            active={keyboard().owner === "search"}
-            linkActionID={linkActionID()}
-            onFocus={setSearchFocusedID}
-            onOpen={(item, archive) => markOpened(item, archive)}
-            onExternalOpen={openExternalItem}
-            onDiscussion={recordClickThrough}
-            onSignal={setSignal}
-            onHeart={toggleHeart}
-            onCopy={copyLink}
-            onRelated={openRelated}
-            onEscape={clearSearch}
-          />
-        </Show>
-        <Show when={selected()}>
-          {(item) => (
-            <Reader
-              loadBody={(url, signal) => api.body(url, signal)}
-              item={item()}
-              initialPlayback={videoPlayback()}
-              active={
-                keyboard().owner === "reader" ||
-                (keyboard().owner === "action-sheet" &&
-                  keyboard().overlays.includes("reader"))
-              }
-              archive={readerArchive()}
-              hearted={item().hearted}
-              linkActionActive={linkActionID() === item().item_id}
-              canPrevious={selectedIndex() > 0}
-              canNext={
-                selectedIndex() >= 0 &&
-                selectedIndex() < frontPageItems().length - 1
-              }
-              closing={readerClosing()}
-              onClose={closeReader}
-              onReveal={(progress, dragging) => {
-                setReaderReveal(progress);
-                setReaderDragging(dragging);
-              }}
-              onHome={() => void backToTop()}
-              onPrevious={() => moveReader(-1)}
-              onNext={() => moveReader(1)}
-              onSignal={(value) => setSignal(item(), value)}
-              onHeart={() => toggleHeart(item())}
-              onCopy={() => copyLink(item())}
-              sendLabel={sendLabel() ?? undefined}
-              sending={sendingID() === item().item_id}
-              onSend={() => void sendItem(item())}
-              onOriginal={() =>
-                !readerArchive() &&
-                queueEvent(item().item_id, { clicked_through: true })
-              }
-              onRelated={() => openRelated(item())}
-              onApplyFeed={() => void applyFeed(item().feed_id)}
-              onRetry={() => {
-                api
-                  .retryItem(item().item_id)
-                  .then(() => showToast("success", "Extraction queued"))
-                  .catch(handleError);
-              }}
-              onDwell={(itemID, dwellMS) =>
-                !readerArchive() && queueEvent(itemID, { dwell_ms: dwellMS })
-              }
-            />
-          )}
-        </Show>
-        <Show when={relatedSource()}>
-          {(source) => (
-            <RelatedPanel
-              source={source()}
-              items={relatedItems()}
-              loading={relatedLoading()}
-              active={keyboard().owner === "related"}
-              linkActionID={linkActionID()}
-              onClose={closeRelated}
-              onWalk={openRelated}
-              onOpen={(item) => {
-                closeRelated();
-                markOpened(item, item.archived === true);
-              }}
-              onExternalOpen={openExternalItem}
-              onDiscussion={recordClickThrough}
-              onSignal={setSignal}
-              onHeart={toggleHeart}
-              onCopy={copyLink}
-            />
-          )}
-        </Show>
-        <Show when={keysOpen()}>
-          <KeyboardMap
-            onClose={closeKeys}
-            characterShortcuts={characterShortcuts()}
-            onCharacterShortcuts={changeCharacterShortcuts}
-          />
-        </Show>
-        <Show when={confirmRemove()}>
-          {(item) => (
-            <ConfirmRemove
-              onCancel={closeConfirmRemove}
-              onConfirm={() =>
-                completeArchiveRemoval(item, closeConfirmRemove, performHeart)
-              }
-            />
-          )}
-        </Show>
-        <Show when={finishUndo()} keyed>
-          {(operation) => (
-            <div
-              class="finish-undo-toast"
-              role="status"
-              aria-live="polite"
-              onPointerEnter={() => {
-                readState.pauseUndo("hover", true);
-              }}
-              onPointerLeave={() => {
-                readState.pauseUndo("hover", false);
-              }}
-              onFocusIn={() => {
-                readState.pauseUndo("focus", true);
-              }}
-              onFocusOut={(event) => {
-                if (
-                  !event.relatedTarget ||
-                  !event.currentTarget.contains(event.relatedTarget as Node)
-                ) {
-                  readState.pauseUndo("focus", false);
-                }
-              }}
-            >
-              <span>
-                <Show
-                  when={operation.count > 0}
-                  fallback={<strong>Grid cleared</strong>}
-                >
-                  Marked {operation.count} read <strong>· grid cleared</strong>
-                </Show>
-              </span>
-              <button type="button" onClick={undoLast}>
-                Undo
-              </button>
-              <i class="finish-undo-toast__progress" aria-hidden="true" />
-            </div>
-          )}
-        </Show>
-        <ToastNotice notice={toast()} />
-      </main>
-    </Show>
+          <ToastNotice notice={toast()} />
+        </main>
+      </Show>
+      {/* Outside the view switch: the Dock plays on through Settings & Feeds. */}
+      <VideoStage
+        dock={dock}
+        covered={dockCovered()}
+        onExpand={expandDock}
+        onFlip={flipVideo}
+        onOriginal={recordClickThrough}
+      />
+    </>
   );
 }
 

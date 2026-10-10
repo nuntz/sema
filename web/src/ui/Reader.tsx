@@ -1,12 +1,15 @@
 import {
   createEffect,
   createMemo,
+  createRenderEffect,
   createSignal,
   For,
   type JSX,
+  on,
   onCleanup,
   onMount,
   Show,
+  untrack,
 } from "solid-js";
 import { Portal, render } from "solid-js/web";
 import { isOlderThanThirtyDays } from "../archive";
@@ -73,7 +76,8 @@ interface ReaderProps {
   loadBody(url: string, signal?: AbortSignal): Promise<string>;
   item: Item;
   active: boolean;
-  initialPlayback?: { itemID: string; seconds: number };
+  /** Resumes a Flipped or Docked video, with the dwell it already earned. */
+  initialPlayback?: { itemID: string; seconds: number; dwellMS?: number };
   archive: boolean;
   hearted: boolean;
   linkActionActive: boolean;
@@ -97,6 +101,10 @@ interface ReaderProps {
   onApplyFeed(): void;
   onRetry(): void;
   onDwell(itemID: string, dwellMS: number): void;
+  /** Any Play starting in the reader, so another video can stop. */
+  onPlay?(): void;
+  /** The lead video was live when the reader left its Item. */
+  onDock?(item: Item, seconds: number, dwellMS: number, archive: boolean): void;
 }
 
 export function Reader(props: ReaderProps) {
@@ -113,9 +121,12 @@ export function Reader(props: ReaderProps) {
     Element,
     PlaybackState | "loading" | "failed"
   >();
+  let playbackArchive = false;
   const play = (seconds?: number) => {
     if (!isVideoItem(props.item)) return;
+    props.onPlay?.();
     props.onOriginal();
+    playbackArchive = props.archive;
     if (playbackForItem()) player?.play(seconds);
     else {
       playbackState = "loading";
@@ -126,6 +137,7 @@ export function Reader(props: ReaderProps) {
   createEffect(() => {
     const initial = props.initialPlayback;
     if (initial?.itemID === props.item.item_id && !playbackForItem()) {
+      playbackArchive = props.archive;
       playbackState = "loading";
       syncDwell();
       setPlayback(initial);
@@ -274,6 +286,42 @@ export function Reader(props: ReaderProps) {
     props.onDwell(trackedID, elapsed);
   };
 
+  const seedDwell = () => {
+    const initial = untrack(() => props.initialPlayback);
+    if (initial?.itemID !== props.item.item_id || !initial.dwellMS) return;
+    dwellMS = initial.dwellMS;
+    lastReported = initial.dwellMS;
+    thresholdReported = initial.dwellMS >= 30_000;
+  };
+
+  const handOff = (item: Item) => {
+    if (
+      !player ||
+      playback()?.itemID !== item.item_id ||
+      (playbackState !== "playing" && playbackState !== "buffering")
+    )
+      return;
+    props.onDock?.(
+      item,
+      player.position(),
+      Math.round(currentDwell()),
+      playbackArchive,
+    );
+  };
+
+  // Runs before the item effects below reset the lead player's state.
+  let leavingItem = props.item;
+  createRenderEffect(
+    on(
+      () => props.item,
+      (item) => {
+        if (item.item_id !== leavingItem.item_id) handOff(leavingItem);
+        leavingItem = item;
+      },
+      { defer: true },
+    ),
+  );
+
   const syncDwell = () => {
     if (canDwell()) startDwell();
     else {
@@ -296,6 +344,7 @@ export function Reader(props: ReaderProps) {
     dwellMS = 0;
     lastReported = 0;
     thresholdReported = false;
+    seedDwell();
     setProgress(0);
     setScrolled(false);
     setHeadlineVisible(true);
@@ -343,7 +392,10 @@ export function Reader(props: ReaderProps) {
     const prepared = body();
     if (!prepared) return;
     const dispose = mountReaderVideos(prepared.element, {
-      onPlay: () => props.onOriginal(),
+      onPlay: () => {
+        props.onPlay?.();
+        props.onOriginal();
+      },
       onState: (card, state) => {
         inlinePlayback.set(card, state);
         syncDwell();
@@ -811,6 +863,7 @@ export function Reader(props: ReaderProps) {
       reclaimTimer = window.setTimeout(reclaimFocus);
     };
 
+    seedDwell();
     startDwell();
     dwellTimer = window.setInterval(() => {
       if (!thresholdReported && currentDwell() >= 30_000) {
@@ -833,6 +886,8 @@ export function Reader(props: ReaderProps) {
     article.addEventListener("touchcancel", cancelSwipe, { passive: true });
     toolbar.addEventListener("click", onToolbarClick, true);
     onCleanup(() => {
+      // Props may already be stale here; the last tracked Item is not.
+      handOff(leavingItem);
       pauseAndReport();
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("focus", onFocus);

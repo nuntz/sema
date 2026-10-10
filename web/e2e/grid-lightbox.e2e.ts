@@ -1,140 +1,7 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { openGrid } from "./grid-fixture";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { stubYouTube } from "./youtube-stub";
-
-async function openGrid(
-  page: Page,
-  kind = "image",
-  tag = false,
-  size = "M",
-  options: {
-    story?: boolean;
-    second?: boolean;
-    read?: boolean;
-    external?: boolean;
-    order?: string;
-  } = {},
-) {
-  await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
-  const item = {
-    item_id: "peek",
-    feed_id: "daily",
-    feed_title: "Daily",
-    url:
-      kind === "youtube"
-        ? "https://youtu.be/dQw4w9WgXcQ"
-        : "https://example.com/peek",
-    title: "Image article",
-    summary: "An article with images",
-    published_ts: new Date().toISOString(),
-    fetched_ts: new Date().toISOString(),
-    has_body: kind !== "video",
-    body_url: "/archive/peek.html",
-    media_url: kind === "body" ? undefined : "/media/e2e/lightbox-images/1.svg",
-    media_type: kind === "video" ? "video" : "image",
-    media_w: 1600,
-    media_h: 1000,
-    extract_quality: 0.8,
-    score: 0.5,
-    size,
-    read: options.read ?? false,
-    connector: options.external ? "reddit" : "rss",
-    external_url: options.external ? "https://v.redd.it/example" : undefined,
-    signal: 0,
-    hearted: false,
-  };
-  const mutations: string[] = [];
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (!path.startsWith("/api/")) {
-      await route.continue();
-      return;
-    }
-    if (route.request().method() !== "GET") {
-      mutations.push(path);
-      await route.fulfill({ status: 204 });
-    } else if (path === "/api/me") {
-      await route.fulfill({
-        json: {
-          profile: {
-            email: "reader@example.com",
-            order_pref: options.order ?? "interest",
-            tag_pref: tag ? "design" : "",
-            heart_count: 0,
-          },
-          heart_count: 0,
-          signal_count: 0,
-          model: {
-            explicit_count: 0,
-            liked_count: 0,
-            disliked_count: 0,
-            implicit_count: 0,
-          },
-        },
-      });
-    } else if (path === "/api/items" || path === "/api/archive")
-      await route.fulfill({
-        json: {
-          items: options.second
-            ? [
-                item,
-                {
-                  ...item,
-                  item_id: "other",
-                  title: "Other image",
-                  media_url: "/media/e2e/lightbox-images/2.svg",
-                },
-              ]
-            : [item],
-          next_cursor: null,
-        },
-      });
-    else if (path === "/api/stories")
-      await route.fulfill({
-        json: {
-          stories: options.story
-            ? [
-                {
-                  story_id: "peek-story",
-                  source_count: 2,
-                  order_key: 1,
-                  size,
-                  items: [
-                    { ...item, story_id: "peek-story" },
-                    {
-                      ...item,
-                      item_id: "headline",
-                      feed_id: "other",
-                      title: "Another headline",
-                      media_url: "/media/e2e/lightbox-images/2.svg",
-                      story_id: "peek-story",
-                    },
-                  ],
-                },
-              ]
-            : [],
-        },
-      });
-    else if (path === "/api/feeds")
-      await route.fulfill({ json: { feeds: [] } });
-    else await route.fulfill({ json: item });
-  });
-  await page.route("**/archive/peek.html", (route) =>
-    route.fulfill({
-      contentType: "text/html",
-      body: '<p>Article body</p><img src="/media/e2e/lightbox-images/2.svg" width="1600" height="1000" alt="Second"><img src="/media/e2e/lightbox-images/3.svg" width="1600" height="1000" alt="Third">',
-    }),
-  );
-  await page.goto("/");
-  if (options.read)
-    await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
-  const cell = page.locator(
-    options.story ? '[data-story-id="peek-story"]' : '[data-item-id="peek"]',
-  );
-  await expect(cell).toBeVisible();
-  await cell.locator(".cell-main, .story-lead").first().focus();
-  return { cell, mutations };
-}
 
 test("grid peek grows, navigates, and restores focus without marking read", async ({
   page,
@@ -546,7 +413,7 @@ for (const entry of ["glyph", "key", "sheet", "story"]) {
         .getByRole("button", { name: "Play", exact: true })
         .click();
     } else await page.keyboard.press("i");
-    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await expect(page.locator(".video-stage iframe")).toBeVisible();
     await expect(cell).not.toHaveClass(/is-read/);
     await expect(page.locator(".reader")).toHaveCount(0);
     await expect
@@ -585,18 +452,28 @@ test("Video Item main button opens the Poster; Play failure stays in the frame",
 });
 
 for (const key of ["Escape", "i"]) {
-  test(`Video Peek closes and destroys playback with ${key}`, async ({
+  test(`a playing Video Peek closes into the Dock with ${key}`, async ({
     page,
   }) => {
     await stubYouTube(page);
     const { cell } = await openGrid(page, "youtube");
     await page.keyboard.press("i");
-    await expect(page.locator(".video-peek iframe")).toBeVisible();
-    await page.locator(".video-peek iframe").focus();
+    const player = page.locator(".video-stage iframe");
+    // Settled playback hands the keyboard back to the Peek, so wait for it.
+    await expect(player).toHaveAttribute("data-state", "1");
+    const original = await player.elementHandle();
+    await player.focus();
     await page.keyboard.press("Shift+Tab");
     await expect(page.locator(".video-peek")).toBeFocused();
     await page.keyboard.press(key);
     await expect(page.locator(".video-peek")).toHaveCount(0);
+    await expect(page.locator('.video-stage[data-mode="dock"]')).toBeVisible();
+    expect(
+      await player.evaluate(
+        (element, previous) => element === previous,
+        original,
+      ),
+    ).toBe(true);
     await expect(cell.locator(".cell-main")).toBeFocused();
     await expect(cell).not.toHaveClass(/is-read/);
   });
@@ -611,10 +488,10 @@ for (const control of ["Seek", "Pause"]) {
       const { cell } = await openGrid(page, "youtube");
       await page.keyboard.press("i");
       await page
-        .frameLocator(".video-peek iframe")
+        .frameLocator(".video-stage iframe")
         .getByRole("button", { name: control })
         .click();
-      await expect(page.locator(".video-peek iframe")).toHaveAttribute(
+      await expect(page.locator(".video-stage iframe")).toHaveAttribute(
         "data-state",
         control === "Seek" ? "1" : "2",
       );
@@ -642,7 +519,7 @@ test("Escape closes Video Peek after leaving other YouTube controls", async ({
   await openGrid(page, "youtube");
   await page.keyboard.press("i");
   await page
-    .frameLocator(".video-peek iframe")
+    .frameLocator(".video-stage iframe")
     .getByRole("button", { name: "Mute" })
     .click();
   await page.mouse.move(1, 1);
@@ -692,7 +569,7 @@ for (const width of [1280, 390]) {
       /^Open Image article/,
     );
     await play.click();
-    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await expect(page.locator(".video-stage iframe")).toBeVisible();
     await expect(page.locator(".reader")).toHaveCount(0);
   });
 
@@ -738,7 +615,7 @@ for (const width of [1280, 390]) {
     await expect(play).toBeFocused();
     await expect(play).toHaveCSS("outline-style", "solid");
     await page.keyboard.press("Enter");
-    await expect(page.locator(".video-peek iframe")).toBeVisible();
+    await expect(page.locator(".video-stage iframe")).toBeVisible();
     await expect(page.locator(".reader")).toHaveCount(0);
   });
 }
@@ -804,7 +681,7 @@ test.describe("touch video Play", () => {
           touchPoints: [],
         });
       }
-      await expect(page.locator(".video-peek iframe")).toBeVisible();
+      await expect(page.locator(".video-stage iframe")).toBeVisible();
       await expect(page.locator(".reader")).toHaveCount(0);
       await expect(page.locator(".action-sheet-layer")).toHaveCount(0);
       await expect(cell).not.toHaveClass(/is-read/);
