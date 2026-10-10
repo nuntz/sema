@@ -7,7 +7,7 @@ GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
 STACK ?= dev
 AWS_REGION ?= us-east-1
 
-.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
+.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
 all: test build
 
@@ -55,6 +55,9 @@ backfill-image-signals:
 
 backfill-archive-identities:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-archive-identities $(BACKFILL_ARGS)
+
+backfill-unread-pk:
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-unread-pk $(BACKFILL_ARGS)
 
 backfill-item-identities:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-item-identities $(BACKFILL_ARGS)

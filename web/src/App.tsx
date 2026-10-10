@@ -208,7 +208,7 @@ export function App(props: {
     items,
     setItems,
     stories,
-    readAnchor,
+    hasRead,
     gridIDs,
     setGridIDs,
     gridStoryIDs,
@@ -1771,7 +1771,7 @@ export function App(props: {
               when={
                 items().length > 0 ||
                 stories().length > 0 ||
-                Boolean(readAnchor()) ||
+                hasRead() ||
                 (mode() === "live" &&
                   (feedFilters().length > 0 ||
                     Boolean(scope()) ||

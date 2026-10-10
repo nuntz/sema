@@ -151,6 +151,7 @@ export interface ItemsResponse {
   items: Item[];
   next_cursor: string | null;
   read_anchor?: ReadAnchor;
+  has_read?: boolean;
 }
 
 export interface ReadAnchor {

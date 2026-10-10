@@ -9,7 +9,6 @@ import type {
   Item,
   ItemsResponse,
   Order,
-  ReadAnchor,
   SearchResponse,
   Story,
 } from "./types";
@@ -30,7 +29,7 @@ export function createItemSession(
 ) {
   const [items, setItems] = createSignal<Item[]>([]);
   const [stories, setStories] = createSignal<Story[]>([]);
-  const [readAnchor, setReadAnchor] = createSignal<ReadAnchor>();
+  const [hasRead, setHasRead] = createSignal(false);
   const [gridIDs, setGridIDs] = createSignal<string[]>([]);
   const [gridStoryIDs, setGridStoryIDs] = createSignal<string[]>([]);
   const [pendingNew, setPendingNew] = createSignal<Item[]>([]);
@@ -82,7 +81,7 @@ export function createItemSession(
     setItems([]);
     setStories([]);
 
-    setReadAnchor();
+    setHasRead(false);
     setGridIDs([]);
     setGridStoryIDs([]);
     setPendingNew([]);
@@ -139,7 +138,7 @@ export function createItemSession(
         setItems(pageItems);
         setStories(nextStories);
         setGridStoryIDs(nextStories.map((story) => story.story_id));
-        setReadAnchor(page.read_anchor);
+        setHasRead(pageHasRead(page));
         setGridIDs(visibleIDs);
         setScrollTarget(0);
         setScrollTopVersion((value) => value + 1);
@@ -198,7 +197,7 @@ export function createItemSession(
         if (added.length > 0) setItems((current) => [...current, ...added]);
         if (visible.length > 0)
           setGridIDs((current) => [...current, ...visible]);
-        if (!readAnchor() && page.read_anchor) setReadAnchor(page.read_anchor);
+        if (pageHasRead(page)) setHasRead(true);
         setCursor(responseCursor);
         setLayoutVersion((value) => value + 1);
       });
@@ -290,7 +289,7 @@ export function createItemSession(
             if (incomingStories !== stories()) setStories(incomingStories);
             setGridStoryIDs(visibleStories.map((story) => story.story_id));
             setItems(pageItems);
-            setReadAnchor(page.read_anchor);
+            setHasRead(pageHasRead(page));
             setGridIDs(visible);
             setScrollTarget(0);
             setScrollTopVersion((value) => value + 1);
@@ -406,7 +405,7 @@ export function createItemSession(
     setItems,
     stories,
     setStories,
-    readAnchor,
+    hasRead,
     gridIDs,
     setGridIDs,
     gridStoryIDs,
@@ -504,6 +503,12 @@ export function prependGridIDs(
   if (incoming.length === 0) return current;
   const added = new Set(incoming);
   return [...incoming, ...current.filter((id) => !added.has(id))];
+}
+
+// The unread index never visits Read items, so the API reports has_read;
+// read_anchor remains for responses from before that field existed.
+export function pageHasRead(page: ItemsResponse): boolean {
+  return page.has_read === true || Boolean(page.read_anchor);
 }
 
 export function includeReadForGrid(unreadOnly: boolean): boolean {

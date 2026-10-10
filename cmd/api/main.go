@@ -754,7 +754,10 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("render stories for item filtering", err)
 		}
 	}
-	items, next, readAnchor, err := s.store.ItemsForFeeds(ctx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, snapshot)
+	listCtx, stats := store.WithQueryStats(ctx)
+	items, next, readAnchor, err := s.store.ItemsForFeeds(listCtx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, snapshot)
+	annotateRequest(ctx, "QueryCalls", strconv.Itoa(stats.Queries))
+	annotateRequest(ctx, "ScannedCount", strconv.Itoa(stats.Scanned))
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidCursor) {
 			return badRequest(err)
@@ -774,6 +777,11 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 		}
 	}
 	payload := map[string]any{"items": items, "next_cursor": next}
+	if !includeRead {
+		// The unread index never visits Read items, so the empty-state signal
+		// comes from the read snapshot rather than an anchor row.
+		payload["has_read"] = len(snapshot) > 0
+	}
 	if !includeRead && readAnchor != nil {
 		payload["read_anchor"] = map[string]string{
 			"item_id":      readAnchor.ItemID,

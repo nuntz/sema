@@ -121,6 +121,7 @@ func main() {
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("score"), Type: pulumi.String("N")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("gsi1pk"), Type: pulumi.String("S")},
 				&dynamodb.TableAttributeArgs{Name: pulumi.String("next_fetch_at"), Type: pulumi.String("S")},
+				&dynamodb.TableAttributeArgs{Name: pulumi.String("unread_pk"), Type: pulumi.String("S")},
 			},
 			GlobalSecondaryIndexes: dynamodb.TableGlobalSecondaryIndexArray{
 				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
@@ -131,6 +132,11 @@ func main() {
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
 					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
 				}, ProjectionType: pulumi.String("KEYS_ONLY")},
+				// Sparse: only unread live items carry unread_pk.
+				&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("unread-by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("unread_pk"), KeyType: pulumi.String("HASH")},
+					&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("score"), KeyType: pulumi.String("RANGE")},
+				}, ProjectionType: pulumi.String("ALL")},
 			},
 			Ttl:  &dynamodb.TableTtlArgs{AttributeName: pulumi.String("ttl"), Enabled: pulumi.Bool(true)},
 			Tags: pulumi.StringMap{"app": pulumi.String("sema"), "stack": pulumi.String(stack)},
@@ -670,7 +676,7 @@ var operationalQueries = []struct {
 	{"item-deadlines", []string{"item-worker"}, `stats sum(ItemDeadlineExceeded) as deadlines by feed_id, item_id`},
 	{"api", []string{"api"}, `stats sum(APIRequests) as requests, sum(APIServerErrors) as server_errors, avg(APIRequestDurationMs) as duration_ms by Route, Status`},
 	{"sends", []string{"api"}, `filter ispresent(SendOutcome) | stats sum(APIRequests) as attempts, avg(APIRequestDurationMs) as duration_ms by Route, SendOutcome, SendStatus, SendReason`},
-	{"items-latency", []string{"api"}, `filter ispresent(Order) | stats sum(APIRequests) as requests, avg(APIRequestDurationMs) as duration_ms, max(APIRequestDurationMs) as max_ms by Order, Filtered, ExcludeStories, ReadCache`},
+	{"items-latency", []string{"api"}, `filter ispresent(Order) | stats sum(APIRequests) as requests, avg(APIRequestDurationMs) as duration_ms, max(APIRequestDurationMs) as max_ms, avg(QueryCalls) as queries, max(QueryCalls) as max_queries, avg(ScannedCount) as scanned by Order, Filtered, ExcludeStories, ReadCache`},
 }
 
 func createOperationalQueries(ctx *pulumi.Context, functions map[string]pulumi.StringInput) error {

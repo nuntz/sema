@@ -55,10 +55,12 @@ func newIntegrationStore(t *testing.T) (context.Context, *Store) {
 			{AttributeName: aws.String("score"), AttributeType: types.ScalarAttributeTypeN},
 			{AttributeName: aws.String("gsi1pk"), AttributeType: types.ScalarAttributeTypeS},
 			{AttributeName: aws.String("next_fetch_at"), AttributeType: types.ScalarAttributeTypeS},
+			{AttributeName: aws.String("unread_pk"), AttributeType: types.ScalarAttributeTypeS},
 		},
 		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
 			{IndexName: aws.String("by-score"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("score"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll}},
 			{IndexName: aws.String("by-next-fetch"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("gsi1pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("next_fetch_at"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeKeysOnly}},
+			{IndexName: aws.String("unread-by-score"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("unread_pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("score"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll}},
 		},
 	})
 	if err != nil {

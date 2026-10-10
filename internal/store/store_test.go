@@ -2152,10 +2152,13 @@ func TestReadExpiresWithLiveItem(t *testing.T) {
 		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
 	}}
 	writes := 0
-	db.batchWrite = func(input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
-		for _, request := range input.RequestItems["table"] {
+	db.transactWrite = func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		for _, action := range input.TransactItems {
+			if action.Put == nil {
+				continue
+			}
 			var row domain.Read
-			if err := attributevalue.UnmarshalMap(request.PutRequest.Item, &row); err != nil {
+			if err := attributevalue.UnmarshalMap(action.Put.Item, &row); err != nil {
 				t.Fatal(err)
 			}
 			if row.SK != "R#live" || row.TTL != expires {
@@ -2163,7 +2166,7 @@ func TestReadExpiresWithLiveItem(t *testing.T) {
 			}
 			writes++
 		}
-		return &dynamodb.BatchWriteItemOutput{}, nil
+		return &dynamodb.TransactWriteItemsOutput{}, nil
 	}
 	if err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", []string{"live", "missing"}, true); err != nil {
 		t.Fatal(err)
@@ -2192,10 +2195,13 @@ func TestReadLegacyLiveItemWithoutIdentity(t *testing.T) {
 			expired, _ := attributevalue.MarshalMap(domain.Item{PK: "U#user", SK: "I#expired", ItemID: "expired", TTL: 1})
 			return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row, expired}}, nil
 		},
-		batchWrite: func(input *dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
-			for _, request := range input.RequestItems["table"] {
+		transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+			for _, action := range input.TransactItems {
+				if action.Put == nil {
+					continue
+				}
 				var row domain.Read
-				if err := attributevalue.UnmarshalMap(request.PutRequest.Item, &row); err != nil {
+				if err := attributevalue.UnmarshalMap(action.Put.Item, &row); err != nil {
 					t.Fatal(err)
 				}
 				if row.SK != "R#legacy" || row.TTL != expires {
@@ -2203,7 +2209,7 @@ func TestReadLegacyLiveItemWithoutIdentity(t *testing.T) {
 				}
 				writes++
 			}
-			return &dynamodb.BatchWriteItemOutput{}, nil
+			return &dynamodb.TransactWriteItemsOutput{}, nil
 		},
 	}
 	repository := New(db, nil, "table", "", "")
@@ -2246,9 +2252,9 @@ func TestReadStaleIDsDoesNotQueryLivePartition(t *testing.T) {
 					queries++
 					return &dynamodb.QueryOutput{}, nil
 				},
-				batchWrite: func(*dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) {
+				transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 					writes++
-					return &dynamodb.BatchWriteItemOutput{}, nil
+					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
 			}
 			repository := New(db, nil, "table", "", "")

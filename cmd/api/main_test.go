@@ -144,6 +144,40 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 	}
 }
 
+func TestGetItemsReportsHasReadWithoutAnchor(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		markers map[string]bool
+		want    bool
+	}{
+		{"read markers", map[string]bool{"elsewhere": true}, true},
+		{"no read markers", map[string]bool{}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := &server{store: &fakeAPIStore{
+				loadMarkers: func(context.Context, string) (map[string]bool, error) { return test.markers, nil },
+				itemsForFeeds: func(context.Context, string, domain.Order, string, int, bool, bool, map[string]bool, map[string]bool, domain.FetchWindow, map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+					return []domain.Item{}, "", nil, nil
+				},
+			}, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
+			ctx, fields := withRequestFields(context.Background())
+			got := server.getItems(ctx, "user", map[string]string{"order": "interest"})
+			var body struct {
+				HasRead *bool `json:"has_read"`
+			}
+			if err := json.Unmarshal([]byte(got.Body), &body); err != nil || got.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, body = %s, err = %v", got.StatusCode, got.Body, err)
+			}
+			if body.HasRead == nil || *body.HasRead != test.want {
+				t.Fatalf("has_read = %v, body = %s", body.HasRead, got.Body)
+			}
+			if fields["QueryCalls"] != "0" || fields["ScannedCount"] != "0" {
+				t.Fatalf("fields = %v", fields)
+			}
+		})
+	}
+}
+
 func TestGetItemsFiltersByFeed(t *testing.T) {
 	for _, test := range []struct {
 		name    string

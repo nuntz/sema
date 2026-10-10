@@ -156,6 +156,7 @@ type Item struct {
 	HasBody           bool           `dynamodbav:"has_body" json:"has_body"`
 	ExtractQuality    float64        `dynamodbav:"extract_quality" json:"extract_quality"`
 	Score             float64        `dynamodbav:"score" json:"score"`
+	UnreadPK          string         `dynamodbav:"unread_pk,omitempty" json:"-"` // present only while unread; keys unread-by-score
 	Size              string         `dynamodbav:"size" json:"size"`
 	Vector            []byte         `dynamodbav:"vector,omitempty" json:"-"`
 	ModelVersion      string         `dynamodbav:"model_version,omitempty" json:"-"`

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"net/url"
 	"reflect"
@@ -365,6 +366,9 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 	item.Vector = nil
 	item.ImageVector = nil
 	item.ImageModelVersion = ""
+	if strings.HasPrefix(item.SK, "I#") {
+		item.UnreadPK = item.PK
+	}
 	encoded, err := attributevalue.MarshalMap(item)
 	if err != nil {
 		return false, err
@@ -740,6 +744,7 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 		if err != nil {
 			return nil, "", nil, err
 		}
+		recordQuery(ctx, response.ScannedCount)
 		var page []domain.Item
 		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
 			return nil, "", nil, err
@@ -1844,6 +1849,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	archive.TTL = 0
 	archive.SearchText = domain.DeriveSearchText(item.Title, item.Summary)
 	archive.ArchiveSK = ""
+	archive.UnreadPK = ""
 	archive.HeartedTS = domain.Timestamp(now)
 	archive.Read = false
 	archive.Signal = 0
@@ -2690,49 +2696,91 @@ func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read b
 			unique = append(unique, id)
 		}
 	}
-	ids = unique
-	now := time.Now().UTC()
-	// Resolve only live rows: Read lapses with the Item, including when kept.
-	live := map[string]domain.Item{}
-	if read {
-		var err error
-		live, _, err = s.resolveLiveItemIDs(ctx, userID, ids, true, s.legacyReadFallback)
-		if err != nil {
+	// Resolve only live rows: Read lapses with the Item, including when kept,
+	// and the unread flag lives on the live row.
+	live, _, err := s.resolveLiveItemIDs(ctx, userID, unique, true, s.legacyReadFallback)
+	if err != nil {
+		return err
+	}
+	pending := make([]string, 0, len(unique))
+	for _, id := range unique {
+		if _, ok := live[id]; ok || !read {
+			pending = append(pending, id)
+		}
+	}
+	for len(pending) > 0 {
+		count := min(setReadTransactionItems, len(pending))
+		if err := s.setReadChunk(ctx, userID, pending[:count], live, read, time.Now().UTC()); err != nil {
+			return err
+		}
+		pending = pending[count:]
+	}
+	return nil
+}
+
+// setReadTransactionItems keeps each chunk's marker and live-row actions within
+// DynamoDB's 100-action transaction limit.
+const setReadTransactionItems = 50
+
+// setReadChunk changes the R# marker and the live row's unread_pk in one
+// transaction, so concurrent read and unread requests cannot leave an unread
+// Item outside the unread index. Items whose live row disappears are dropped
+// from the live-row update and the chunk is retried; conflicts back off.
+func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, live map[string]domain.Item, read bool, now time.Time) error {
+	pk := domain.UserPK(userID)
+	live = maps.Clone(live)
+	const maxConflicts = 5
+	for conflicts := 0; ; {
+		writes := make([]types.TransactWriteItem, 0, 2*len(ids))
+		actionIDs := make([]string, 0, 2*len(ids))
+		for _, id := range ids {
+			item, isLive := live[id]
+			if read {
+				if !isLive {
+					continue
+				}
+				row, err := attributevalue.MarshalMap(domain.Read{PK: pk, SK: domain.ReadSK(id), ReadAt: domain.Timestamp(now), TTL: item.TTL})
+				if err != nil {
+					return err
+				}
+				writes = append(writes,
+					types.TransactWriteItem{Put: &types.Put{TableName: aws.String(s.table), Item: row}},
+					types.TransactWriteItem{Update: s.unreadPKUpdate(pk, item.SK, false)})
+				actionIDs = append(actionIDs, id, id)
+				continue
+			}
+			writes = append(writes, types.TransactWriteItem{Delete: &types.Delete{TableName: aws.String(s.table), Key: key(pk, domain.ReadSK(id))}})
+			actionIDs = append(actionIDs, id)
+			if isLive {
+				writes = append(writes, types.TransactWriteItem{Update: s.unreadPKUpdate(pk, item.SK, true)})
+				actionIDs = append(actionIDs, id)
+			}
+		}
+		if len(writes) == 0 {
+			return nil
+		}
+		err := s.transact(ctx, writes)
+		var canceled *types.TransactionCanceledException
+		errors.As(err, &canceled)
+		switch {
+		case err == nil:
+			return nil
+		case canceledBecause(err, "ConditionalCheckFailed"):
+			for index, reason := range canceled.CancellationReasons {
+				if index < len(actionIDs) && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
+					delete(live, actionIDs[index])
+				}
+			}
+		case canceledBecause(err, "TransactionConflict") && conflicts < maxConflicts-1:
+			backoff := min(50*time.Millisecond<<conflicts, time.Second)
+			conflicts++
+			if sleepErr := s.sleep(ctx, time.Duration(rand.Int64N(int64(backoff)))); sleepErr != nil {
+				return sleepErr
+			}
+		default:
 			return err
 		}
 	}
-	requests := make([]types.WriteRequest, 0, len(ids))
-	for _, id := range ids {
-		if read {
-			item, ok := live[id]
-			if !ok {
-				continue
-			}
-			row, err := attributevalue.MarshalMap(domain.Read{PK: domain.UserPK(userID), SK: domain.ReadSK(id), ReadAt: domain.Timestamp(now), TTL: item.TTL})
-			if err != nil {
-				return err
-			}
-			requests = append(requests, types.WriteRequest{PutRequest: &types.PutRequest{Item: row}})
-		} else {
-			requests = append(requests, types.WriteRequest{DeleteRequest: &types.DeleteRequest{Key: key(domain.UserPK(userID), domain.ReadSK(id))}})
-		}
-	}
-	for len(requests) > 0 {
-		count := min(25, len(requests))
-		pending := requests[:count]
-		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
-			response, err := s.db.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{RequestItems: map[string][]types.WriteRequest{s.table: pending}})
-			if err != nil {
-				return err
-			}
-			pending = response.UnprocessedItems[s.table]
-		}
-		if len(pending) > 0 {
-			return fmt.Errorf("%d read-state writes were throttled", len(pending))
-		}
-		requests = requests[count:]
-	}
-	return nil
 }
 
 func (s *Store) PutContent(ctx context.Context, objectKey, contentType string, body []byte) error {
