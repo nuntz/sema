@@ -60,6 +60,22 @@ func TestReadStateWritersKeepUnreadIndexInStep(t *testing.T) {
 	}
 }
 
+func TestUnreadInterestPageScansOnlyUnreadItems(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.7, "c": 0.5, "d": 0.3, "e": 0.1})
+	if err := repository.SetRead(ctx, "user", []string{"a", "c", "d"}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, cursor, stats := unreadInterestPage(t, ctx, repository, "", 20)
+	if len(ids) != 2 || ids[0] != "b" || ids[1] != "e" || cursor != "" {
+		t.Fatalf("unread page = %v, cursor %q", ids, cursor)
+	}
+	if stats.Queries != 1 || stats.Scanned != 2 {
+		t.Fatalf("stats = %+v, want 1 query scanning 2 rows", stats)
+	}
+}
+
 func TestMarkUnreadRestoresItemAtItsScore(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.5, "c": 0.1})
@@ -113,8 +129,8 @@ func TestKeptCopyStaysOutOfUnreadPage(t *testing.T) {
 	if _, _, err := repository.SetHeart(ctx, "user", "kept", true); err != nil {
 		t.Fatal(err)
 	}
-	if ids, _, _ := unreadInterestPage(t, ctx, repository, "", 20); len(ids) != 2 || ids[0] != "kept" || ids[1] != "other" {
-		t.Fatalf("unread page = %v", ids)
+	if ids, _, stats := unreadInterestPage(t, ctx, repository, "", 20); len(ids) != 2 || ids[0] != "kept" || ids[1] != "other" || stats.Scanned != 2 {
+		t.Fatalf("unread page = %v, stats %+v", ids, stats)
 	}
 	if archived, err := repository.ArchiveItem(ctx, "user", "kept"); err != nil || archived.UnreadPK != "" {
 		t.Fatalf("kept copy = %+v, %v", archived, err)
@@ -219,8 +235,8 @@ func TestReconcileUnreadMembershipRepairsPreDeployRows(t *testing.T) {
 	if err != nil || audit != (UnreadMembership{Live: 3}) {
 		t.Fatalf("audit after apply = %+v, %v", audit, err)
 	}
-	if ids, _, _ := unreadInterestPage(t, ctx, repository, "", 20); len(ids) != 2 || ids[0] != "a" || ids[1] != "c" {
-		t.Fatalf("after apply = %v", ids)
+	if ids, _, stats := unreadInterestPage(t, ctx, repository, "", 20); len(ids) != 2 || ids[0] != "a" || ids[1] != "c" || stats.Scanned != 2 {
+		t.Fatalf("after apply = %v, stats %+v", ids, stats)
 	}
 }
 

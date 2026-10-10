@@ -718,7 +718,17 @@ func (s *Store) ItemsForFeeds(ctx context.Context, userID string, order domain.O
 			":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)},
 		},
 	}
-	if order == domain.OrderInterest {
+	switch {
+	case order == domain.OrderInterest && !includeRead:
+		// Only unread rows carry unread_pk. Kept copies share PK but not the I#
+		// prefix, and read markers still filter rows the index has not dropped yet.
+		input.IndexName = aws.String("unread-by-score")
+		input.KeyConditionExpression = aws.String("unread_pk = :pk")
+		input.FilterExpression = aws.String("#ttl > :now AND begins_with(SK, :prefix)")
+		if len(input.ExclusiveStartKey) > 0 {
+			input.ExclusiveStartKey["unread_pk"] = input.ExclusiveStartKey["PK"]
+		}
+	case order == domain.OrderInterest:
 		input.IndexName = aws.String("by-score")
 		input.KeyConditionExpression = aws.String("PK = :pk")
 		delete(input.ExpressionAttributeValues, ":prefix")
