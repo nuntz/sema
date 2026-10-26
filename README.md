@@ -111,7 +111,7 @@ The first attempt runs while the user waits, so the toast reports what the recei
 ## Prerequisites
 
 - Go 1.26+
-- Bun 1.3+
+- Bun 1.4.4+
 - Pulumi 3+
 - `zip` on `PATH`
 - AWS credentials for the target account
