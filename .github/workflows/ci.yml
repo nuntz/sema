@@ -28,10 +28,10 @@ jobs:
           cache: true
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version: 24.22.1
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.4
       - name: Check Go formatting
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
