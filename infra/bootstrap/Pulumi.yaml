@@ -1,7 +1,5 @@
 name: sema-bootstrap
 runtime: go
 description: >-
-  What CI deploys Sema with: the Lambda permissions boundary and the deploy role, trusted by the
-  account's GitHub OIDC provider that Stash's bootstrap stack owns. Applied by hand with your own
-  AWS session, never by CI (RUNBOOK.md → Bootstrap stack). Reads sema:githubRepository and
-  sema:route53ZoneId from the sema/prod ESC environment.
+  Sema's CI deploy role and Lambda permissions boundary, trusted by the account's GitHub OIDC
+  provider. Applied only by hand (RUNBOOK.md → Bootstrap stack).
