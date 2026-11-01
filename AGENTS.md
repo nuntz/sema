@@ -39,7 +39,7 @@ Recent history favors short imperative subjects, often Conventional Commit style
 
 ## Security & Configuration
 
-Keep credentials out of Git. Store the browser OAuth ID in `web/.env.local`, and set Pulumi secrets with `pulumi config set --secret`.
+Keep credentials out of Git. Store the browser OAuth ID in `web/.env.local`, and keep Pulumi config, secrets included, in the `untz/sema/prod` ESC environment (`pulumi env set --secret`), never in stack files; see `RUNBOOK.md`.
 
 ## Agent skills
 

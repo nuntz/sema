@@ -4,7 +4,9 @@ GO_CACHE ?= /tmp/sema-go-build
 GO_MOD_CACHE ?= /tmp/sema-go-mod
 LAMBDAS := scheduler feed-worker item-worker api rescore vector-cleanup delivery-worker
 GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
-STACK ?= dev
+STACK ?= prod
+PULUMI_ORG ?= untz
+PULUMI_STACK ?= $(PULUMI_ORG)/sema/$(STACK)
 AWS_REGION ?= us-east-1
 
 .PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
@@ -30,28 +32,28 @@ web:
 	cd web && bun run build
 
 infra:
-	cd infra && pulumi up
+	cd infra && pulumi up --stack $(PULUMI_STACK)
 
 preview:
-	cd infra && pulumi preview
+	cd infra && pulumi preview --stack $(PULUMI_STACK)
 
 deploy: infra
-	aws cloudfront create-invalidation --region $(AWS_REGION) --distribution-id "$$(cd infra && pulumi stack output distributionId)" --paths '/*'
+	aws cloudfront create-invalidation --region $(AWS_REGION) --distribution-id "$$(cd infra && pulumi stack output distributionId --stack $(PULUMI_STACK))" --paths '/*'
 
 rescore:
 	aws lambda invoke --region $(AWS_REGION) --function-name sema-$(STACK)-rescore --cli-binary-format raw-in-base64-out --payload '{"on_demand":true}' /tmp/sema-rescore.json
 
 replay:
 	replay_model_version='$(MODEL_VERSION)'; \
-	if [ -z "$$replay_model_version" ]; then replay_model_version=$$(cd infra && pulumi stack output modelVersion --stack $(STACK)); fi; \
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl --stack $(STACK)) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay $(FLAGS)
+	if [ -z "$$replay_model_version" ]; then replay_model_version=$$(cd infra && pulumi stack output modelVersion --stack $(PULUMI_STACK)); fi; \
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) ITEMS_QUEUE_URL=$$(cd infra && pulumi stack output itemsQueueUrl --stack $(PULUMI_STACK)) MODEL_VERSION="$$replay_model_version" GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/replay $(FLAGS)
 
 redrive:
-	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output feedsDlqArn --stack $(STACK))" --destination-arn "$$(cd infra && pulumi stack output feedsQueueArn --stack $(STACK))"
-	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output itemsDlqArn --stack $(STACK))" --destination-arn "$$(cd infra && pulumi stack output itemsQueueArn --stack $(STACK))"
+	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output feedsDlqArn --stack $(PULUMI_STACK))" --destination-arn "$$(cd infra && pulumi stack output feedsQueueArn --stack $(PULUMI_STACK))"
+	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output itemsDlqArn --stack $(PULUMI_STACK))" --destination-arn "$$(cd infra && pulumi stack output itemsQueueArn --stack $(PULUMI_STACK))"
 
 backfill-image-signals:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) IMAGE_MODEL_VERSION=$$(cd infra && pulumi stack output imageModelVersion --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-image-signals $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(PULUMI_STACK)) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(PULUMI_STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(PULUMI_STACK)) IMAGE_MODEL_VERSION=$$(cd infra && pulumi stack output imageModelVersion --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-image-signals $(BACKFILL_ARGS)
 
 backfill-archive-identities:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-archive-identities $(BACKFILL_ARGS)
@@ -63,10 +65,10 @@ backfill-item-identities:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-item-identities $(BACKFILL_ARGS)
 
 backfill-item-vectors:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-item-vectors $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(PULUMI_STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-item-vectors $(BACKFILL_ARGS)
 
 backfill-media-variants:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-media-variants $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-media-variants $(BACKFILL_ARGS)
 
 backfill-reddit-connector:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-reddit-connector $(BACKFILL_ARGS)
@@ -78,13 +80,13 @@ backfill-stories:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-stories $(BACKFILL_ARGS)
 
 backfill-vectors:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-vectors $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(PULUMI_STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(PULUMI_STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-vectors $(BACKFILL_ARGS)
 
 purge-legacy-vectors:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/purge-legacy-vectors $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(PULUMI_STACK)) VECTOR_INDEX=$$(cd infra && pulumi stack output vectorIndex --stack $(PULUMI_STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/purge-legacy-vectors $(BACKFILL_ARGS)
 
 backfill-youtube-connector:
-	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-youtube-connector $(BACKFILL_ARGS)
+	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-youtube-connector $(BACKFILL_ARGS)
 
 clean:
 	rm -rf bin web/dist

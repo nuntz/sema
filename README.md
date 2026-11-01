@@ -142,14 +142,13 @@ Set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local`. Vite proxies `/api` to `http://
 
 ## Deploy
 
+Production is the one stack, `untz/sema/prod` in Pulumi Cloud. Its config, secrets included, lives in the `untz/sema/prod` Pulumi ESC environment; `infra/Pulumi.prod.yaml` only imports it. [RUNBOOK.md](RUNBOOK.md) covers setting it up (`scripts/setup-deploy.sh` walks the one-time steps), changing config, and deploying by hand:
+
 ```sh
-cd infra
-pulumi stack init dev # or: pulumi stack select dev
-pulumi config set --secret sema:googleClientId YOUR_CLIENT_ID
-pulumi up
+make deploy
 ```
 
-The checked-in stack files use `us-east-1`; a new stack only needs the Google client ID. `pulumi up` installs pinned frontend dependencies, builds the Lambdas and SPA, and provisions their AWS resources. From the repository root, `make deploy` performs the same update and invalidates CloudFront.
+`pulumi up` installs pinned frontend dependencies, builds the Lambdas and SPA, and provisions their AWS resources; `make deploy` runs it on the prod stack and invalidates CloudFront. A new stack needs only the region and the Google client ID in its ESC environment.
 
 After deployment, run `pulumi stack output url` and add that HTTPS origin to the Google OAuth client’s **Authorized JavaScript origins**. Sign-in will not work until it is registered. The stack also exports the CloudFront URL, API endpoint, distribution ID, and storage bucket names.
 
@@ -163,8 +162,8 @@ Set the hostname and, when the zone is in Route 53, its hosted-zone ID:
 
 ```sh
 cd infra
-pulumi config set sema:domain reader.example.com
-pulumi config set sema:route53ZoneId Z0123456789ABCDEF
+pulumi env set untz/sema/prod 'pulumiConfig["sema:domain"]' reader.example.com
+pulumi env set untz/sema/prod 'pulumiConfig["sema:route53ZoneId"]' Z0123456789ABCDEF
 pulumi up
 ```
 
@@ -281,8 +280,7 @@ readers before backfilling leaves search incomplete and similarity can return
 5. Deploy with `cd infra && pulumi up --stack prod`, then restore the recorded
    API concurrency setting and event-source mapping state. Remove the temporary
    concurrency limit if the API previously had no reserved limit. Verify search,
-   similarity, and archive actions for each account. The `STACK` Make variable
-   does not select the active Pulumi stack for `make deploy`.
+   similarity, and archive actions for each account.
 6. After verifying the migration and retiring all old writers, inspect and
    optionally purge obsolete global records:
 
@@ -320,7 +318,7 @@ make rescore STACK=prod
 
 The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout will visibly reshuffle item sizes as the new image centroids take effect.
 
-The image-search similarity floor is a tuning knob for text-to-image recall. `ImageSearchTopSimilarity` and `ImageSearchMatches` in the Sema CloudWatch namespace show the live score distribution; adjust the floor with `pulumi config set sema:imageSearchMinSimilarity <n>` before deploying the stack.
+The image-search similarity floor is a tuning knob for text-to-image recall. `ImageSearchTopSimilarity` and `ImageSearchMatches` in the Sema CloudWatch namespace show the live score distribution; adjust the floor with `pulumi env set untz/sema/prod 'pulumiConfig["sema:imageSearchMinSimilarity"]' <n>` before deploying the stack.
 
 ### YouTube connector rollout
 
@@ -328,13 +326,13 @@ For deployments that predate the YouTube connector, gate discovery while migrati
 
 ```sh
 cd infra
-pulumi config set sema:youtubeDiscoveryEnabled false --stack prod
+pulumi env set untz/sema/prod 'pulumiConfig["sema:youtubeDiscoveryEnabled"]' false
 cd ..
 make deploy
 make backfill-youtube-connector STACK=prod
 make backfill-youtube-connector STACK=prod BACKFILL_ARGS=--apply
 cd infra
-pulumi config set sema:youtubeDiscoveryEnabled true --stack prod
+pulumi env set untz/sema/prod 'pulumiConfig["sema:youtubeDiscoveryEnabled"]' true
 cd ..
 make deploy
 ```
@@ -364,20 +362,20 @@ Send adds the `deliveries` queue with its dead-letter queue and alarm, the `deli
 The nightly `rescore` Lambda updates rankings across the live seven-day window. Run it on demand with:
 
 ```sh
-make rescore STACK=dev
+make rescore
 ```
 
 For an embedding or summary model upgrade, deploy the new configuration, replay the window, and then rescore:
 
 ```sh
 cd infra
-pulumi config set sema:modelVersion amazon.titan-embed-text-v2:0
-pulumi config set sema:summarizeModel amazon.nova-micro-v1:0
+pulumi env set untz/sema/prod 'pulumiConfig["sema:modelVersion"]' amazon.titan-embed-text-v2:0
+pulumi env set untz/sema/prod 'pulumiConfig["sema:summarizeModel"]' amazon.nova-micro-v1:0
 pulumi up
 cd ..
-make replay STACK=dev MODEL_VERSION=amazon.titan-embed-text-v2:0
-make replay STACK=dev FLAGS="--force-extract --force-summary"
-make rescore STACK=dev
+make replay MODEL_VERSION=amazon.titan-embed-text-v2:0
+make replay FLAGS="--force-extract --force-summary"
+make rescore
 ```
 
 Replay rebuilds embeddings from stored titles and reprocesses live items. It does not change read state, feedback, hearts, or archived article bodies.
@@ -387,7 +385,7 @@ Replay rebuilds embeddings from stored titles and reprocesses live items. It doe
 Move messages from both dead-letter queues back to their source queues with:
 
 ```sh
-make redrive STACK=dev
+make redrive
 ```
 
 Use credentials for the target stack and review the queues before redriving production messages.
