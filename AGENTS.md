@@ -14,11 +14,11 @@ Send is a public webhook contract: within `version: 1` only add optional fields,
 
 ## Build, Test, and Development Commands
 
-- `make check` is CI's test job (lint, format, vet, unit tests, web build, reproducible Lambda ZIPs); run it before every commit. `make test` runs only the unit tests.
+- `make check` is CI's test job (lint, format, vet, unit tests, web build, reproducible Lambda ZIPs); run it before every commit, plus `make e2e` when `web/` changed. `make test` runs only the unit tests.
 - `make build` creates arm64 Lambda ZIPs and the production SPA.
 - `cd web && bun run dev` starts Vite; `/api` proxies to `localhost:8787`.
 - `cd web && bun run lint` checks TypeScript with Biome; `bun run format` formats it.
-- `cd web && bun run test:e2e` runs Playwright after `bunx playwright install chromium`.
+- `make e2e` is CI's e2e job (Playwright, minus `@local` specs; `make e2e-all` includes them), after `cd web && bunx playwright install chromium`.
 - `make preview` previews Pulumi changes. Reserve `make deploy` for intentional AWS deployments.
 - Every green push to `master` deploys production from CI; `RUNBOOK.md` covers CI deploys, deploys by hand, and rollback. The deploy role and the Lambda boundary are fenced on purpose: never widen them or bypass the boundary to make a deploy pass; see `docs/adr/0004-ci-deploys-through-github-oidc.md`.
 
@@ -28,7 +28,7 @@ Format Go with `gofmt`; use tabs and lowercase package names. Use kebab-case for
 
 ## UI Contracts
 
-At viewports 620px and wider, keep grid and reader headers on a 56px shell with 20px edge padding, a 60px brand slot, and a 2px bottom band. The phone reader uses a 44px translucent nav bar and a toolbar sharing one material, with 0.5px hairlines and content scrolling under both. At 1200px and wider, align reader identity to the 640px article measure; collapse the shim below 1200px. Trailing icons navigate elsewhere; leading icons act on the current item. At 620px and wider, the reader read-progress gauge is 2px inside the header band, centred on the article measure, and quiet by default. The scrolled header title is the one sans-serif text in the header; all other header text stays mono. Below 860px the grid header carries the active Scope chip and a filter summary, with a 52px tag strip under it that collapses on scroll while the header never does; at 430px and below the grid header is 44px. Every header adds the top safe-area inset above these heights. In the installed iOS app, the root background matches the bar on top, because iOS tints the status bar from it. The phone reader and lightbox bars add 16px below the inset to clear the system edge blur. The phone reader toolbar sits 12px into the home-indicator inset.
+Header, reader, grid, and lightbox chrome follow fixed contracts (heights, insets, type, icon roles) in `CODING_STANDARDS.md`; read them before changing that chrome. `web/e2e/header.e2e.ts` asserts the measurable ones.
 
 ## Testing Guidelines
 
