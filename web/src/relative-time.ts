@@ -7,8 +7,11 @@ export function relativeAge(value: string, now: number): string {
   return `${Math.floor(seconds / 86400)}d`;
 }
 
-// Age as a phrase: "just now", "3m ago". Use this instead of appending "ago".
-export function relativeAgo(value: string, now: number): string {
-  const age = relativeAge(value, now);
+// Turns a compact age into a phrase: "just now", "3m ago". Use this instead of appending "ago".
+export function agoPhrase(age: string): string {
   return age === "now" ? "just now" : `${age} ago`;
+}
+
+export function relativeAgo(value: string, now: number): string {
+  return agoPhrase(relativeAge(value, now));
 }

@@ -71,6 +71,7 @@ describe("feed fetch status", () => {
     ["broken", "3d", "broken 3d"],
     ["muted", "3d", "muted"],
     ["ok", "2h", "2h ago"],
+    ["ok", "now", "just now"],
     ["ok", undefined, "never"],
     ["slowed", undefined, "slowed"],
     ["broken", undefined, "broken"],

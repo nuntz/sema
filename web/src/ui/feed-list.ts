@@ -1,3 +1,4 @@
+import { agoPhrase } from "../relative-time";
 import type { Feed } from "../types";
 
 export function upsertFeed(
@@ -20,5 +21,5 @@ export function feedFetchLabel(
   if (feed.status === "muted") return "muted";
   if (feed.status === "slowed" || feed.status === "broken")
     return age ? `${feed.status} ${age}` : feed.status;
-  return age ? `${age} ago` : "never";
+  return age ? agoPhrase(age) : "never";
 }
