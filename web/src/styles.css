@@ -2199,7 +2199,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .video-provider-strip > strong .icon { color: currentColor; }
 .video-channel-line { min-height: 61px; margin-bottom: 16px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
 .video-channel-line strong { min-width: 0; overflow: hidden; color: var(--fg-primary); font: 600 var(--type-sm)/1 "Instrument Sans", sans-serif; white-space: nowrap; text-overflow: ellipsis; }
-.video-channel-line > span { color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; white-space: nowrap; }
+.video-channel-line > span { flex: none; color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; white-space: nowrap; }
 .video-channel-line + .article-summary { margin: 0 0 28px; }
 .video-description { color: var(--article-body-fg); font: 400 var(--type-md)/1.72 "Newsreader", Georgia, serif; }
 .video-description p { margin: 0 0 19px; white-space: pre-wrap; text-wrap: pretty; }
@@ -2299,7 +2299,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .mute-row input:checked + i::after { transform: translateX(16px); }
   .video-media-band { max-height: 250px; }
   .video-provider-strip { padding: 0 10px; gap: 8px; }
-  .video-channel-line > span { overflow: hidden; text-overflow: ellipsis; }
   .reddit-cell .reddit-discussion { width: 28px; height: 28px; right: 6px; bottom: 6px; }
   .reddit-cell .reddit-discussion .icon { width: 15px; height: 15px; }
   .reddit-cell .cell-copy { padding-right: 42px; }

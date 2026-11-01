@@ -28,6 +28,26 @@ for (const width of [390, 1280]) {
   });
 }
 
+test("a phone Video Item byline truncates only the feed name", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.goto("/e2e/header-fixture.html?view=reader&media=video");
+  const line = page.locator(".video-channel-line");
+  await line.locator("strong").evaluate((name) => {
+    name.textContent = "top scoring links : multi with a long feed name";
+  });
+  const date = line.locator("> span:last-child");
+  await expect(date).toHaveText(/^· \w{3} \d{1,2}, \d{4}$/);
+  const clipped = (selector: string) =>
+    line
+      .locator(selector)
+      .evaluate((element) => element.scrollWidth > element.clientWidth);
+  expect(await clipped("> span:last-child")).toBe(false);
+  expect(await clipped("strong")).toBe(true);
+});
+
 test("Reddit YouTube link replaces destination card and leaves description unparsed", async ({
   page,
 }) => {

@@ -1242,7 +1242,7 @@ export function Reader(props: ReaderProps) {
                 />
                 <strong>{props.item.feed_title || props.item.author}</strong>
                 <span>
-                  · published{" "}
+                  ·{" "}
                   {new Intl.DateTimeFormat(undefined, {
                     day: "numeric",
                     month: "short",
