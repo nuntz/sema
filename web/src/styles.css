@@ -1740,7 +1740,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .app-header--reader[data-scrolled] .read-progress { opacity: 1; }
   .app-header--reader .read-progress > i { background: var(--accent); }
   .reader-scroll { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .reader .article { padding: calc(44px + var(--bar-top)) 22px calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + 22px); }
+  .reader .article { padding: calc(44px + var(--bar-top) + 16px) 22px calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + 22px); }
   .reader-bottom-actions {
     position: absolute;
     right: 0;

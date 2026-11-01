@@ -467,11 +467,7 @@ test("headers clear the status bar and tint it in standalone", async ({
   await openFixture(page, "reader");
   await simulateStatusBar(page, 47, 34);
   await expect.poll(() => headerHeight(page)).toBe(44 + 47);
-  expect(
-    await page
-      .locator(".reader .article")
-      .evaluate((article) => getComputedStyle(article).paddingTop),
-  ).toBe(`${44 + 47}px`);
+  expect(await airUnderBar(page)).toBe(16);
   // The toolbar gives back 12px of the home-indicator inset.
   await expect
     .poll(() =>
@@ -493,18 +489,37 @@ test("headers clear the status bar and tint it in standalone", async ({
     ]),
   ).toEqual([material, material]);
 
-  // Its source label clears the strongest part of the iOS edge blur too.
-  const readerTop = 44 + 47 + 16;
-  await expect.poll(() => headerHeight(page)).toBe(readerTop);
-  expect(
-    await page
-      .locator(".reader .article")
-      .evaluate((article) => getComputedStyle(article).paddingTop),
-  ).toBe(`${readerTop}px`);
+  // The bar clears the strongest part of the iOS edge blur too.
+  await expect.poll(() => headerHeight(page)).toBe(44 + 47 + 16);
 
   // No status bar, no clearance.
   await simulateStatusBar(page, 0, 34);
   await expect.poll(() => headerHeight(page)).toBe(44);
+});
+
+// The bars leave 16px under the status blur; the headline gets the same air under the bar.
+const airUnderBar = (page: Page) =>
+  page.evaluate(() => {
+    const bar = document.querySelector(".app-header") as HTMLElement;
+    const article = document.querySelector(".reader .article") as HTMLElement;
+    const first = [...article.querySelectorAll("*")].find(
+      (element) => element.getBoundingClientRect().height > 0,
+    ) as HTMLElement;
+    return Math.round(
+      first.getBoundingClientRect().top - bar.getBoundingClientRect().bottom,
+    );
+  });
+
+test("phone reader content starts 16px under the nav bar", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 780 });
+  await openFixture(page, "reader");
+  await page.locator("#reader-last-line").waitFor();
+  await expect.poll(() => airUnderBar(page)).toBe(16);
+
+  await simulateStatusBar(page, 47, 34);
+  await activateStandalone(page);
+  await expect.poll(() => headerHeight(page)).toBe(44 + 47 + 16);
+  await expect.poll(() => airUnderBar(page)).toBe(16);
 });
 
 test("phone reader title tracks a nav bar that grows while open", async ({

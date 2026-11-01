@@ -26,6 +26,7 @@ These hold for the grid and reader headers, the phone reader, and the lightbox. 
 
 - The phone reader has a 44px translucent nav bar and a toolbar sharing one material, with 0.5px hairlines and content scrolling under both.
 - The phone reader and lightbox bars add 16px below the top inset to clear the system edge blur.
+- Phone reader content starts 16px under the nav bar, the same air the bar leaves under the status blur. _(e2e)_
 - The phone reader toolbar sits 12px into the home-indicator inset.
 
 ### Safe areas and the installed iOS app
