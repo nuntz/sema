@@ -8,6 +8,7 @@ STACK ?= prod
 PULUMI_ORG ?= untz
 PULUMI_STACK ?= $(PULUMI_ORG)/sema/$(STACK)
 AWS_REGION ?= us-east-1
+ZIP_EPOCH := 198001010000
 
 .PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
@@ -24,8 +25,11 @@ lambdas: $(LAMBDAS:%=bin/%.zip)
 
 bin/%.zip: $(GO_SOURCES)
 	mkdir -p bin/$*
-	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o bin/$*/bootstrap ./cmd/$*
-	cd bin/$* && zip -q -j ../$*.zip bootstrap
+	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" -o bin/$*/bootstrap ./cmd/$*
+	chmod 0755 bin/$*/bootstrap
+	touch -t $(ZIP_EPOCH) bin/$*/bootstrap
+	rm -f bin/$*.zip
+	cd bin/$* && zip -q -X -j ../$*.zip bootstrap
 
 web:
 	cd web && bun install --frozen-lockfile
