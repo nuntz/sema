@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/nuntz/sema/infra/deployaccess"
 	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/iam"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -17,7 +18,7 @@ func TestAPIConditionCheckPermissions(t *testing.T) {
 	policies := make(chan string, 1)
 	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 		output := func(value string) pulumi.StringOutput { return pulumi.String(value).ToStringOutput() }
-		_, err := lambdaRole(ctx, "api", output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
+		_, err := lambdaRole(ctx, "api", deployaccess.BoundaryARN("123456789012"), output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
 		return err
 	}, pulumi.WithMocks("sema", "test", policyMocks{policies: policies}))
 	if err != nil {
@@ -69,7 +70,7 @@ func TestAPIArchiveCleanupPermissions(t *testing.T) {
 	policies := make(chan string, 1)
 	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 		output := func(value string) pulumi.StringOutput { return pulumi.String(value).ToStringOutput() }
-		_, err := lambdaRole(ctx, "api", output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
+		_, err := lambdaRole(ctx, "api", deployaccess.BoundaryARN("123456789012"), output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
 		return err
 	}, pulumi.WithMocks("sema", "test", policyMocks{policies: policies}))
 	if err != nil {
@@ -182,7 +183,7 @@ func policyActions(statements []policyStatement, resource string) []string {
 func TestDeliveryWorkerRoleOnlyReadsAndUpdatesTheTable(t *testing.T) {
 	policies := collectPolicies(t, func(ctx *pulumi.Context) error {
 		output := func(value string) pulumi.StringOutput { return pulumi.String(value).ToStringOutput() }
-		_, err := lambdaRole(ctx, "delivery-worker", output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
+		_, err := lambdaRole(ctx, "delivery-worker", deployaccess.BoundaryARN("123456789012"), output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
 		return err
 	}, 1)
 
@@ -221,7 +222,7 @@ func TestDeliveryQueuePoliciesLetTheAPISendAndTheWorkerConsumeAndRequeue(t *test
 func TestAPICanWriteSendCopiesButNotReadThemBack(t *testing.T) {
 	policies := collectPolicies(t, func(ctx *pulumi.Context) error {
 		output := func(value string) pulumi.StringOutput { return pulumi.String(value).ToStringOutput() }
-		_, err := lambdaRole(ctx, "api", output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
+		_, err := lambdaRole(ctx, "api", deployaccess.BoundaryARN("123456789012"), output("table"), output("arn:aws:s3:::content"), output("feeds"), output("items"), output("vectors"), output("images"))
 		return err
 	}, 1)
 
