@@ -10,7 +10,7 @@ PULUMI_STACK ?= $(PULUMI_ORG)/sema/$(STACK)
 AWS_REGION ?= us-east-1
 ZIP_EPOCH := 198001010000
 
-.PHONY: all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
+.PHONY: all check check-reproducible test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
 all: test build
 
@@ -18,6 +18,29 @@ test:
 	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test ./...
 	cd infra && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test ./...
 	cd web && bun run test
+
+# check runs everything CI's test job runs (CI calls it), so a green check is a green CI test job.
+check:
+	bash scripts/lint-ci-files.sh
+	@unformatted="$$(gofmt -l .)"; if [ -n "$$unformatted" ]; then echo "gofmt needed: $$unformatted" >&2; exit 1; fi
+	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go vet ./...
+	cd infra && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go vet ./...
+	cd web && bun install --frozen-lockfile
+	cd web && bun run lint
+	$(MAKE) test
+	cd web && bun run build
+	$(MAKE) check-reproducible
+
+# The Lambda ZIPs must come out byte-identical from any build of the same code, or every deploy
+# updates all seven functions. Two builds 2s apart (a ZIP's clock ticks in 2s) must match, and no
+# binary may embed VCS info, which changes with every commit.
+check-reproducible:
+	$(MAKE) -B lambdas
+	sha256sum bin/*.zip > bin/reproducible.sha256
+	sleep 2
+	$(MAKE) -B lambdas
+	sha256sum --check --quiet bin/reproducible.sha256
+	@if go version -m bin/*/bootstrap | grep "vcs\."; then echo "The Lambda binaries embed VCS info" >&2; exit 1; fi
 
 build: lambdas web
 

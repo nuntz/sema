@@ -35,8 +35,6 @@ jobs:
       # A dispatch `ref` may name a branch; deploy the commit tested here, even if the branch moves.
       - id: commit
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-      - name: Lint the workflows and shell scripts
-        run: bash scripts/lint-ci-files.sh
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -47,22 +45,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
-      - name: Check Go formatting
-        run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go vet ./...
-        working-directory: infra
-      - run: go test ./...
-      - run: go test ./...
-        working-directory: infra
-      - run: bun install --frozen-lockfile
-        working-directory: web
-      - run: bun run lint
-        working-directory: web
-      - run: bun run test
-        working-directory: web
-      - run: bun run build
-        working-directory: web
+      # The same checks as a local `make check`: lint, format, vet, unit tests, the web build, and
+      # reproducible Lambda ZIPs.
+      - run: make check
 
   # The deploy role trusts only this repository's `production` environment, which GitHub limits to
   # master (RUNBOOK.md → CI deploys, docs/adr/0004-ci-deploys-through-github-oidc.md). Until the

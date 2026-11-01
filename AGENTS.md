@@ -14,7 +14,7 @@ Send is a public webhook contract: within `version: 1` only add optional fields,
 
 ## Build, Test, and Development Commands
 
-- `make test` runs root Go, Pulumi, and frontend unit tests.
+- `make check` is CI's test job (lint, format, vet, unit tests, web build, reproducible Lambda ZIPs); run it before every commit. `make test` runs only the unit tests.
 - `make build` creates arm64 Lambda ZIPs and the production SPA.
 - `cd web && bun run dev` starts Vite; `/api` proxies to `localhost:8787`.
 - `cd web && bun run lint` checks TypeScript with Biome; `bun run format` formats it.
