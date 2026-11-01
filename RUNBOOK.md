@@ -1,5 +1,33 @@
 # Sema Operations Runbook
 
+## CI deploys
+
+Every green push to `master` deploys `untz/sema/prod`: the `deploy` job in
+`.github/workflows/ci.yml` runs after the `test` job passes. It builds the arm64 Lambda ZIPs, reads
+`aws:region` and `sema:googleClientId` from the stack config, builds the SPA with that client ID
+(the job fails if it is empty, rather than shipping a bundle nobody can sign in to), runs
+`pulumi up --yes`, invalidates CloudFront, and runs the live check, `scripts/check-live.sh`: the
+site root must answer 200 with the SPA's HTML, and `/api/items` 401 without a session. Pull
+requests run the tests and the workflow and shell-script lint (`scripts/lint-ci-files.sh`, also
+runnable locally with podman or docker) but never deploy.
+
+The job runs in the `production` GitHub environment, which GitHub limits to `master`, with
+`id-token: write`, in one `deploy` concurrency group that never cancels a run in progress. It
+reaches AWS through GitHub OIDC as `sema-github-deploy`, so no AWS key is stored in GitHub; the
+role and its fence are the [bootstrap stack](#bootstrap-stack)'s, and
+`docs/adr/0004-ci-deploys-through-github-oidc.md` records the trust model.
+
+GitHub holds the `PULUMI_ACCESS_TOKEN` repository secret and three repository variables:
+`PULUMI_STACK` (`untz/sema/prod`), `PULUMI_ESC_ENVIRONMENT` (`sema/prod`) and `AWS_DEPLOY_ROLE_ARN`
+(the bootstrap stack's `deployRoleArn` output). They are repository variables, not `production`
+environment ones, because the job decides whether to run from `PULUMI_STACK` before it enters the
+environment: an environment variable would always skip it. Until `PULUMI_STACK` is set, and on
+forks, the job is skipped without failing. The last stage of `bash scripts/setup-deploy.sh` creates
+the environment and sets the secret and variables.
+
+When a deploy fails with `AccessDenied`, the message names the IAM action the deploy role lacks:
+grant it in `infra/deployaccess`, apply the bootstrap stack by hand, then re-run the workflow.
+
 ## Deploy by hand
 
 This needs the one-time [Pulumi setup](#pulumi-setup) below. Sign in to AWS (`aws sso login`) and Pulumi Cloud (`pulumi login`), then from the repository root:
@@ -16,6 +44,29 @@ them should show as replaced or deleted.
 To target another organization's copy of the stack, pass `PULUMI_ORG=<org>`; every Make target
 that reads stack outputs (`rescore`, `replay`, `redrive`, the backfills) uses the same stack.
 
+## Rollback
+
+Run the CI workflow on `master` with a `ref`, from GitHub (Actions → ci → Run workflow) or:
+```bash
+gh workflow run ci.yml --ref master -f ref=<known-good-commit>
+```
+Keep `--ref master`: the deploy job only runs for `master`, and `ref` picks what it tests and
+deploys. Both jobs check out that ref, with the current workflow, so the ref must contain the CI
+deploy job's prerequisites (`scripts/check-live.sh`, `scripts/lint-ci-files.sh`, the `/sema/` role
+path); for an older commit, check it out and [deploy by hand](#deploy-by-hand). The next push to
+`master` deploys `master` again, so a rollback is never permanent: revert or fix on `master` before
+pushing. A branch name as `ref` is resolved once, by the test job, and that commit is what deploys.
+GitHub keeps only one waiting run in the `deploy` concurrency group, so a push that queues behind a
+waiting rollback replaces it: check the rollback's run actually deployed.
+
+Config is not versioned with the code: a rollback deploys the old code with today's ESC values. If
+it also needs an older config value, restore it from the environment's revision history before
+running the workflow:
+```bash
+pulumi env version history untz/sema/prod
+pulumi env get untz/sema/prod@<revision>        # compare, then pulumi env set the old value
+```
+
 ## Pulumi setup
 
 Production is one stack, `untz/sema/prod`, with its state in Pulumi Cloud and its secrets
@@ -26,8 +77,9 @@ Makefile targets this stack by default (`STACK=prod`, `PULUMI_ORG=untz`).
 `bash scripts/setup-deploy.sh` walks the one-time move from the old local stack: Pulumi Cloud
 login, a last local deploy so prod matches the checkout, the ESC environment built from the old
 stack config, the state export with secrets and import into `untz/sema/prod`, and the gate: the
-same config read back from ESC and a zero-change `pulumi preview`. Its last two stages apply the
-[bootstrap stack](#bootstrap-stack) and move the Lambda roles under `/sema/`. It can be stopped and
+same config read back from ESC and a zero-change `pulumi preview`. Its next two stages apply the
+[bootstrap stack](#bootstrap-stack) and move the Lambda roles under `/sema/`, and the last sets up
+[CI deploys](#ci-deploys). It can be stopped and
 re-run; its answers stay in `~/.config/sema/deploy.env`.
 
 The old local state (`~/.pulumi/stacks/sema/prod.json`) and its passphrase stack file are left

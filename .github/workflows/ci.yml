@@ -4,6 +4,12 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, tag or branch to test and deploy (a rollback); empty for master
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -11,6 +17,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
     services:
       dynamodb:
         image: amazon/dynamodb-local:latest
@@ -22,6 +30,13 @@ jobs:
       GOMODCACHE: /tmp/sema-go-mod
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      # A dispatch `ref` may name a branch; deploy the commit tested here, even if the branch moves.
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Lint the workflows and shell scripts
+        run: bash scripts/lint-ci-files.sh
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -48,3 +63,90 @@ jobs:
         working-directory: web
       - run: bun run build
         working-directory: web
+
+  # The deploy role trusts only this repository's `production` environment, which GitHub limits to
+  # master (RUNBOOK.md → CI deploys, docs/adr/0004-ci-deploys-through-github-oidc.md). Until the
+  # wizard sets PULUMI_STACK, and on forks, it is skipped.
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master' && vars.PULUMI_STACK != ''
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+      GOCACHE: /tmp/sema-go-build
+      GOMODCACHE: /tmp/sema-go-mod
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.test.outputs.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            infra/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # `pulumi up` runs `make build` itself; building first fails fast, before AWS credentials,
+      # and guards the SPA against an empty client ID. The second build finds the ZIPs up to date.
+      - name: Build the arm64 Lambda ZIPs
+        run: make lambdas
+
+      - uses: pulumi/actions@v7
+        with:
+          pulumi-version: 3.272.0
+
+      # infra/Pulumi.prod.yaml already imports the environment; `config env add` would import it a
+      # second time, so it only runs for a stack file that lacks it.
+      - name: Select the stack and its ESC environment
+        id: stack
+        working-directory: infra
+        env:
+          PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+          PULUMI_ESC_ENVIRONMENT: ${{ vars.PULUMI_ESC_ENVIRONMENT }}
+        run: |
+          pulumi stack select "$PULUMI_STACK"
+          if ! pulumi config env ls --output json | jq -e --arg env "$PULUMI_ESC_ENVIRONMENT" 'index($env)' > /dev/null; then
+            pulumi config env add "$PULUMI_ESC_ENVIRONMENT" --yes > /dev/null
+          fi
+          # Assigned first, so a failing `config get` fails this step instead of passing an empty value.
+          region="$(pulumi config get aws:region)"
+          google_client_id="$(pulumi config get sema:googleClientId)"
+          echo "region=$region" >> "$GITHUB_OUTPUT"
+          echo "google-client-id=$google_client_id" >> "$GITHUB_OUTPUT"
+
+      # Vite inlines the client ID at build time; without it, Google sign-in fails in the browser.
+      - name: Build the web app
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ steps.stack.outputs.google-client-id }}
+        run: |
+          : "${VITE_GOOGLE_CLIENT_ID:?sema:googleClientId is missing from the stack config}"
+          make web
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: sema-deploy-${{ github.run_id }}
+          aws-region: ${{ steps.stack.outputs.region }}
+
+      - name: pulumi up
+        working-directory: infra
+        run: pulumi up --yes
+
+      - name: Invalidate CloudFront
+        working-directory: infra
+        run: |
+          aws cloudfront create-invalidation --distribution-id "$(pulumi stack output distributionId)" --paths '/*' > /dev/null
+
+      - name: Check the live site
+        run: bash scripts/check-live.sh
