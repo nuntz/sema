@@ -40,3 +40,17 @@ Recent history favors short imperative subjects, often Conventional Commit style
 ## Security & Configuration
 
 Keep credentials out of Git. Store the browser OAuth ID in `web/.env.local`, and set Pulumi secrets with `pulumi config set --secret`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`nuntz/sema`) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: glossary in `CONTEXT.md`, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
