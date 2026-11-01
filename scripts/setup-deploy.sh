@@ -561,7 +561,11 @@ fi
 say "CI signs in to Pulumi with an access token, and to AWS through OIDC (no AWS keys)."
 open_url "https://app.pulumi.com/account/tokens"
 step "Create token → Personal access token → name it 'sema-ci' → Create → copy it."
-ask_secret PULUMI_ACCESS_TOKEN "Paste the Pulumi access token:"
+# An empty paste would set an empty secret, and CI would fail at its first pulumi call.
+while ask_secret PULUMI_ACCESS_TOKEN "Paste the Pulumi access token:" && [[ "$PULUMI_ACCESS_TOKEN" != pul-* ]]; do
+  warn "That isn't a Pulumi access token (they start with 'pul-'): paste it again."
+done
+[[ "${PULUMI_ACCESS_TOKEN:-}" == pul-* ]] || { warn "No Pulumi access token given."; exit 1; }
 write_env PULUMI_ACCESS_TOKEN "$PULUMI_ACCESS_TOKEN"
 set_secret PULUMI_ACCESS_TOKEN "$PULUMI_ACCESS_TOKEN"
 note "Repository variables, not environment ones: the job checks PULUMI_STACK before it enters"
