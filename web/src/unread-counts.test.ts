@@ -1,0 +1,328 @@
+import { createRoot, createSignal } from "solid-js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createItemSession } from "./item-session";
+import { createReadState } from "./read-state";
+import type { Feed, FeedItemCounts, GridScope, Item } from "./types";
+import { createUnreadCounts } from "./unread-counts";
+
+const item = (id: string): Item => ({
+  item_id: id,
+  feed_id: "feed",
+  url: `https://example.com/${id}`,
+  title: id,
+  summary_source: "",
+  published_ts: "2026-09-17T00:00:00Z",
+  fetched_ts: "2026-09-17T00:00:00Z",
+  has_body: false,
+  extract_quality: 0,
+  score: 0.5,
+  size: "M",
+  read: false,
+  signal: 0,
+  hearted: false,
+});
+
+const counts = (unread: number, all = unread): FeedItemCounts => ({
+  feed: { unread, all },
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+type CountRequest = {
+  from?: string;
+  reply: ReturnType<typeof deferred<FeedItemCounts>>;
+};
+
+const flushMicrotasks = async () => {
+  for (let index = 0; index < 20; index++) await Promise.resolve();
+};
+
+function setup() {
+  const requests: CountRequest[] = [];
+  const api = {
+    items: vi.fn(async () => ({ items: [], next_cursor: "" })),
+    stories: vi.fn(async () => ({ stories: [] })),
+    archive: vi.fn(async () => ({ items: [], next_cursor: "" })),
+    read: vi.fn(async (_id: string, _read: boolean) => {}),
+    readBatch: vi.fn(
+      async (_ids: string[], _read: boolean, _keepalive?: boolean) => {},
+    ),
+    behaviour: vi.fn(async () => {}),
+    feedItemCounts: vi.fn((window?: { from: string; before: string }) => {
+      const reply = deferred<FeedItemCounts>();
+      requests.push({ from: window?.from, reply });
+      return reply.promise;
+    }),
+  };
+  const errors = vi.fn();
+  const [feedsScreen, setFeedsScreen] = createSignal(false);
+  const [scope] = createSignal<GridScope>(null);
+  const [feeds] = createSignal<Feed[]>([{ feed_id: "feed" } as Feed]);
+  let dispose!: () => void;
+  const built = createRoot((rootDispose) => {
+    dispose = rootDispose;
+    const session = createItemSession(api, {
+      onError: errors,
+      changed: () => {},
+      beforeReload: () => {},
+      pagingBlocked: () => false,
+      cleared: () => undefined,
+      visible: () => true,
+    });
+    const reads = createReadState(api, session, errors);
+    const unread = createUnreadCounts(
+      api,
+      reads,
+      {
+        scope,
+        itemWindow: session.itemWindow,
+        unreadOnly: session.unreadOnly,
+        feeds,
+        feedsScreen,
+        phone: () => false,
+      },
+      errors,
+    );
+    return { session, reads, unread };
+  });
+  const cleanup = () => {
+    built.reads.dispose();
+    built.session.dispose();
+    dispose();
+  };
+  return { api, errors, requests, setFeedsScreen, cleanup, ...built };
+}
+
+afterEach(() => vi.useRealTimers());
+
+describe("Unread counts", () => {
+  it("shows refreshed counts and stays unknown while a new Window loads", async () => {
+    const { session, unread, requests, cleanup } = setup();
+    expect(unread.scopeCell().count).toBeUndefined();
+    const first = unread.refresh();
+    await flushMicrotasks();
+    requests[0].reply.resolve(counts(4));
+    await first;
+    expect(unread.scopeCell().count).toBe(4);
+    session.setItemWindow("today");
+    const second = unread.refresh();
+    expect(unread.scopeCell().count).toBeUndefined();
+    await flushMicrotasks();
+    expect(requests[1].from).toBeDefined();
+    requests[1].reply.resolve(counts(2));
+    await second;
+    expect(unread.scopeCell().count).toBe(2);
+    cleanup();
+  });
+
+  async function loaded(unread = 4) {
+    const harness = setup();
+    harness.session.setItems([item("one"), item("two")]);
+    const first = harness.unread.refresh();
+    await flushMicrotasks();
+    harness.requests[0].reply.resolve(counts(unread));
+    await first;
+    return harness;
+  }
+
+  it("ignores a delayed reply superseded by a later refresh", async () => {
+    const { unread, requests, cleanup } = await loaded();
+    const older = unread.refresh();
+    await flushMicrotasks();
+    const newer = unread.refresh();
+    await flushMicrotasks();
+    requests[2].reply.resolve(counts(7));
+    await newer;
+    requests[1].reply.resolve(counts(9));
+    await older;
+    expect(unread.scopeCell().count).toBe(7);
+    cleanup();
+  });
+
+  it("ignores a reply for a Window the user already left", async () => {
+    const { session, unread, requests, cleanup } = await loaded();
+    session.setItemWindow("today");
+    const today = unread.refresh();
+    await flushMicrotasks();
+    session.setItemWindow("yesterday");
+    const yesterday = unread.refresh();
+    await flushMicrotasks();
+    requests[1].reply.resolve(counts(5));
+    await today;
+    expect(unread.scopeCell().count).toBeUndefined();
+    requests[2].reply.resolve(counts(6));
+    await yesterday;
+    expect(unread.scopeCell().count).toBe(6);
+    cleanup();
+  });
+
+  it("does not revive old counts for a Window revisited mid-refresh", async () => {
+    const { session, unread, requests, cleanup } = await loaded();
+    session.setItemWindow("today");
+    const today = unread.refresh();
+    session.setItemWindow("all");
+    expect(unread.scopeCell().count).toBeUndefined();
+    await flushMicrotasks();
+    requests[1].reply.resolve(counts(5));
+    await today;
+    cleanup();
+  });
+
+  it("flushes queued Read and waits for the write before counting", async () => {
+    const { api, reads, unread, requests, cleanup } = await loaded();
+    const write = deferred<void>();
+    api.readBatch.mockImplementationOnce(() => write.promise);
+    reads.queueRead(["one"]);
+    expect(unread.scopeCell().count).toBe(3);
+    const refresh = unread.refresh();
+    await flushMicrotasks();
+    expect(api.readBatch).toHaveBeenCalledWith(["one"], true, false);
+    expect(requests).toHaveLength(1);
+    write.resolve();
+    await flushMicrotasks();
+    expect(requests).toHaveLength(2);
+    expect(unread.scopeCell().count).toBe(3);
+    requests[1].reply.resolve(counts(3));
+    await refresh;
+    expect(reads.readAdjust()).toBe(0);
+    expect(unread.scopeCell().count).toBe(3);
+    cleanup();
+  });
+
+  it("waits for an in-flight toggle before counting", async () => {
+    const { api, session, reads, unread, requests, cleanup } = await loaded();
+    const write = deferred<void>();
+    api.read.mockImplementationOnce(() => write.promise);
+    void reads.toggleRead(session.items()[0]);
+    const refresh = unread.refresh();
+    await flushMicrotasks();
+    expect(requests).toHaveLength(1);
+    write.resolve();
+    await flushMicrotasks();
+    requests[1].reply.resolve(counts(3));
+    await refresh;
+    expect(unread.scopeCell().count).toBe(3);
+    cleanup();
+  });
+
+  it("keeps the optimistic count when a Read write fails", async () => {
+    const { api, reads, unread, requests, errors, cleanup } = await loaded();
+    api.readBatch.mockRejectedValueOnce(new Error("offline"));
+    reads.queueRead(["one"]);
+    await unread.refresh();
+    expect(errors).toHaveBeenCalled();
+    expect(requests).toHaveLength(1);
+    expect(reads.readAdjust()).toBe(1);
+    expect(unread.scopeCell().count).toBe(3);
+    cleanup();
+  });
+
+  it("rejects counts requested before a concurrent Read, without retrying", async () => {
+    const { session, reads, unread, requests, cleanup } = await loaded();
+    const refresh = unread.refresh();
+    await flushMicrotasks();
+    void reads.toggleRead(session.items()[0]);
+    expect(unread.scopeCell().count).toBe(3);
+    requests[1].reply.resolve(counts(4));
+    await refresh;
+    await flushMicrotasks();
+    expect(requests).toHaveLength(2);
+    expect(reads.readAdjust()).toBe(1);
+    expect(unread.scopeCell().count).toBe(3);
+    cleanup();
+  });
+
+  it("rejects counts requested before a concurrent Undo", async () => {
+    const { reads, unread, requests, cleanup } = await loaded();
+    reads.queueRead(["one"]);
+    const refresh = unread.refresh();
+    await flushMicrotasks();
+    expect(requests).toHaveLength(2);
+    reads.undoLast();
+    expect(unread.scopeCell().count).toBe(4);
+    requests[1].reply.resolve(counts(3));
+    await refresh;
+    expect(unread.scopeCell().count).toBe(4);
+    cleanup();
+  });
+
+  it("keeps same-Window counts when counts are missing or fail", async () => {
+    const { reads, unread, requests, errors, cleanup } = await loaded();
+    reads.queueRead(["one"]);
+    const missing = unread.refresh();
+    await flushMicrotasks();
+    requests[1].reply.resolve(undefined as unknown as FeedItemCounts);
+    await missing;
+    expect(unread.scopeCell().count).toBe(3);
+    const failed = unread.refresh();
+    await flushMicrotasks();
+    requests[2].reply.reject(new Error("offline"));
+    await failed;
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(reads.readAdjust()).toBe(1);
+    expect(unread.scopeCell().count).toBe(3);
+    cleanup();
+  });
+
+  it("stays unknown for a changed Window whose counts fail", async () => {
+    const { session, unread, requests, errors, cleanup } = await loaded();
+    session.setItemWindow("today");
+    const failed = unread.refresh();
+    await flushMicrotasks();
+    requests[1].reply.reject(new Error("offline"));
+    await failed;
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(unread.ready()).toBe(false);
+    expect(unread.scopeCell().count).toBeUndefined();
+    cleanup();
+  });
+
+  it("loads each alternate Window once and drops them on refresh", async () => {
+    const { api, unread, requests, cleanup } = await loaded();
+    api.feedItemCounts.mockClear();
+    unread.loadWindowChoices();
+    unread.loadWindowChoices();
+    expect(api.feedItemCounts).toHaveBeenCalledTimes(2);
+    const [today, yesterday] = requests.slice(1);
+    today.reply.resolve(counts(2));
+    await flushMicrotasks();
+    expect(unread.windowChoices(4)).toEqual({
+      all: 4,
+      today: 2,
+      yesterday: undefined,
+    });
+    const refresh = unread.refresh();
+    expect(unread.windowChoices(4).today).toBeUndefined();
+    yesterday.reply.resolve(counts(1));
+    await flushMicrotasks();
+    expect(unread.windowChoices(4).yesterday).toBeUndefined();
+    unread.loadWindowChoices();
+    expect(api.feedItemCounts).toHaveBeenCalledTimes(5);
+    requests[3].reply.resolve(counts(4));
+    await refresh;
+    cleanup();
+  });
+
+  it("gives the Feeds screen All counts only", async () => {
+    const { session, unread, requests, setFeedsScreen, cleanup } = setup();
+    session.setItemWindow("today");
+    setFeedsScreen(true);
+    expect(unread.feedsScreenCounts()).toBeUndefined();
+    const refresh = unread.refresh();
+    await flushMicrotasks();
+    expect(requests[0].from).toBeUndefined();
+    requests[0].reply.resolve(counts(8));
+    await refresh;
+    expect(unread.feedsScreenCounts()).toEqual(counts(8));
+    expect(unread.ready()).toBe(false);
+    cleanup();
+  });
+});

@@ -1,7 +1,6 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The settled header contract requires button elements with radio roles.
 
 import {
-  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -28,12 +27,7 @@ import { feedbackPatch } from "./feedback";
 import { createGridModel } from "./grid-model";
 import { effectiveGridOrder, sameGridScope } from "./grid-scope";
 import { createItemSession } from "./item-session";
-import {
-  ITEM_WINDOWS,
-  type ItemWindow,
-  scopeSummary,
-  windowRange,
-} from "./item-view";
+import { ITEM_WINDOWS, type ItemWindow, scopeSummary } from "./item-view";
 import {
   copyOriginalLink,
   isCancelledShare,
@@ -42,14 +36,12 @@ import {
 import { createMediaQuery } from "./media-query";
 import { createReadState } from "./read-state";
 import { resolveReaderItem } from "./reader-item";
-import { scopeCellModel, windowScopeCounts } from "./scope-cell";
 import { normalizeSearchResponse, SEARCH_DEBOUNCE_MS } from "./search";
 import { sendFailureToast, sendToast } from "./send-action";
 import { nextSignalNotice, type SignalNotice } from "./signal-feedback";
 import { nextThemePreference, type ThemeController } from "./theme";
 import type {
   Feed,
-  FeedItemCounts,
   GridScope,
   Item,
   Order,
@@ -100,6 +92,7 @@ import {
   updateToolbarCollapse,
 } from "./ui/toolbar-collapse";
 import { VideoStage } from "./ui/VideoStage";
+import { createUnreadCounts } from "./unread-counts";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
 import { createVideoDock, expandTarget } from "./video-dock";
 import { listenForWindowReturn } from "./window-activity";
@@ -126,12 +119,6 @@ export function App(props: {
   const [sendLabel, setSendLabel] = createSignal<string | null>(null);
   const [sendingID, setSendingID] = createSignal("");
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
-  const [feedItemCounts, setFeedItemCounts] = createSignal<FeedItemCounts>({});
-  const [scopeCountsWindowKey, setScopeCountsWindowKey] =
-    createSignal<string>();
-  // Counts on hand describe the current Window, not one being swapped in.
-  const windowCountsReady = () =>
-    scopeCountsWindowKey() === (windowRange(itemWindow())?.from ?? "");
   const scopePhone = createMediaQuery("(max-width: 619px)");
 
   const [expandedStoryIDs, setExpandedStoryIDs] = createSignal<Set<string>>(
@@ -158,9 +145,6 @@ export function App(props: {
   const [relatedLoading, setRelatedLoading] = createSignal(false);
   const [readerArchive, setReaderArchive] = createSignal(false);
   const [filterOpen, setFilterOpen] = createSignal(false);
-  const [windowCounts, setWindowCounts] = createSignal<
-    Partial<Record<ItemWindow, FeedItemCounts>>
-  >({});
   const [scopeCollapse, setScopeCollapse] = createSignal(
     initialToolbarCollapseState(),
   );
@@ -172,7 +156,6 @@ export function App(props: {
     createSignal<TagFilterOpenRequest>();
   const openTagPalette = (mode: TagFilterMode) =>
     setTagOpenRequest((current) => ({ id: (current?.id ?? 0) + 1, mode }));
-  let feedItemCountVersion = 0;
   let searchVersion = 0;
   let relatedVersion = 0;
   let readerCloseTimer: number | undefined;
@@ -194,7 +177,7 @@ export function App(props: {
   const session = createItemSession(api, {
     onError: (error) => handleError(error),
     changed: () => {
-      void refreshFeedItemCounts();
+      void unreadCounts.refresh();
     },
     beforeReload: () => {
       discardFinishUndo();
@@ -262,10 +245,21 @@ export function App(props: {
     undoLast,
     finishAndClear,
     discardFinishUndo,
-    readAdjust,
-    setReadAdjust,
     undo,
   } = readState;
+  const unreadCounts = createUnreadCounts(
+    api,
+    readState,
+    {
+      scope,
+      itemWindow,
+      unreadOnly,
+      feeds: feedFilters,
+      feedsScreen: () => view() === "feeds",
+      phone: scopePhone,
+    },
+    (error) => handleError(error),
+  );
   const markBelow = (item: Item) => readState.markBelow(item.item_id);
   const markStoryBelow = (id: string) => readState.markBelow(`story:${id}`);
   const searchActive = createMemo(() => [...searchQuery().trim()].length >= 2);
@@ -344,19 +338,11 @@ export function App(props: {
     }
   };
 
-  const scopeCell = createMemo(() => {
-    if (mode() === "archive" || searchActive()) return undefined;
-    const model = scopeCellModel(
-      scope(),
-      itemWindow(),
-      unreadOnly(),
-      feedFilters(),
-      windowCountsReady() ? feedItemCounts() : undefined,
-      readAdjust(),
-      scopePhone(),
-    );
-    return model;
-  });
+  const scopeCell = createMemo(() =>
+    mode() === "archive" || searchActive()
+      ? undefined
+      : unreadCounts.scopeCell(),
+  );
 
   const visibleScopeCell = createMemo(() =>
     !scope() &&
@@ -370,7 +356,7 @@ export function App(props: {
     () => compactDisplayControls() && mode() === "live" && !searchActive(),
   );
   const stripTagOptions = createMemo(() =>
-    feedTagOptions(feedFilters(), feedItemCounts(), unreadOnly()),
+    feedTagOptions(feedFilters(), unreadCounts.feedCounts(), unreadOnly()),
   );
   const stripTagKey = createMemo(() => tagSetKey(feedFilters()));
   // Frozen per session so chips never move after a tap; re-ranked only when
@@ -378,7 +364,7 @@ export function App(props: {
   const [stripOrder, setStripOrder] = createSignal<string[]>([]);
   createEffect(
     on(
-      [itemWindow, unreadOnly, stripTagKey, windowCountsReady],
+      [itemWindow, unreadOnly, stripTagKey, unreadCounts.ready],
       ([, , , ready]) => {
         if (ready) setStripOrder(rankStripTags(untrack(stripTagOptions)));
       },
@@ -387,31 +373,8 @@ export function App(props: {
   const stripChips = createMemo(() =>
     tagStripChips(stripTagOptions(), stripOrder(), scope()),
   );
-  const pendingWindowCounts = new Map<ItemWindow, number>();
   createEffect(() => {
-    if (!filterOpen()) return;
-    const cached = windowCounts();
-    const version = feedItemCountVersion;
-    for (const { value } of ITEM_WINDOWS) {
-      if (
-        value === itemWindow() ||
-        cached[value] ||
-        pendingWindowCounts.get(value) === version
-      )
-        continue;
-      pendingWindowCounts.set(value, version);
-      void api
-        .feedItemCounts(windowRange(value))
-        .then((counts) => {
-          if (version === feedItemCountVersion && counts)
-            setWindowCounts((current) => ({ ...current, [value]: counts }));
-        })
-        .catch(handleError)
-        .finally(() => {
-          if (pendingWindowCounts.get(value) === version)
-            pendingWindowCounts.delete(value);
-        });
-    }
+    if (filterOpen()) unreadCounts.loadWindowChoices();
   });
   createEffect(() => {
     if (filterOpen()) {
@@ -1113,45 +1076,9 @@ export function App(props: {
     return scope()?.kind === "feed" ? applyFeed("") : applyTag("");
   };
 
-  const refreshFeedItemCounts = async () => {
-    const version = ++feedItemCountVersion;
-    setWindowCounts({});
-    const window = view() === "feeds" ? undefined : windowRange(itemWindow());
-    if (scopeCountsWindowKey() !== (window?.from ?? ""))
-      setScopeCountsWindowKey(undefined);
-    try {
-      // Counts must include queued and already-in-flight read writes before
-      // they replace the optimistic adjustment (including finish-and-clear).
-      await flushRead();
-      if (!(await readState.settle()) || version !== feedItemCountVersion)
-        return;
-      const readRevision = readState.revision;
-      const latest = await api.feedItemCounts(window);
-      if (!latest) return;
-      if (
-        version === feedItemCountVersion &&
-        readRevision === readState.revision
-      )
-        batch(() => {
-          setFeedItemCounts(latest ?? {});
-          setWindowCounts((current) => ({
-            ...current,
-            [view() === "feeds" ? "all" : itemWindow()]: latest,
-          }));
-          setScopeCountsWindowKey(window?.from ?? "");
-          setReadAdjust(0);
-        });
-    } catch (caught) {
-      handleError(caught);
-    }
-  };
-
   const refreshFeedFilters = async () => {
     try {
-      const [latest] = await Promise.all([
-        api.feeds(),
-        refreshFeedItemCounts(),
-      ]);
+      const [latest] = await Promise.all([api.feeds(), unreadCounts.refresh()]);
       setFeedFilters(latest);
       const activeScope = scope();
       if (
@@ -1226,7 +1153,7 @@ export function App(props: {
     clearGo();
     closeKeys();
     setView("grid");
-    if (!windowCountsReady()) void refreshFeedItemCounts();
+    unreadCounts.refreshIfStale();
     if (!feedsGridDirty) return;
     feedsGridDirty = false;
     await feedFilterRefresh;
@@ -1313,7 +1240,7 @@ export function App(props: {
   const scopePicker = (chipOpensPalette: boolean) => (
     <TagFilter
       feeds={feedFilters()}
-      itemCounts={feedItemCounts()}
+      itemCounts={unreadCounts.feedCounts()}
       unreadOnly={unreadOnly()}
       value={scope()}
       active={
@@ -1326,8 +1253,7 @@ export function App(props: {
       tooltipDisabled={headerTooltipDisabled()}
       onOpenChange={(open) => {
         setTagFilterOpen(open);
-        if (open && mode() === "live")
-          void flushRead().then(refreshFeedItemCounts);
+        if (open && mode() === "live") void unreadCounts.refresh();
       }}
       onChange={(nextScope) => void applyScope(nextScope)}
     />
@@ -1341,10 +1267,8 @@ export function App(props: {
           <>
             <Feeds
               api={api}
-              itemCounts={
-                scopeCountsWindowKey() === "" ? feedItemCounts() : undefined
-              }
-              onRefreshCounts={refreshFeedItemCounts}
+              itemCounts={unreadCounts.feedsScreenCounts()}
+              onRefreshCounts={unreadCounts.refresh}
               focusSearch={focusFeedSearch()}
               heartCount={heartCount()}
               onBack={() => void closeFeedsAndSettings()}
@@ -1657,15 +1581,7 @@ export function App(props: {
               feedScoped={feedScoped()}
               window={itemWindow()}
               unreadOnly={unreadOnly()}
-              counts={{
-                ...windowScopeCounts(
-                  scope(),
-                  unreadOnly(),
-                  feedFilters(),
-                  windowCounts(),
-                ),
-                [itemWindow()]: scopeCell()?.count,
-              }}
+              counts={unreadCounts.windowChoices(scopeCell()?.count)}
               onOrder={(next) => void selectOrder(next)}
               onWindow={(next) => void selectWindow(next)}
               onUnreadOnly={(next) => void setUnreadOnlyState(next)}

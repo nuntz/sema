@@ -24,6 +24,8 @@ export interface ReadGeometry {
   scrollHeight: number;
   userInitiated: boolean;
 }
+export type ReadState = ReturnType<typeof createReadState>;
+
 export function createReadState(
   api: Pick<AppAPI, "read" | "readBatch" | "behaviour" | "items">,
   session: ItemSession,
@@ -403,6 +405,41 @@ export function createReadState(
     }
   }
 
+  async function settle() {
+    await Promise.all(readFlushes);
+    return pendingRead.size === 0;
+  }
+
+  /**
+   * Loads a server snapshot that reflects every Read change made so far:
+   * queued writes are flushed and in-flight writes awaited first. Resolves
+   * undefined when writes failed and remain pending, or when `wanted` turns
+   * false meanwhile. `accept` applies the snapshot and drops the optimistic
+   * adjustment together, unless a Read change happened after the request.
+   */
+  async function settledSnapshot<T>(
+    wanted: () => boolean,
+    load: () => Promise<T>,
+  ): Promise<
+    { value: T; accept(apply: (value: T) => void): boolean } | undefined
+  > {
+    await flushRead();
+    if (!(await settle()) || !wanted()) return undefined;
+    const requested = revision;
+    const value = await load();
+    return {
+      value,
+      accept(apply) {
+        if (requested !== revision) return false;
+        batch(() => {
+          apply(value);
+          setReadAdjust(0);
+        });
+        return true;
+      },
+    };
+  }
+
   let passedVersion = -1;
   let passedScrollVersion = -1;
   const passed = new Set<string>();
@@ -444,17 +481,11 @@ export function createReadState(
     finishAndClear,
     discardFinishUndo,
     readAdjust,
-    setReadAdjust,
     undo,
     markBelow,
     openStory,
-    get revision() {
-      return revision;
-    },
-    async settle() {
-      await Promise.all(readFlushes);
-      return pendingRead.size === 0;
-    },
+    settle,
+    settledSnapshot,
     pauseUndo(kind: "hover" | "focus", paused: boolean) {
       if (kind === "hover") undoHovered = paused;
       else undoFocused = paused;
