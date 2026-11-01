@@ -203,6 +203,8 @@ function GridContent(props: GridProps) {
     if (restoreFocus) imageOrigin?.focus({ preventScroll: true });
   };
   onCleanup(() => imageRequest?.abort());
+  const overlayOnTop = () =>
+    keyOwnership().overlays.some((overlay) => overlay !== "reader");
   // Yield Grid shortcuts while its Peek owns the keyboard.
   const peekActive = () =>
     props.active ||
@@ -1088,7 +1090,9 @@ function GridContent(props: GridProps) {
       classList={{
         "refined-grid": true,
         "mobile-refined-grid": mobile(),
-        "keyboard-focus": keyboardFocus(),
+        // The Cursor keeps its place under an Overlay but draws no ring
+        // there, or the ring halos through the scrim.
+        "keyboard-focus": keyboardFocus() && !overlayOnTop(),
         "reader-underlay": props.reader.readerOpen,
         "reader-underlay-dragging": props.reader.readerDragging,
       }}

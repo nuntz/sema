@@ -65,6 +65,21 @@ for (const width of [390, 1280]) {
   });
 }
 
+test("the Cursor draws no ring under a Peek, and does beside the Dock", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  const { cell } = await openGrid(page, "youtube");
+  const ring = () => cell.evaluate((el) => getComputedStyle(el).outlineStyle);
+  await page.keyboard.press("i");
+  await expect(player(page)).toHaveAttribute("data-state", "1");
+  await expect(cell).toHaveClass(/focused/);
+  await expect.poll(ring).toBe("none");
+  await page.keyboard.press("Escape");
+  await expect(docked(page)).toBeVisible();
+  await expect.poll(ring).toBe("solid");
+});
+
 test("a paused Peek closes without a Dock", async ({ page }) => {
   await stubYouTube(page, false, true);
   await openGrid(page, "youtube");
