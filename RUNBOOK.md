@@ -41,10 +41,10 @@ Lambda ZIPs and the SPA always match the checkout. Review the preview before con
 update: the DynamoDB table, the content bucket, and the vector bucket hold user data, so none of
 them should show as replaced or deleted.
 
-The Lambda ZIPs are reproducible, so a function shows `~code` only when its binary changed. If all
-seven show `~code` after a change that touched no Go code, your local Go is not the `toolchain`
-version in `go.mod`, which CI builds with, and the update would restart every function for nothing
-(#9). Build with `GOTOOLCHAIN=<that version> make deploy` until the Makefile pins it.
+The Lambda ZIPs are reproducible, so a function shows `~code` only when its binary changed. The
+Makefile builds them with the `toolchain` version in `go.mod`, which CI installs, whatever Go is on
+your `PATH`. It downloads that version into the Go module cache under `/tmp` whenever it is
+missing, so the first build after a bump or a reboot needs the network.
 
 To target another organization's copy of the stack, pass `PULUMI_ORG=<org>`; every Make target
 that reads stack outputs (`rescore`, `replay`, `redrive`, the backfills) uses the same stack.

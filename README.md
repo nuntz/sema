@@ -140,7 +140,7 @@ The first attempt runs while the user waits, so the toast reports what the Desti
 
 ## Prerequisites
 
-- Go 1.26.6+. To get reproducible Lambda ZIPs, build with the `toolchain` version in `go.mod`, which is what CI uses.
+- Go 1.26.6+. `make lambdas` builds with the `toolchain` version in `go.mod`, which is what CI uses, and downloads it on first use.
 - Bun 1.4.4 and Node.js 24, the versions CI uses.
 - The Pulumi CLI 3 and the AWS CLI.
 - `zip` and `sha256sum` on `PATH`.
