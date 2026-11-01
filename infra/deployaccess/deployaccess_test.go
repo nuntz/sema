@@ -23,20 +23,25 @@ func assumeWith(subject, audience string) Request {
 }
 
 func TestTrustPolicyAdmitsOnlyTheProductionEnvironment(t *testing.T) {
-	trust := TrustPolicy(testProvider, "nuntz/sema")
-	if !trust.Allows(assumeWith("repo:nuntz/sema:environment:production", "sts.amazonaws.com")) {
+	// GitHub's immutable subject names the owner and repository by ID too, so a
+	// renamed or recreated repository of the same name gets a different subject.
+	const repo = "repo:nuntz@261462/sema@1342395675"
+	trust := TrustPolicy(testProvider, repo)
+	if !trust.Allows(assumeWith(repo+":environment:production", "sts.amazonaws.com")) {
 		t.Fatal("production environment cannot assume the deploy role")
 	}
 	for name, request := range map[string]Request{
-		"master branch":     assumeWith("repo:nuntz/sema:ref:refs/heads/master", "sts.amazonaws.com"),
-		"pull request":      assumeWith("repo:nuntz/sema:pull_request", "sts.amazonaws.com"),
-		"other environment": assumeWith("repo:nuntz/sema:environment:staging", "sts.amazonaws.com"),
-		"other repository":  assumeWith("repo:nuntz/stash:environment:production", "sts.amazonaws.com"),
-		"fork lookalike":    assumeWith("repo:nuntz/sema-fork:environment:production", "sts.amazonaws.com"),
-		"wrong audience":    assumeWith("repo:nuntz/sema:environment:production", "https://github.com/nuntz"),
-		"missing audience":  {Action: "sts:AssumeRoleWithWebIdentity", Principal: testProvider, Context: map[string]string{"token.actions.githubusercontent.com:sub": "repo:nuntz/sema:environment:production"}},
-		"other provider":    {Action: "sts:AssumeRoleWithWebIdentity", Principal: "arn:aws:iam::123456789012:oidc-provider/example.com", Context: assumeWith("repo:nuntz/sema:environment:production", "sts.amazonaws.com").Context},
-		"plain assume role": {Action: "sts:AssumeRole", Principal: testProvider, Context: assumeWith("repo:nuntz/sema:environment:production", "sts.amazonaws.com").Context},
+		"master branch":        assumeWith(repo+":ref:refs/heads/master", "sts.amazonaws.com"),
+		"pull request":         assumeWith(repo+":pull_request", "sts.amazonaws.com"),
+		"other environment":    assumeWith(repo+":environment:staging", "sts.amazonaws.com"),
+		"name-only subject":    assumeWith("repo:nuntz/sema:environment:production", "sts.amazonaws.com"),
+		"recreated repository": assumeWith("repo:nuntz@261462/sema@999:environment:production", "sts.amazonaws.com"),
+		"other repository":     assumeWith("repo:nuntz@261462/stash@1342395676:environment:production", "sts.amazonaws.com"),
+		"fork lookalike":       assumeWith("repo:nuntz@261462/sema-fork@1342395675:environment:production", "sts.amazonaws.com"),
+		"wrong audience":       assumeWith(repo+":environment:production", "https://github.com/nuntz"),
+		"missing audience":     {Action: "sts:AssumeRoleWithWebIdentity", Principal: testProvider, Context: map[string]string{"token.actions.githubusercontent.com:sub": repo + ":environment:production"}},
+		"other provider":       {Action: "sts:AssumeRoleWithWebIdentity", Principal: "arn:aws:iam::123456789012:oidc-provider/example.com", Context: assumeWith(repo+":environment:production", "sts.amazonaws.com").Context},
+		"plain assume role":    {Action: "sts:AssumeRole", Principal: testProvider, Context: assumeWith(repo+":environment:production", "sts.amazonaws.com").Context},
 	} {
 		if trust.Allows(request) {
 			t.Errorf("%s can assume the deploy role", name)

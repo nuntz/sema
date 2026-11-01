@@ -27,9 +27,13 @@ const (
 	GitHubOIDCURL = "https://" + githubIssuer
 )
 
-// TrustPolicy lets only repository's Environment assume the role through the
-// GitHub OIDC provider at providerARN.
-func TrustPolicy(providerARN, repository string) Document {
+// TrustPolicy lets only Environment of the repository whose OIDC subjects start
+// with subjectPrefix assume the role through the GitHub OIDC provider at
+// providerARN. subjectPrefix is the repository's sub_claim_prefix as GitHub
+// reports it; with immutable subjects it carries the owner and repository IDs
+// (repo:nuntz@261462/sema@1342395675), so a recreated repository of the same
+// name can't assume the role.
+func TrustPolicy(providerARN, subjectPrefix string) Document {
 	return Document{Version: "2012-10-17", Statement: []Statement{{
 		Sid:       "GitHubProductionEnvironment",
 		Effect:    "Allow",
@@ -37,7 +41,7 @@ func TrustPolicy(providerARN, repository string) Document {
 		Action:    []string{"sts:AssumeRoleWithWebIdentity"},
 		Condition: map[string]map[string]string{"StringEquals": {
 			githubIssuer + ":aud": Audience,
-			githubIssuer + ":sub": fmt.Sprintf("repo:%s:environment:%s", repository, Environment),
+			githubIssuer + ":sub": subjectPrefix + ":environment:" + Environment,
 		}},
 	}}}
 }

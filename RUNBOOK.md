@@ -107,7 +107,14 @@ The change applies on the next `pulumi up`. Check what the stack reads with
 what CI deploys with: the `sema-lambda-boundary` permissions boundary, the `sema-github-deploy` role
 CI assumes, and the role's inline policy, all built by `infra/deployaccess` (see
 `docs/adr/0004-ci-deploys-through-github-oidc.md`). It imports the same `untz/sema/prod` ESC
-environment as the main stack and reads `sema:githubRepository` and `sema:route53ZoneId` from it.
+environment as the main stack and reads `sema:githubSubjectPrefix` and `sema:route53ZoneId` from it.
+`sema:githubSubjectPrefix` is the repository's OIDC subject prefix exactly as GitHub reports it
+(`gh api repos/nuntz/sema/actions/oidc/customization/sub -q .sub_claim_prefix`). The repository
+uses immutable subjects, so the prefix names the owner and repository by ID
+(`repo:nuntz@261462/sema@1342395675`): a renamed or recreated repository can't assume the role.
+Turning immutable subjects off, or renaming the repository, changes the prefix; update the value and
+re-apply the bootstrap stack, or CI deploys fail with `Not authorized to perform
+sts:AssumeRoleWithWebIdentity`.
 Its `deployRoleArn` output is the `AWS_DEPLOY_ROLE_ARN` GitHub variable.
 
 Only you apply it, by hand, with your own AWS session: CI's role is denied any change to itself and

@@ -300,6 +300,16 @@ else
   ask GITHUB_REPOSITORY_NAME "GitHub repository CI deploys from (owner/name, e.g. nuntz/sema):"
 fi
 write_env GITHUB_REPOSITORY_NAME "$GITHUB_REPOSITORY_NAME"
+# The deploy role trusts the OIDC subject GitHub sends, whose prefix carries the owner and
+# repository IDs when the repository uses immutable subjects: ask GitHub rather than build it.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  GITHUB_SUBJECT_PREFIX="$(gh api "repos/$GITHUB_REPOSITORY_NAME/actions/oidc/customization/sub" -q .sub_claim_prefix)"
+else
+  ask GITHUB_SUBJECT_PREFIX "OIDC subject prefix of $GITHUB_REPOSITORY_NAME (e.g. repo:nuntz@261462/sema@1342395675):"
+fi
+[[ "$GITHUB_SUBJECT_PREFIX" == repo:* ]] ||
+  { warn "'$GITHUB_SUBJECT_PREFIX' isn't a repository OIDC subject prefix (repo:...)."; exit 1; }
+write_env GITHUB_SUBJECT_PREFIX "$GITHUB_SUBJECT_PREFIX"
 MIGRATED=0
 (( $(cloud_resources) > 0 )) && MIGRATED=1
 if (( MIGRATED )); then
@@ -357,13 +367,13 @@ else
   unlock
   keys="$(config_keys)"
   render() {  # render true|false prints the environment definition, secrets masked or not
-    jq -r --argjson keys "$keys" --argjson show "$1" --arg repo "$GITHUB_REPOSITORY_NAME" '
+    jq -r --argjson keys "$keys" --argjson show "$1" --arg subject "$GITHUB_SUBJECT_PREFIX" '
       "values:", "  pulumiConfig:",
       (to_entries[] | select(.key as $k | $keys | index($k)) |
         if .value.secret then
           "    \(.key | tojson):", "      fn::secret: \(if $show then .value.value | tojson else "[secret]" end)"
         else "    \(.key | tojson): \(.value.value | tojson)" end),
-      "    \("sema:githubRepository" | tojson): \($repo | tojson)"' "$WORK/local-config.json"
+      "    \("sema:githubSubjectPrefix" | tojson): \($subject | tojson)"' "$WORK/local-config.json"
   }
   render false | sed 's/^/    /'
   if confirm "Create $PULUMI_ORG/$ESC_ENV with these values?"; then
@@ -376,10 +386,15 @@ else
     exit 1
   fi
 fi
-current_repo="$(pulumi env get "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:githubRepository"]' --value string 2>/dev/null || true)"
-if [[ "$current_repo" != "$GITHUB_REPOSITORY_NAME" ]]; then
-  pulumi env set "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:githubRepository"]' "$GITHUB_REPOSITORY_NAME"
-  printf '  %s✓ set%s sema:githubRepository = %s\n' "$GREEN" "$RESET" "$GITHUB_REPOSITORY_NAME"
+current_subject="$(pulumi env get "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:githubSubjectPrefix"]' --value string 2>/dev/null || true)"
+if [[ "$current_subject" != "$GITHUB_SUBJECT_PREFIX" ]]; then
+  pulumi env set "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:githubSubjectPrefix"]' "$GITHUB_SUBJECT_PREFIX"
+  printf '  %s✓ set%s sema:githubSubjectPrefix = %s\n' "$GREEN" "$RESET" "$GITHUB_SUBJECT_PREFIX"
+fi
+# sema:githubRepository was the trust policy's input before immutable subjects; nothing reads it.
+if [[ -n "$(pulumi env get "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:githubRepository"]' --value string 2>/dev/null || true)" ]]; then
+  pulumi env rm "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:githubRepository"]' --yes >/dev/null
+  printf '  %s✓ removed%s the unused sema:githubRepository\n' "$GREEN" "$RESET"
 fi
 pause
 

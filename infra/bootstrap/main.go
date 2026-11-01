@@ -21,7 +21,7 @@ func main() {
 		// Reads the main stack's ESC environment, so the repository and zone are
 		// edited in one place.
 		cfg := config.New(ctx, "sema")
-		repository := strings.TrimSpace(cfg.Require("githubRepository"))
+		subjectPrefix := strings.TrimSpace(cfg.Require("githubSubjectPrefix"))
 		hostedZoneID := strings.TrimSpace(cfg.Require("route53ZoneId"))
 
 		identity, err := awsprovider.GetCallerIdentity(ctx, &awsprovider.GetCallerIdentityArgs{})
@@ -42,7 +42,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		trust, err := deployaccess.TrustPolicy(provider.Arn, repository).JSON()
+		trust, err := deployaccess.TrustPolicy(provider.Arn, subjectPrefix).JSON()
 		if err != nil {
 			return err
 		}
