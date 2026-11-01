@@ -23,6 +23,8 @@ const (
 	Audience = "sts.amazonaws.com"
 
 	githubIssuer = "token.actions.githubusercontent.com"
+	// GitHubOIDCURL is the issuer URL of the account's GitHub OIDC provider.
+	GitHubOIDCURL = "https://" + githubIssuer
 )
 
 // TrustPolicy lets only repository's Environment assume the role through the

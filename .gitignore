@@ -40,3 +40,4 @@ web/node_modules/
 
 # Compiled Pulumi program (go build ./... inside infra/)
 /infra/infra
+/infra/bootstrap/bootstrap
