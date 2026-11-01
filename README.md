@@ -1,136 +1,161 @@
 # Sema
 
-Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid makes the likely-interesting items physically larger, while everything unkept expires after seven days. Hearted items are copied into a permanent archive.
+Sema is a cloud feed reader built for triage first. A fast, keyboard-driven grid makes the Items you are most likely to care about physically larger. Anything you don't keep expires seven days after it was published, and Kept Items move to a permanent Archive.
 
 ![Sema's front page: a justified grid where higher-ranked items take larger cells, with a two-source story at top left](docs/screenshot.png)
 
 ## Highlights
 
-- Read RSS, Atom, JSON Feed, YouTube channel feeds, and public subreddit feeds.
-- Import subscriptions from OPML.
-- Triage quickly with keyboard navigation and a responsive justified grid.
-- Rank items using explicit feedback, reading behaviour, and Bedrock embeddings.
-- Keep selected articles permanently while the unkept queue expires automatically.
+- Read RSS, Atom, JSON Feed, YouTube, and Reddit through one Connector interface.
+- Import and export subscriptions as OPML.
+- Triage from the keyboard on a justified grid where each cell's Size follows its predicted interest.
+- Rank Items with Signals (Boost, Bury, Keep), Behaviour, and Bedrock text and image embeddings.
+- See one Story on the Front Page when several Feeds cover the same thing.
+- Search live and Kept Items by keyword, by meaning, and by image content.
+- Send any Item to an HTTPS Destination you choose, as a signed request.
 - Install the SolidJS frontend as a PWA on desktop or mobile.
 
 ## How it works
 
 ```text
-                              INGESTION PIPELINE
-                              ==================
+                                 INGESTION
+                                 =========
 
- EventBridge ---------+
- (rate schedule)      |
-                      v
-               +-------------+    claims due feeds     +----------------+
-               |  scheduler  |<----------------------->|    DynamoDB    |
-               |   Lambda    |   (5-min claim lease)   | feeds / items  |
-               +------+------+                         | prefs / users  |
-                      | enqueue feed jobs              +----------------+
-                      v                                    ^         ^
-               [ feeds-q SQS ]--> DLQ                      |         |
-                      |                                    |         |
-                      v                                    |         |
-               +-------------+   fetch + parse feeds       |         |
-               | feed-worker |-- RSS / Atom / JSON Feed ---+         |
-               |   Lambda    |   YouTube / Reddit connectors         |
-               +------+------+   (dedupe, write new items)           |
-                      | enqueue per-item jobs                        |
-                      v                                              |
-               [ items-q SQS ]--> DLQ                                |
-                      |                                              |
-                      v                                              |
-               +-------------+   extract article text ---------------+
-               | item-worker |   fetch media/thumbnails ---> S3 (content)
-               |   Lambda    |   embed text -----------> Bedrock Titan Text
-               |             |   embed lead image -----> Bedrock Titan Multimodal
-               +-------------+                                  |
-                                            store vectors       v
-                                            & score item   [ S3 Vectors: items
-                                                             + images indexes ]
-
-
-                              SERVING & TRIAGE
-                              ================
-
-  browser (SolidJS PWA)
-    | Google sign-in (once) -> API sets 30-day HttpOnly session cookie
-    v
- +------------+   static app & media    +--------------------------+
- | CloudFront |------------------------>| S3: app bundle + content |
- |            |   (signed cookies)      +--------------------------+
- +-----+------+
-       | /api
-       v
- +------------+   items, hearts, feedback, OPML import, search
- | HTTP API   |----> api Lambda ----> DynamoDB / SQS / Bedrock (query
- +------------+                       embeddings) / S3 Vectors (similarity)
-
-  User signals fed back in:  keeps, boosts, buries, behaviour ---> prefs
+  EventBridge, every minute
+        |
+        v
+  +-------------+
+  |  scheduler  |  claim due Feeds, 5-min lease ----> DynamoDB
+  +------+------+
+         | one job per due Feed
+         v
+  [ feeds SQS ] --> DLQ
+         |
+         v
+  +-------------+
+  | feed-worker |  fetch through the Feed's Connector:
+  |             |    RSS / Atom / JSON Feed, YouTube, Reddit
+  |             |  drop seen and out-of-window Items
+  |             |  update Cadence, Feed Status -----> DynamoDB
+  |             |  cache favicon -------------------> S3 content
+  +------+------+
+         | one job per new Item
+         v
+  [ items SQS ] --> DLQ
+         |
+         v
+  +-------------+
+  | item-worker |  extract, cache body + images ----> S3 content
+  |             |  summarize junk summaries --------> Bedrock Nova Micro
+  |             |  embed text ----------------------> Bedrock Titan Text v2
+  |             |  embed lead image, not video -----> Bedrock Titan Multimodal
+  |             |  write vectors, join a Story -----> S3 Vectors: items, images
+  |             |  score, write Item ---------------> DynamoDB
+  +-------------+
 
 
-                              RANKING & EXPIRY
-                              ================
+                             SERVING AND TRIAGE
+                             ==================
 
- EventBridge (nightly) --> rescore Lambda --------> re-ranks items per user
-                             (blends explicit feedback + behaviour
-                              + embedding similarity to liked items)
+  browser: SolidJS PWA
+        |  Google sign-in once -> 30-day HttpOnly session cookie
+        v
+  +------------+  app bundle ---------------------> S3 app
+  | CloudFront |  bodies, images, Archive ---------> S3 content
+  |            |    (short-lived signed cookies)
+  +-----+------+
+        | /api/*
+        v
+  +------------+
+  |  HTTP API  |  Items, Stories, Feeds, Read, ----> DynamoDB
+  |     |      |    Signals, Behaviour, OPML
+  |     v      |  search, similar Items -----------> S3 Vectors + Bedrock
+  | api Lambda |  Send, first attempt inline ------> Destination
+  |            |    retries -> [ deliveries SQS ] -> delivery-worker
+  |            |  re-rank on demand ---------------> rescore
+  +------------+
 
- EventBridge (weekly) ---> vector-cleanup Lambda -> deletes expired vectors
 
- DynamoDB TTL + S3 lifecycle: unkept items expire after 7 days
- Hearted items -> copied to permanent archive (never expires)
+                             RANKING AND EXPIRY
+                             ==================
+
+  EventBridge, daily 09:00 UTC ---> rescore
+      rebuild each user's taste from Signals, Behaviour, and text and
+      image vectors; re-rank live Items; recompute Size cutoffs;
+      consolidate Stories
+
+  EventBridge, Sundays -----------> vector-cleanup
+      delete vectors of Items past their Live Window
+
+  Live Window   DynamoDB TTL + S3 lifecycle drop unkept Items
+                seven days after publication
+  Keep          copies the Item, its body, and its images into the
+                Archive, which never expires
 ```
 
-The repository contains six Go Lambda functions, shared feed-processing packages, a SolidJS/TypeScript PWA, and a Pulumi Go project that provisions the AWS stack. Queue consumers are retry-safe and use dead-letter queues. DynamoDB TTL and S3 lifecycle rules enforce the rolling seven-day window; archived items and preference signals do not expire.
+The repository has seven Go Lambda functions, shared packages under `internal/`, a SolidJS/TypeScript PWA in `web/`, and a Pulumi Go project in `infra/` that provisions the AWS stack. Everything lives in one DynamoDB table. Each queue has its own dead-letter queue and alarm, and its consumer is safe to retry. DynamoDB TTL and S3 lifecycle rules enforce the Live Window. Kept Items and Signals never expire; Behaviour expires after 90 days.
 
 ## Cadence and refusals
 
-Each feed has a Cadence: how often Sema checks it. Cadence follows the feed's own publish rate rather than a fixed default, because most subscribed feeds publish less than one item a day while a few publish dozens, and polling every one of them hourly spent most of the fetch budget on sources that had nothing new. A feed is checked hourly when it produces four or more items a day, every three hours at ten to twenty-seven a week, every six hours at three to nine a week, and daily below that, measured over the seven-day live window and recomputed after every successful fetch. New feeds start hourly for their first week; a quiet feed that publishes again is promoted on the first fetch that finds new items, so the lag is bounded by one slot. The user can pin any feed to a fixed Cadence, and Reddit feeds keep the Cadence implied by their collection. The trade-off is deliberate: a feed that publishes rarely may be seen up to a day late.
+Each Feed has a Cadence: how often Sema checks it. Cadence follows the Feed's own publish rate rather than a fixed default. Most subscribed Feeds publish less than one Item a day while a few publish dozens, and checking every one of them hourly spent most of the fetch budget on Feeds that had nothing new.
 
-A refused fetch, such as a 429 anywhere or the 404s and 500s YouTube returns when it throttles feed readers, is not a feed error. It never slows or breaks the feed; it is retried after one Cadence period or six hours, whichever is shorter, so the retry lands outside the source's burst window. Only a feed refused continuously for a day is shown as broken, and it keeps being checked at its Cadence.
+Sema counts the new Items each Feed brought over the last seven UTC days, today included. That count is recomputed after every successful fetch, including fetches where the Feed was unchanged, and sets the Cadence:
+
+| New Items in the last seven days | Cadence |
+|---|---|
+| 28 or more (four or more a day) | hourly |
+| 10 to 27 | every three hours |
+| 3 to 9 | every six hours |
+| fewer than 3 | daily |
+
+New Feeds start hourly for their first week. A quiet Feed that gets busy speeds up on the first fetch that takes its count past a threshold. The user can pin any Feed to a fixed Cadence, and Reddit Feeds keep the Cadence their collection implies. The trade-off is deliberate: a Feed that publishes rarely may be seen up to a day late.
+
+A Refused fetch is not a Feed error. Examples are a 429 from any source, and the 404s and 500s YouTube returns when it throttles feed readers. A refusal never slows or breaks the Feed. Sema retries at the time the source's `Retry-After` header gives. Without that header, it retries after one Cadence period or six hours, whichever is shorter, plus up to five minutes of jitter, so the retry lands outside the source's burst window. Only a Feed refused continuously for a day is shown as broken, and Sema keeps retrying it on the same schedule.
 
 ## Connectors
 
-Feed transports implement the shared `internal/connector.Connector` interface and are registered by source type in the feed worker. RSS, Atom, and JSON Feed share the generic parser; YouTube and Reddit add source-specific discovery and item metadata while retaining the same scheduling, deduplication, ranking, retry, retention, and archive paths.
+Each Connector implements the shared `internal/connector.Connector` interface and is registered by name in the feed worker. RSS, Atom, and JSON Feed share the generic parser. YouTube and Reddit add their own discovery and Item metadata, and every other path is shared: scheduling, deduplication, ranking, retries, retention, and the Archive.
 
-The Reddit connector uses only Reddit's public Atom feeds—there is no Reddit API, OAuth, login, credential, or third-party service. Discovery accepts `r/name`, full subreddit URLs, and supported subreddit feed URLs. It canonicalizes the selected collection into the stored feed URL:
+The Reddit Connector uses only Reddit's public Atom feeds. There is no Reddit API, OAuth, login, credential, or third-party service. Discovery accepts `r/name`, full subreddit URLs, and supported subreddit feed URLs, and stores the chosen collection as a canonical Feed URL:
 
 - Hot: `/r/<subreddit>/.rss`, fetched every three hours.
 - Top · day: `/r/<subreddit>/top.rss?t=day`, fetched daily.
 - New: `/r/<subreddit>/new.rss`, fetched hourly.
 
-Scheduled and discovery requests send the fixed `User-Agent: linux:sema:rss`. Feed jobs retain their stable per-feed schedule offsets and generic exponential error backoff; Reddit failures remain isolated to the affected feed.
+Scheduled and discovery requests send the fixed `User-Agent: linux:sema:rss`. Each Feed keeps a stable offset within its Cadence and its own exponential backoff after errors, so a Reddit failure affects only that Feed.
 
-Reddit items preserve the thread permalink separately from an external article or media destination. Link posts use the normal article extraction pipeline and open in Reader, text posts render sanitized selftext already present in Atom, and image and gallery posts render in Reader with a cached lead image. For Reddit-owned preview thumbnails, Sema prefers the corresponding full-size `i.redd.it` asset and keeps the signed Atom thumbnail as a fallback; gallery replays recover missing enclosure metadata from the public per-post Atom feed. Reddit-hosted video remains external because `v.redd.it` media is delivered as split DASH streams. The message-square action on every Reddit cell opens its comment thread externally. Titles and cleaned excerpts enter the existing embedding and ranking pipeline unchanged.
+Reddit Items keep the thread permalink separate from any external article or media link:
+
+- **Link posts** go through the normal article extraction and open in the reader.
+- **Text posts** render the sanitized selftext the Atom feed already carries.
+- **Image and gallery posts** render in the reader with a cached lead image.
+
+For Reddit's own preview thumbnails, Sema prefers the full-size `i.redd.it` image and keeps the signed Atom thumbnail as a fallback. For galleries, it recovers missing image details from the post's own public Atom feed. Reddit-hosted video stays external, because `v.redd.it` serves it as separate audio and video streams. The message-square action on every Reddit cell opens the comment thread externally. Titles and cleaned excerpts are embedded and ranked like any other Item.
 
 ## Send
 
-Send pushes one Item, on demand, to an HTTPS address the user chooses under "Send to…" in Feeds & settings. Sema signs every request with the user's secret so the receiver can verify it; what the receiver does with the Item is up to it. Send is available from the reader, the grid action sheet, and the `s` key once a Destination is saved and enabled.
+Send pushes one Item, on demand, to an HTTPS address the user chooses under "Send to…" in Feeds & settings. Sema signs every request with the user's secret so the Destination can verify it; what the Destination does with the Item is up to it. Once a Destination is saved and enabled, Send is available from the reader, from the grid action sheet, and with the `s` key.
 
-The first attempt runs while the user waits, so the toast reports what the receiver actually answered. Retryable failures (timeouts, network errors, `429`, `5xx`) are retried three more times through the deliveries queue, and Settings shows the latest result. Each user may make 60 Sends and tests an hour. Outbound requests refuse private and loopback addresses and never follow redirects.
+The first attempt runs while the user waits, so the toast reports what the Destination actually answered. Retryable failures (timeouts, network errors, `429`, `5xx`) get three more attempts through the deliveries queue, and Settings shows the latest result. Each user may make 60 Sends and tests an hour. Outbound requests refuse private and loopback addresses and never follow redirects. The payload is a versioned public contract; see `docs/adr/0001-send-public-webhook-contract.md`.
 
 ## Prerequisites
 
-- Go 1.26+
-- Bun 1.4.4+
-- Pulumi 3+
-- `zip` on `PATH`
-- AWS credentials for the target account
-- Bedrock model access to `amazon.titan-embed-text-v2:0` in `us-east-1`
-- Bedrock model access to `amazon.titan-embed-image-v1` in `us-east-1`
-- A Google OAuth web client ID
+- Go 1.26.6+. To get reproducible Lambda ZIPs, build with the `toolchain` version in `go.mod`, which is what CI uses.
+- Bun 1.4.4 and Node.js 24, the versions CI uses.
+- The Pulumi CLI 3 and the AWS CLI.
+- `zip` and `sha256sum` on `PATH`.
+- An AWS account in `us-east-1`, with Bedrock model access to:
+  - `amazon.titan-embed-text-v2:0`
+  - `amazon.titan-embed-image-v1`
+  - `amazon.nova-micro-v1:0`
+- An SNS topic named `NotifyMe` in that account for alarms. To use another topic, set `sema:alarmTopicName`.
+- A Google OAuth web client ID.
 
 Confirm AWS access with `aws sts get-caller-identity` before deploying.
 
 ## Local development
 
-Run the complete test suite and build all Lambda archives and frontend assets:
-
-```sh
-make test
-make build
-```
+`make check` runs CI's test job: lint, formatting, vet, unit tests, the web build, and reproducible Lambda ZIPs. `make e2e` runs the Playwright specs. `make test` runs only the Go and Vitest unit tests, and `make build` produces the Lambda ZIPs and the production SPA.
 
 To work on the frontend:
 
@@ -140,23 +165,31 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local`. Vite proxies `/api` to `http://localhost:8787`; set `SEMA_API_ORIGIN` to use a deployed API instead. See [AGENTS.md](AGENTS.md) for linting, formatting, test, and contribution guidance.
+Set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local`. Vite proxies `/api` to `SEMA_API_ORIGIN`, or to `http://localhost:8787` when that is unset. The API runs only as a Lambda, so nothing in this repository listens on that port. See [AGENTS.md](AGENTS.md) for linting, formatting, test, and contribution guidance.
 
 ## Deploy
 
-Production is the one stack, `untz/sema/prod` in Pulumi Cloud. Its config, secrets included, lives in the `untz/sema/prod` Pulumi ESC environment; `infra/Pulumi.prod.yaml` only imports it. [RUNBOOK.md](RUNBOOK.md) covers setting it up (`scripts/setup-deploy.sh` walks the one-time steps), changing config, and deploying by hand:
+Production is the one stack, `untz/sema/prod` in Pulumi Cloud. Every green push to `master` deploys it from CI, through GitHub OIDC. Its config, secrets included, lives in the `untz/sema/prod` Pulumi ESC environment, and `infra/Pulumi.prod.yaml` only imports it. [RUNBOOK.md](RUNBOOK.md) covers:
 
-```sh
-make deploy
-```
+- CI deploys, deploying by hand (`make preview`, then `make deploy`), and rollback.
+- The one-time setup, which `scripts/setup-deploy.sh` walks through.
+- Changing config.
+- Day-to-day operations.
+- The migrations an older stack needs.
 
-`pulumi up` installs pinned frontend dependencies, builds the Lambdas and SPA, and provisions their AWS resources; `make deploy` runs it on the prod stack and invalidates CloudFront. A new stack needs only the region and the Google client ID in its ESC environment.
+`pulumi up` builds the Lambdas and the SPA and provisions their AWS resources. `make deploy` runs it on the prod stack and then invalidates CloudFront. A new stack needs:
 
-After deployment, run `pulumi stack output url` and add that HTTPS origin to the Google OAuth client’s **Authorized JavaScript origins**. Sign-in will not work until it is registered. The stack also exports the CloudFront URL, API endpoint, distribution ID, and storage bucket names.
+- The region and the Google client ID in its ESC environment.
+- The alarm SNS topic from the Prerequisites.
+- The bootstrap stack (`infra/bootstrap`), applied first. It owns the permissions boundary that every Lambda role uses.
+
+After the first deployment, run `pulumi stack output url` and add that HTTPS origin to the Google OAuth client's **Authorized JavaScript origins**. Sign-in won't work until it is registered. The stack also exports the CloudFront URL, API endpoint, distribution ID, and storage bucket names.
 
 ### Authentication and private content
 
-Google Identity Services is used only for initial sign-in. The API exchanges the Google ID token for a 30-day sliding session in a Secure, HttpOnly cookie; the browser does not store or resend the Google token. Pulumi keeps the content-signing private key in encrypted stack state, S3 remains private behind CloudFront, and authenticated responses refresh short-lived signed content cookies.
+Google Identity Services is used only for the first sign-in. The API exchanges the Google ID token for a 30-day sliding session in a Secure, HttpOnly cookie, and the browser doesn't keep the Google token.
+
+Both S3 buckets are private behind CloudFront. Article bodies, cached images, and the Archive need signed cookies, which are scoped to the user and last an hour. Authenticated API responses renew them. Pulumi generates the content-signing private key, keeps it in encrypted stack state, and passes it to the API Lambda as an environment variable.
 
 ### Custom domain
 
@@ -169,228 +202,16 @@ pulumi env set untz/sema/prod 'pulumiConfig["sema:route53ZoneId"]' Z0123456789AB
 pulumi up
 ```
 
-Pulumi requests and validates the certificate, configures the CloudFront alias, and creates A and AAAA records. The default `*.cloudfront.net` URL remains available.
+Pulumi requests and validates the certificate, configures the CloudFront alias, and creates A and AAAA records. The default `*.cloudfront.net` URL keeps working.
 
-For external DNS, omit `sema:route53ZoneId`. First deploy the `domain-certificate` target, publish the exported validation CNAME, and then run the full update. Point subdomains to `dnsCnameTarget` with CNAME; apex domains require the provider’s ALIAS/ANAME equivalent.
+If your DNS is hosted elsewhere, omit `sema:route53ZoneId`:
+
+1. Deploy only the `domain-certificate` target.
+2. Publish the validation CNAME the stack exports.
+3. Run the full update.
+4. Point a subdomain at `dnsCnameTarget` with a CNAME. An apex domain needs your DNS provider's ALIAS or ANAME record instead.
 
 After DNS resolves, add the custom HTTPS origin to the Google OAuth client. Keep the CloudFront origin registered until installed PWAs have moved to the custom domain.
-
-## Updating an existing stack
-
-New stacks do not need these migrations. Backfill commands start in read-only mode and report affected rows; inspect that output before running them again with `BACKFILL_ARGS=--apply`.
-
-### Item identity marker rollout
-
-Before deploying the identity-aware item worker over older data, create identity markers and reconcile duplicate live rows:
-
-```sh
-make backfill-item-identities STACK=prod
-make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
-make deploy
-make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
-```
-
-The backfill keeps the newest row for each item, preserves archive pointers, and creates its identity marker. The final pass catches items written during deployment.
-
-Read writes use strongly consistent identity lookups and skip missing or expired Items by default. If an older stack needs to mark live Items Read before this backfill completes, temporarily set `LEGACY_READ_FALLBACK=true` on the API Lambda. This enables a consistent query through the user’s live partition when an identity is absent—including identities already removed by TTL—so leave it unset during normal operation and remove it after the final backfill pass. No deployment enables it by default.
-
-### Split item-vector rollout and recovery
-
-Deploy the split-vector writer and targeted rescore updates before migrating older live items. Then inspect and apply the DynamoDB item-vector backfill before allowing a scheduled or on-demand rescore:
-
-```sh
-make deploy STACK=prod
-make backfill-item-vectors STACK=prod
-make backfill-item-vectors STACK=prod BACKFILL_ARGS=--apply
-```
-
-The command is idempotent and dry-run by default. It creates only missing or expired `V#` rows, preferring a surviving inline embedding and otherwise restoring the original embedding from S3 Vectors. Investigate any non-zero `unavailable` count and replay those items before rescoring. The separate `backfill-vectors` command below copies DynamoDB embeddings in the opposite direction, into the S3 vector index.
-
-### Permanent archive identities
-
-Deploy the permanent archive-identity writer before running this migration.
-It updates the existing `D#<item-id>` row to point at the timestamped `A#` key
-and removes its TTL, so semantic search and similar results continue resolving
-archives after the seven-day live window expires. Live key/expiry metadata keeps
-hearted items available in the live window; unheart restores or removes the identity.
-
-A hearted item keeps a permanent identity, so a feed that republishes it after
-the live window is treated as a duplicate (`ItemsDeduped`) and does not re-enter
-the live grid. Unhearting clears the identity after the live window has expired;
-within that window, it restores the expiring live identity.
-
-```sh
-make deploy STACK=prod
-make backfill-archive-identities STACK=prod
-make backfill-archive-identities STACK=prod BACKFILL_ARGS=--apply
-```
-
-The command is dry-run by default and idempotent. It lists archive rows only in
-this maintenance path, preserves existing live identity metadata, and checks that
-the archive and identity have not changed before writing. Repeat the apply pass
-if concurrent changes caused a row to be skipped. No key-schema, GSI, or IAM
-changes are required. Existing archives need this backfill to regain resolution.
-
-### Search rollout and vector migrations
-
-Deploy search writers first, then reindex live items and backfill search text and vectors:
-
-```sh
-make replay STACK=prod FLAGS="--reindex"
-make backfill-search-text STACK=prod
-make backfill-search-text STACK=prod BACKFILL_ARGS=--apply
-make backfill-vectors STACK=prod
-make backfill-vectors STACK=prod BACKFILL_ARGS=--apply
-```
-
-The vector backfill reuses stored embeddings and does not invoke Bedrock or change rankings. If a new embedding model changes vector dimensions, create a new index, dual-write, replay and verify the data, switch reads, and only then remove the old index.
-
-By default, replay only re-embeds text when the stored vector is missing or belongs to a different `MODEL_VERSION`; pass `FLAGS="--force-extract"` to force a fresh text embedding.
-
-### User-scoped vector migration
-
-Vector keys now include the account ID and queries filter `user_id` before
-selecting neighbours. Old global records cannot serve these readers: switching
-readers before backfilling leaves search incomplete and similarity can return
-404. Migrate both indexes before deploying the new readers.
-
-1. Build the updated application and maintenance tools with `make build`.
-   Preview the intended stack explicitly with `cd infra && pulumi preview --stack prod`.
-2. Run the new backfill writer in dry-run mode against both indexes:
-
-   ```sh
-   make backfill-vectors STACK=prod
-   make backfill-vectors STACK=prod BACKFILL_ARGS='--image'
-   ```
-
-3. During a maintenance window, disable the item-worker SQS event-source mapping
-   and temporarily set API reserved concurrency to zero to prevent heart changes.
-   Record their original settings first. Once the mapping reports `Disabled`,
-   allow at least 120 seconds for existing item-worker and API invocations to finish.
-   Pause any manual replay or migration tools as well.
-4. Populate both indexes using the new writer while the existing application
-   readers remain deployed:
-
-   ```sh
-   make backfill-vectors STACK=prod BACKFILL_ARGS='--apply'
-   make backfill-vectors STACK=prod BACKFILL_ARGS='--image --apply'
-   ```
-
-   Both commands must succeed before switching readers. They reuse stored
-   embeddings; archive retention wins when a live and archive row share an ID.
-   Missing stored embeddings require recovery before they can be indexed.
-5. Deploy with `cd infra && pulumi up --stack prod`, then restore the recorded
-   API concurrency setting and event-source mapping state. Remove the temporary
-   concurrency limit if the API previously had no reserved limit. Verify search,
-   similarity, and archive actions for each account.
-6. After verifying the migration and retiring all old writers, inspect and
-   optionally purge obsolete global records:
-
-   ```sh
-   make purge-legacy-vectors STACK=prod
-   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--image'
-   # After reviewing the dry-run counts:
-   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--apply'
-   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--image --apply'
-   ```
-
-The purge is idempotent and dry-run by default. It deletes only records without
-`user_id` metadata, including global archive records that ordinary expiry
-cleanup retains forever. Namespaced records remain untouched. Purging ends the
-legacy S3 fallback used by `backfill-item-vectors`; finish any required recovery
-and retain old records if rollback to global readers is still needed.
-
-An indexing outage leaves ingested items in DynamoDB and retries the SQS
-messages using stored embeddings. The queue moves messages to its DLQ after
-three receives; a prolonged outage still needs DLQ redrive after recovery or a
-vector backfill. Run redrive against the intended stack with
-`make redrive STACK=prod` (the default is `dev`).
-
-### Image ranking rollout
-
-Deploy the image index and writer before replaying live items or changing existing preference models:
-
-```sh
-make deploy STACK=prod
-make replay STACK=prod
-make backfill-image-signals STACK=prod
-make backfill-image-signals STACK=prod BACKFILL_ARGS=--apply
-make rescore STACK=prod
-```
-
-The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout will visibly reshuffle item sizes as the new image centroids take effect.
-
-The image-search similarity floor is a tuning knob for text-to-image recall. `ImageSearchTopSimilarity` and `ImageSearchMatches` in the Sema CloudWatch namespace show the live score distribution; adjust the floor with `pulumi env set untz/sema/prod 'pulumiConfig["sema:imageSearchMinSimilarity"]' <n>` before deploying the stack.
-
-### YouTube connector rollout
-
-For deployments that predate the YouTube connector, gate discovery while migrating stored channel feeds:
-
-```sh
-cd infra
-pulumi env set untz/sema/prod 'pulumiConfig["sema:youtubeDiscoveryEnabled"]' false
-cd ..
-make deploy
-make backfill-youtube-connector STACK=prod
-make backfill-youtube-connector STACK=prod BACKFILL_ARGS=--apply
-cd infra
-pulumi env set untz/sema/prod 'pulumiConfig["sema:youtubeDiscoveryEnabled"]' true
-cd ..
-make deploy
-```
-
-The migration preserves feed and item identities, so history, archive pointers, signals, and read state remain connected. YouTube exposes only the latest 15 uploads through its public feed; older uploads cannot be recovered during import.
-
-### Reddit connector rollout
-
-Deploy the connector writers before migrating subreddit feeds that were previously stored as generic RSS sources:
-
-```sh
-make deploy
-make backfill-reddit-connector STACK=prod
-make backfill-reddit-connector STACK=prod BACKFILL_ARGS=--apply
-```
-
-The idempotent backfill recognizes only supported subreddit feed URLs. It keeps each existing feed ID, tags, mute state, items, archive pointers, ranking history, and read state while changing the connector to `reddit`, canonicalizing the selected Hot/Top-Day/New URL, setting its cadence, and clearing URL-specific HTTP validators when required. Unsupported Reddit listing types are left unchanged.
-
-### Send rollout
-
-Send adds the `deliveries` queue with its dead-letter queue and alarm, the `delivery-worker` Lambda, and the `DELIVERIES_QUEUE_URL` variable on the API. `make deploy` creates all of them; no configuration is required. Items start recording the origin URL of their lead image on ingest or replay, and there is no backfill; every Item with a stored lead image also sends a one-hour signed URL to a per-Send copy of Sema's image under `send/`, which a lifecycle rule deletes after a day. That copy needs the `sema:domain` custom domain, which becomes the API's `PUBLIC_ORIGIN`; without one, Items ingested before the rollout send an empty `images` list.
-
-## Operations
-
-### Refresh rankings
-
-The nightly `rescore` Lambda updates rankings across the live seven-day window. Run it on demand with:
-
-```sh
-make rescore
-```
-
-For an embedding or summary model upgrade, deploy the new configuration, replay the window, and then rescore:
-
-```sh
-cd infra
-pulumi env set untz/sema/prod 'pulumiConfig["sema:modelVersion"]' amazon.titan-embed-text-v2:0
-pulumi env set untz/sema/prod 'pulumiConfig["sema:summarizeModel"]' amazon.nova-micro-v1:0
-pulumi up
-cd ..
-make replay MODEL_VERSION=amazon.titan-embed-text-v2:0
-make replay FLAGS="--force-extract --force-summary"
-make rescore
-```
-
-Replay rebuilds embeddings from stored titles and reprocesses live items. It does not change read state, feedback, hearts, or archived article bodies.
-
-### Redrive failed queue messages
-
-Move messages from both dead-letter queues back to their source queues with:
-
-```sh
-make redrive
-```
-
-Use credentials for the target stack and review the queues before redriving production messages.
 
 ## License
 

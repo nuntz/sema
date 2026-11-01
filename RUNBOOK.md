@@ -149,3 +149,222 @@ The account has one GitHub OIDC provider, and Stash's bootstrap stack (`untz/sta
 owns it; Sema's only looks it up. **Destroying Stash's bootstrap stack, or removing the provider
 from it, breaks Sema's CI deploys** until the provider exists again. Never create a second provider
 for Sema: the account allows only one per issuer URL.
+
+## Operations
+
+### Refresh rankings
+
+The `rescore` Lambda re-ranks every live Item daily at 09:00 UTC. Run it on demand with:
+
+```sh
+make rescore
+```
+
+For an embedding or summary model upgrade, deploy the new configuration, replay the window, and then rescore:
+
+```sh
+cd infra
+pulumi env set untz/sema/prod 'pulumiConfig["sema:modelVersion"]' amazon.titan-embed-text-v2:0
+pulumi env set untz/sema/prod 'pulumiConfig["sema:summarizeModel"]' amazon.nova-micro-v1:0
+pulumi up
+cd ..
+make replay MODEL_VERSION=amazon.titan-embed-text-v2:0
+make replay FLAGS="--force-extract --force-summary"
+make rescore
+```
+
+Replay reprocesses live Items, re-embedding text from the stored title, summary, and first paragraph when the vector is missing or belongs to another model version. It does not change Read state, Signals, Kept Items, or Archive bodies.
+
+### Redrive failed queue messages
+
+Move messages from the feeds and items dead-letter queues back to their source queues with:
+
+```sh
+make redrive
+```
+
+Use credentials for the target stack and review the queues before redriving production messages.
+`make redrive` does not cover the deliveries dead-letter queue; to redrive it, run
+`aws sqs start-message-move-task` with the stack's `deliveriesDlqArn` output as the source.
+
+## Updating an existing stack
+
+New stacks do not need these migrations. Backfill commands start in read-only mode and report affected rows; inspect that output before running them again with `BACKFILL_ARGS=--apply`.
+
+### Item identity marker rollout
+
+Before deploying the identity-aware item worker over older data, create identity markers and reconcile duplicate live rows:
+
+```sh
+make backfill-item-identities STACK=prod
+make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
+make deploy
+make backfill-item-identities STACK=prod BACKFILL_ARGS=--apply
+```
+
+The backfill keeps the newest row for each item, preserves archive pointers, and creates its identity marker. The final pass catches items written during deployment.
+
+Read writes use strongly consistent identity lookups and skip missing or expired Items by default. If an older stack needs to mark live Items Read before this backfill completes, temporarily set `LEGACY_READ_FALLBACK=true` on the API Lambda. This enables a consistent query through the user’s live partition when an identity is absent—including identities already removed by TTL—so leave it unset during normal operation and remove it after the final backfill pass. No deployment enables it by default.
+
+### Split item-vector rollout and recovery
+
+Deploy the split-vector writer and targeted rescore updates before migrating older live items. Then inspect and apply the DynamoDB item-vector backfill before allowing a scheduled or on-demand rescore:
+
+```sh
+make deploy STACK=prod
+make backfill-item-vectors STACK=prod
+make backfill-item-vectors STACK=prod BACKFILL_ARGS=--apply
+```
+
+The command is idempotent and dry-run by default. It creates only missing or expired `V#` rows, preferring a surviving inline embedding and otherwise restoring the original embedding from S3 Vectors. Investigate any non-zero `unavailable` count and replay those items before rescoring. The separate `backfill-vectors` command below copies DynamoDB embeddings in the opposite direction, into the S3 vector index.
+
+### Permanent archive identities
+
+Deploy the permanent archive-identity writer before running this migration.
+It updates the existing `D#<item-id>` row to point at the timestamped `A#` key
+and removes its TTL, so semantic search and similar results continue resolving
+archives after the seven-day live window expires. Live key/expiry metadata keeps
+hearted items available in the live window; unheart restores or removes the identity.
+
+A hearted item keeps a permanent identity, so a feed that republishes it after
+the live window is treated as a duplicate (`ItemsDeduped`) and does not re-enter
+the live grid. Unhearting clears the identity after the live window has expired;
+within that window, it restores the expiring live identity.
+
+```sh
+make deploy STACK=prod
+make backfill-archive-identities STACK=prod
+make backfill-archive-identities STACK=prod BACKFILL_ARGS=--apply
+```
+
+The command is dry-run by default and idempotent. It lists archive rows only in
+this maintenance path, preserves existing live identity metadata, and checks that
+the archive and identity have not changed before writing. Repeat the apply pass
+if concurrent changes caused a row to be skipped. No key-schema, GSI, or IAM
+changes are required. Existing archives need this backfill to regain resolution.
+
+### Search rollout and vector migrations
+
+Deploy search writers first, then reindex live items and backfill search text and vectors:
+
+```sh
+make replay STACK=prod FLAGS="--reindex"
+make backfill-search-text STACK=prod
+make backfill-search-text STACK=prod BACKFILL_ARGS=--apply
+make backfill-vectors STACK=prod
+make backfill-vectors STACK=prod BACKFILL_ARGS=--apply
+```
+
+The vector backfill reuses stored embeddings and does not invoke Bedrock or change rankings. If a new embedding model changes vector dimensions, create a new index, dual-write, replay and verify the data, switch reads, and only then remove the old index.
+
+By default, replay only re-embeds text when the stored vector is missing or belongs to a different `MODEL_VERSION`; pass `FLAGS="--force-extract"` to force a fresh text embedding.
+
+### User-scoped vector migration
+
+Vector keys now include the account ID and queries filter `user_id` before
+selecting neighbours. Old global records cannot serve these readers: switching
+readers before backfilling leaves search incomplete and similarity can return
+404. Migrate both indexes before deploying the new readers.
+
+1. Build the updated application and maintenance tools with `make build`.
+   Preview the intended stack explicitly with `cd infra && pulumi preview --stack prod`.
+2. Run the new backfill writer in dry-run mode against both indexes:
+
+   ```sh
+   make backfill-vectors STACK=prod
+   make backfill-vectors STACK=prod BACKFILL_ARGS='--image'
+   ```
+
+3. During a maintenance window, disable the item-worker SQS event-source mapping
+   and temporarily set API reserved concurrency to zero to prevent heart changes.
+   Record their original settings first. Once the mapping reports `Disabled`,
+   allow at least 120 seconds for existing item-worker and API invocations to finish.
+   Pause any manual replay or migration tools as well.
+4. Populate both indexes using the new writer while the existing application
+   readers remain deployed:
+
+   ```sh
+   make backfill-vectors STACK=prod BACKFILL_ARGS='--apply'
+   make backfill-vectors STACK=prod BACKFILL_ARGS='--image --apply'
+   ```
+
+   Both commands must succeed before switching readers. They reuse stored
+   embeddings; archive retention wins when a live and archive row share an ID.
+   Missing stored embeddings require recovery before they can be indexed.
+5. Deploy with `cd infra && pulumi up --stack prod`, then restore the recorded
+   API concurrency setting and event-source mapping state. Remove the temporary
+   concurrency limit if the API previously had no reserved limit. Verify search,
+   similarity, and archive actions for each account.
+6. After verifying the migration and retiring all old writers, inspect and
+   optionally purge obsolete global records:
+
+   ```sh
+   make purge-legacy-vectors STACK=prod
+   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--image'
+   # After reviewing the dry-run counts:
+   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--apply'
+   make purge-legacy-vectors STACK=prod BACKFILL_ARGS='--image --apply'
+   ```
+
+The purge is idempotent and dry-run by default. It deletes only records without
+`user_id` metadata, including global archive records that ordinary expiry
+cleanup retains forever. Namespaced records remain untouched. Purging ends the
+legacy S3 fallback used by `backfill-item-vectors`; finish any required recovery
+and retain old records if rollback to global readers is still needed.
+
+An indexing outage leaves ingested items in DynamoDB and retries the SQS
+messages using stored embeddings. The queue moves messages to its DLQ after
+three receives; a prolonged outage still needs DLQ redrive after recovery or a
+vector backfill. Run redrive against the intended stack with
+`make redrive STACK=prod`.
+
+### Image ranking rollout
+
+Deploy the image index and writer before replaying live items or changing existing preference models:
+
+```sh
+make deploy STACK=prod
+make replay STACK=prod
+make backfill-image-signals STACK=prod
+make backfill-image-signals STACK=prod BACKFILL_ARGS=--apply
+make rescore STACK=prod
+```
+
+The first command creates the `images` vector index and enables image writes. Replay embeds lead images for live, non-video items without re-embedding text. Inspect the dry-run backfill counts before applying it to give existing hearts and behaviour rows image vectors. Run rescore after the backfill, or wait for the nightly run; the first rescore after rollout will visibly reshuffle item sizes as the new image centroids take effect.
+
+The image-search similarity floor is a tuning knob for text-to-image recall. `ImageSearchTopSimilarity` and `ImageSearchMatches` in the Sema CloudWatch namespace show the live score distribution; adjust the floor with `pulumi env set untz/sema/prod 'pulumiConfig["sema:imageSearchMinSimilarity"]' <n>` before deploying the stack.
+
+### YouTube connector rollout
+
+For deployments that predate the YouTube connector, gate discovery while migrating stored channel feeds:
+
+```sh
+cd infra
+pulumi env set untz/sema/prod 'pulumiConfig["sema:youtubeDiscoveryEnabled"]' false
+cd ..
+make deploy
+make backfill-youtube-connector STACK=prod
+make backfill-youtube-connector STACK=prod BACKFILL_ARGS=--apply
+cd infra
+pulumi env set untz/sema/prod 'pulumiConfig["sema:youtubeDiscoveryEnabled"]' true
+cd ..
+make deploy
+```
+
+The migration preserves feed and item identities, so history, archive pointers, signals, and read state remain connected. YouTube exposes only the latest 15 uploads through its public feed; older uploads cannot be recovered during import.
+
+### Reddit connector rollout
+
+Deploy the connector writers before migrating subreddit feeds that were previously stored as generic RSS sources:
+
+```sh
+make deploy
+make backfill-reddit-connector STACK=prod
+make backfill-reddit-connector STACK=prod BACKFILL_ARGS=--apply
+```
+
+The idempotent backfill recognizes only supported subreddit feed URLs. It keeps each existing feed ID, tags, mute state, items, archive pointers, ranking history, and read state while changing the connector to `reddit`, canonicalizing the selected Hot/Top-Day/New URL, setting its cadence, and clearing URL-specific HTTP validators when required. Unsupported Reddit listing types are left unchanged.
+
+### Send rollout
+
+Send adds the `deliveries` queue with its dead-letter queue and alarm, the `delivery-worker` Lambda, and the `DELIVERIES_QUEUE_URL` variable on the API. `make deploy` creates all of them; no configuration is required. Items start recording the origin URL of their lead image on ingest or replay, and there is no backfill; every Item with a stored lead image also sends a one-hour signed URL to a per-Send copy of Sema's image under `send/`, which a lifecycle rule deletes after a day. That copy needs the `sema:domain` custom domain, which becomes the API's `PUBLIC_ORIGIN`; without one, Items ingested before the rollout send an empty `images` list.
