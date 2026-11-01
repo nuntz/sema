@@ -432,11 +432,7 @@ func main() {
 		}
 		distribution, err := cloudfront.NewDistribution(ctx, "cdn", &cloudfront.DistributionArgs{
 			Enabled: pulumi.Bool(true), IsIpv6Enabled: pulumi.Bool(true), DefaultRootObject: pulumi.String("index.html"), PriceClass: pulumi.String("PriceClass_100"), Aliases: aliases,
-			Origins: cloudfront.DistributionOriginArray{
-				&cloudfront.DistributionOriginArgs{DomainName: appBucket.BucketRegionalDomainName, OriginId: pulumi.String("app"), OriginAccessControlId: oac.ID(), S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
-				&cloudfront.DistributionOriginArgs{DomainName: contentBucket.BucketRegionalDomainName, OriginId: pulumi.String("content"), OriginAccessControlId: oac.ID(), S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
-				&cloudfront.DistributionOriginArgs{DomainName: apiDomain, OriginId: pulumi.String("api"), CustomOriginConfig: &cloudfront.DistributionOriginCustomOriginConfigArgs{HttpPort: pulumi.Int(80), HttpsPort: pulumi.Int(443), OriginProtocolPolicy: pulumi.String("https-only"), OriginSslProtocols: pulumi.StringArray{pulumi.String("TLSv1.2")}}},
-			},
+			Origins:              cdnOrigins(appBucket.BucketRegionalDomainName, contentBucket.BucketRegionalDomainName, apiDomain, oac.ID()),
 			DefaultCacheBehavior: defaultBehavior,
 			OrderedCacheBehaviors: cloudfront.DistributionOrderedCacheBehaviorArray{
 				contentBehavior("/bodies/*", "content", keyGroup.ID()), contentBehavior("/media/*", "content", keyGroup.ID()), contentBehavior("/archive/*", "content", keyGroup.ID()), contentBehavior("/send/*", "content", keyGroup.ID()), contentBehavior("/favicons/*", "content", nil), apiBehavior("/api/*", "api"),
@@ -883,11 +879,41 @@ func uploadWeb(ctx *pulumi.Context, bucket *s3.Bucket) error {
 		}
 		relative, _ := filepath.Rel(directory, path)
 		name := "app-" + strings.NewReplacer("/", "-", ".", "-").Replace(relative)
-		contentType := mime.TypeByExtension(filepath.Ext(path))
+		contentType := webContentType(relative)
 		cacheControl := webCacheControl(relative)
 		_, err = s3.NewBucketObject(ctx, name, &s3.BucketObjectArgs{Bucket: bucket.ID(), Key: pulumi.String(filepath.ToSlash(relative)), Source: pulumi.NewFileAsset(path), ContentType: pulumi.String(contentType), CacheControl: pulumi.String(cacheControl)})
 		return err
 	})
+}
+
+// cdnOrigins lists the distribution's origins sorted by ID, the order CloudFront returns them
+// in, so a preview doesn't propose reordering them.
+func cdnOrigins(appDomain, contentDomain, apiDomain pulumi.StringInput, originAccessControlID pulumi.StringInput) cloudfront.DistributionOriginArray {
+	return cloudfront.DistributionOriginArray{
+		&cloudfront.DistributionOriginArgs{DomainName: apiDomain, OriginId: pulumi.String("api"), CustomOriginConfig: &cloudfront.DistributionOriginCustomOriginConfigArgs{HttpPort: pulumi.Int(80), HttpsPort: pulumi.Int(443), OriginProtocolPolicy: pulumi.String("https-only"), OriginSslProtocols: pulumi.StringArray{pulumi.String("TLSv1.2")}}},
+		&cloudfront.DistributionOriginArgs{DomainName: appDomain, OriginId: pulumi.String("app"), OriginAccessControlId: originAccessControlID, S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
+		&cloudfront.DistributionOriginArgs{DomainName: contentDomain, OriginId: pulumi.String("content"), OriginAccessControlId: originAccessControlID, S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
+	}
+}
+
+// webContentTypes pins the type of every file the SPA ships, so the upload doesn't depend on
+// the deploying host's mime.types (Go knows no .webmanifest type, and an empty one makes S3
+// store octet-stream and every preview propose a re-upload).
+var webContentTypes = map[string]string{
+	".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+	".json": "application/json", ".webmanifest": "application/manifest+json",
+	".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/vnd.microsoft.icon",
+}
+
+func webContentType(relative string) string {
+	extension := filepath.Ext(relative)
+	if contentType, ok := webContentTypes[extension]; ok {
+		return contentType
+	}
+	if contentType := mime.TypeByExtension(extension); contentType != "" {
+		return contentType
+	}
+	return "application/octet-stream"
 }
 
 func webCacheControl(relative string) string {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pulumi/pulumi-aws/sdk/v7/go/aws/cloudfront"
 	awslambda "github.com/pulumi/pulumi-aws/sdk/v7/go/aws/lambda"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -359,5 +360,38 @@ func TestOperationalQueriesRegisterWithLogGroups(t *testing.T) {
 	}
 	if len(seen) != len(operationalQueries) {
 		t.Fatalf("registered %d queries, want %d", len(seen), len(operationalQueries))
+	}
+}
+
+func TestWebContentTypeNamesEveryShippedFile(t *testing.T) {
+	tests := map[string]string{
+		"index.html":               "text/html; charset=utf-8",
+		"sw.js":                    "text/javascript; charset=utf-8",
+		"assets/index-abc.js":      "text/javascript; charset=utf-8",
+		"assets/index-abc.css":     "text/css; charset=utf-8",
+		"version.json":             "application/json",
+		"manifest.webmanifest":     "application/manifest+json",
+		"icon-192.png":             "image/png",
+		"sema-mark.svg":            "image/svg+xml",
+		"favicon.ico":              "image/vnd.microsoft.icon",
+		"assets/unknown-extension": "application/octet-stream",
+	}
+	for path, want := range tests {
+		if got := webContentType(path); got != want {
+			t.Errorf("webContentType(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestCDNOriginsFollowTheOrderCloudFrontReturns(t *testing.T) {
+	// CloudFront returns origins sorted by ID; declaring them in another order
+	// makes every preview propose a reorder.
+	origins := cdnOrigins(pulumi.String("app.s3"), pulumi.String("content.s3"), pulumi.String("api.example"), pulumi.String("oac"))
+	var ids []string
+	for _, origin := range origins {
+		ids = append(ids, string(origin.(*cloudfront.DistributionOriginArgs).OriginId.(pulumi.String)))
+	}
+	if got, want := strings.Join(ids, ","), "api,app,content"; got != want {
+		t.Errorf("origin IDs = %s, want %s", got, want)
 	}
 }

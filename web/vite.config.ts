@@ -4,15 +4,21 @@ import solid from "vite-plugin-solid";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
-  const builtAt = new Date().toISOString();
+  // A build is named by its commit and dated by the commit time, so rebuilding the
+  // same commit yields the same version.json and deploys don't re-upload it.
   let build: string;
+  let builtAt: string;
   try {
-    build = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const git = (...args: string[]) =>
+      execFileSync("git", args, {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+    build = git("rev-parse", "--short", "HEAD");
+    builtAt = new Date(git("log", "-1", "--format=%cI", "HEAD")).toISOString();
   } catch {
     build = String(Date.now());
+    builtAt = new Date().toISOString();
   }
   return {
     define: {
