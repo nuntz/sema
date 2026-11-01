@@ -36,7 +36,13 @@ import {
   type DiscoveryState,
   discoveredCandidateState,
 } from "./feed-discovery";
-import { feedFetchLabel, upsertFeed } from "./feed-list";
+import {
+  domainName,
+  drawerDescriptor,
+  feedDescriptor,
+  feedFetchLabel,
+  upsertFeed,
+} from "./feed-list";
 import { relativeTime, relativeTimeAgo } from "./Grid";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { type BadgeSize, SourceBadge } from "./SourceBadge";
@@ -1614,27 +1620,6 @@ function PriorBadge(props: { feed: Feed }) {
   );
 }
 
-function feedDescriptor(feed: Feed): string {
-  if (feed.connector === "youtube") return "YouTube";
-  if (feed.connector === "reddit")
-    return `reddit.com · ${redditCollectionLabel(
-      redditCollectionFromURL(feed.url),
-    ).toLowerCase()}`;
-  return domainName(feed.url);
-}
-
-function drawerDescriptor(feed: Feed): string {
-  const checked = feed.last_fetch_at
-    ? `checked ${relativeTimeAgo(feed.last_fetch_at)}`
-    : "not checked yet";
-  if (feed.connector === "youtube") return `YouTube · uploads · ${checked}`;
-  if (feed.connector === "reddit")
-    return `${feedDescriptor(feed)} · {cadenceLabel(feed)} · ${checked}`;
-  return feed.last_fetch_at
-    ? `last fetched ${relativeTimeAgo(feed.last_fetch_at)}`
-    : "not fetched yet";
-}
-
 function candidateDescriptor(candidate: FeedCandidate): string {
   if (candidate.connector === "youtube") return "YouTube · uploads";
   if (candidate.connector === "reddit")
@@ -1668,18 +1653,6 @@ function redditSearchTerm(raw: string): string {
     .trim()
     .replace(/^\/?r\//i, "")
     .split(/[/?#]/)[0];
-}
-
-function domainName(rawURL: string): string {
-  try {
-    const parsed = new URL(rawURL);
-    return (
-      parsed.hostname.replace(/^www\./, "") +
-      (parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, ""))
-    );
-  } catch {
-    return rawURL;
-  }
 }
 
 function absoluteAddress(raw: string): string {

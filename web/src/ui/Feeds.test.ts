@@ -3,7 +3,7 @@ import { archiveSize } from "../archive";
 import { formatPrior, whyText } from "../ranking-display";
 import type { Feed, FeedCandidate, Item } from "../types";
 import { discoveredCandidateState } from "./feed-discovery";
-import { feedFetchLabel, upsertFeed } from "./feed-list";
+import { drawerDescriptor, feedFetchLabel, upsertFeed } from "./feed-list";
 
 describe("archive storage estimate", () => {
   it("uses the specified 300 KB per kept item estimate", () => {
@@ -77,5 +77,17 @@ describe("feed fetch status", () => {
     ["broken", undefined, "broken"],
   ] as const)("shows %s from the API", (status, age, expected) => {
     expect(feedFetchLabel({ status }, age)).toBe(expected);
+  });
+});
+
+describe("feed drawer descriptor", () => {
+  it("names a Reddit feed's cadence", () => {
+    const reddit = {
+      feed_id: "reddit",
+      connector: "reddit",
+      url: "https://www.reddit.com/r/programming/top/?t=day",
+      fetch_interval_h: 24,
+    } as Feed;
+    expect(drawerDescriptor(reddit)).toMatch(/ · Daily · not checked yet$/);
   });
 });
