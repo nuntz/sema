@@ -6,9 +6,8 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - **`CONTEXT.md`** at the repo root: the glossary. It defines domain terms (Feed, Connector, Tag, Item, …) and the synonyms to avoid.
 - **`docs/adr/`**: read ADRs that touch the area you're about to work in.
-- **`AGENTS.md`**: older decisions (ranking, read state, the Dock, Send) are recorded as prose in its project-structure section. Read the ones relevant to your area; new decisions go in `docs/adr/`, not `AGENTS.md`.
 
-If `docs/adr/` doesn't exist yet, **proceed silently**. Don't flag its absence; don't create it upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates ADRs lazily when decisions actually get resolved.
+New decisions go in `docs/adr/` as numbered ADRs, created by the `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) when decisions get resolved. `AGENTS.md` keeps only a one-line guardrail that points at an ADR when its rule must hold on every change.
 
 ## File structure
 
@@ -33,6 +32,6 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 
 ## Flag ADR conflicts
 
-If your output contradicts an existing ADR or a decision recorded in `AGENTS.md`, surface it explicitly rather than silently overriding:
+If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
 > _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
