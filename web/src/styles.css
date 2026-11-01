@@ -1317,9 +1317,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .cold-start button .icon, .cold-start button:hover .icon { color: currentColor; }
 .cold-start small { margin-top: 20px; color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 
-.reader { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); box-shadow: -10px 0 30px rgba(0, 0, 0, .16); transform: translate3d(var(--reader-panel-x, 0px), 0, 0); animation: reader-in 220ms cubic-bezier(.2, .75, .2, 1); transition: transform 220ms cubic-bezier(.2, .75, .2, 1); will-change: transform; }
-.reader.swiping { transition: none; }
-.reader.closing { transform: translate3d(100%, 0, 0); }
+.reader { position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column; background: var(--bg); box-shadow: -10px 0 30px rgba(0, 0, 0, .16); transform: translate3d(var(--reader-panel-x, 0px), 0, 0); animation: reader-in 220ms cubic-bezier(.2, .75, .2, 1); transition: transform 220ms cubic-bezier(.2, .75, .2, 1); }
+/* Promote the reader only while it moves: a resting will-change layer loses LCD text antialiasing.
+   The slide-in animation and the snap-back transition are composited while they run anyway. */
+.reader.swiping { transition: none; will-change: transform; }
+.reader.closing { transform: translate3d(100%, 0, 0); will-change: transform; }
 @keyframes reader-in { from { transform: translate3d(100%, 0, 0); } }
 .reader-back { width: var(--control-h); height: var(--control-h); margin-left: var(--brand-to-next); padding: 0; display: flex; align-items: center; justify-content: center; flex: none; border: 1px solid var(--chrome-border-control); border-radius: var(--control-radius); background: transparent; color: var(--chrome-fg-tertiary); }
 .reader-back:hover { background: var(--surface-chrome-hover); color: var(--chrome-fg-primary); }

@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { expect, type Page, test } from "@playwright/test";
 import { activateStandalone, simulateStatusBar } from "./standalone";
 
@@ -30,7 +31,7 @@ async function scrollReaderPastHeadline(page: Page) {
 
 test("grid and reader share brand chrome and a 2px bottom band", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1544, height: 900 });
   await openFixture(page, "grid", "loaded");
   const gridBrand = await page.locator(".app-header__brand").screenshot();
@@ -48,7 +49,17 @@ test("grid and reader share brand chrome and a 2px bottom band", async ({
       Number.parseFloat(getComputedStyle(header, "::after").height),
     );
 
+  // Keep both captures, so a mismatch in CI can be seen, not only counted in bytes.
+  await writeFile(testInfo.outputPath("grid-brand.png"), gridBrand);
+  await writeFile(testInfo.outputPath("reader-brand.png"), readerBrand);
   expect(readerBrand).toEqual(gridBrand);
+  // A will-change: transform layer loses LCD text antialiasing, so a resting reader that kept it
+  // would render its text unlike the grid wherever LCD text is on (CI's Ubuntu, not every desktop).
+  expect(
+    await page
+      .locator(".reader")
+      .evaluate((reader) => getComputedStyle(reader).willChange),
+  ).toBe("auto");
   expect(gridBandHeight).toBe(2);
   expect(readerBandHeight).toBe(gridBandHeight);
 });
