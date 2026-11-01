@@ -4,7 +4,7 @@ Rules a reviewer applies to a diff. Mechanical rules live in tooling (`make chec
 
 ## UI contracts
 
-These hold for the grid and reader headers, the phone reader, and the lightbox. Rules marked _(e2e)_ are asserted by `web/e2e/header.e2e.ts`; check the rest by reading the diff, and extend that spec when a change touches a rule it doesn't cover.
+These hold for the grid and reader headers, the phone reader, and the Peek. Rules marked _(e2e)_ are asserted by `web/e2e/header.e2e.ts`; check the rest by reading the diff, and extend that spec when a change touches a rule it doesn't cover.
 
 ### Desktop headers (620px and wider)
 
@@ -23,12 +23,13 @@ These hold for the grid and reader headers, the phone reader, and the lightbox. 
 - At 430px and below, the grid header is 44px.
 - The filter summary is the one raised control in the trailing group; Search and More are bare glyphs. _(e2e)_
 
-### Phone reader and lightbox
+### Phone reader and Peek
 
 - The phone reader has a 44px translucent nav bar and a toolbar sharing one material, with 0.5px hairlines and content scrolling under both.
-- The phone reader and lightbox bars add 16px below the top inset to clear the system edge blur.
+- The phone reader and Peek bars add 16px below the top inset to clear the system edge blur.
 - Phone reader content starts 16px under the nav bar, the same air the bar leaves under the status blur. _(e2e)_
 - The phone reader toolbar sits 12px into the home-indicator inset.
+- The Peek is a media surface: its bars, controls and caption stay dark in both themes and at every width. _(e2e: `lightbox.e2e.ts`)_
 
 ### Safe areas and the installed iOS app
 

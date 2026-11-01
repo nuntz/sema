@@ -738,10 +738,7 @@ test("installed phone peeks tint the status bar from the grid", async ({
   await activateStandalone(page);
   await page.keyboard.press("i");
   await expect(page.locator(".lb-overlay")).toBeVisible();
-  expect(await rootTint(page)).toEqual([
-    "rgb(209, 207, 203)",
-    "rgb(209, 207, 203)",
-  ]);
+  expect(await rootTint(page)).toEqual(["rgb(8, 9, 10)", "rgb(8, 9, 10)"]);
   await expect(page.locator(".lb-overlay")).toHaveAttribute("data-idle", "", {
     timeout: 4000,
   });

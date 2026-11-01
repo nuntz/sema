@@ -551,6 +551,40 @@ test("Reddit decode failure removes the lead affordance before external load", a
   );
 });
 
+for (const width of [390, 1280]) {
+  test(`the Peek stays dark in the light theme at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+    await page.locator(".lb-openable").first().click();
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    const look = (selector: string) =>
+      page
+        .locator(selector)
+        .first()
+        .evaluate((element) => {
+          const style = getComputedStyle(element);
+          return {
+            background: style.backgroundColor,
+            color: style.color,
+            height: element.getBoundingClientRect().height,
+          };
+        });
+    if (width < 620) {
+      for (const bar of [".lb-top", ".lb-caption"])
+        expect((await look(bar)).background, bar).toBe("rgba(6, 7, 8, 0.72)");
+    } else {
+      expect(await look(".lb-actions .lb-control:not(.lb-close)")).toEqual({
+        background: "rgba(23, 24, 26, 0.72)",
+        color: "rgb(199, 204, 211)",
+        height: 44,
+      });
+    }
+  });
+}
+
 test("installed phone lightbox clears the edge blur and tints the status bar", async ({
   page,
 }) => {
@@ -561,7 +595,7 @@ test("installed phone lightbox clears the edge blur and tints the status bar", a
   await activateStandalone(page);
   await page.locator(".lb-openable").first().click();
   const overlay = page.locator(".lb-overlay");
-  const bar = ["rgb(209, 207, 203)", "rgb(209, 207, 203)"];
+  const bar = ["rgb(8, 9, 10)", "rgb(8, 9, 10)"];
   const scrim = ["rgb(34, 35, 36)", "rgb(34, 35, 36)"];
 
   // Controls sit below the strongest part of the blur, which takes the bar's colour.
