@@ -41,7 +41,7 @@ import {
   videoDwellActive,
 } from "../youtube-player";
 import { ExpiryPill } from "./ExpiryPill";
-import { relativeTime } from "./Grid";
+import { relativeTime, relativeTimeAgo } from "./Grid";
 import { isEditingTarget, readerCommand } from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
@@ -977,10 +977,9 @@ export function Reader(props: ReaderProps) {
                   <span class="reader-crumb__meta">
                     {" "}
                     ·{" "}
-                    {relativeTime(
+                    {relativeTimeAgo(
                       props.item.display_date || props.item.published_ts,
-                    )}{" "}
-                    ago
+                    )}
                   </span>
                 </Show>
               </span>

@@ -49,6 +49,7 @@ import {
 import { whyText } from "../ranking-display";
 import type { ReadGeometry } from "../read-state";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
+import { relativeAge, relativeAgo } from "../relative-time";
 import type { Item, Story } from "../types";
 import { isVideoItem } from "../video-item";
 import { ExpiryPill } from "./ExpiryPill";
@@ -2135,11 +2136,11 @@ export function UnreadDot(props: { visible: boolean }) {
 }
 
 export function relativeTime(value: string): string {
-  const seconds = Math.max(0, (clockNow() - new Date(value).getTime()) / 1000);
-  if (seconds < 60) return "now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
-  return `${Math.floor(seconds / 86400)}d`;
+  return relativeAge(value, clockNow());
+}
+
+export function relativeTimeAgo(value: string): string {
+  return relativeAgo(value, clockNow());
 }
 
 function publishedDate(value: string): string {

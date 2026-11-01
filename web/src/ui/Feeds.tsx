@@ -37,7 +37,7 @@ import {
   discoveredCandidateState,
 } from "./feed-discovery";
 import { feedFetchLabel, upsertFeed } from "./feed-list";
-import { relativeTime } from "./Grid";
+import { relativeTime, relativeTimeAgo } from "./Grid";
 import { closeOverlay, pushOverlay } from "./overlay-history";
 import { type BadgeSize, SourceBadge } from "./SourceBadge";
 import { displayFeedTitle as displayTitle } from "./tag-options";
@@ -1625,13 +1625,13 @@ function feedDescriptor(feed: Feed): string {
 
 function drawerDescriptor(feed: Feed): string {
   const checked = feed.last_fetch_at
-    ? `checked ${relativeTime(feed.last_fetch_at)} ago`
+    ? `checked ${relativeTimeAgo(feed.last_fetch_at)}`
     : "not checked yet";
   if (feed.connector === "youtube") return `YouTube · uploads · ${checked}`;
   if (feed.connector === "reddit")
     return `${feedDescriptor(feed)} · {cadenceLabel(feed)} · ${checked}`;
   return feed.last_fetch_at
-    ? `last fetched ${relativeTime(feed.last_fetch_at)} ago`
+    ? `last fetched ${relativeTimeAgo(feed.last_fetch_at)}`
     : "not fetched yet";
 }
 
@@ -1643,7 +1643,7 @@ function candidateDescriptor(candidate: FeedCandidate): string {
     ? ` · ${candidate.cadence}`
     : ` · ${formatCount(candidate.item_count)} items`;
   const newest = candidate.newest_item_ts
-    ? ` · newest ${relativeTime(candidate.newest_item_ts)} ago`
+    ? ` · newest ${relativeTimeAgo(candidate.newest_item_ts)}`
     : "";
   return `${candidate.type.toUpperCase()}${timing}${newest}`;
 }
