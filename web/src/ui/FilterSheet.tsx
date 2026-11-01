@@ -148,7 +148,7 @@ export function FilterSheet(props: {
                   <Icon name="check" size={18} />
                   <span>{option.label}</span>
                   <span class="scope-count">
-                    {props.counts[option.value]?.toLocaleString("en-US") ?? "–"}
+                    {props.counts[option.value]?.toLocaleString("en-US")}
                   </span>
                 </button>
               )}

@@ -650,6 +650,38 @@ test("same-window counts stay numeric while a new window shows counting", async 
   await expect(count).toHaveText("15");
 });
 
+test("the phone filter summary shows no count until it is known", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGrid(page, false, true);
+  const summary = page.locator(".filter-button");
+  await expect(summary.locator(".scope-count")).toHaveText("30");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/feeds/counts?*", async (route) => {
+    await held;
+    await route.fulfill({
+      json: {
+        feeds: { daily: { all: 10, unread: 3 }, other: { all: 8, unread: 2 } },
+      },
+    });
+  });
+  const changedWindow = page.waitForRequest((request) =>
+    new URL(request.url()).searchParams.has("fetched_from"),
+  );
+  await page.keyboard.press("g");
+  await page.keyboard.press("t");
+  await changedWindow;
+  await expect(summary.locator(".scope-count")).toHaveCount(0);
+  await expect(summary).not.toContainText("–");
+  await expect(summary).toHaveAttribute("aria-label", /counting$/);
+  release();
+  await expect(summary.locator(".scope-count")).toHaveText("5");
+});
+
 test("filter sheet fetches missing windows in parallel and caches until refresh", async ({
   page,
 }) => {
@@ -671,8 +703,8 @@ test("filter sheet fetches missing windows in parallel and caches until refresh"
   const sheet = page.getByRole("dialog", { name: "Filter", exact: true });
   await expect.poll(() => requests.length).toBe(2);
   await expect(sheet.locator(".filter-date .scope-count")).toHaveText([
-    "–",
-    "–",
+    "",
+    "",
     "30",
   ]);
   for (const release of releases) release();

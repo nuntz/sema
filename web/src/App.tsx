@@ -1483,9 +1483,11 @@ export function App(props: {
                       unreadOnly(),
                     )}
                   </span>
-                  <span class="scope-count">
-                    {scopeCell()?.count?.toLocaleString("en-US") ?? "–"}
-                  </span>
+                  <Show when={scopeCell()?.count !== undefined}>
+                    <span class="scope-count">
+                      {scopeCell()?.count?.toLocaleString("en-US")}
+                    </span>
+                  </Show>
                   <Show when={!scope()}>
                     <Icon name="chevron-down" size={13} />
                   </Show>
