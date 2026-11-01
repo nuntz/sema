@@ -275,8 +275,14 @@ for tool in aws pulumi jq git go bun make zip; do
   command -v "$tool" >/dev/null 2>&1 || { warn "$tool is not installed: install it and re-run"; exit 1; }
 done
 if ! aws sts get-caller-identity >/dev/null 2>&1; then
-  step "Signing you in to AWS SSO (a browser window opens)."
-  aws sso login
+  if [[ -n "${SSH_CONNECTION:-}" ]]; then
+    # Over SSH the browser can't reach the CLI's localhost callback, so use a device code.
+    step "Signing you in to AWS SSO: open the link it prints and enter the code."
+    aws sso login --use-device-code
+  else
+    step "Signing you in to AWS SSO (a browser window opens)."
+    aws sso login
+  fi
 fi
 note "AWS: $(aws sts get-caller-identity --query Arn --output text)"
 if ! pulumi whoami --verbose 2>/dev/null | grep -q 'Backend URL: https://'; then
