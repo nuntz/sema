@@ -176,16 +176,45 @@ func TestDeployRoleGrantsItsServiceNamespacesAccountWide(t *testing.T) {
 	}
 }
 
+func fromFunction(arn string) map[string]string {
+	return map[string]string{"lambda:SourceFunctionArn": arn}
+}
+
 func TestBoundaryCapsLambdaRolesAtTheDataPlane(t *testing.T) {
-	boundary := BoundaryPolicy()
-	for _, action := range []string{"dynamodb:Query", "dynamodb:TransactWriteItems", "s3:GetObject", "sqs:ReceiveMessage", "s3vectors:QueryVectors", "bedrock:InvokeModel", "logs:PutLogEvents", "lambda:InvokeFunction"} {
-		if !boundary.Allows(Request{Action: action, Resource: "arn:aws:mock:::resource"}) {
-			t.Errorf("boundary denies %s", action)
+	boundary := BoundaryPolicy(testAccount)
+	inSema := fromFunction("arn:aws:lambda:us-east-1:123456789012:function:sema-prod-api")
+	for _, action := range []string{"dynamodb:Query", "dynamodb:TransactWriteItems", "s3:GetObject", "sqs:SendMessage", "sqs:ReceiveMessage", "s3vectors:QueryVectors", "bedrock:InvokeModel", "logs:PutLogEvents", "lambda:InvokeFunction"} {
+		if !boundary.Allows(Request{Action: action, Resource: "arn:aws:mock:::resource", Context: inSema}) {
+			t.Errorf("boundary denies %s from a Sema function", action)
 		}
 	}
 	for _, action := range []string{"iam:CreateRole", "iam:PassRole", "iam:PutRolePolicy", "sts:AssumeRole", "dynamodb:DeleteTable", "s3:DeleteBucket", "s3:PutBucketPolicy", "sqs:DeleteQueue", "lambda:UpdateFunctionCode", "lambda:CreateFunction", "s3vectors:DeleteIndex", "ec2:RunInstances"} {
-		if boundary.Allows(Request{Action: action, Resource: "*"}) {
+		if boundary.Allows(Request{Action: action, Resource: "*", Context: inSema}) {
 			t.Errorf("boundary allows %s", action)
+		}
+	}
+}
+
+// A role's trust policy can't be fenced by IAM conditions, so the boundary
+// makes a Sema role useless to anyone who assumes it outside a Sema function.
+func TestBoundaryWorksOnlyInsideSemaFunctions(t *testing.T) {
+	boundary := BoundaryPolicy(testAccount)
+	for name, context := range map[string]map[string]string{
+		"an assumed session":      nil,
+		"another app's function":  fromFunction("arn:aws:lambda:us-east-1:123456789012:function:stash-prod-api"),
+		"another account's sema-": fromFunction("arn:aws:lambda:us-east-1:999999999999:function:sema-prod-api"),
+	} {
+		for _, action := range []string{"dynamodb:GetItem", "s3:GetObject", "s3vectors:QueryVectors", "bedrock:InvokeModel", "sqs:SendMessage", "lambda:InvokeFunction"} {
+			if boundary.Allows(Request{Action: action, Resource: "*", Context: context}) {
+				t.Errorf("%s can call %s", name, action)
+			}
+		}
+	}
+	// Event source mappings poll queues with the role but without the source
+	// function key, so polling is the one thing that works outside a function.
+	for _, action := range []string{"sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes"} {
+		if !boundary.Allows(Request{Action: action, Resource: "arn:aws:sqs:us-east-1:123456789012:items-queue"}) {
+			t.Errorf("event source mappings cannot %s", action)
 		}
 	}
 }

@@ -145,7 +145,8 @@ func TestEveryLambdaRoleIsFencedUnderTheSemaPath(t *testing.T) {
 
 func TestEveryLambdaActionFitsInsideTheBoundary(t *testing.T) {
 	mocks := runStack(t)
-	boundary := deployaccess.BoundaryPolicy()
+	boundary := deployaccess.BoundaryPolicy(mockAccount)
+	inSema := map[string]string{"lambda:SourceFunctionArn": "arn:aws:lambda:us-east-1:" + mockAccount + ":function:sema-test-api"}
 	policies := mocks.of("aws:iam/rolePolicy:RolePolicy")
 	if len(policies) == 0 {
 		t.Fatal("no role policies registered")
@@ -167,7 +168,7 @@ func TestEveryLambdaActionFitsInsideTheBoundary(t *testing.T) {
 			}
 			for _, action := range stringList(statement.Action) {
 				for _, resource := range stringList(statement.Resource) {
-					if !boundary.Allows(deployaccess.Request{Action: action, Resource: resource}) {
+					if !boundary.Allows(deployaccess.Request{Action: action, Resource: resource, Context: inSema}) {
 						t.Errorf("%s grants %s on %s, which the boundary denies", entry.name, action, resource)
 					}
 				}

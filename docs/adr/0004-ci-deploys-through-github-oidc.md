@@ -1,10 +1,10 @@
 # CI deploys through GitHub OIDC, fenced by a role path and boundary
 
-Every green push to `master` deploys `untz/sema/prod` from GitHub Actions. The job reaches AWS as `sema-github-deploy`, a role only this repository's `production` environment can assume, so no long-lived AWS key exists. Sema shares its AWS account with Stash, and the repository is public, so the role's reach is fenced rather than trusted: it may manage Sema's services account-wide, but IAM only on roles under `/sema/` that carry the `sema-lambda-boundary` permissions boundary, and Route 53 only in Sema's hosted zone. Nothing it deploys can be granted more than the boundary allows, including itself.
+Every green push to `master` deploys `untz/sema/prod` from GitHub Actions. The job reaches AWS as `sema-github-deploy`, a role only this repository's `production` environment can assume, so no long-lived AWS key exists. Sema shares its AWS account with Stash, and the repository is public, so the role's reach is fenced rather than trusted: it may manage Sema's services account-wide, but Lambda only on functions named `sema-*`, IAM only on roles under `/sema/` that carry the `sema-lambda-boundary` permissions boundary, and Route 53 only in Sema's hosted zone. Nothing it deploys can be granted more than the boundary allows, including itself. IAM can't fence a role's trust policy, so the boundary also stops a role working outside a `sema-*` function in the account, except for the queue polling that event source mappings do.
 
 ## Considered Options
 
-- **Scoping each service by a `sema-` name prefix.** Rejected: the DynamoDB table and SQS queues carry generated names, and renaming the table replaces it and loses its data. The boundary already stops escalation, which is the risk prefixes would guard against.
+- **Scoping each service by a `sema-` name prefix.** Rejected: the DynamoDB table and SQS queues carry generated names, and renaming the table replaces it and loses its data. The boundary already stops escalation, which is the risk prefixes would guard against. Lambda is the exception: new code in another app's function would run as that app's unbounded role, and Sema's functions already carry the prefix.
 - **Owning the GitHub OIDC provider.** An account holds one provider per issuer URL, and Stash's bootstrap stack already owns it. Sema's bootstrap stack looks it up instead of creating, importing, or moving it into a shared stack.
 
 ## Consequences

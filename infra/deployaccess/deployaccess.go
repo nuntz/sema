@@ -76,6 +76,11 @@ func DeployRoleARN(accountID string) string {
 	return fmt.Sprintf("arn:aws:iam::%s:role/%s", accountID, DeployRoleName)
 }
 
+// functionARNs matches every Sema function in accountID, in any region.
+func functionARNs(accountID string) string {
+	return fmt.Sprintf("arn:aws:lambda:*:%s:function:%s*", accountID, FunctionPrefix)
+}
+
 func roleARNs(accountID string) []string {
 	return []string{fmt.Sprintf("arn:aws:iam::%s:role%s*", accountID, RolePath)}
 }
@@ -89,7 +94,7 @@ func DeployPolicy(accountID, hostedZoneID string) Document {
 		services[index] = namespace + ":*"
 	}
 	zone := "arn:aws:route53:::hostedzone/" + hostedZoneID
-	functions := fmt.Sprintf("arn:aws:lambda:*:%s:function:%s*", accountID, FunctionPrefix)
+	functions := functionARNs(accountID)
 	return Document{Version: "2012-10-17", Statement: []Statement{
 		{
 			Sid:      "ManageSemaServices",
@@ -178,24 +183,43 @@ func DeployPolicy(accountID, hostedZoneID string) Document {
 	}}
 }
 
-// BoundaryPolicy is the most any Sema Lambda role may do: read and write data
-// in the stack's services, never manage them, and nothing in IAM or STS. A role
-// policy that grants more is silently capped, so the main stack's tests check
-// every Lambda action against it.
-func BoundaryPolicy() Document {
-	return Document{Version: "2012-10-17", Statement: []Statement{{
-		Sid:    "SemaLambdaDataPlane",
-		Effect: "Allow",
-		Action: []string{
-			"logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
-			"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem",
-			"dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:TransactGetItems", "dynamodb:TransactWriteItems",
-			"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket",
-			"sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes",
-			"s3vectors:PutVectors", "s3vectors:GetVectors", "s3vectors:QueryVectors", "s3vectors:ListVectors", "s3vectors:DeleteVectors",
-			"bedrock:InvokeModel",
-			"lambda:InvokeFunction",
+// queuePolling is what an event source mapping does with a Lambda role. Lambda
+// polls outside the function, so these calls carry no lambda:SourceFunctionArn.
+var queuePolling = []string{"sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes"}
+
+// BoundaryPolicy is the most any Sema Lambda role in accountID may do: read and
+// write data in the stack's services, never manage them, and nothing in IAM or
+// STS. A role policy that grants more is silently capped, so the main stack's
+// tests check every Lambda action against it.
+//
+// IAM conditions can't see a role's trust policy, so the deploy role could make
+// a Sema role trust an outsider. The boundary makes that useless: apart from
+// queue polling, a Sema role only works for calls Lambda tags as coming from a
+// sema- function in accountID, which covers the function's code and the log
+// writes Lambda makes for it.
+func BoundaryPolicy(accountID string) Document {
+	return Document{Version: "2012-10-17", Statement: []Statement{
+		{
+			Sid:    "SemaFunctionDataPlane",
+			Effect: "Allow",
+			Action: slices.Concat([]string{
+				"logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents",
+				"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem",
+				"dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:TransactGetItems", "dynamodb:TransactWriteItems",
+				"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket",
+				"sqs:SendMessage",
+				"s3vectors:PutVectors", "s3vectors:GetVectors", "s3vectors:QueryVectors", "s3vectors:ListVectors", "s3vectors:DeleteVectors",
+				"bedrock:InvokeModel",
+				"lambda:InvokeFunction",
+			}, queuePolling),
+			Resource:  []string{"*"},
+			Condition: map[string]map[string]string{"ArnLike": {"lambda:SourceFunctionArn": functionARNs(accountID)}},
 		},
-		Resource: []string{"*"},
-	}}}
+		{
+			Sid:      "EventSourceMappingPolling",
+			Effect:   "Allow",
+			Action:   queuePolling,
+			Resource: []string{"*"},
+		},
+	}}
 }
