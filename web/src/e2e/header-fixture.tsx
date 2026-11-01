@@ -117,7 +117,11 @@ function GridHeaderFixture() {
           <span class="scope-count">183</span>
           <Icon name="chevron-down" size={13} />
         </button>
-        <button type="button" class="chrome-icon" aria-label="Search">
+        <button
+          type="button"
+          class="chrome-icon header-icon-button search-trigger"
+          aria-label="Search"
+        >
           <Icon name="search" />
         </button>
         <button
@@ -138,7 +142,7 @@ function GridHeaderFixture() {
       </button>
       <button
         type="button"
-        class="chrome-btn chrome-btn--icon grid-overflow-trigger"
+        class="chrome-icon header-icon-button grid-overflow-trigger"
         classList={{ "is-hidden": !phone() }}
         aria-label="More"
       >

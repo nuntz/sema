@@ -1009,6 +1009,27 @@ for (const width of [620, 860, 900, 1024]) {
   });
 }
 
+for (const width of [390, 430, 859]) {
+  test(`the filter summary is the one raised trailing control at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openFixture(page, "grid", "loaded");
+    const material = (selector: string) =>
+      page.locator(`.app-header ${selector}`).evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { background: style.backgroundColor, shadow: style.boxShadow };
+      });
+    const bare = { background: "rgba(0, 0, 0, 0)", shadow: "none" };
+    expect(await material(".header-filter-summary")).not.toMatchObject({
+      background: bare.background,
+    });
+    expect(await material(".search-trigger")).toEqual(bare);
+    if (width <= 430)
+      expect(await material(".grid-overflow-trigger")).toEqual(bare);
+  });
+}
+
 test.describe("touch text fields", () => {
   test.use({
     viewport: { width: 390, height: 780 },

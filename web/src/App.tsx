@@ -1597,7 +1597,7 @@ export function App(props: {
             </Tooltip>
             <button
               type="button"
-              class="chrome-btn chrome-btn--icon grid-overflow-trigger"
+              class="chrome-icon header-icon-button grid-overflow-trigger"
               classList={{ "is-hidden": !phoneHeader() }}
               aria-label="More"
               aria-haspopup="dialog"

@@ -21,6 +21,7 @@ These hold for the grid and reader headers, the phone reader, and the lightbox. 
 
 - It carries the active Scope chip and a filter summary, with a 52px tag strip under it. The strip collapses on scroll; the header never does. _(e2e: the collapse)_
 - At 430px and below, the grid header is 44px.
+- The filter summary is the one raised control in the trailing group; Search and More are bare glyphs. _(e2e)_
 
 ### Phone reader and lightbox
 
