@@ -758,3 +758,100 @@ for (const width of [390, 768, 1280])
         });
       }
     });
+
+test("phone Tag chips drop as soon as their Items are read", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.clock.install({ time: new Date("2026-09-08T02:00:00Z") });
+  await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
+  const feeds = [
+    { feed_id: "apple-feed", tags: ["apple", "technology"] },
+    { feed_id: "art-feed", tags: ["art"] },
+  ];
+  const items = feeds.map((feed) => ({
+    ...makeItem(feed.feed_id.replace("-feed", ""), "2026-09-07T12:00:00Z"),
+    feed_id: feed.feed_id,
+  }));
+  const read = new Set<string>();
+  await page.route("**/api/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.pathname.startsWith("/api/")) {
+      await route.continue();
+      return;
+    }
+    if (route.request().method() !== "GET") {
+      if (url.pathname === "/api/items/read-batch")
+        for (const id of route.request().postDataJSON().ids) read.add(id);
+      await route.fulfill({ status: 204 });
+    } else if (url.pathname === "/api/me") {
+      await route.fulfill({
+        json: {
+          profile: {
+            email: "reader@example.com",
+            created_at: "2026-09-01T00:00:00Z",
+            order_pref: "chrono",
+            tag_pref: "",
+            heart_count: 0,
+          },
+          heart_count: 0,
+          signal_count: 0,
+          model: {
+            explicit_count: 0,
+            liked_count: 0,
+            disliked_count: 0,
+            implicit_count: 0,
+          },
+        },
+      });
+    } else if (url.pathname === "/api/feeds") {
+      await route.fulfill({
+        json: {
+          feeds: feeds.map((feed) => ({
+            ...feed,
+            title: feed.feed_id,
+            url: `https://example.com/${feed.feed_id}`,
+          })),
+        },
+      });
+    } else if (url.pathname === "/api/feeds/counts") {
+      await route.fulfill({
+        json: {
+          feeds: Object.fromEntries(
+            items.map((item) => [
+              item.feed_id,
+              { all: 1, unread: read.has(item.item_id) ? 0 : 1 },
+            ]),
+          ),
+        },
+      });
+    } else if (url.pathname === "/api/items") {
+      await route.fulfill({
+        json: {
+          items: items.filter(
+            (item) =>
+              !read.has(item.item_id) ||
+              url.searchParams.get("include_read") === "true",
+          ),
+          next_cursor: null,
+        },
+      });
+    } else if (url.pathname === "/api/stories") {
+      await route.fulfill({ json: { stories: [] } });
+    } else {
+      await route.fulfill({ json: {} });
+    }
+  });
+  await page.goto("/");
+  const chips = page.locator(
+    ".tag-strip__chip:not(.tag-strip__chip--hash, .tag-strip__chip--feeds)",
+  );
+  await expect(chips).toHaveText(["apple1", "art1", "technology1"]);
+  await page
+    .getByRole("button", { name: "Mark 2 read & clear", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "You're all caught up" }),
+  ).toBeVisible();
+  await expect(chips).toHaveCount(0);
+});

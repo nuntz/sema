@@ -2,12 +2,18 @@ import { createRoot, createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createItemSession } from "./item-session";
 import { createReadState } from "./read-state";
-import type { Feed, FeedItemCounts, GridScope, Item } from "./types";
+import type {
+  Feed,
+  FeedItemCounts,
+  GridScope,
+  Item,
+  ItemsResponse,
+} from "./types";
 import { createUnreadCounts } from "./unread-counts";
 
-const item = (id: string): Item => ({
+const item = (id: string, feed = "feed"): Item => ({
   item_id: id,
-  feed_id: "feed",
+  feed_id: feed,
   url: `https://example.com/${id}`,
   title: id,
   summary_source: "",
@@ -48,7 +54,9 @@ const flushMicrotasks = async () => {
 function setup() {
   const requests: CountRequest[] = [];
   const api = {
-    items: vi.fn(async () => ({ items: [], next_cursor: "" })),
+    items: vi.fn(
+      async (): Promise<ItemsResponse> => ({ items: [], next_cursor: "" }),
+    ),
     stories: vi.fn(async () => ({ stories: [] })),
     archive: vi.fn(async () => ({ items: [], next_cursor: "" })),
     read: vi.fn(async (_id: string, _read: boolean) => {}),
@@ -324,5 +332,98 @@ describe("Unread counts", () => {
     expect(unread.feedsScreenCounts()).toEqual(counts(8));
     expect(unread.ready()).toBe(false);
     cleanup();
+  });
+
+  describe("per Feed", () => {
+    async function twoFeeds() {
+      const harness = setup();
+      harness.session.setItems([
+        item("apple", "apple-feed"),
+        item("art", "art-feed"),
+      ]);
+      const first = harness.unread.refresh();
+      await flushMicrotasks();
+      harness.requests[0].reply.resolve({
+        "apple-feed": { unread: 1, all: 3 },
+        "art-feed": { unread: 2, all: 5 },
+      });
+      await first;
+      return harness;
+    }
+
+    it("lowers a Feed's unread count as soon as its Item is read", async () => {
+      const { reads, unread, cleanup } = await twoFeeds();
+      reads.queueRead(["apple"]);
+      expect(unread.feedCounts()).toEqual({
+        "apple-feed": { unread: 0, all: 3 },
+        "art-feed": { unread: 2, all: 5 },
+      });
+      cleanup();
+    });
+
+    it("hands the Read over to the settled server counts", async () => {
+      const { reads, unread, requests, cleanup } = await twoFeeds();
+      reads.queueRead(["apple"]);
+      const refresh = unread.refresh();
+      await flushMicrotasks();
+      requests[1].reply.resolve({
+        "apple-feed": { unread: 0, all: 3 },
+        "art-feed": { unread: 2, all: 5 },
+      });
+      await refresh;
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 0, all: 3 });
+      cleanup();
+    });
+
+    it("restores a Feed's unread count on Undo", async () => {
+      const { reads, unread, cleanup } = await twoFeeds();
+      reads.queueRead(["apple", "art"]);
+      reads.undoLast();
+      expect(unread.feedCounts()).toEqual({
+        "apple-feed": { unread: 1, all: 3 },
+        "art-feed": { unread: 2, all: 5 },
+      });
+      cleanup();
+    });
+
+    it("follows a toggled Item and rolls back when its write fails", async () => {
+      const { api, session, reads, unread, cleanup } = await twoFeeds();
+      const write = deferred<void>();
+      api.read.mockImplementationOnce(() => write.promise);
+      const toggle = reads.toggleRead(session.items()[0]);
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 0, all: 3 });
+      write.reject(new Error("offline"));
+      await toggle;
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 1, all: 3 });
+      cleanup();
+    });
+
+    it("lowers the Feed of an Item marked below from an unloaded page", async () => {
+      const { api, session, reads, unread, requests, cleanup } = setup();
+      api.items.mockResolvedValueOnce({
+        items: [item("apple", "apple-feed"), item("art", "art-feed")],
+        next_cursor: "later",
+      });
+      await session.reload();
+      const first = unread.refresh();
+      await flushMicrotasks();
+      requests[0].reply.resolve({
+        "apple-feed": { unread: 1, all: 1 },
+        "art-feed": { unread: 1, all: 1 },
+        "news-feed": { unread: 1, all: 1 },
+      });
+      await first;
+      api.items.mockResolvedValueOnce({
+        items: [item("news", "news-feed")],
+        next_cursor: "",
+      });
+      await reads.markBelow("apple");
+      expect(unread.feedCounts()).toEqual({
+        "apple-feed": { unread: 0, all: 1 },
+        "art-feed": { unread: 0, all: 1 },
+        "news-feed": { unread: 0, all: 1 },
+      });
+      cleanup();
+    });
   });
 });

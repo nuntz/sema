@@ -55,6 +55,10 @@ export function createReadState(
   let revision = 0;
   const [undo, setUndo] = createSignal<Undo>();
   const [readAdjust, setReadAdjust] = createSignal(0);
+  // The same adjustment split by Feed, for per-Feed and per-Tag counts.
+  const [feedReadAdjust, setFeedReadAdjust] = createSignal<
+    Record<string, number>
+  >({});
   let readTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let undoTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let undoDeadline = 0;
@@ -69,6 +73,16 @@ export function createReadState(
     revision++;
     setReadAdjust(update);
   };
+  // Feed of each Item Read has adjusted, so Undo can reverse it by Feed.
+  const adjustedFeeds = new Map<string, string>();
+  const feedsOf = (ids: Iterable<string>) =>
+    [...ids].flatMap((id) => adjustedFeeds.get(id) ?? []);
+  const changeFeedAdjust = (feedIDs: Iterable<string>, delta: number) =>
+    setFeedReadAdjust((current) => {
+      const next = { ...current };
+      for (const feedID of feedIDs) next[feedID] = (next[feedID] ?? 0) + delta;
+      return next;
+    });
   const finishUndo = () => undo()?.gridSnapshot;
   const patchRead = (ids: Iterable<string>, read: boolean) =>
     batch(() => {
@@ -159,14 +173,17 @@ export function createReadState(
   const queueRead = (ids: string[], gridSnapshot?: GridClearSnapshot) => {
     if (mode() === "archive") return;
     const requested = new Set(ids);
+    const loaded = [...items(), ...stories().flatMap((story) => story.items)];
     const alreadyRead = new Set(
-      [...items(), ...stories().flatMap((story) => story.items)]
-        .filter((item) => item.read)
-        .map((item) => item.item_id),
+      loaded.filter((item) => item.read).map((item) => item.item_id),
     );
     const unread = [...requested].filter((id) => !alreadyRead.has(id));
     if (unread.length === 0) return;
+    for (const item of loaded)
+      if (requested.has(item.item_id))
+        adjustedFeeds.set(item.item_id, item.feed_id);
     changeAdjust((value) => value + unread.length);
+    changeFeedAdjust(feedsOf(unread), 1);
     for (const id of unread) {
       pendingRead.add(id);
       changes.set(id, Symbol());
@@ -227,6 +244,10 @@ export function createReadState(
       changes.set(item.item_id, token);
     }
     changeAdjust((value) => value + changed.length * (read ? 1 : -1));
+    changeFeedAdjust(
+      changed.map((item) => item.feed_id),
+      read ? 1 : -1,
+    );
     patchRead(
       members.map((item) => item.item_id),
       read,
@@ -245,6 +266,10 @@ export function createReadState(
           (item) => changes.get(item.item_id) === token,
         );
         changeAdjust((value) => value - rollback.length * (read ? 1 : -1));
+        changeFeedAdjust(
+          rollback.map((item) => item.feed_id),
+          read ? -1 : 1,
+        );
         batch(() => {
           for (const item of rollback)
             replaceItem(item.item_id, { read: item.read });
@@ -350,11 +375,10 @@ export function createReadState(
           markOrder === "interest"
             ? excludeRenderedStoryItems(page.items ?? [], stories())
             : (page.items ?? []);
-        ids.push(
-          ...pageItems
-            .filter((candidate) => !candidate.read)
-            .map((candidate) => candidate.item_id),
-        );
+        const unreadOnPage = pageItems.filter((candidate) => !candidate.read);
+        for (const candidate of unreadOnPage)
+          adjustedFeeds.set(candidate.item_id, candidate.feed_id);
+        ids.push(...unreadOnPage.map((candidate) => candidate.item_id));
         nextCursor = page.next_cursor ?? "";
       }
       if (clearVersion === session.clearVersion) queueRead(ids);
@@ -369,6 +393,7 @@ export function createReadState(
     const operation = undo();
     if (!operation) return;
     changeAdjust((value) => value - operation.ids.length);
+    changeFeedAdjust(feedsOf(operation.ids), -1);
     clearUndoTimer();
     undoRemaining = 8_000;
     setUndo(undefined);
@@ -434,6 +459,7 @@ export function createReadState(
         batch(() => {
           apply(value);
           setReadAdjust(0);
+          setFeedReadAdjust({});
         });
         return true;
       },
@@ -481,6 +507,7 @@ export function createReadState(
     finishAndClear,
     discardFinishUndo,
     readAdjust,
+    feedReadAdjust,
     undo,
     markBelow,
     openStory,

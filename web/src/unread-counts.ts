@@ -17,12 +17,13 @@ export interface UnreadCountView {
 
 /**
  * Owns unread-count loading, caching and freshness for every count display.
- * The active Scope and current Window choice subtract Read's optimistic
- * adjustment; Feed, Tag and alternate-Window counts are server snapshots.
+ * The active Scope, current Window choice and per-Feed counts (hence Tag
+ * chips) subtract Read's optimistic adjustment; the Feeds screen and
+ * alternate-Window counts are server snapshots.
  */
 export function createUnreadCounts(
   api: Pick<AppAPI, "feedItemCounts">,
-  reads: Pick<ReadState, "readAdjust" | "settledSnapshot">,
+  reads: Pick<ReadState, "readAdjust" | "feedReadAdjust" | "settledSnapshot">,
   view: UnreadCountView,
   handleError: (error: unknown) => void,
 ) {
@@ -63,6 +64,16 @@ export function createUnreadCounts(
     }
   };
 
+  const optimistic = (snapshot: FeedItemCounts): FeedItemCounts => {
+    const adjust = reads.feedReadAdjust();
+    const adjusted = { ...snapshot };
+    for (const [feedID, read] of Object.entries(adjust)) {
+      const count = adjusted[feedID];
+      if (count) adjusted[feedID] = { ...count, unread: count.unread - read };
+    }
+    return adjusted;
+  };
+
   const scopeCell = createMemo(() =>
     scopeCellModel(
       view.scope(),
@@ -85,8 +96,8 @@ export function createUnreadCounts(
     ready,
     /** The active Scope's header model, optimistic for Read and Undo. */
     scopeCell,
-    /** Per-Feed server counts for the Tag strip and Scope picker. */
-    feedCounts: counts,
+    /** Per-Feed counts for the Tag strip and Scope picker, optimistic for Read. */
+    feedCounts: () => optimistic(counts()),
     /** Per-Feed All counts for the Feeds screen, once known. */
     feedsScreenCounts: () =>
       countsKey() === windowKey("all") ? counts() : undefined,
