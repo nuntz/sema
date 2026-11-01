@@ -306,7 +306,13 @@ if (( MIGRATED )); then
 else
   [[ -f "$LOCAL_STATE" ]] || { warn "No local state at $LOCAL_STATE, so there is nothing to migrate."; exit 1; }
   say "The old stack config (passphrase salt and encrypted values) lives outside the repo."
-  ask LOCAL_STACK_CONFIG "Path of the old local Pulumi.prod.yaml (e.g. ~/.config/sema/Pulumi.prod.local.yaml):"
+  default_config="$(dirname "$ENV_FILE")/Pulumi.prod.local.yaml"
+  if [[ -z "$(_existing LOCAL_STACK_CONFIG || true)" && -f "$default_config" ]]; then
+    LOCAL_STACK_CONFIG="$default_config"
+    note "Old stack config: $LOCAL_STACK_CONFIG"
+  else
+    ask LOCAL_STACK_CONFIG "Path of the old local Pulumi.prod.yaml:"
+  fi
   LOCAL_STACK_CONFIG="${LOCAL_STACK_CONFIG/#\~/$HOME}"
   grep -q '^encryptionsalt:' "$LOCAL_STACK_CONFIG" 2>/dev/null ||
     { warn "$LOCAL_STACK_CONFIG has no encryptionsalt, so it isn't the old passphrase stack file."; exit 1; }
