@@ -208,10 +208,21 @@ run_wizard() {
 
 TOTAL_STAGES=9
 
-cd "$(git rev-parse --show-toplevel)"
 ENV_FILE="${SEMA_DEPLOY_ENV:-${XDG_CONFIG_HOME:-$HOME/.config}/sema/deploy.env}"
 mkdir -p "$(dirname "$ENV_FILE")"
 chmod 700 "$(dirname "$ENV_FILE")"
+
+# Each run re-executes itself under script(1), which keeps the terminal and records what the
+# screen shows to wizard.log, so whoever helps with a stage reads the log rather than a paste
+# (RUNBOOK.md → Pulumi setup). Hidden answers are never echoed, so they never reach it.
+if [[ -z "${SEMA_WIZARD_LOG:-}" && -t 0 && -t 1 ]] && script --version 2>/dev/null | grep -q util-linux; then
+  export SEMA_WIZARD_LOG
+  SEMA_WIZARD_LOG="$(dirname "$ENV_FILE")/wizard.log"
+  (umask 077 && : > "$SEMA_WIZARD_LOG")
+  exec script --quiet --return --flush --command "$(printf '%q ' bash "$(realpath "$0")" "$@")" "$SEMA_WIZARD_LOG"
+fi
+
+cd "$(git rev-parse --show-toplevel)"
 
 # The old stack lives in the local file backend; it is read, and brought up to date, but never
 # changed after the migration. Its config file (passphrase salt and secure values) sits outside
@@ -267,6 +278,9 @@ unlock() {
 }
 
 banner "Sema: prod stack to Pulumi Cloud, then CI deploys"
+if [[ -n "${SEMA_WIZARD_LOG:-}" ]]; then
+  note "This run is recorded in $SEMA_WIZARD_LOG (hidden answers excepted)."
+fi
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
 stage "Tools and sign-ins"

@@ -87,6 +87,10 @@ same config read back from ESC and a zero-change `pulumi preview`. Its next two 
 [CI deploys](#ci-deploys). It can be stopped and
 re-run; its answers stay in `~/.config/sema/deploy.env`.
 
+Each run overwrites `~/.config/sema/wizard.log` with what its screen shows, hidden answers
+excepted. When helping with a stage, read the log instead of asking for a paste, with the
+colour codes stripped: `sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' ~/.config/sema/wizard.log | tail -80`.
+
 The old local state (`~/.pulumi/stacks/sema/prod.json`) and its passphrase stack file are left
 untouched as a backup; if the wizard had to deploy with the local stack first, the state from
 before that update is also kept in `~/.config/sema/`. Never run `pulumi up` against the local
