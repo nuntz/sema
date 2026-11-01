@@ -224,6 +224,61 @@ test("on a phone the Dock rides above the reader toolbar and Expands into the re
   await expect(stage(page)).toHaveCount(0);
 });
 
+test("on a phone the Dock's buttons take a 44px touch and leave the video its taps", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubYouTube(page);
+  await openGrid(page, "youtube", false, "M");
+  await dockFromPeek(page);
+  // Measure the settled Dock, not the Peek shrinking into it.
+  await page.evaluate(() =>
+    Promise.all(
+      document.getAnimations().map((animation) => animation.finished),
+    ),
+  );
+
+  const hits = await page.evaluate(() => {
+    const owner = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y);
+      return (
+        hit?.closest("button")?.getAttribute("aria-label") ??
+        hit?.tagName.toLowerCase() ??
+        ""
+      );
+    };
+    const buttons = [
+      ...document.querySelectorAll<HTMLElement>(".video-dock-action"),
+    ];
+    const strip = document
+      .querySelector(".video-dock-strip")
+      ?.getBoundingClientRect();
+    return {
+      // Every point within 21px of a button's centre lands on that button.
+      targets: buttons.map((button) => {
+        const box = button.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        return [
+          owner(x - 21, y),
+          owner(x + 21, y),
+          owner(x, y - 21),
+          owner(x, y + 21),
+        ];
+      }),
+      labels: buttons.map((button) => button.getAttribute("aria-label")),
+      belowStrip: strip
+        ? owner(strip.left + strip.width / 2, strip.bottom + 2)
+        : "",
+    };
+  });
+  expect(hits.labels).toEqual(["Expand video", "Close video"]);
+  hits.targets.forEach((points, index) => {
+    expect(points).toEqual(Array(4).fill(hits.labels[index]));
+  });
+  expect(hits.belowStrip).toBe("iframe");
+});
+
 test("other Overlays cover the Dock, leaving it dimmed and inert", async ({
   page,
 }) => {

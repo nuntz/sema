@@ -2797,6 +2797,11 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
 @media (min-width: 620px) {
   .video-stage { --dock-gap: 20px; --dock-w: 320px; }
 }
+/* Phones take 44px touches; the frame clips, so the strip grows rather than the iframe losing taps. */
+@media (max-width: 619px) {
+  .video-dock-strip { height: 44px; gap: 0; }
+  .video-dock-action { width: 44px; height: 44px; }
+}
 /* The phone reader's toolbar owns the bottom edge; the Dock rides above it. */
 @media (max-width: 619px) {
   body:has(.reader:not(.closing) .reader-bottom-actions) .video-stage[data-mode="dock"] { bottom: calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + var(--dock-gap) - var(--viewport-gap)); }
