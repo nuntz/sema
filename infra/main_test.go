@@ -384,12 +384,17 @@ func TestWebContentTypeNamesEveryShippedFile(t *testing.T) {
 }
 
 func TestCDNOriginsFollowTheOrderCloudFrontReturns(t *testing.T) {
-	// CloudFront returns origins sorted by ID; declaring them in another order
-	// makes every preview propose a reorder.
+	// CloudFront returns origins sorted by ID, and the provider reads an empty
+	// S3 origin config back as absent; declaring either otherwise makes every
+	// preview propose a change.
 	origins := cdnOrigins(pulumi.String("app.s3"), pulumi.String("content.s3"), pulumi.String("api.example"), pulumi.String("oac"))
 	var ids []string
 	for _, origin := range origins {
-		ids = append(ids, string(origin.(*cloudfront.DistributionOriginArgs).OriginId.(pulumi.String)))
+		args := origin.(*cloudfront.DistributionOriginArgs)
+		ids = append(ids, string(args.OriginId.(pulumi.String)))
+		if args.S3OriginConfig != nil {
+			t.Errorf("origin %v declares s3OriginConfig, which the provider reads back as absent", args.OriginId)
+		}
 	}
 	if got, want := strings.Join(ids, ","), "api,app,content"; got != want {
 		t.Errorf("origin IDs = %s, want %s", got, want)

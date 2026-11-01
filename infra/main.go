@@ -887,12 +887,14 @@ func uploadWeb(ctx *pulumi.Context, bucket *s3.Bucket) error {
 }
 
 // cdnOrigins lists the distribution's origins sorted by ID, the order CloudFront returns them
-// in, so a preview doesn't propose reordering them.
+// in, so a preview doesn't propose reordering them. The S3 origins sign through origin access
+// control and carry no s3OriginConfig: the provider sends CloudFront the empty one it needs and
+// reads it back as absent, so declaring it makes every preview propose adding it.
 func cdnOrigins(appDomain, contentDomain, apiDomain pulumi.StringInput, originAccessControlID pulumi.StringInput) cloudfront.DistributionOriginArray {
 	return cloudfront.DistributionOriginArray{
 		&cloudfront.DistributionOriginArgs{DomainName: apiDomain, OriginId: pulumi.String("api"), CustomOriginConfig: &cloudfront.DistributionOriginCustomOriginConfigArgs{HttpPort: pulumi.Int(80), HttpsPort: pulumi.Int(443), OriginProtocolPolicy: pulumi.String("https-only"), OriginSslProtocols: pulumi.StringArray{pulumi.String("TLSv1.2")}}},
-		&cloudfront.DistributionOriginArgs{DomainName: appDomain, OriginId: pulumi.String("app"), OriginAccessControlId: originAccessControlID, S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
-		&cloudfront.DistributionOriginArgs{DomainName: contentDomain, OriginId: pulumi.String("content"), OriginAccessControlId: originAccessControlID, S3OriginConfig: &cloudfront.DistributionOriginS3OriginConfigArgs{OriginAccessIdentity: pulumi.String("")}},
+		&cloudfront.DistributionOriginArgs{DomainName: appDomain, OriginId: pulumi.String("app"), OriginAccessControlId: originAccessControlID},
+		&cloudfront.DistributionOriginArgs{DomainName: contentDomain, OriginId: pulumi.String("content"), OriginAccessControlId: originAccessControlID},
 	}
 }
 
