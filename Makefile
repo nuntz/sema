@@ -10,7 +10,7 @@ PULUMI_STACK ?= $(PULUMI_ORG)/sema/$(STACK)
 AWS_REGION ?= us-east-1
 ZIP_EPOCH := 198001010000
 
-.PHONY: all check check-reproducible test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
+.PHONY: all check check-reproducible e2e e2e-all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
 all: test build
 
@@ -20,6 +20,7 @@ test:
 	cd web && bun run test
 
 # check runs everything CI's test job runs (CI calls it), so a green check is a green CI test job.
+# The browser tests are CI's separate e2e job: make e2e.
 check:
 	bash scripts/lint-ci-files.sh
 	@unformatted="$$(gofmt -l .)"; if [ -n "$$unformatted" ]; then echo "gofmt needed: $$unformatted" >&2; exit 1; fi
@@ -41,6 +42,15 @@ check-reproducible:
 	$(MAKE) -B lambdas
 	sha256sum --check --quiet bin/reproducible.sha256
 	@if go version -m bin/*/bootstrap | grep "vcs\."; then echo "The Lambda binaries embed VCS info" >&2; exit 1; fi
+
+# e2e is CI's e2e job: every Playwright spec except those tagged @local. e2e-all runs them all.
+e2e:
+	cd web && bun install --frozen-lockfile
+	cd web && bunx playwright test --grep-invert @local
+
+e2e-all:
+	cd web && bun install --frozen-lockfile
+	cd web && bunx playwright test
 
 build: lambdas web
 

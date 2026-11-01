@@ -1847,10 +1847,11 @@ for (const width of [1470, 390]) {
   });
 }
 
-test("grid releases detached nodes after repeated scrolling through loaded items", async ({
-  page,
-  browserName,
-}) => {
+// Tagged @local: its node count varies by a few hundred between runs, so CI leaves it out until
+// the count is deterministic (#11). `make e2e-all` still runs it.
+test("grid releases detached nodes after repeated scrolling through loaded items", {
+  tag: "@local",
+}, async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "DOM counters require Chromium's CDP");
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1470, height: 833 });

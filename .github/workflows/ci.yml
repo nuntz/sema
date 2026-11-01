@@ -49,12 +49,29 @@ jobs:
       # reproducible Lambda ZIPs.
       - run: make check
 
+  # The browser tests run beside the test job and gate the deploy as well (make e2e).
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+        working-directory: web
+      - name: Install Chromium for Playwright
+        run: bunx playwright install --with-deps chromium
+        working-directory: web
+      - run: make e2e
+
   # The deploy role trusts only this repository's `production` environment, which GitHub limits to
   # master (RUNBOOK.md → CI deploys, docs/adr/0004-ci-deploys-through-github-oidc.md). Until the
   # wizard sets PULUMI_STACK, and on forks, it is skipped.
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master' && vars.PULUMI_STACK != ''
-    needs: test
+    needs: [test, e2e]
     runs-on: ubuntu-latest
     environment: production
     concurrency:
