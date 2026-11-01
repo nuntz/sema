@@ -2,6 +2,8 @@
 
 Sema is a cloud feed reader built for triage first: a fast, keyboard-driven grid makes the likely-interesting items physically larger, while everything unkept expires after seven days. Hearted items are copied into a permanent archive.
 
+![Sema's front page: a justified grid where higher-ranked items take larger cells, with a two-source story at top left](docs/screenshot.png)
+
 ## Highlights
 
 - Read RSS, Atom, JSON Feed, YouTube channel feeds, and public subreddit feeds.

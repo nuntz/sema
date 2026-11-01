@@ -10,7 +10,7 @@ PULUMI_STACK ?= $(PULUMI_ORG)/sema/$(STACK)
 AWS_REGION ?= us-east-1
 ZIP_EPOCH := 198001010000
 
-.PHONY: all check check-reproducible e2e e2e-all test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
+.PHONY: all check check-reproducible e2e e2e-all screenshot test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
 all: test build
 
@@ -51,6 +51,11 @@ e2e:
 e2e-all:
 	cd web && bun install --frozen-lockfile
 	cd web && bunx playwright test
+
+# screenshot redraws docs/screenshot.png, the README's front page, from a mocked API.
+screenshot:
+	cd web && bun install --frozen-lockfile
+	cd web && SEMA_SCREENSHOT=1 bunx playwright test readme-screenshot
 
 build: lambdas web
 
