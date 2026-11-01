@@ -46,11 +46,17 @@ func TrustPolicy(providerARN, repository string) Document {
 // prefix, is what stops escalation (see ADR 0004).
 var accountWideNamespaces = []string{
 	"acm", "apigateway", "cloudfront", "cloudwatch", "dynamodb", "events",
-	"lambda", "logs", "s3", "s3vectors", "sns", "sqs",
+	"logs", "s3", "s3vectors", "sns", "sqs",
 }
 
-// fencedNamespaces are granted only on Sema's own resources.
-var fencedNamespaces = []string{"iam", "route53"}
+// fencedNamespaces are granted only on Sema's own resources. Lambda is fenced
+// because new code in another app's function would run as that app's
+// unbounded role.
+var fencedNamespaces = []string{"iam", "lambda", "route53"}
+
+// FunctionPrefix starts the name of every Lambda function the deploy role may
+// manage; the main stack names them sema-<stack>-<name>.
+const FunctionPrefix = "sema-"
 
 // ServiceNamespaces lists every IAM service namespace the deploy role is
 // granted, sorted.
@@ -83,11 +89,33 @@ func DeployPolicy(accountID, hostedZoneID string) Document {
 		services[index] = namespace + ":*"
 	}
 	zone := "arn:aws:route53:::hostedzone/" + hostedZoneID
+	functions := fmt.Sprintf("arn:aws:lambda:*:%s:function:%s*", accountID, FunctionPrefix)
 	return Document{Version: "2012-10-17", Statement: []Statement{
 		{
 			Sid:      "ManageSemaServices",
 			Effect:   "Allow",
 			Action:   services,
+			Resource: []string{"*"},
+		},
+		{
+			Sid:      "ManageSemaFunctions",
+			Effect:   "Allow",
+			Action:   []string{"lambda:*"},
+			Resource: []string{functions},
+		},
+		// Event source mappings have their own ARNs; AWS names the function a
+		// mapping invokes in lambda:FunctionArn.
+		{
+			Sid:       "MapQueuesToSemaFunctions",
+			Effect:    "Allow",
+			Action:    []string{"lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping"},
+			Resource:  []string{"*"},
+			Condition: map[string]map[string]string{"ArnLike": {"lambda:FunctionArn": functions}},
+		},
+		{
+			Sid:      "ReadLambdaForRefresh",
+			Effect:   "Allow",
+			Action:   []string{"lambda:GetEventSourceMapping", "lambda:ListEventSourceMappings", "lambda:ListFunctions", "lambda:ListTags", "lambda:GetAccountSettings"},
 			Resource: []string{"*"},
 		},
 		{

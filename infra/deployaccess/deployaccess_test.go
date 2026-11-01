@@ -161,7 +161,7 @@ func TestDeployRoleGrantsItsServiceNamespacesAccountWide(t *testing.T) {
 		}
 	}
 	for _, namespace := range namespaces {
-		if namespace == "iam" || namespace == "route53" {
+		if namespace == "iam" || namespace == "route53" || namespace == "lambda" {
 			continue
 		}
 		resource := "arn:aws:" + namespace + ":us-east-1:123456789012:stash-thing"
@@ -186,6 +186,37 @@ func TestBoundaryCapsLambdaRolesAtTheDataPlane(t *testing.T) {
 	for _, action := range []string{"iam:CreateRole", "iam:PassRole", "iam:PutRolePolicy", "sts:AssumeRole", "dynamodb:DeleteTable", "s3:DeleteBucket", "s3:PutBucketPolicy", "sqs:DeleteQueue", "lambda:UpdateFunctionCode", "lambda:CreateFunction", "s3vectors:DeleteIndex", "ec2:RunInstances"} {
 		if boundary.Allows(Request{Action: action, Resource: "*"}) {
 			t.Errorf("boundary allows %s", action)
+		}
+	}
+}
+
+func TestDeployRoleManagesOnlySemaFunctions(t *testing.T) {
+	policy := DeployPolicy(testAccount, testZone)
+	sema := "arn:aws:lambda:us-east-1:123456789012:function:sema-prod-api"
+	stash := "arn:aws:lambda:us-east-1:123456789012:function:stash-prod-api"
+	for _, action := range []string{"lambda:CreateFunction", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:AddPermission", "lambda:GetFunction", "lambda:DeleteFunction"} {
+		if !policy.Allows(Request{Action: action, Resource: sema}) {
+			t.Errorf("%s is denied on a sema- function", action)
+		}
+		if policy.Allows(Request{Action: action, Resource: stash}) {
+			t.Errorf("%s is allowed on another app's function", action)
+		}
+	}
+	if !policy.Allows(Request{Action: "lambda:GetFunction", Resource: sema + ":1"}) {
+		t.Error("cannot read a sema- function's version")
+	}
+	mapping := "arn:aws:lambda:us-east-1:123456789012:event-source-mapping:0b1c2d3e"
+	for _, action := range []string{"lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping"} {
+		if !policy.Allows(Request{Action: action, Resource: mapping, Context: map[string]string{"lambda:FunctionArn": sema}}) {
+			t.Errorf("%s is denied for a sema- function", action)
+		}
+		if policy.Allows(Request{Action: action, Resource: mapping, Context: map[string]string{"lambda:FunctionArn": stash}}) {
+			t.Errorf("%s is allowed for another app's function", action)
+		}
+	}
+	for _, action := range []string{"lambda:GetEventSourceMapping", "lambda:ListEventSourceMappings", "lambda:ListTags"} {
+		if !policy.Allows(Request{Action: action, Resource: mapping}) {
+			t.Errorf("cannot %s on refresh", action)
 		}
 	}
 }

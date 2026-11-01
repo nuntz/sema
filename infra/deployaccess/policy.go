@@ -42,8 +42,8 @@ type Request struct {
 // Allows reports whether the document alone allows the request: some Allow
 // statement matches and no Deny statement does. It supports the subset of IAM
 // Sema's policies use: Action and Resource wildcards, principal values, and the
-// StringEquals condition operator. It panics on any other operator, so a policy
-// can't silently outgrow its tests.
+// StringEquals and ArnLike condition operators. It panics on any other
+// operator, so a policy can't silently outgrow its tests.
 func (d Document) Allows(request Request) bool {
 	allowed := false
 	for _, statement := range d.Statement {
@@ -71,11 +71,17 @@ func (s Statement) matches(request Request) bool {
 		return false
 	}
 	for operator, entries := range s.Condition {
-		if operator != "StringEquals" {
+		var compare func(want, got string) bool
+		switch operator {
+		case "StringEquals":
+			compare = func(want, got string) bool { return want == got }
+		case "ArnLike":
+			compare = func(want, got string) bool { return glob(want, got, false) }
+		default:
 			panic("deployaccess: unsupported condition operator " + operator)
 		}
 		for key, want := range entries {
-			if got, ok := request.Context[key]; !ok || got != want {
+			if got, ok := request.Context[key]; !ok || !compare(want, got) {
 				return false
 			}
 		}

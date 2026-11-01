@@ -41,6 +41,9 @@ func (m *stackMocks) NewResource(args pulumi.MockResourceArgs) (string, resource
 			state[resource.PropertyKey(key)] = resource.NewStringProperty(value)
 		}
 	}
+	if args.TypeToken == "aws:lambda/function:Function" {
+		set("arn", "arn:aws:lambda:us-east-1:"+mockAccount+":function:"+args.Inputs["name"].StringValue())
+	}
 	set("arn", "arn:aws:mock:us-east-1:"+mockAccount+":"+args.Name)
 	set("name", args.Name)
 	switch args.TypeToken {
@@ -169,6 +172,31 @@ func TestEveryLambdaActionFitsInsideTheBoundary(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+func TestDeployRoleCanManageEveryFunctionTheStackDeclares(t *testing.T) {
+	mocks := runStack(t)
+	policy := deployaccess.DeployPolicy(mockAccount, "Z0123456789ABC")
+	functions := mocks.of("aws:lambda/function:Function")
+	if len(functions) != 7 {
+		t.Fatalf("functions = %d, want 7", len(functions))
+	}
+	for _, function := range functions {
+		arn := "arn:aws:lambda:us-east-1:" + mockAccount + ":function:" + function.inputs["name"].StringValue()
+		if !policy.Allows(deployaccess.Request{Action: "lambda:UpdateFunctionCode", Resource: arn}) {
+			t.Errorf("deploy role cannot update %s", arn)
+		}
+	}
+	mappings := mocks.of("aws:lambda/eventSourceMapping:EventSourceMapping")
+	if len(mappings) == 0 {
+		t.Fatal("no event source mappings registered")
+	}
+	for _, mapping := range mappings {
+		target := mapping.inputs["functionName"].StringValue()
+		if !policy.Allows(deployaccess.Request{Action: "lambda:CreateEventSourceMapping", Resource: "*", Context: map[string]string{"lambda:FunctionArn": target}}) {
+			t.Errorf("deploy role cannot map %s to %s", mapping.name, target)
 		}
 	}
 }
