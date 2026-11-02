@@ -13,10 +13,13 @@ type apiStore interface {
 	EnsureUser(ctx context.Context, userID, email string) error
 	User(ctx context.Context, userID string) (domain.User, error)
 	UpdateUser(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error
-	PutFeed(ctx context.Context, feed domain.Feed) error
+	// SaveFeeds and DeleteFeed move the user's FeedVersion, so other API
+	// instances drop their cached Feeds; the API has no write that doesn't.
+	SaveFeeds(ctx context.Context, userID string, feeds []domain.Feed) (int64, error)
 	Feed(ctx context.Context, userID, feedID string) (domain.Feed, error)
 	Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
-	DeleteFeed(ctx context.Context, userID, feedID string) error
+	FeedVersion(ctx context.Context, userID string) (int64, error)
+	DeleteFeed(ctx context.Context, userID, feedID string) (int64, error)
 	FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error)
 	ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error)
 	LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error)

@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Feed edits are read-your-writes across API instances

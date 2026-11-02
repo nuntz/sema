@@ -160,6 +160,7 @@ type importFeedsResult struct {
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	started := time.Now()
 	ctx, fields := withRequestFields(ctx)
+	ctx = withFeedVersionMemo(ctx)
 	result, err := s.handleRequest(ctx, request)
 	status := result.StatusCode
 	if err != nil || status == 0 {
@@ -952,13 +953,20 @@ type cachedStoryList struct {
 // Results are immutable after rendering. Include the model's public ranking
 // cutoffs as well as filters so a newly computed model cannot reuse old sizes.
 func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
+	// Stories bake in Feed titles, favicons and Connectors, so a Feed edit on
+	// any instance must miss this cache.
+	feedVersion, err := s.feedVersion(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
 	filters, err := json.Marshal(struct {
-		Allowed    map[string]bool
-		UnreadOnly bool
-		Tag        string
-		Window     domain.FetchWindow
-		Model      domain.Model
-	}{allowed, unreadOnly, tag, window, model})
+		Allowed     map[string]bool
+		UnreadOnly  bool
+		Tag         string
+		Window      domain.FetchWindow
+		Model       domain.Model
+		FeedVersion int64
+	}{allowed, unreadOnly, tag, window, model, feedVersion})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1527,13 +1535,15 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 		subscriptions[index].Title = title
 	}
 	now := time.Now().UTC()
-	messages := make([]domain.FeedMessage, len(subscriptions))
+	// Merge each OPML outline with any existing Feed first, then write them
+	// all in one SaveFeeds, so the import moves the FeedVersion once.
+	feeds := make([]domain.Feed, len(subscriptions))
+	mergeErrors := make([]error, len(subscriptions))
 	semaphore := make(chan struct{}, 20)
-	writeErrors := make(chan error, len(subscriptions))
 	var group sync.WaitGroup
 	for index, subscription := range subscriptions {
 		group.Add(1)
-		go func(index int, subscription rss.Subscription) {
+		go func() {
 			defer group.Done()
 			semaphore <- struct{}{}
 			defer func() { <-semaphore }()
@@ -1559,7 +1569,7 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 				feed.Connector = connectorName
 				merged, mergeErr := normalizeTags(append(append([]string{}, feed.Tags...), subscription.Tags...))
 				if mergeErr != nil {
-					writeErrors <- mergeErr
+					mergeErrors[index] = mergeErr
 					return
 				}
 				feed.Tags = merged
@@ -1570,40 +1580,29 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 					feed.NextFetchAt = domain.Timestamp(now)
 				}
 			} else if !errors.Is(getErr, store.ErrNotFound) {
-				writeErrors <- getErr
+				mergeErrors[index] = getErr
 				return
 			}
-			if err := s.store.PutFeed(ctx, feed); err != nil {
-				writeErrors <- err
-				return
-			}
-			if !feed.Muted {
-				messages[index] = domain.FeedMessage{User: userID, FeedID: feedID}
-			}
-		}(index, subscription)
+			feeds[index] = feed
+		}()
 	}
 	group.Wait()
-	close(writeErrors)
-	var importErrors []error
-	for err := range writeErrors {
-		importErrors = append(importErrors, err)
+	if err := errors.Join(mergeErrors...); err != nil {
+		return s.failure("merge imported feed", err)
 	}
-	if err := errors.Join(importErrors...); err != nil {
-		s.invalidateFeeds(userID)
+	if err := s.saveFeeds(ctx, userID, feeds...); err != nil {
 		return s.failure("store imported feed", err)
 	}
-	queued := messages[:0]
-	for _, message := range messages {
-		if message.FeedID != "" {
-			queued = append(queued, message)
+	messages := make([]domain.FeedMessage, 0, len(feeds))
+	for _, feed := range feeds {
+		if !feed.Muted {
+			messages = append(messages, domain.FeedMessage{User: userID, FeedID: feed.FeedID})
 		}
 	}
-	if err := s.enqueueFeeds(ctx, queued); err != nil {
-		s.invalidateFeeds(userID)
+	if err := s.enqueueFeeds(ctx, messages); err != nil {
 		return s.failure("enqueue imported feeds", err)
 	}
-	s.invalidateFeeds(userID)
-	return response(http.StatusAccepted, importFeedsResult{Imported: len(messages), Unsupported: unsupported})
+	return response(http.StatusAccepted, importFeedsResult{Imported: len(feeds), Unsupported: unsupported})
 }
 
 func (s *server) enqueueFeeds(ctx context.Context, messages []domain.FeedMessage) error {
@@ -1642,10 +1641,11 @@ func (s *server) deleteFeed(ctx context.Context, userID, feedID string) events.A
 	if feedID == "" {
 		return badRequest(errors.New("feed id is required"))
 	}
-	if err := s.store.DeleteFeed(ctx, userID, feedID); err != nil {
+	_, err := s.store.DeleteFeed(ctx, userID, feedID)
+	s.invalidateFeeds(ctx, userID)
+	if err != nil {
 		return s.failure("delete feed", err)
 	}
-	s.invalidateFeeds(userID)
 	return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusNoContent}
 }
 

@@ -397,6 +397,9 @@ const (
 	// ReadVersionSK counts a user's Read changes, so a cached copy of their
 	// Read markers can tell it is stale without reloading them.
 	ReadVersionSK = "READ_VERSION"
+	// FeedVersionSK counts a user's API Feed changes, so a cached copy of
+	// their Feeds can tell it is stale without reloading them.
+	FeedVersionSK = "FEED_VERSION"
 )
 
 // Destination is where a user Sends Items. It lives in its own row so the

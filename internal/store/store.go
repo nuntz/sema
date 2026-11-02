@@ -179,6 +179,9 @@ func (s *Store) UpdateUser(ctx context.Context, userID string, order *domain.Ord
 	return err
 }
 
+// PutFeed writes a Feed without moving the user's FeedVersion. It is for the
+// worker and backfills, whose changes other API instances pick up when their
+// Feed cache expires; API handlers write through SaveFeeds and DeleteFeed.
 func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
 	feed.Connector = domain.FeedConnector(feed)
 	if feed.Muted {
@@ -220,6 +223,56 @@ func (s *Store) PutFeed(ctx context.Context, feed domain.Feed) error {
 	return err
 }
 
+// saveFeedsConcurrency bounds an OPML import's parallel Feed writes.
+const saveFeedsConcurrency = 20
+
+// SaveFeeds writes a user's Feeds, as a user's own edits, and returns their
+// new FeedVersion, or 0 when nothing was written. The version moves once,
+// after the writes, so an instance that sees it also sees them; it moves even
+// when some writes fail, because the others have committed.
+func (s *Store) SaveFeeds(ctx context.Context, userID string, feeds []domain.Feed) (version int64, err error) {
+	pk := domain.UserPK(userID)
+	for _, feed := range feeds {
+		if feed.PK != pk {
+			return 0, fmt.Errorf("feed %s belongs to %s, not %s", feed.FeedID, feed.PK, pk)
+		}
+	}
+	if len(feeds) == 0 {
+		return 0, nil
+	}
+	semaphore := make(chan struct{}, saveFeedsConcurrency)
+	writeErrors := make([]error, len(feeds))
+	var group sync.WaitGroup
+	for index, feed := range feeds {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+			writeErrors[index] = s.PutFeed(ctx, feed)
+		}()
+	}
+	group.Wait()
+	wrote := false
+	for _, writeErr := range writeErrors {
+		wrote = wrote || writeErr == nil
+	}
+	if wrote {
+		version, err = s.bumpVersion(ctx, userID, domain.FeedVersionSK)
+	}
+	if writeErr := errors.Join(writeErrors...); writeErr != nil {
+		return 0, errors.Join(writeErr, err)
+	}
+	return version, err
+}
+
+// FeedVersion returns how many SaveFeeds and DeleteFeed calls have changed
+// the user's Feeds; 0 before the first. Read it before Feeds: Feeds loaded
+// after a version can only be newer than it, never older.
+func (s *Store) FeedVersion(ctx context.Context, userID string) (int64, error) {
+	return s.version(ctx, userID, domain.FeedVersionSK)
+}
+
 func (s *Store) Feed(ctx context.Context, userID, feedID string) (domain.Feed, error) {
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID)), ConsistentRead: aws.Bool(true)})
 	if err != nil {
@@ -245,6 +298,8 @@ func (s *Store) Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 			ExpressionAttributeValues: map[string]types.AttributeValue{
 				":pk": &types.AttributeValueMemberS{Value: domain.UserPK(userID)}, ":prefix": &types.AttributeValueMemberS{Value: "F#"},
 			}, ExclusiveStartKey: start,
+			// A Feed edit just taken by another API instance must be visible.
+			ConsistentRead: aws.Bool(true),
 		})
 		if err != nil {
 			return nil, err
@@ -332,9 +387,13 @@ func (s *Store) ClaimFeed(ctx context.Context, userID, feedID string, due, next 
 	return false, err
 }
 
-func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) error {
-	_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID))})
-	return err
+// DeleteFeed deletes a user's Feed and returns their new FeedVersion, moved
+// after the delete commits.
+func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) (int64, error) {
+	if _, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID))}); err != nil {
+		return 0, err
+	}
+	return s.bumpVersion(ctx, userID, domain.FeedVersionSK)
 }
 
 func (s *Store) ItemExists(ctx context.Context, userID, itemID string) (bool, error) {
@@ -821,8 +880,14 @@ func (s *Store) LoadReadMarkers(ctx context.Context, userID string) (map[string]
 // markers; 0 before the first. Read it before LoadReadMarkers: markers loaded
 // after a version can only be newer than it, never older.
 func (s *Store) ReadVersion(ctx context.Context, userID string) (int64, error) {
+	return s.version(ctx, userID, domain.ReadVersionSK)
+}
+
+// version reads a per-user change counter strongly consistent; a missing row
+// reads as 0.
+func (s *Store) version(ctx context.Context, userID, sk string) (int64, error) {
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ReadVersionSK),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
 		ProjectionExpression: aws.String("version"), ConsistentRead: aws.Bool(true),
 	})
 	if err != nil || response.Item == nil {
@@ -835,9 +900,9 @@ func (s *Store) ReadVersion(ctx context.Context, userID string) (int64, error) {
 	return row.Version, err
 }
 
-func (s *Store) bumpReadVersion(ctx context.Context, userID string) (int64, error) {
+func (s *Store) bumpVersion(ctx context.Context, userID, sk string) (int64, error) {
 	response, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ReadVersionSK),
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
 		UpdateExpression:          aws.String("ADD version :one"),
 		ExpressionAttributeValues: map[string]types.AttributeValue{":one": &types.AttributeValueMemberN{Value: "1"}},
 		ReturnValues:              types.ReturnValueUpdatedNew,
@@ -2764,7 +2829,7 @@ func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read b
 		if !wrote {
 			return
 		}
-		bumped, bumpErr := s.bumpReadVersion(ctx, userID)
+		bumped, bumpErr := s.bumpVersion(ctx, userID, domain.ReadVersionSK)
 		if err == nil {
 			version, err = bumped, bumpErr
 		}

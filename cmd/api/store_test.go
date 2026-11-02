@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
@@ -37,6 +38,9 @@ type fakeAPIStore struct {
 	publicItem      func(item domain.Item) domain.Item
 	// readVersion moves with every successful setRead, like the store's.
 	readVersion int64
+	// feedVersion moves with every SaveFeeds that wrote and every DeleteFeed.
+	feedVersion      int64
+	feedVersionReads int
 }
 
 func (f *fakeAPIStore) EnsureUser(ctx context.Context, userID, email string) error {
@@ -48,8 +52,28 @@ func (f *fakeAPIStore) User(ctx context.Context, userID string) (domain.User, er
 func (f *fakeAPIStore) UpdateUser(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error {
 	return f.updateUser(ctx, userID, order, position, tag, feed)
 }
-func (f *fakeAPIStore) PutFeed(ctx context.Context, feed domain.Feed) error {
-	return f.putFeed(ctx, feed)
+func (f *fakeAPIStore) SaveFeeds(ctx context.Context, _ string, feeds []domain.Feed) (int64, error) {
+	var writeErrors []error
+	wrote := false
+	for _, feed := range feeds {
+		var err error
+		if f.putFeed != nil {
+			err = f.putFeed(ctx, feed)
+		}
+		writeErrors = append(writeErrors, err)
+		wrote = wrote || err == nil
+	}
+	if wrote {
+		f.feedVersion++
+	}
+	if err := errors.Join(writeErrors...); err != nil || !wrote {
+		return 0, err
+	}
+	return f.feedVersion, nil
+}
+func (f *fakeAPIStore) FeedVersion(context.Context, string) (int64, error) {
+	f.feedVersionReads++
+	return f.feedVersion, nil
 }
 func (f *fakeAPIStore) Feed(ctx context.Context, userID, feedID string) (domain.Feed, error) {
 	if f.feed == nil {
@@ -63,8 +87,14 @@ func (f *fakeAPIStore) Feeds(ctx context.Context, userID string) ([]domain.Feed,
 	}
 	return f.feeds(ctx, userID)
 }
-func (f *fakeAPIStore) DeleteFeed(ctx context.Context, userID, feedID string) error {
-	return f.deleteFeed(ctx, userID, feedID)
+func (f *fakeAPIStore) DeleteFeed(ctx context.Context, userID, feedID string) (int64, error) {
+	if f.deleteFeed != nil {
+		if err := f.deleteFeed(ctx, userID, feedID); err != nil {
+			return 0, err
+		}
+	}
+	f.feedVersion++
+	return f.feedVersion, nil
 }
 func (f *fakeAPIStore) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error) {
 	return f.feedItemCounts(ctx, userID, window, snapshot)

@@ -38,7 +38,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 
 ## API
 
-- Each Lambda instance keeps its own `cmd/api` caches, and concurrent requests land on different instances. Data a client reads back after its own write must either be checked against shared state (as the Read markers are against `READ_VERSION`, ADR 0005) or skip the cache. Clearing the cache on the instance that took the write is not enough. Test this with two `server` values sharing one store, as in `cmd/api/read_cache_instances_test.go`.
+- Each Lambda instance keeps its own `cmd/api` caches, and concurrent requests land on different instances. Data a client reads back after its own write must either be checked against shared state (as the Read markers are against `READ_VERSION`, ADR 0005, and the Feed list against `FEED_VERSION`, ADR 0006) or skip the cache. Clearing the cache on the instance that took the write is not enough. Test this with two `server` values sharing one store, as in `cmd/api/read_cache_instances_test.go` and `cmd/api/feed_cache_instances_test.go`.
 
 ## Docs and decisions
 

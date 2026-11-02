@@ -22,3 +22,14 @@ func annotateRequest(ctx context.Context, name, value string) {
 		fields[name] = value
 	}
 }
+
+// annotateRequestOnce keeps the first value a request records for name, for
+// outcomes such as a cache's, where later calls in the same request would
+// overwrite a stale or miss with a hit.
+func annotateRequestOnce(ctx context.Context, name, value string) {
+	if fields, ok := ctx.Value(requestFieldsKey{}).(map[string]string); ok {
+		if _, recorded := fields[name]; !recorded {
+			annotateRequest(ctx, name, value)
+		}
+	}
+}

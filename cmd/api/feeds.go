@@ -30,9 +30,59 @@ type feedDiscoverer interface {
 	Discover(context.Context, string) ([]domain.FeedCandidate, error)
 }
 
+// cachedFeedList is one API instance's copy of a user's Feeds. Other
+// instances take Feed edits too, so a hit also needs the user's FeedVersion to
+// match the version the copy was loaded at (ADR 0006).
 type cachedFeedList struct {
-	loaded time.Time
-	feeds  []domain.Feed
+	loaded  time.Time
+	version int64
+	feeds   []domain.Feed
+}
+
+type feedVersionKey struct{}
+
+// feedVersionMemo holds one request's FeedVersion, so a request that reads
+// its Feeds several times (Scope, Stories, presentation) pays for one
+// strongly consistent read and sees one version throughout. Like the request
+// fields, it is unsynchronised: use it only from the request's own goroutine.
+type feedVersionMemo struct {
+	loaded  bool
+	version int64
+}
+
+// withFeedVersionMemo gives a request somewhere to keep its FeedVersion. A
+// request serves one user, so the memo needs no user key.
+func withFeedVersionMemo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, feedVersionKey{}, &feedVersionMemo{})
+}
+
+func requestFeedVersionMemo(ctx context.Context) *feedVersionMemo {
+	memo, _ := ctx.Value(feedVersionKey{}).(*feedVersionMemo)
+	return memo
+}
+
+// feedVersion returns the user's FeedVersion, read once per request.
+func (s *server) feedVersion(ctx context.Context, userID string) (int64, error) {
+	memo := requestFeedVersionMemo(ctx)
+	if memo == nil {
+		return s.store.FeedVersion(ctx, userID)
+	}
+	if !memo.loaded {
+		version, err := s.store.FeedVersion(ctx, userID)
+		if err != nil {
+			return 0, err
+		}
+		memo.loaded, memo.version = true, version
+	}
+	return memo.version, nil
+}
+
+// saveFeeds writes Feeds as the user's own edit, then drops this instance's
+// Feed caches whether or not every write committed.
+func (s *server) saveFeeds(ctx context.Context, userID string, feeds ...domain.Feed) error {
+	_, err := s.store.SaveFeeds(ctx, userID, feeds)
+	s.invalidateFeeds(ctx, userID)
+	return err
 }
 
 func (s *server) feedRoute(ctx context.Context, userID, method, suffix, body string) events.APIGatewayV2HTTPResponse {
@@ -258,7 +308,7 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 			feed.LastStatus = "queued"
 		}
 	}
-	if err := s.store.PutFeed(ctx, feed); err != nil {
+	if err := s.saveFeeds(ctx, userID, feed); err != nil {
 		return s.failure("store feed", err)
 	}
 	if !feed.Muted {
@@ -266,7 +316,6 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 			return s.failure("enqueue feed", err)
 		}
 	}
-	s.invalidateFeeds(userID)
 	status := http.StatusAccepted
 	if !created {
 		status = http.StatusOK
@@ -378,7 +427,7 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		feed.NextFetchAt = domain.Timestamp(time.Now().UTC())
 		feed.LastStatus = "queued"
 	}
-	if err := s.store.PutFeed(ctx, feed); err != nil {
+	if err := s.saveFeeds(ctx, userID, feed); err != nil {
 		return s.failure("update feed", err)
 	}
 	if queueNow {
@@ -386,7 +435,6 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 			return s.failure("enqueue unmuted feed", err)
 		}
 	}
-	s.invalidateFeeds(userID)
 	feed.Status = feedstatus.Status(feed)
 	return response(http.StatusOK, publicFeed(s.store, feed))
 }
@@ -406,13 +454,12 @@ func (s *server) retryFeed(ctx context.Context, userID, feedID string) events.AP
 		return badRequest(errors.New("unmute the feed before retrying"))
 	}
 	feed = feedstatus.Retry(feed, time.Now().UTC())
-	if err := s.store.PutFeed(ctx, feed); err != nil {
+	if err := s.saveFeeds(ctx, userID, feed); err != nil {
 		return s.failure("reset feed", err)
 	}
 	if err := s.enqueueFeeds(ctx, []domain.FeedMessage{{User: userID, FeedID: feedID}}); err != nil {
 		return s.failure("enqueue retry", err)
 	}
-	s.invalidateFeeds(userID)
 	feed.Status = feedstatus.Status(feed)
 	return response(http.StatusAccepted, publicFeed(s.store, feed))
 }
@@ -510,56 +557,70 @@ func (s *server) applyFeedPresentation(ctx context.Context, userID string, items
 }
 
 func (s *server) cachedFeeds(ctx context.Context, userID string) ([]domain.Feed, error) {
+	return s.feedList(ctx, userID, &s.feedCache, func() ([]domain.Feed, error) {
+		return s.store.Feeds(ctx, userID)
+	})
+}
+
+func (s *server) cachedDetailedFeeds(ctx context.Context, userID string) ([]domain.Feed, error) {
+	feeds, err := s.feedList(ctx, userID, &s.feedDetailCache, func() ([]domain.Feed, error) {
+		feeds, err := s.store.Feeds(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		return feeds, s.decorateFeeds(ctx, userID, feeds)
+	})
+	return append([]domain.Feed(nil), feeds...), err
+}
+
+// feedList returns the cached copy when it is younger than the TTL and at the
+// user's current FeedVersion, and otherwise loads and caches a new one.
+func (s *server) feedList(ctx context.Context, userID string, cache *map[string]cachedFeedList, load func() ([]domain.Feed, error)) ([]domain.Feed, error) {
+	// Read the version before any Feeds, so a copy is never newer-labelled
+	// than its contents.
+	version, err := s.feedVersion(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	s.feedMu.Lock()
-	entry, ok := s.feedCache[userID]
+	entry, ok := (*cache)[userID]
 	s.feedMu.Unlock()
-	if ok && now.Sub(entry.loaded) < feedCacheTTL {
+	fresh := ok && now.Sub(entry.loaded) < feedCacheTTL
+	switch {
+	case fresh && entry.version == version:
+		annotateRequestOnce(ctx, "FeedCache", "hit")
 		return entry.feeds, nil
+	case fresh:
+		annotateRequestOnce(ctx, "FeedCache", "stale")
+	default:
+		annotateRequestOnce(ctx, "FeedCache", "miss")
 	}
-	feeds, err := s.store.Feeds(ctx, userID)
+	feeds, err := load()
 	if err != nil {
 		return nil, err
 	}
 	s.feedMu.Lock()
-	if s.feedCache == nil {
-		s.feedCache = make(map[string]cachedFeedList)
+	if *cache == nil {
+		*cache = make(map[string]cachedFeedList)
 	}
-	s.feedCache[userID] = cachedFeedList{loaded: now, feeds: feeds}
+	(*cache)[userID] = cachedFeedList{loaded: now, version: version, feeds: feeds}
 	s.feedMu.Unlock()
 	return feeds, nil
 }
 
-func (s *server) invalidateFeeds(userID string) {
+// invalidateFeeds drops this instance's copies after its own Feed write
+// rather than patching them forward: Feed writes are rare, and the write
+// moved the FeedVersion, so other instances reload too.
+func (s *server) invalidateFeeds(ctx context.Context, userID string) {
+	if memo := requestFeedVersionMemo(ctx); memo != nil {
+		memo.loaded = false
+	}
 	s.invalidateStories(userID)
 	s.feedMu.Lock()
 	delete(s.feedCache, userID)
 	delete(s.feedDetailCache, userID)
 	s.feedMu.Unlock()
-}
-
-func (s *server) cachedDetailedFeeds(ctx context.Context, userID string) ([]domain.Feed, error) {
-	now := time.Now()
-	s.feedMu.Lock()
-	entry, ok := s.feedDetailCache[userID]
-	s.feedMu.Unlock()
-	if ok && now.Sub(entry.loaded) < feedCacheTTL {
-		return append([]domain.Feed(nil), entry.feeds...), nil
-	}
-	feeds, err := s.store.Feeds(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.decorateFeeds(ctx, userID, feeds); err != nil {
-		return nil, err
-	}
-	s.feedMu.Lock()
-	if s.feedDetailCache == nil {
-		s.feedDetailCache = make(map[string]cachedFeedList)
-	}
-	s.feedDetailCache[userID] = cachedFeedList{loaded: now, feeds: feeds}
-	s.feedMu.Unlock()
-	return append([]domain.Feed(nil), feeds...), nil
 }
 
 func normalizeFeedURL(raw string) (string, error) {
