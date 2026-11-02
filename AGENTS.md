@@ -6,7 +6,7 @@
 
 Ranking uses parallel text and lead-image embedding channels; image embeddings use the largest stored JPEG variant at or below 768px, and videos are always excluded.
 
-Change an `R#` marker and its `unread_pk` in one transaction conditioned on the live row existing, and keep optimistic unread UI rather than reloading to confirm; see `docs/adr/0002-sparse-unread-index.md`.
+Change an `R#` marker and its `unread_pk` in one transaction conditioned on the live row existing, then bump `READ_VERSION`, and keep optimistic unread UI rather than reloading to confirm; see `docs/adr/0002-sparse-unread-index.md` and `docs/adr/0005-read-state-is-read-your-writes.md`.
 
 Video playback keeps one fixed iframe host positioned over its slot, because moving the iframe reloads it; read `docs/adr/0003-video-dock-fixed-iframe-host.md` before changing the Peek, reader lead, or Dock.
 
