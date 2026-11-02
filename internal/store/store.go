@@ -817,6 +817,41 @@ func (s *Store) LoadReadMarkers(ctx context.Context, userID string) (map[string]
 	return s.readItemIDs(ctx, userID)
 }
 
+// ReadVersion returns how many SetRead calls have changed the user's Read
+// markers; 0 before the first. Read it before LoadReadMarkers: markers loaded
+// after a version can only be newer than it, never older.
+func (s *Store) ReadVersion(ctx context.Context, userID string) (int64, error) {
+	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ReadVersionSK),
+		ProjectionExpression: aws.String("version"), ConsistentRead: aws.Bool(true),
+	})
+	if err != nil || response.Item == nil {
+		return 0, err
+	}
+	var row struct {
+		Version int64 `dynamodbav:"version"`
+	}
+	err = attributevalue.UnmarshalMap(response.Item, &row)
+	return row.Version, err
+}
+
+func (s *Store) bumpReadVersion(ctx context.Context, userID string) (int64, error) {
+	response, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ReadVersionSK),
+		UpdateExpression:          aws.String("ADD version :one"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{":one": &types.AttributeValueMemberN{Value: "1"}},
+		ReturnValues:              types.ReturnValueUpdatedNew,
+	})
+	if err != nil {
+		return 0, err
+	}
+	var row struct {
+		Version int64 `dynamodbav:"version"`
+	}
+	err = attributevalue.UnmarshalMap(response.Attributes, &row)
+	return row.Version, err
+}
+
 // readItemIDs loads the compact read-marker keyspace once so an unread request
 // can scan through an all-read live window without a BatchGet for every page.
 func (s *Store) readItemIDs(ctx context.Context, userID string) (map[string]bool, error) {
@@ -828,6 +863,8 @@ func (s *Store) readItemIDs(ctx context.Context, userID string) (map[string]bool
 			KeyConditionExpression: aws.String("PK = :pk AND begins_with(SK, :prefix)"),
 			FilterExpression:       aws.String("#ttl > :now"),
 			ProjectionExpression:   aws.String("SK"),
+			// A Read just written on another API instance must be visible.
+			ConsistentRead: aws.Bool(true),
 			ExpressionAttributeNames: map[string]string{
 				"#ttl": "ttl",
 			},
@@ -2694,9 +2731,13 @@ func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.I
 	return nil
 }
 
-func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read bool) error {
+// SetRead marks ids read or unread and returns the user's new ReadVersion,
+// or 0 when nothing was written. The version moves only after the markers
+// commit, so a reader that sees it also sees them; it moves even when a later
+// chunk fails, because earlier chunks have committed.
+func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read bool) (version int64, err error) {
 	if len(ids) == 0 {
-		return nil
+		return 0, nil
 	}
 	unique := make([]string, 0, len(ids))
 	seen := make(map[string]bool, len(ids))
@@ -2710,7 +2751,7 @@ func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read b
 	// and the unread flag lives on the live row.
 	live, _, err := s.resolveLiveItemIDs(ctx, userID, unique, true, s.legacyReadFallback)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	pending := make([]string, 0, len(unique))
 	for _, id := range unique {
@@ -2718,14 +2759,26 @@ func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read b
 			pending = append(pending, id)
 		}
 	}
+	wrote := false
+	defer func() {
+		if !wrote {
+			return
+		}
+		bumped, bumpErr := s.bumpReadVersion(ctx, userID)
+		if err == nil {
+			version, err = bumped, bumpErr
+		}
+	}()
 	for len(pending) > 0 {
 		count := min(setReadTransactionItems, len(pending))
-		if err := s.setReadChunk(ctx, userID, pending[:count], live, read, time.Now().UTC()); err != nil {
-			return err
+		chunkWrote, chunkErr := s.setReadChunk(ctx, userID, pending[:count], live, read, time.Now().UTC())
+		wrote = wrote || chunkWrote
+		if chunkErr != nil {
+			return 0, chunkErr
 		}
 		pending = pending[count:]
 	}
-	return nil
+	return 0, nil
 }
 
 // setReadTransactionItems keeps each chunk's marker and live-row actions within
@@ -2736,7 +2789,7 @@ const setReadTransactionItems = 50
 // transaction, so concurrent read and unread requests cannot leave an unread
 // Item outside the unread index. Items whose live row disappears are dropped
 // from the live-row update and the chunk is retried; conflicts back off.
-func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, live map[string]domain.Item, read bool, now time.Time) error {
+func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, live map[string]domain.Item, read bool, now time.Time) (bool, error) {
 	pk := domain.UserPK(userID)
 	live = maps.Clone(live)
 	const maxConflicts = 5
@@ -2751,7 +2804,7 @@ func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, l
 				}
 				row, err := attributevalue.MarshalMap(domain.Read{PK: pk, SK: domain.ReadSK(id), ReadAt: domain.Timestamp(now), TTL: item.TTL})
 				if err != nil {
-					return err
+					return false, err
 				}
 				writes = append(writes,
 					types.TransactWriteItem{Put: &types.Put{TableName: aws.String(s.table), Item: row}},
@@ -2767,14 +2820,14 @@ func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, l
 			}
 		}
 		if len(writes) == 0 {
-			return nil
+			return false, nil
 		}
 		err := s.transact(ctx, writes)
 		var canceled *types.TransactionCanceledException
 		errors.As(err, &canceled)
 		switch {
 		case err == nil:
-			return nil
+			return true, nil
 		case canceledBecause(err, "ConditionalCheckFailed"):
 			for index, reason := range canceled.CancellationReasons {
 				if index < len(actionIDs) && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
@@ -2785,10 +2838,10 @@ func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, l
 			backoff := min(50*time.Millisecond<<conflicts, time.Second)
 			conflicts++
 			if sleepErr := s.sleep(ctx, time.Duration(rand.Int64N(int64(backoff)))); sleepErr != nil {
-				return sleepErr
+				return false, sleepErr
 			}
 		default:
-			return err
+			return false, err
 		}
 	}
 }

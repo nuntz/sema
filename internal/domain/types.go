@@ -394,6 +394,9 @@ const (
 	DestinationSK = "DESTINATION"
 	// SendQuotaSK holds the hourly Send count apart from the Destination.
 	SendQuotaSK = "SEND_QUOTA"
+	// ReadVersionSK counts a user's Read changes, so a cached copy of their
+	// Read markers can tell it is stale without reloading them.
+	ReadVersionSK = "READ_VERSION"
 )
 
 // Destination is where a user Sends Items. It lives in its own row so the

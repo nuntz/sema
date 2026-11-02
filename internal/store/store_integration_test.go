@@ -174,7 +174,7 @@ func TestDynamoAccessPatterns(t *testing.T) {
 			t.Fatalf("second unread page (%s) included excluded fields: %#v", order, second[0])
 		}
 	}
-	if err := repository.SetRead(ctx, "user", []string{"old"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"old"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.ResolveRead(ctx, "user", chrono, nil); err != nil || chrono[0].Read || !chrono[1].Read {
@@ -184,10 +184,10 @@ func TestDynamoAccessPatterns(t *testing.T) {
 	if err != nil || len(unread) != 1 || unread[0].ItemID != "new" || unread[0].Read {
 		t.Fatalf("unread items = %#v, %v", unread, err)
 	}
-	if err := repository.SetRead(ctx, "user", []string{"old"}, false); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"old"}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetRead(ctx, "user", []string{"new"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"new"}, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, order := range []domain.Order{domain.OrderChrono, domain.OrderInterest} {
@@ -638,7 +638,7 @@ func TestReadLegacyItemsAndIdentityBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	ids := []string{"legacy", "legacy", "expired", "deleted", "archive", "missing"}
-	if err := repository.SetRead(ctx, "reader", ids, true); err != nil {
+	if _, err := repository.SetRead(ctx, "reader", ids, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range ids {
@@ -660,7 +660,7 @@ func TestReadLegacyItemsAndIdentityBoundaries(t *testing.T) {
 			t.Fatalf("legacy Read TTL=%d want %d", read.TTL, expires)
 		}
 	}
-	if err := repository.SetRead(ctx, "reader", ids, false); err != nil {
+	if _, err := repository.SetRead(ctx, "reader", ids, false); err != nil {
 		t.Fatal(err)
 	}
 	markers, err := repository.LoadReadMarkers(ctx, "reader")

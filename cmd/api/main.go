@@ -845,20 +845,35 @@ func conditionalStories(result events.APIGatewayV2HTTPResponse, headers map[stri
 
 const readCacheTTL = time.Minute
 
+// cachedReadMarkers is one API instance's copy of a user's Read markers.
+// Other instances take Read changes too, so a hit also needs the user's
+// ReadVersion to match the version the copy was loaded at.
 type cachedReadMarkers struct {
-	loaded time.Time
-	ids    map[string]bool
+	loaded  time.Time
+	version int64
+	ids     map[string]bool
 }
 
 func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	now := time.Now()
+	// Read the version before any markers, so a copy is never newer-labelled
+	// than its contents.
+	version, err := s.store.ReadVersion(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	entry, ok := s.readCache[userID]
-	if ok && now.Sub(entry.loaded) < readCacheTTL {
+	switch {
+	case ok && now.Sub(entry.loaded) < readCacheTTL && entry.version == version:
 		annotateRequest(ctx, "ReadCache", "hit")
-	} else {
-		annotateRequest(ctx, "ReadCache", "miss")
+	default:
+		if ok && now.Sub(entry.loaded) < readCacheTTL {
+			annotateRequest(ctx, "ReadCache", "stale")
+		} else {
+			annotateRequest(ctx, "ReadCache", "miss")
+		}
 		ids, err := s.store.LoadReadMarkers(ctx, userID)
 		if err != nil {
 			delete(s.readCache, userID)
@@ -881,7 +896,7 @@ func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string
 			}
 			delete(s.readCache, oldest)
 		}
-		entry = cachedReadMarkers{now, ids}
+		entry = cachedReadMarkers{now, version, ids}
 		s.readCache[userID] = entry
 	}
 	// Copy under the lock so mutations cannot race with request readers.
@@ -895,11 +910,16 @@ func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string
 func (s *server) setRead(ctx context.Context, userID string, ids []string, read bool) error {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
-	if err := s.store.SetRead(ctx, userID, ids, read); err != nil {
+	version, err := s.store.SetRead(ctx, userID, ids, read)
+	if err != nil {
 		delete(s.readCache, userID)
 		return err
 	}
-	if entry, ok := s.readCache[userID]; ok {
+	entry, ok := s.readCache[userID]
+	switch {
+	case !ok || version == 0:
+	case version == entry.version+1:
+		// Only this write moved the version: patch the copy forward.
 		for _, id := range ids {
 			if read {
 				entry.ids[id] = true
@@ -907,6 +927,11 @@ func (s *server) setRead(ctx context.Context, userID string, ids []string, read 
 				delete(entry.ids, id)
 			}
 		}
+		entry.version = version
+		s.readCache[userID] = entry
+	default:
+		// Another instance wrote in between; this copy misses its changes.
+		delete(s.readCache, userID)
 	}
 	return nil
 }

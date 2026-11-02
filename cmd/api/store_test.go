@@ -35,6 +35,8 @@ type fakeAPIStore struct {
 	putContent      func(ctx context.Context, objectKey, contentType string, body []byte) error
 	contentURL      func(objectKey string) string
 	publicItem      func(item domain.Item) domain.Item
+	// readVersion moves with every successful setRead, like the store's.
+	readVersion int64
 }
 
 func (f *fakeAPIStore) EnsureUser(ctx context.Context, userID, email string) error {
@@ -130,11 +132,20 @@ func (f *fakeAPIStore) SetSignal(ctx context.Context, userID string, item domain
 func (f *fakeAPIStore) ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error {
 	return f.resolveRead(ctx, userID, items, snapshot)
 }
-func (f *fakeAPIStore) SetRead(ctx context.Context, userID string, ids []string, read bool) error {
-	if f.setRead == nil {
-		return nil
+func (f *fakeAPIStore) ReadVersion(context.Context, string) (int64, error) {
+	return f.readVersion, nil
+}
+func (f *fakeAPIStore) SetRead(ctx context.Context, userID string, ids []string, read bool) (int64, error) {
+	if f.setRead != nil {
+		if err := f.setRead(ctx, userID, ids, read); err != nil {
+			return 0, err
+		}
 	}
-	return f.setRead(ctx, userID, ids, read)
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	f.readVersion++
+	return f.readVersion, nil
 }
 func (f *fakeAPIStore) PutContent(ctx context.Context, objectKey, contentType string, body []byte) error {
 	return f.putContent(ctx, objectKey, contentType, body)

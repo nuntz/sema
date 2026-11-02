@@ -58,7 +58,7 @@ func TestSetReadSplitsTransactionsAtActionLimit(t *testing.T) {
 		sizes = append(sizes, len(input.TransactItems))
 		return &dynamodb.TransactWriteItemsOutput{}, nil
 	})
-	if err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", readIDs(120), true); err != nil {
+	if _, err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", readIDs(120), true); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(sizes) != "[100 100 40]" {
@@ -90,7 +90,7 @@ func TestSetReadDropsItemWhoseLiveRowVanished(t *testing.T) {
 		}
 		return &dynamodb.TransactWriteItemsOutput{}, nil
 	})
-	if err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", readIDs(3), true); err != nil {
+	if _, err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", readIDs(3), true); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 || fmt.Sprint(committed) != "[R#item-000 R#item-002]" {
@@ -117,7 +117,7 @@ func TestSetReadRetriesTransactionConflict(t *testing.T) {
 	})
 	repository := New(db, nil, "table", "", "")
 	repository.sleep = func(context.Context, time.Duration) error { return nil }
-	if err := repository.SetRead(context.Background(), "user", readIDs(2), false); err != nil {
+	if _, err := repository.SetRead(context.Background(), "user", readIDs(2), false); err != nil {
 		t.Fatal(err)
 	}
 	if attempts != 2 {
@@ -140,7 +140,74 @@ func TestSetReadReturnsNonConflictCancellation(t *testing.T) {
 		t.Fatal("backed off on a non-conflict cancellation")
 		return nil
 	}
-	if err := repository.SetRead(context.Background(), "user", readIDs(1), true); err == nil || attempts != 1 {
+	if _, err := repository.SetRead(context.Background(), "user", readIDs(1), true); err == nil || attempts != 1 {
 		t.Fatalf("attempts = %d, err = %v", attempts, err)
+	}
+}
+
+func TestSetReadBumpsReadVersionOnlyAfterCommit(t *testing.T) {
+	var events []string
+	failSecond := false
+	chunks := 0
+	db := liveReadFake(t, func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+		chunks++
+		if failSecond && chunks == 2 {
+			return nil, fmt.Errorf("throttled")
+		}
+		events = append(events, "commit")
+		return &dynamodb.TransactWriteItemsOutput{}, nil
+	})
+	version := int64(0)
+	db.updateItem = func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+		if sk := input.Key["SK"].(*types.AttributeValueMemberS).Value; sk != domain.ReadVersionSK {
+			t.Fatalf("updated %s", sk)
+		}
+		events = append(events, "bump")
+		version++
+		return &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{
+			"version": &types.AttributeValueMemberN{Value: fmt.Sprint(version)},
+		}}, nil
+	}
+	repository := New(db, nil, "table", "", "")
+	ctx := context.Background()
+
+	got, err := repository.SetRead(ctx, "user", readIDs(2), true)
+	if err != nil || got != 1 || fmt.Sprint(events) != "[commit bump]" {
+		t.Fatalf("version = %d, err = %v, events = %v", got, err, events)
+	}
+	if got, err := repository.SetRead(ctx, "user", nil, true); err != nil || got != 0 || version != 1 {
+		t.Fatalf("empty SetRead: version = %d, err = %v, bumps = %d", got, err, version)
+	}
+	// A failed later chunk still leaves earlier markers committed.
+	events, chunks, failSecond = nil, 0, true
+	if _, err := repository.SetRead(ctx, "user", readIDs(60), true); err == nil {
+		t.Fatal("want the chunk error")
+	}
+	if fmt.Sprint(events) != "[commit bump]" {
+		t.Fatalf("events = %v", events)
+	}
+}
+
+func TestReadStateLoadsAreStronglyConsistent(t *testing.T) {
+	db := &fakeDynamoDB{
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("ReadVersion read eventually consistent")
+			}
+			return &dynamodb.GetItemOutput{}, nil
+		},
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("LoadReadMarkers read eventually consistent")
+			}
+			return &dynamodb.QueryOutput{}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	if version, err := repository.ReadVersion(context.Background(), "user"); err != nil || version != 0 {
+		t.Fatalf("missing row: version = %d, err = %v", version, err)
+	}
+	if _, err := repository.LoadReadMarkers(context.Background(), "user"); err != nil {
+		t.Fatal(err)
 	}
 }

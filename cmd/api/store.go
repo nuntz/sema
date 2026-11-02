@@ -20,6 +20,7 @@ type apiStore interface {
 	FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error)
 	ItemsForFeeds(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error)
 	LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error)
+	ReadVersion(ctx context.Context, userID string) (int64, error)
 	Clusters(ctx context.Context, userID string) ([]domain.Cluster, error)
 	SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error)
 	ResolveItemIDs(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error)
@@ -32,7 +33,7 @@ type apiStore interface {
 	SignalValues(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
 	SetSignal(ctx context.Context, userID string, item domain.Item, value int) error
 	ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error
-	SetRead(ctx context.Context, userID string, ids []string, read bool) error
+	SetRead(ctx context.Context, userID string, ids []string, read bool) (int64, error)
 	PutContent(ctx context.Context, objectKey, contentType string, body []byte) error
 	ContentURL(objectKey string) string
 	PublicItem(item domain.Item) domain.Item

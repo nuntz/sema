@@ -46,10 +46,10 @@ func unreadInterestPage(t *testing.T, ctx context.Context, repository *Store, cu
 func TestReadStateWritersKeepUnreadIndexInStep(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.7, "c": 0.5, "d": 0.3, "e": 0.1})
-	if err := repository.SetRead(ctx, "user", []string{"a", "c", "d"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"a", "c", "d"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetRead(ctx, "user", []string{"c"}, false); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"c"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := repository.SetHeart(ctx, "user", "b", true); err != nil {
@@ -63,7 +63,7 @@ func TestReadStateWritersKeepUnreadIndexInStep(t *testing.T) {
 func TestUnreadInterestPageScansOnlyUnreadItems(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.7, "c": 0.5, "d": 0.3, "e": 0.1})
-	if err := repository.SetRead(ctx, "user", []string{"a", "c", "d"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"a", "c", "d"}, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -79,10 +79,10 @@ func TestUnreadInterestPageScansOnlyUnreadItems(t *testing.T) {
 func TestMarkUnreadRestoresItemAtItsScore(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.5, "c": 0.1})
-	if err := repository.SetRead(ctx, "user", []string{"a", "b"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"a", "b"}, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetRead(ctx, "user", []string{"b"}, false); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"b"}, false); err != nil {
 		t.Fatal(err)
 	}
 	if ids, _, _ := unreadInterestPage(t, ctx, repository, "", 20); len(ids) != 2 || ids[0] != "b" || ids[1] != "c" {
@@ -97,7 +97,7 @@ func TestMarkUnreadRestoresItemAtItsScore(t *testing.T) {
 func TestMarkUnreadDoesNotRecreateVanishedLiveRow(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	putUnreadTestItems(t, ctx, repository, map[string]float64{"gone": 0.5})
-	if err := repository.SetRead(ctx, "user", []string{"gone"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"gone"}, true); err != nil {
 		t.Fatal(err)
 	}
 	live, err := repository.LiveItems(ctx, "user")
@@ -109,7 +109,7 @@ func TestMarkUnreadDoesNotRecreateVanishedLiveRow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetRead(ctx, "user", []string{"gone"}, false); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"gone"}, false); err != nil {
 		t.Fatal(err)
 	}
 	row, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{
@@ -164,7 +164,7 @@ func TestUnreadInterestCursorSurvivesReadingItsItem(t *testing.T) {
 	if len(first) != 1 || first[0] != "a" || cursor == "" {
 		t.Fatalf("first = %v, cursor %q", first, cursor)
 	}
-	if err := repository.SetRead(ctx, "user", []string{"a"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"a"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if rest, next, _ := unreadInterestPage(t, ctx, repository, cursor, 20); len(rest) != 2 || rest[0] != "b" || rest[1] != "c" || next != "" {
@@ -197,7 +197,7 @@ func TestUnreadInterestResumesByScoreCursor(t *testing.T) {
 func TestReconcileUnreadMembershipRepairsPreDeployRows(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.5, "c": 0.1})
-	if err := repository.SetRead(ctx, "user", []string{"b"}, true); err != nil {
+	if _, err := repository.SetRead(ctx, "user", []string{"b"}, true); err != nil {
 		t.Fatal(err)
 	}
 	live, err := repository.LiveItems(ctx, "user")
@@ -268,5 +268,32 @@ func TestReconcileUnreadMembershipTreatsExpiredMarkerAsUnread(t *testing.T) {
 	}
 	if audit, err := repository.ReconcileUnreadMembership(ctx, "user", false); err != nil || audit != (UnreadMembership{Live: 1}) {
 		t.Fatalf("audit = %+v, %v", audit, err)
+	}
+}
+
+func TestReadVersionMovesWithEachReadChange(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	putUnreadTestItems(t, ctx, repository, map[string]float64{"a": 0.9, "b": 0.5})
+	if version, err := repository.ReadVersion(ctx, "user"); err != nil || version != 0 {
+		t.Fatalf("initial version = %d, %v", version, err)
+	}
+	for want, change := range []struct {
+		ids  []string
+		read bool
+	}{{[]string{"a", "b"}, true}, {[]string{"b"}, false}} {
+		version, err := repository.SetRead(ctx, "user", change.ids, change.read)
+		if err != nil || version != int64(want+1) {
+			t.Fatalf("SetRead %v = %d, %v; want %d", change.ids, version, err, want+1)
+		}
+		if stored, err := repository.ReadVersion(ctx, "user"); err != nil || stored != version {
+			t.Fatalf("ReadVersion = %d, %v; want %d", stored, err, version)
+		}
+	}
+	if version, err := repository.SetRead(ctx, "user", []string{"missing"}, true); err != nil || version != 0 {
+		t.Fatalf("no-op SetRead = %d, %v", version, err)
+	}
+	markers, err := repository.LoadReadMarkers(ctx, "user")
+	if err != nil || len(markers) != 1 || !markers["a"] {
+		t.Fatalf("markers = %v, %v", markers, err)
 	}
 }

@@ -2168,7 +2168,7 @@ func TestReadExpiresWithLiveItem(t *testing.T) {
 		}
 		return &dynamodb.TransactWriteItemsOutput{}, nil
 	}
-	if err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", []string{"live", "missing"}, true); err != nil {
+	if _, err := New(db, nil, "table", "", "").SetRead(context.Background(), "user", []string{"live", "missing"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if writes != 1 {
@@ -2214,7 +2214,7 @@ func TestReadLegacyLiveItemWithoutIdentity(t *testing.T) {
 	}
 	repository := New(db, nil, "table", "", "")
 	repository.legacyReadFallback = true
-	if err := repository.SetRead(context.Background(), "user", []string{"legacy", "legacy", "expired", "missing"}, true); err != nil {
+	if _, err := repository.SetRead(context.Background(), "user", []string{"legacy", "legacy", "expired", "missing"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if writes != 1 || queries != 1 {
@@ -2266,7 +2266,7 @@ func TestReadStaleIDsDoesNotQueryLivePartition(t *testing.T) {
 				ids = append(ids, "ttl-deleted")
 			}
 			for attempt := 0; attempt < 3; attempt++ {
-				if err := repository.SetRead(context.Background(), "user", ids, true); err != nil {
+				if _, err := repository.SetRead(context.Background(), "user", ids, true); err != nil {
 					t.Fatal(err)
 				}
 			}
