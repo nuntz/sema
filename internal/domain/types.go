@@ -400,6 +400,9 @@ const (
 	// FeedVersionSK counts a user's API Feed changes, so a cached copy of
 	// their Feeds can tell it is stale without reloading them.
 	FeedVersionSK = "FEED_VERSION"
+	// FeedbackVersionSK counts a user's Boost, Bury, Keep and Unkeep changes,
+	// so a cached copy of Items that shows them can tell it is stale.
+	FeedbackVersionSK = "FEEDBACK_VERSION"
 )
 
 // Destination is where a user Sends Items. It lives in its own row so the

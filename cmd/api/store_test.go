@@ -41,6 +41,9 @@ type fakeAPIStore struct {
 	// feedVersion moves with every SaveFeeds that wrote and every DeleteFeed.
 	feedVersion      int64
 	feedVersionReads int
+	// feedbackVersions move per user with every successful SetHeart and
+	// SetSignal, like the store's.
+	feedbackVersions map[string]int64
 }
 
 func (f *fakeAPIStore) EnsureUser(ctx context.Context, userID, email string) error {
@@ -139,7 +142,11 @@ func (f *fakeAPIStore) ArchiveItem(ctx context.Context, userID, itemID string) (
 	return f.archiveItem(ctx, userID, itemID)
 }
 func (f *fakeAPIStore) SetHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error) {
-	return f.setHeart(ctx, userID, itemID, hearted)
+	archiveSK, count, err := f.setHeart(ctx, userID, itemID, hearted)
+	if err == nil {
+		f.bumpFeedback(userID)
+	}
+	return archiveSK, count, err
 }
 func (f *fakeAPIStore) RecordBehaviour(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error {
 	return f.recordBehaviour(ctx, userID, item, event)
@@ -157,7 +164,20 @@ func (f *fakeAPIStore) SignalValues(ctx context.Context, userID string, itemIDs 
 	return f.signalValues(ctx, userID, itemIDs)
 }
 func (f *fakeAPIStore) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
-	return f.setSignal(ctx, userID, item, value)
+	if err := f.setSignal(ctx, userID, item, value); err != nil {
+		return err
+	}
+	f.bumpFeedback(userID)
+	return nil
+}
+func (f *fakeAPIStore) bumpFeedback(userID string) {
+	if f.feedbackVersions == nil {
+		f.feedbackVersions = map[string]int64{}
+	}
+	f.feedbackVersions[userID]++
+}
+func (f *fakeAPIStore) FeedbackVersion(_ context.Context, userID string) (int64, error) {
+	return f.feedbackVersions[userID], nil
 }
 func (f *fakeAPIStore) ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error {
 	return f.resolveRead(ctx, userID, items, snapshot)

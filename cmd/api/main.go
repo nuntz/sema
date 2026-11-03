@@ -741,16 +741,18 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("load ranking model", err)
 		}
 	}
+	var read *readSnapshot
 	var snapshot map[string]bool
 	if !includeRead {
-		snapshot, err = s.loadReadMarkers(ctx, userID)
+		loaded, err := s.readMarkers(ctx, userID)
 		if err != nil {
 			return s.failure("load read markers", err)
 		}
+		read, snapshot = &loaded, loaded.ids
 	}
 	var hidden map[string]bool
 	if excludeStories {
-		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window, snapshot)
+		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window, read)
 		if err != nil {
 			return s.failure("render stories for item filtering", err)
 		}
@@ -855,7 +857,20 @@ type cachedReadMarkers struct {
 	ids     map[string]bool
 }
 
+// readSnapshot is a request's copy of the user's Read markers and the
+// ReadVersion they were loaded at, so a cache built from them can be labelled
+// no newer than its contents.
+type readSnapshot struct {
+	ids     map[string]bool
+	version int64
+}
+
 func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
+	snapshot, err := s.readMarkers(ctx, userID)
+	return snapshot.ids, err
+}
+
+func (s *server) readMarkers(ctx context.Context, userID string) (readSnapshot, error) {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	now := time.Now()
@@ -863,7 +878,7 @@ func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string
 	// than its contents.
 	version, err := s.store.ReadVersion(ctx, userID)
 	if err != nil {
-		return nil, err
+		return readSnapshot{}, err
 	}
 	entry, ok := s.readCache[userID]
 	switch {
@@ -878,7 +893,7 @@ func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string
 		ids, err := s.store.LoadReadMarkers(ctx, userID)
 		if err != nil {
 			delete(s.readCache, userID)
-			return nil, err
+			return readSnapshot{}, err
 		}
 		if s.readCache == nil {
 			s.readCache = make(map[string]cachedReadMarkers)
@@ -905,7 +920,7 @@ func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string
 	for id, read := range entry.ids {
 		snapshot[id] = read
 	}
-	return snapshot, nil
+	return readSnapshot{snapshot, entry.version}, nil
 }
 
 func (s *server) setRead(ctx context.Context, userID string, ids []string, read bool) error {
@@ -952,21 +967,44 @@ type cachedStoryList struct {
 
 // Results are immutable after rendering. Include the model's public ranking
 // cutoffs as well as filters so a newly computed model cannot reuse old sizes.
-func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
+//
+// Stories render from read, or from a snapshot loaded here when read is nil,
+// and are keyed by its ReadVersion: every rendered Member shows its Read state.
+func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, read *readSnapshot) ([]storycluster.Rendered, map[string]bool, error) {
 	// Stories bake in Feed titles, favicons and Connectors, so a Feed edit on
 	// any instance must miss this cache.
 	feedVersion, err := s.feedVersion(ctx, userID)
 	if err != nil {
 		return nil, nil, err
 	}
+	// Rendered Items show the user's Boost, Bury and Keep, so feedback on any
+	// instance must miss this cache. Read the version before rendering, so a
+	// list is never newer-labelled than its contents.
+	feedbackVersion, err := s.store.FeedbackVersion(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// A Read on any instance must miss this cache too. Render from the
+	// strongly consistent snapshot rather than resolving Read rows directly,
+	// which can be older than its version.
+	if read == nil {
+		loaded, err := s.readMarkers(ctx, userID)
+		if err != nil {
+			return nil, nil, err
+		}
+		read = &loaded
+	}
+	snapshot, readVersion := read.ids, read.version
 	filters, err := json.Marshal(struct {
-		Allowed     map[string]bool
-		UnreadOnly  bool
-		Tag         string
-		Window      domain.FetchWindow
-		Model       domain.Model
-		FeedVersion int64
-	}{allowed, unreadOnly, tag, window, model, feedVersion})
+		Allowed         map[string]bool
+		UnreadOnly      bool
+		Tag             string
+		Window          domain.FetchWindow
+		Model           domain.Model
+		FeedVersion     int64
+		ReadVersion     int64
+		FeedbackVersion int64
+	}{allowed, unreadOnly, tag, window, model, feedVersion, readVersion, feedbackVersion})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1027,12 +1065,6 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 	ids := make([]string, 0)
 	for _, row := range rows {
 		ids = append(ids, row.MemberIDs...)
-	}
-	if unreadOnly && snapshot == nil {
-		snapshot, err = s.loadReadMarkers(ctx, userID)
-		if err != nil {
-			return nil, nil, err
-		}
 	}
 	items, err := s.store.ResolveItemIDs(ctx, userID, ids, snapshot)
 	if err != nil {

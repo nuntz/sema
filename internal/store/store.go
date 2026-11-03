@@ -883,6 +883,13 @@ func (s *Store) ReadVersion(ctx context.Context, userID string) (int64, error) {
 	return s.version(ctx, userID, domain.ReadVersionSK)
 }
 
+// FeedbackVersion returns how many SetSignal and SetHeart calls have changed
+// the user's feedback; 0 before the first. Read it before the Items it labels:
+// Items loaded after a version can only be newer than it, never older.
+func (s *Store) FeedbackVersion(ctx context.Context, userID string) (int64, error) {
+	return s.version(ctx, userID, domain.FeedbackVersionSK)
+}
+
 // version reads a per-user change counter strongly consistent; a missing row
 // reads as 0.
 func (s *Store) version(ctx context.Context, userID, sk string) (int64, error) {
@@ -1933,9 +1940,20 @@ func (s *Store) archiveItemBySK(ctx context.Context, userID, archiveSK string) (
 
 // SetHeart synchronously copies durable content and atomically changes the
 // archive row, live item pointer, profile count, and implied ranking signal.
+// Like SetSignal, it moves the user's FeedbackVersion once after any call
+// that attempted a write.
 func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error) {
+	var wrote bool
+	archiveSK, count, err := s.setHeart(ctx, userID, itemID, hearted, &wrote)
+	if !wrote {
+		return archiveSK, count, err
+	}
+	return archiveSK, count, s.bumpFeedbackVersion(ctx, userID, err)
+}
+
+func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted bool, wrote *bool) (string, int, error) {
 	if !hearted {
-		return s.removeHeart(ctx, userID, itemID)
+		return s.removeHeart(ctx, userID, itemID, wrote)
 	}
 	item, err := s.Item(ctx, userID, itemID)
 	if errors.Is(err, ErrNotFound) {
@@ -2061,7 +2079,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	}}, types.TransactWriteItem{Put: &types.Put{
 		TableName: aws.String(s.table), Item: heartSignal, ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
-	err = s.transact(ctx, withSignal)
+	err = s.feedbackTransact(ctx, wrote, withSignal)
 	signalChanged := err == nil
 	var oldSignal *domain.Signal
 	for attempt := 0; isTransactionCanceled(err) && attempt < 4; attempt++ {
@@ -2073,7 +2091,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 			return "", 0, readErr
 		}
 		if len(previous.Item) == 0 {
-			err = s.transact(ctx, withSignal)
+			err = s.feedbackTransact(ctx, wrote, withSignal)
 			signalChanged = err == nil
 			continue
 		}
@@ -2100,7 +2118,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 				ExpressionAttributeValues: map[string]types.AttributeValue{":zero": &types.AttributeValueMemberN{Value: "0"}},
 			}})
 		}
-		err = s.transact(ctx, retry)
+		err = s.feedbackTransact(ctx, wrote, retry)
 		if err == nil && !plan.Preserve {
 			oldSignal = &old
 			signalChanged = true
@@ -2125,7 +2143,7 @@ func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted boo
 	return archiveSK, count, err
 }
 
-func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string, int, error) {
+func (s *Store) removeHeart(ctx context.Context, userID, itemID string, wrote *bool) (string, int, error) {
 	item, itemErr := s.Item(ctx, userID, itemID)
 	if itemErr != nil && !errors.Is(itemErr, ErrNotFound) {
 		return "", 0, itemErr
@@ -2227,14 +2245,14 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string,
 			ConditionExpression:      aws.String(strings.Join(conditions, " AND ")),
 			ExpressionAttributeNames: names, ExpressionAttributeValues: values,
 		}})
-		err = s.transact(ctx, writes)
+		err = s.feedbackTransact(ctx, wrote, writes)
 		if isTransactionCanceled(err) {
 			// Only finish without a decrement if the signal was concurrently removed.
-			err = s.transact(ctx, stateWrites)
+			err = s.feedbackTransact(ctx, wrote, stateWrites)
 			signalDeleted = false
 		}
 	} else {
-		err = s.transact(ctx, stateWrites)
+		err = s.feedbackTransact(ctx, wrote, stateWrites)
 	}
 
 	if err != nil {
@@ -2592,12 +2610,38 @@ func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []strin
 	return result, nil
 }
 
+// SetSignal Boosts, Buries or clears the user's Signal on item, then moves
+// their FeedbackVersion once. A call that fails after attempting its write
+// may have written, so it moves the version too: a spare bump costs other
+// instances one reload, a missing one leaves their Stories showing old
+// feedback. A call rejected before writing doesn't move it.
 func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
 	plan, err := feedback.Apply(feedback.State{Kept: feedback.Kept(item)}, feedback.Signal, value)
 	if err != nil {
+		// Rejected before writing, so other instances have nothing to drop.
 		return err
 	}
-	value = plan.Value
+	return s.bumpFeedbackVersion(ctx, userID, s.setSignal(ctx, userID, item, plan))
+}
+
+// feedbackTransact runs a Keep or Unkeep transaction, first noting that the
+// call has attempted a write and so must move the FeedbackVersion.
+func (s *Store) feedbackTransact(ctx context.Context, wrote *bool, writes []types.TransactWriteItem) error {
+	*wrote = true
+	return s.transact(ctx, writes)
+}
+
+// bumpFeedbackVersion moves the user's FeedbackVersion after a feedback
+// write and returns err, or the bump's error when the write succeeded.
+func (s *Store) bumpFeedbackVersion(ctx context.Context, userID string, err error) error {
+	if _, bumpErr := s.bumpVersion(ctx, userID, domain.FeedbackVersionSK); err == nil {
+		err = bumpErr
+	}
+	return err
+}
+
+func (s *Store) setSignal(ctx context.Context, userID string, item domain.Item, plan feedback.Plan) error {
+	value := plan.Value
 	if plan.DeletesSignal() {
 		response, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.SignalSK(item.ItemID)), ReturnValues: types.ReturnValueAllOld,

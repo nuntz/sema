@@ -30,10 +30,13 @@ type apiStore interface {
 	Item(ctx context.Context, userID, itemID string) (domain.Item, error)
 	Archives(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error)
 	ArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error)
+	// SetHeart and SetSignal move the user's FeedbackVersion, so other API
+	// instances drop cached Stories that show the old Keep or Signal.
 	SetHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error)
 	RecordBehaviour(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error
 	Model(ctx context.Context, userID string) (domain.Model, error)
 	SignalValues(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
+	FeedbackVersion(ctx context.Context, userID string) (int64, error)
 	SetSignal(ctx context.Context, userID string, item domain.Item, value int) error
 	ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error
 	SetRead(ctx context.Context, userID string, ids []string, read bool) (int64, error)

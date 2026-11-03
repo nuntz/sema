@@ -1604,6 +1604,9 @@ func TestSetSignalMaintainsProfileCount(t *testing.T) {
 			return &dynamodb.DeleteItemOutput{Attributes: old}, nil
 		},
 		updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+			if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.FeedbackVersionSK {
+				return &dynamodb.UpdateItemOutput{}, nil
+			}
 			if aws.ToString(input.UpdateExpression) != "ADD signal_count :delta" {
 				t.Fatalf("count update = %#v", input)
 			}
@@ -1735,8 +1738,18 @@ func TestSetHeartCountsOnlyCreatedSignal(t *testing.T) {
 					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
 			}
+			bumps := 0
+			db.updateItem = func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.FeedbackVersionSK {
+					bumps++
+				}
+				return &dynamodb.UpdateItemOutput{}, nil
+			}
 			if _, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", true); err != nil {
 				t.Fatal(err)
+			}
+			if bumps != 1 {
+				t.Fatalf("FeedbackVersion bumps = %d, want 1", bumps)
 			}
 			var saved domain.Signal
 			if err := attributevalue.UnmarshalMap(storedSignal, &saved); err != nil {
@@ -1905,9 +1918,20 @@ func TestUnkeepRemovesAnySignal(t *testing.T) {
 					return &dynamodb.TransactWriteItemsOutput{}, nil
 				},
 			}
+			bumps := 0
+			db.updateItem = func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
+				if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.FeedbackVersionSK {
+					bumps++
+				}
+				return &dynamodb.UpdateItemOutput{}, nil
+			}
 			_, _, err := New(db, nil, "table", "", "").SetHeart(context.Background(), "user", "item", false)
 			if (err != nil) != (test.concurrent == "replaced") {
 				t.Fatalf("unkeep error = %v", err)
+			}
+			// A replaced Signal fails after attempting its write, so it bumps too.
+			if bumps != 1 {
+				t.Fatalf("FeedbackVersion bumps = %d, want 1", bumps)
 			}
 			if !test.missing && test.concurrent == "" {
 				if updatedModel == nil || updatedModel.ExplicitCount != 0 || updatedModel.LikedCount != 0 || updatedModel.FeedLikes["feed"] != 0 {
