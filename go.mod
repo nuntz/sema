@@ -2,7 +2,7 @@ module github.com/nuntz/sema
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/aws/aws-lambda-go v1.54.0

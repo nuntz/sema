@@ -2,6 +2,8 @@ module github.com/nuntz/sema/infra
 
 go 1.26.6
 
+toolchain go1.26.10
+
 require (
 	github.com/pulumi/pulumi-aws/sdk/v7 v7.43.0
 	github.com/pulumi/pulumi-tls/sdk/v5 v5.5.1
