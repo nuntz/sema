@@ -46,6 +46,11 @@ Makefile builds them with the `toolchain` version in `go.mod`, which CI installs
 your `PATH`. It downloads that version into the Go module cache under `/tmp` whenever it is
 missing, so the first build after a bump or a reboot needs the network.
 
+`infra/go.mod` repeats the root `toolchain` line, so the Pulumi program and the infra tests never
+build with an older Go than the Lambdas; unlike the Makefile, Go treats that line as a minimum, so
+a newer Go on your `PATH` still wins there. Nothing checks that the two lines agree: bump them
+together.
+
 To target another organization's copy of the stack, pass `PULUMI_ORG=<org>`; every Make target
 that reads stack outputs (`rescore`, `replay`, `redrive`, the backfills) uses the same stack.
 
