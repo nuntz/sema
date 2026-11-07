@@ -23,7 +23,7 @@ Stopping a Feed without removing it. A muted Feed is not fetched and its live It
 _Avoid_: Pause, disable, snooze, hide
 
 **Feed Status**:
-How a Feed is doing: ok, slowed after a fetch error, broken after repeated errors or after a day of being Refused, or muted. A Feed broken by refusals keeps being checked at its Cadence.
+How a Feed is doing: ok, slowed after a fetch error, broken after repeated errors or after a day of being Refused, or muted. A Feed broken by refusals keeps being retried on the Refused schedule: when the source says to come back, otherwise after its Cadence or six hours, whichever is sooner.
 _Avoid_: Health, state
 
 **Refused**:
