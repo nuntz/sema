@@ -66,9 +66,12 @@ loosened.
 
 Every rule of a policy must match, and policies only add access, so the policies other
 repositories keep on the shared issuer, each naming its own repository, can't issue Sema's token,
-and Sema's can't issue theirs. Leave them alone when editing Sema's. The wizard's last stage walks
-Sema's policies and reads them back to check them; to check by hand, open the organization's
-Settings → Access Management → OIDC Issuers → `github-actions`.
+and Sema's can't issue theirs. Leave them alone when editing Sema's. In a rule value, `*` and `?`
+are wildcards and `.` matches any one character, so `ci.yml` alone would also match `ciXyml`: the
+numeric `repository_id` and `repository_owner_id` rules are what pin the repository. They also let
+tooling that rewrites the issuer's policy list tell Sema's policies from its own and keep them.
+The wizard's last stage walks Sema's policies and reads them back to check them; to check by
+hand, open the organization's Settings → Access Management → OIDC Issuers → `github-actions`.
 
 Pulumi's free tier issues only personal OIDC tokens, so CI acts as that user, with all of its
 access: every organization and stack it belongs to, decrypting stack state, and ESC. The
