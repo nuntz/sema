@@ -28,11 +28,11 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("look up AWS account: %w", err)
 		}
-		// The account has one GitHub OIDC provider, owned by Stash's bootstrap
-		// stack; Sema only looks it up (ADR 0004).
+		// The account's GitHub OIDC provider is managed outside this stack;
+		// Sema only looks it up (ADR 0004).
 		provider, err := iam.LookupOpenIdConnectProvider(ctx, &iam.LookupOpenIdConnectProviderArgs{Url: pulumi.StringRef(deployaccess.GitHubOIDCURL)})
 		if err != nil {
-			return fmt.Errorf("look up the GitHub OIDC provider (Stash's bootstrap stack owns it): %w", err)
+			return fmt.Errorf("look up the externally managed GitHub OIDC provider: %w", err)
 		}
 		if !slices.Contains(provider.ClientIdLists, deployaccess.Audience) {
 			return fmt.Errorf("GitHub OIDC provider %s does not accept the %s audience", provider.Arn, deployaccess.Audience)

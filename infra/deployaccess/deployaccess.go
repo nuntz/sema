@@ -47,9 +47,9 @@ func TrustPolicy(providerARN, subjectPrefix string) Document {
 }
 
 // accountWideNamespaces are the services the main stack uses that the deploy
-// role manages without a resource fence. Sema shares the account with Stash,
-// and these grants reach Stash's resources too: the boundary, not a name
-// prefix, is what stops escalation (see ADR 0004).
+// role manages without a resource fence. These grants reach unrelated resources
+// in the account too: the boundary, not a name prefix, is what stops escalation
+// (see ADR 0004).
 var accountWideNamespaces = []string{
 	"acm", "apigateway", "cloudfront", "cloudwatch", "dynamodb", "events",
 	"logs", "s3", "s3vectors", "sns", "sqs",

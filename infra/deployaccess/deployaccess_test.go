@@ -36,7 +36,7 @@ func TestTrustPolicyAdmitsOnlyTheProductionEnvironment(t *testing.T) {
 		"other environment":    assumeWith(repo+":environment:staging", "sts.amazonaws.com"),
 		"name-only subject":    assumeWith("repo:nuntz/sema:environment:production", "sts.amazonaws.com"),
 		"recreated repository": assumeWith("repo:nuntz@261462/sema@999:environment:production", "sts.amazonaws.com"),
-		"other repository":     assumeWith("repo:nuntz@261462/stash@1342395676:environment:production", "sts.amazonaws.com"),
+		"other repository":     assumeWith("repo:nuntz@261462/other-app@999:environment:production", "sts.amazonaws.com"),
 		"fork lookalike":       assumeWith("repo:nuntz@261462/sema-fork@1342395675:environment:production", "sts.amazonaws.com"),
 		"wrong audience":       assumeWith(repo+":environment:production", "https://github.com/nuntz"),
 		"missing audience":     {Action: "sts:AssumeRoleWithWebIdentity", Principal: testProvider, Context: map[string]string{"token.actions.githubusercontent.com:sub": repo + ":environment:production"}},
@@ -72,7 +72,7 @@ func TestDeployRoleManagesOnlyBoundedSemaRoles(t *testing.T) {
 		if policy.Allows(Request{Action: action, Resource: semaRole, Context: map[string]string{"iam:PermissionsBoundary": "arn:aws:iam::aws:policy/AdministratorAccess"}}) {
 			t.Errorf("%s with another boundary is allowed", action)
 		}
-		for _, outside := range []string{"arn:aws:iam::123456789012:role/stash-api", "arn:aws:iam::123456789012:role/stash/api", "arn:aws:iam::123456789012:role/sema-admin"} {
+		for _, outside := range []string{"arn:aws:iam::123456789012:role/other-app-api", "arn:aws:iam::123456789012:role/other-app/api", "arn:aws:iam::123456789012:role/sema-admin"} {
 			if policy.Allows(Request{Action: action, Resource: outside, Context: bounded}) {
 				t.Errorf("%s is allowed on %s", action, outside)
 			}
@@ -82,7 +82,7 @@ func TestDeployRoleManagesOnlyBoundedSemaRoles(t *testing.T) {
 		if !policy.Allows(Request{Action: action, Resource: semaRole}) {
 			t.Errorf("%s is denied on a /sema/ role", action)
 		}
-		if policy.Allows(Request{Action: action, Resource: "arn:aws:iam::123456789012:role/stash-api"}) {
+		if policy.Allows(Request{Action: action, Resource: "arn:aws:iam::123456789012:role/other-app-api"}) {
 			t.Errorf("%s is allowed outside /sema/", action)
 		}
 	}
@@ -98,7 +98,7 @@ func TestDeployRoleManagesOnlyBoundedSemaRoles(t *testing.T) {
 	if policy.Allows(Request{Action: "iam:PassRole", Resource: semaRole, Context: map[string]string{"iam:PassedToService": "ec2.amazonaws.com"}}) {
 		t.Error("can pass a /sema/ role to EC2")
 	}
-	if policy.Allows(Request{Action: "iam:PassRole", Resource: "arn:aws:iam::123456789012:role/stash-api", Context: toLambda}) {
+	if policy.Allows(Request{Action: "iam:PassRole", Resource: "arn:aws:iam::123456789012:role/other-app-api", Context: toLambda}) {
 		t.Error("can pass a role outside /sema/")
 	}
 }
@@ -143,7 +143,7 @@ func TestDeployRoleChangesRecordsOnlyInSemasZone(t *testing.T) {
 		if !policy.Allows(Request{Action: action, Resource: zone}) {
 			t.Errorf("%s is denied in Sema's zone", action)
 		}
-		if policy.Allows(Request{Action: action, Resource: "arn:aws:route53:::hostedzone/ZSTASH"}) {
+		if policy.Allows(Request{Action: action, Resource: "arn:aws:route53:::hostedzone/ZOTHER"}) {
 			t.Errorf("%s is allowed in another zone", action)
 		}
 	}
@@ -169,7 +169,7 @@ func TestDeployRoleGrantsItsServiceNamespacesAccountWide(t *testing.T) {
 		if namespace == "iam" || namespace == "route53" || namespace == "lambda" {
 			continue
 		}
-		resource := "arn:aws:" + namespace + ":us-east-1:123456789012:stash-thing"
+		resource := "arn:aws:" + namespace + ":us-east-1:123456789012:other-app-thing"
 		if !policy.Allows(Request{Action: namespace + ":DeleteAnything", Resource: resource}) {
 			t.Errorf("%s is not granted account-wide", namespace)
 		}
@@ -206,7 +206,7 @@ func TestBoundaryWorksOnlyInsideSemaFunctions(t *testing.T) {
 	boundary := BoundaryPolicy(testAccount)
 	for name, context := range map[string]map[string]string{
 		"an assumed session":      nil,
-		"another app's function":  fromFunction("arn:aws:lambda:us-east-1:123456789012:function:stash-prod-api"),
+		"another app's function":  fromFunction("arn:aws:lambda:us-east-1:123456789012:function:other-app-prod-api"),
 		"another account's sema-": fromFunction("arn:aws:lambda:us-east-1:999999999999:function:sema-prod-api"),
 	} {
 		for _, action := range []string{"dynamodb:GetItem", "s3:GetObject", "s3vectors:QueryVectors", "bedrock:InvokeModel", "sqs:SendMessage", "lambda:InvokeFunction"} {
@@ -227,12 +227,12 @@ func TestBoundaryWorksOnlyInsideSemaFunctions(t *testing.T) {
 func TestDeployRoleManagesOnlySemaFunctions(t *testing.T) {
 	policy := DeployPolicy(testAccount, testZone)
 	sema := "arn:aws:lambda:us-east-1:123456789012:function:sema-prod-api"
-	stash := "arn:aws:lambda:us-east-1:123456789012:function:stash-prod-api"
+	otherApp := "arn:aws:lambda:us-east-1:123456789012:function:other-app-prod-api"
 	for _, action := range []string{"lambda:CreateFunction", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration", "lambda:AddPermission", "lambda:GetFunction", "lambda:DeleteFunction"} {
 		if !policy.Allows(Request{Action: action, Resource: sema}) {
 			t.Errorf("%s is denied on a sema- function", action)
 		}
-		if policy.Allows(Request{Action: action, Resource: stash}) {
+		if policy.Allows(Request{Action: action, Resource: otherApp}) {
 			t.Errorf("%s is allowed on another app's function", action)
 		}
 	}
@@ -244,7 +244,7 @@ func TestDeployRoleManagesOnlySemaFunctions(t *testing.T) {
 		if !policy.Allows(Request{Action: action, Resource: mapping, Context: map[string]string{"lambda:FunctionArn": sema}}) {
 			t.Errorf("%s is denied for a sema- function", action)
 		}
-		if policy.Allows(Request{Action: action, Resource: mapping, Context: map[string]string{"lambda:FunctionArn": stash}}) {
+		if policy.Allows(Request{Action: action, Resource: mapping, Context: map[string]string{"lambda:FunctionArn": otherApp}}) {
 			t.Errorf("%s is allowed for another app's function", action)
 		}
 	}
