@@ -150,10 +150,9 @@ Re-apply it before pushing a change that uses a new AWS service or gives a Lambd
 allows the action in the boundary, and CI can't deploy that change until the bootstrap stack is
 applied.
 
-The account has one GitHub OIDC provider, and Stash's bootstrap stack (`untz/stash-bootstrap/prod`)
-owns it; Sema's only looks it up. **Destroying Stash's bootstrap stack, or removing the provider
-from it, breaks Sema's CI deploys** until the provider exists again. Never create a second provider
-for Sema: the account allows only one per issuer URL.
+The account's GitHub OIDC provider is managed outside Sema's bootstrap stack, which only looks
+it up. **Removing the existing provider breaks Sema's CI deploys** until the provider exists
+again. Never create a second provider for Sema: the account allows only one per issuer URL.
 
 ## Operations
 
