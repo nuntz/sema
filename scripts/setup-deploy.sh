@@ -591,8 +591,8 @@ else
 fi
 say "CI signs in to Pulumi Cloud and to AWS through GitHub OIDC: GitHub stores no token or key."
 # The free tier issues only personal OIDC tokens, so CI acts as this user, with all of its access.
-PULUMI_OIDC_USER="$(pulumi whoami)"
-warn "CI's token is $PULUMI_OIDC_USER's: it reaches every org, stack and ESC environment you can."
+PULUMI_CI_USER="$(pulumi whoami)"
+warn "CI's token is $PULUMI_CI_USER's: it reaches every org, stack and ESC environment you can."
 github_issuer="https://token.actions.githubusercontent.com"
 read -r repo_id owner_id < <(gh api "repos/$GITHUB_REPOSITORY_NAME" -q '"\(.id) \(.owner.id)"')
 [[ -n "${owner_id:-}" ]] || { warn "Couldn't read $GITHUB_REPOSITORY_NAME's IDs from GitHub."; exit 1; }
@@ -630,7 +630,7 @@ oidc_policies_ok() {
   push="$(oidc_rules push)"
   dispatch="$(oidc_rules workflow_dispatch)"
   for event in push workflow_dispatch; do
-    jq -e --arg user "$PULUMI_OIDC_USER" --argjson rules "$(oidc_rules "$event")" '
+    jq -e --arg user "$PULUMI_CI_USER" --argjson rules "$(oidc_rules "$event")" '
       any(.policies[]; .decision == "allow" and .tokenType == "personal" and .userLogin == $user and .rules == $rules)' \
       <<<"$policies" >/dev/null || { warn "No Allow policy matches the $event rules exactly."; ok=1; }
   done
@@ -648,7 +648,7 @@ step "Settings → Access Management → OIDC Issuers. If $github_issuer isn't l
 step "issuer: name it 'github-actions', with that URL and a max expiration of 1 hour → Submit."
 note "Other repositories may share the issuer and have their own policies: leave those alone."
 step "Open the issuer → add two policies, each Decision Allow, Token type Personal, User"
-step "$PULUMI_OIDC_USER, one with event_name push and one with workflow_dispatch, and these rules:"
+step "$PULUMI_CI_USER, one with event_name push and one with workflow_dispatch, and these rules:"
 while IFS= read -r line; do note "$line"; done < <(
   jq -r '.event_name = "push (or workflow_dispatch)" | to_entries[] | "  \(.key) = \(.value)"' <<<"$(oidc_rules push)")
 warn "Exactly these values: no '*' wildcard, and no repo:<owner>/<name>:... subject."
@@ -659,7 +659,7 @@ until oidc_policies_ok; do
     break
   fi
 done
-write_env PULUMI_OIDC_USER "$PULUMI_OIDC_USER"
+write_env PULUMI_CI_USER "$PULUMI_CI_USER"
 if [[ -n "$(_existing PULUMI_ACCESS_TOKEN || true)" ]] ||
   gh secret list --repo "$GITHUB_REPOSITORY_NAME" --json name -q '.[].name' | grep -qx PULUMI_ACCESS_TOKEN; then
   note "The old PULUMI_ACCESS_TOKEN (secret or saved copy) is now unused, but keep it until a CI"
@@ -670,7 +670,7 @@ note "the environment. Setting PULUMI_STACK is what turns CI deploys on."
 AWS_DEPLOY_ROLE_ARN="${AWS_DEPLOY_ROLE_ARN:-$(_existing AWS_DEPLOY_ROLE_ARN || true)}"
 [[ -n "$AWS_DEPLOY_ROLE_ARN" ]] || { warn "No AWS_DEPLOY_ROLE_ARN: re-run the bootstrap stage first."; exit 1; }
 set_var AWS_DEPLOY_ROLE_ARN "$AWS_DEPLOY_ROLE_ARN"
-set_var PULUMI_OIDC_USER "$PULUMI_OIDC_USER"
+set_var PULUMI_CI_USER "$PULUMI_CI_USER"
 set_var PULUMI_ESC_ENVIRONMENT "$ESC_ENV"
 set_var PULUMI_STACK "$PROD_STACK"
 not_started="the first CI deploy: push to master, or gh workflow run ci.yml --ref master"

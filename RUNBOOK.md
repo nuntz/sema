@@ -20,7 +20,7 @@ through GitHub OIDC too, so no Pulumi token is stored in GitHub either: see
 [Pulumi Cloud sign-in](#pulumi-cloud-sign-in).
 
 The job reads no secret, only four repository variables: `PULUMI_STACK` (`untz/sema/prod`),
-`PULUMI_ESC_ENVIRONMENT` (`sema/prod`), `PULUMI_OIDC_USER` (the Pulumi user CI signs in as) and
+`PULUMI_ESC_ENVIRONMENT` (`sema/prod`), `PULUMI_CI_USER` (the Pulumi user CI signs in as) and
 `AWS_DEPLOY_ROLE_ARN` (the bootstrap stack's `deployRoleArn` output). They are repository
 variables, not `production` environment ones, because the job decides whether to run from
 `PULUMI_STACK` before it enters the environment: an environment variable would always skip it.
@@ -35,14 +35,14 @@ grant it in `infra/deployaccess`, apply the bootstrap stack by hand, then re-run
 
 Before its first Pulumi command, the deploy job runs `pulumi/auth-actions`, pinned to a reviewed
 commit. It exchanges the job's GitHub OIDC token for a one-hour personal access token of
-`PULUMI_OIDC_USER` and exports it, masked, as `PULUMI_ACCESS_TOKEN`. The next step checks that
+`PULUMI_CI_USER` and exports it, masked, as `PULUMI_ACCESS_TOKEN`. The next step checks that
 `pulumi whoami` is that user. Neither the GitHub token nor the Pulumi token is printed. A deploy
 takes minutes, so the token outlives the job only by the rest of its hour.
 
 The Pulumi organization (`untz`) trusts the issuer `https://token.actions.githubusercontent.com`
 once, for every repository that deploys this way, with a max expiration of one hour. Sema has two
 Allow policies of its own on it, one per deploy event: `push`, and `workflow_dispatch` for
-[rollbacks](#rollback). Each issues a Personal token of `PULUMI_OIDC_USER` and matches these
+[rollbacks](#rollback). Each issues a Personal token of `PULUMI_CI_USER` and matches these
 claims exactly:
 
 | Claim | Value |
@@ -86,7 +86,7 @@ policies with the table above, fix them and re-run.
 
 The switch from the old `PULUMI_ACCESS_TOKEN` repository secret runs in this order:
 
-1. Add the two policies above and set the `PULUMI_OIDC_USER` variable (the wizard's last
+1. Add the two policies above and set the `PULUMI_CI_USER` variable (the wizard's last
    stage does both) before the OIDC workflow reaches `master`; without the variable, the deploy
    fails at its first Pulumi step. The merge's own deploy is the validation.
 2. Until a deploy through OIDC has succeeded, the rollback is to revert the workflow commit: the

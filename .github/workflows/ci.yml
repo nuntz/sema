@@ -118,15 +118,15 @@ jobs:
 
       # Pulumi Cloud trusts this job's OIDC claims (this repository by ID, the `production`
       # environment, master, this workflow, a push or dispatch) and exchanges them for a one-hour
-      # personal token of PULUMI_OIDC_USER, exported masked as PULUMI_ACCESS_TOKEN (RUNBOOK.md →
+      # personal token of PULUMI_CI_USER, exported masked as PULUMI_ACCESS_TOKEN (RUNBOOK.md →
       # Pulumi Cloud sign-in).
       - name: Find the Pulumi organization
         id: pulumi-identity
         env:
           PULUMI_STACK: ${{ vars.PULUMI_STACK }}
-          PULUMI_OIDC_USER: ${{ vars.PULUMI_OIDC_USER }}
+          PULUMI_CI_USER: ${{ vars.PULUMI_CI_USER }}
         run: |
-          : "${PULUMI_OIDC_USER:?Set the PULUMI_OIDC_USER repository variable (RUNBOOK.md → Pulumi Cloud sign-in)}"
+          : "${PULUMI_CI_USER:?Set the PULUMI_CI_USER repository variable (RUNBOOK.md → Pulumi Cloud sign-in)}"
           echo "organization=${PULUMI_STACK%%/*}" >> "$GITHUB_OUTPUT"
 
       # v2.1.1; review the bundled dist/index.js before moving the pin.
@@ -134,17 +134,17 @@ jobs:
         with:
           organization: ${{ steps.pulumi-identity.outputs.organization }}
           requested-token-type: urn:pulumi:token-type:access_token:personal
-          scope: user:${{ vars.PULUMI_OIDC_USER }}
+          scope: user:${{ vars.PULUMI_CI_USER }}
           token-expiration: 3600
 
       # Fails fast, before AWS credentials, if the trust policy issued a token for anyone else.
       - name: Check the Pulumi identity
         env:
-          PULUMI_OIDC_USER: ${{ vars.PULUMI_OIDC_USER }}
+          PULUMI_CI_USER: ${{ vars.PULUMI_CI_USER }}
         run: |
           user="$(pulumi whoami)"
           echo "Signed in to Pulumi Cloud as $user"
-          [[ "$user" == "$PULUMI_OIDC_USER" ]] || { echo "::error::Expected $PULUMI_OIDC_USER" >&2; exit 1; }
+          [[ "$user" == "$PULUMI_CI_USER" ]] || { echo "::error::Expected $PULUMI_CI_USER" >&2; exit 1; }
 
       # infra/Pulumi.prod.yaml already imports the environment; `config env add` would import it a
       # second time, so it only runs for a stack file that lacks it.
