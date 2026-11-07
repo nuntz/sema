@@ -32,7 +32,7 @@ func main() {
 		// Sema only looks it up (ADR 0004).
 		provider, err := iam.LookupOpenIdConnectProvider(ctx, &iam.LookupOpenIdConnectProviderArgs{Url: pulumi.StringRef(deployaccess.GitHubOIDCURL)})
 		if err != nil {
-			return fmt.Errorf("look up the externally managed GitHub OIDC provider: %w", err)
+			return fmt.Errorf("look up the GitHub OIDC provider (create or restore it in the stack that manages the account's shared IAM, not here; ADR 0004): %w", err)
 		}
 		if !slices.Contains(provider.ClientIdLists, deployaccess.Audience) {
 			return fmt.Errorf("GitHub OIDC provider %s does not accept the %s audience", provider.Arn, deployaccess.Audience)
