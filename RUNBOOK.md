@@ -15,18 +15,71 @@ The job runs in the `production` GitHub environment, which GitHub limits to `mas
 `id-token: write`, in one `deploy` concurrency group that never cancels a run in progress. It
 reaches AWS through GitHub OIDC as `sema-github-deploy`, so no AWS key is stored in GitHub; the
 role and its fence are the [bootstrap stack](#bootstrap-stack)'s, and
-`docs/adr/0004-ci-deploys-through-github-oidc.md` records the trust model.
+`docs/adr/0004-ci-deploys-through-github-oidc.md` records the trust model. It reaches Pulumi Cloud
+through GitHub OIDC too, so no Pulumi token is stored in GitHub either: see
+[Pulumi Cloud sign-in](#pulumi-cloud-sign-in).
 
-GitHub holds the `PULUMI_ACCESS_TOKEN` repository secret and three repository variables:
-`PULUMI_STACK` (`untz/sema/prod`), `PULUMI_ESC_ENVIRONMENT` (`sema/prod`) and `AWS_DEPLOY_ROLE_ARN`
-(the bootstrap stack's `deployRoleArn` output). They are repository variables, not `production`
-environment ones, because the job decides whether to run from `PULUMI_STACK` before it enters the
-environment: an environment variable would always skip it. Until `PULUMI_STACK` is set, and on
-forks, the job is skipped without failing. The last stage of `bash scripts/setup-deploy.sh` creates
-the environment and sets the secret and variables.
+The job reads no secret, only four repository variables: `PULUMI_STACK` (`untz/sema/prod`),
+`PULUMI_ESC_ENVIRONMENT` (`sema/prod`), `PULUMI_OIDC_USER` (the Pulumi user CI signs in as) and
+`AWS_DEPLOY_ROLE_ARN` (the bootstrap stack's `deployRoleArn` output). They are repository
+variables, not `production` environment ones, because the job decides whether to run from
+`PULUMI_STACK` before it enters the environment: an environment variable would always skip it.
+Until `PULUMI_STACK` is set, and on forks, the job is skipped without failing. The last stage of
+`bash scripts/setup-deploy.sh` creates the environment, walks the Pulumi Cloud trust policy and
+sets the variables.
 
 When a deploy fails with `AccessDenied`, the message names the IAM action the deploy role lacks:
 grant it in `infra/deployaccess`, apply the bootstrap stack by hand, then re-run the workflow.
+
+### Pulumi Cloud sign-in
+
+Before its first Pulumi command, the deploy job runs `pulumi/auth-actions`, pinned to a reviewed
+commit. It exchanges the job's GitHub OIDC token for a one-hour personal access token of
+`PULUMI_OIDC_USER` and exports it, masked, as `PULUMI_ACCESS_TOKEN`. The next step checks that
+`pulumi whoami` is that user. Neither the GitHub token nor the Pulumi token is printed. A deploy
+takes minutes, so the token outlives the job only by the rest of its hour.
+
+The Pulumi organization (`untz`) trusts the issuer `https://token.actions.githubusercontent.com`,
+with a max expiration of one hour, and one Allow policy, for a Personal token of `PULUMI_OIDC_USER`, and two exact rules:
+
+- `aud` is `urn:pulumi:org:untz`;
+- `sub` is `repo:nuntz@261462/sema@1342395675:environment:production`, the immutable subject the
+  AWS role trusts too (`sema:githubSubjectPrefix` plus the environment).
+
+There is no wildcard, no `repo:nuntz/sema:…` rule, and no other Allow policy. Only the `production`
+environment produces that subject, and GitHub lets only `master` enter it, so pull requests, other
+branches, forks and a recreated repository of the same name can't get a Pulumi token. The wizard's
+last stage walks this policy. To check it by hand, open the organization's Settings → Access
+Management → OIDC Issuers.
+
+Pulumi's free tier issues only personal OIDC tokens, so CI acts as that user, with all of its
+access: every organization and stack it belongs to, decrypting stack state, and ESC. The
+repository's name doesn't narrow that. What OIDC removes is a long-lived token stored in GitHub: a
+compromised action in the deploy job only gets a token that lasts the hour.
+
+To validate a change to the trust, push to `master` (or run the workflow on it) and read the deploy
+log: the auth step says `OIDC token exchange performed successfully.`, the identity check prints
+the expected user, and the stack and its ESC environment resolve. A failed exchange reports
+`Invalid response from token exchange`, and most often means the policy's `aud` or `sub` doesn't
+match: fix the policy and re-run.
+
+The switch from the old `PULUMI_ACCESS_TOKEN` repository secret runs in this order:
+
+1. Configure the trust policy above and set the `PULUMI_OIDC_USER` variable (the wizard's last
+   stage does both) before the OIDC workflow reaches `master`; without the variable, the deploy
+   fails at its first Pulumi step. The merge's own deploy is the validation.
+2. Until a deploy through OIDC has succeeded, the rollback is to revert the workflow commit: the
+   secret still works, so the next push deploys as before.
+3. Check that no other workflow or tool uses the secret or the `sema-ci` token:
+   `gh secret list`, and the token's last use under Pulumi Cloud → Personal access tokens.
+4. Delete the secret (`gh secret delete PULUMI_ACCESS_TOKEN`) and revoke `sema-ci`.
+5. Remove the saved copy: delete the `PULUMI_ACCESS_TOKEN=` line from
+   `~/.config/sema/deploy.env`.
+
+After that, the rollback for a broken trust is to fix the policy; a new personal access token set
+as the secret would only work with the workflow reverted as well.
+
+Signing in locally (`pulumi login`, for [deploys by hand](#deploy-by-hand)) is unchanged.
 
 ## Deploy by hand
 

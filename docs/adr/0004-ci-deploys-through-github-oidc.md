@@ -12,3 +12,4 @@ Every green push to `master` deploys `untz/sema/prod` from GitHub Actions. The j
 - Removing the existing GitHub OIDC provider breaks Sema's CI deploys until the provider exists again.
 - The bootstrap stack (`infra/bootstrap`) owns the role and the boundary and is applied only by hand with a personal AWS session. A change that needs a new AWS action fails the `deployaccess` test until the policy grants it, and CI cannot deploy it until the bootstrap stack is applied.
 - Moving the Lambda roles under `/sema/` replaces them; that one `pulumi up` runs locally, because CI's role cannot manage roles outside the path.
+- CI reaches Pulumi Cloud through GitHub OIDC as well, trusting the same `production` environment subject, so GitHub stores no Pulumi token either. Pulumi's free tier issues only personal OIDC tokens, so the job's one-hour token carries all of `PULUMI_OIDC_USER`'s Pulumi access, not just this stack's (RUNBOOK.md → Pulumi Cloud sign-in).
