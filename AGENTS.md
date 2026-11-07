@@ -16,7 +16,7 @@ Send is a public webhook contract: within `version: 1` only add optional fields,
 
 - `make check` is CI's test job (lint, format, vet, unit tests, web build, reproducible Lambda ZIPs); run it before every commit, plus `make e2e` when `web/` changed. `make test` runs only the unit tests.
 - `make build` creates arm64 Lambda ZIPs and the production SPA.
-- `cd web && bun run dev` starts Vite; `/api` proxies to `localhost:8787`.
+- `cd web && bun run dev` starts Vite and proxies `/api` to `SEMA_API_ORIGIN`, such as a deployed stack's `cloudfrontUrl`. No local API server exists (`cmd/api` runs only as a Lambda), and only `/api` is proxied, so stored bodies and images don't load.
 - `cd web && bun run lint` checks TypeScript with Biome; `bun run format` formats it.
 - `make e2e` is CI's e2e job (Playwright, minus `@local` specs; `make e2e-all` includes them), after `cd web && bunx playwright install chromium`.
 - `make preview` previews Pulumi changes. Reserve `make deploy` for intentional AWS deployments.

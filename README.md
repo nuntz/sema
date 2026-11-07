@@ -165,7 +165,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local`. Vite proxies `/api` to `SEMA_API_ORIGIN`, or to `http://localhost:8787` when that is unset. The API runs only as a Lambda, so nothing in this repository listens on that port. See [AGENTS.md](AGENTS.md) for linting, formatting, test, and contribution guidance.
+Set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local`. Vite proxies `/api` to `SEMA_API_ORIGIN`, or to `http://localhost:8787` when that is unset. The API runs only as a Lambda, so nothing in this repository listens on that port; point `SEMA_API_ORIGIN` at a deployed stack's `cloudfrontUrl` instead. Only `/api` is proxied, so stored bodies and images under `/bodies/` and `/media/` don't load in development. See [AGENTS.md](AGENTS.md) for linting, formatting, test, and contribution guidance.
 
 ## Deploy
 
