@@ -506,8 +506,8 @@ oidc_provider="arn:aws:iam::$(aws sts get-caller-identity --query Account --outp
 if aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$oidc_provider" >/dev/null 2>&1; then
   note "GitHub OIDC provider: $oidc_provider (managed outside this stack; Sema only looks it up)."
 else
-  warn "The account has no GitHub OIDC provider. Restore it through its owning infrastructure"
-  warn "first (Sema must not create a second one), then re-run."
+  warn "The account has no GitHub OIDC provider. Create or restore it in the stack that manages"
+  warn "the account's shared IAM, not in Sema (an account holds only one), then re-run."
   exit 1
 fi
 zone="$(pulumi env get "$PULUMI_ORG/$ESC_ENV" 'pulumiConfig["sema:route53ZoneId"]' --value string 2>/dev/null || true)"
@@ -525,8 +525,8 @@ else
   (cd infra/bootstrap && pulumi up --stack "$BOOTSTRAP_STACK")
 fi
 write_env AWS_DEPLOY_ROLE_ARN "$(cd infra/bootstrap && pulumi stack output deployRoleArn --stack "$BOOTSTRAP_STACK")"
-step "The infrastructure owning the GitHub OIDC provider should still show no changes:"
-note "  preview its owning stack and verify the provider was only read, not changed."
+step "The stack owning the GitHub OIDC provider should still show no changes, as Sema only read it:"
+note "  in that stack's checkout, run: pulumi preview --stack <owning stack> --expect-no-changes"
 pause
 
 # ── 8 ─────────────────────────────────────────────────────────────────────
