@@ -25,7 +25,7 @@ The job reads no secret, only four repository variables: `PULUMI_STACK` (`untz/s
 variables, not `production` environment ones, because the job decides whether to run from
 `PULUMI_STACK` before it enters the environment: an environment variable would always skip it.
 Until `PULUMI_STACK` is set, and on forks, the job is skipped without failing. The last stage of
-`bash scripts/setup-deploy.sh` creates the environment, walks the Pulumi Cloud trust policy and
+`bash scripts/setup-deploy.sh` creates the environment, walks the Pulumi Cloud trust policies and
 sets the variables.
 
 When a deploy fails with `AccessDenied`, the message names the IAM action the deploy role lacks:
@@ -39,18 +39,36 @@ commit. It exchanges the job's GitHub OIDC token for a one-hour personal access 
 `pulumi whoami` is that user. Neither the GitHub token nor the Pulumi token is printed. A deploy
 takes minutes, so the token outlives the job only by the rest of its hour.
 
-The Pulumi organization (`untz`) trusts the issuer `https://token.actions.githubusercontent.com`,
-with a max expiration of one hour, and one Allow policy, for a Personal token of `PULUMI_OIDC_USER`, and two exact rules:
+The Pulumi organization (`untz`) trusts the issuer `https://token.actions.githubusercontent.com`
+once, for every repository that deploys this way, with a max expiration of one hour. Sema has two
+Allow policies of its own on it, one per deploy event: `push`, and `workflow_dispatch` for
+[rollbacks](#rollback). Each issues a Personal token of `PULUMI_OIDC_USER` and matches these
+claims exactly:
 
-- `aud` is `urn:pulumi:org:untz`;
-- `sub` is `repo:nuntz@261462/sema@1342395675:environment:production`, the immutable subject the
-  AWS role trusts too (`sema:githubSubjectPrefix` plus the environment).
+| Claim | Value |
+|---|---|
+| `aud` | `urn:pulumi:org:untz` |
+| `sub` | `repo:nuntz@261462/sema@1342395675:environment:production` |
+| `environment` | `production` |
+| `event_name` | `push`, or `workflow_dispatch` |
+| `ref`, `ref_type` | `refs/heads/master`, `branch` |
+| `repository`, `repository_id`, `repository_owner_id` | `nuntz/sema`, `1342395675`, `261462` |
+| `workflow_ref`, `job_workflow_ref` | `nuntz/sema/.github/workflows/ci.yml@refs/heads/master` |
+| `runner_environment` | `github-hosted` |
 
-There is no wildcard, no `repo:nuntz/sema:…` rule, and no other Allow policy. Only the `production`
-environment produces that subject, and GitHub lets only `master` enter it, so pull requests, other
-branches, forks and a recreated repository of the same name can't get a Pulumi token. The wizard's
-last stage walks this policy. To check it by hand, open the organization's Settings → Access
-Management → OIDC Issuers.
+The `sub` is the immutable subject the AWS role trusts too (`sema:githubSubjectPrefix` plus the
+environment). There is no wildcard and no `repo:nuntz/sema:…` subject. A token therefore needs this
+repository by ID, the `production` environment, `master`, this workflow file, a GitHub-hosted
+runner and a push or dispatch: pull requests, other branches and workflows, forks and a recreated
+repository of the same name can't get one. The `environment` and `ref` rules overlap on purpose:
+GitHub's branch policy on `production` and Pulumi's `ref` rule each still hold if the other is
+loosened.
+
+Every rule of a policy must match, and policies only add access, so the policies other
+repositories keep on the shared issuer, each naming its own repository, can't issue Sema's token,
+and Sema's can't issue theirs. Leave them alone when editing Sema's. The wizard's last stage walks
+Sema's policies and reads them back to check them; to check by hand, open the organization's
+Settings → Access Management → OIDC Issuers → `github-actions`.
 
 Pulumi's free tier issues only personal OIDC tokens, so CI acts as that user, with all of its
 access: every organization and stack it belongs to, decrypting stack state, and ESC. The
@@ -60,12 +78,12 @@ compromised action in the deploy job only gets a token that lasts the hour.
 To validate a change to the trust, push to `master` (or run the workflow on it) and read the deploy
 log: the auth step says `OIDC token exchange performed successfully.`, the identity check prints
 the expected user, and the stack and its ESC environment resolve. A failed exchange reports
-`Invalid response from token exchange`, and most often means the policy's `aud` or `sub` doesn't
-match: fix the policy and re-run.
+`Invalid response from token exchange`, and means no policy matches every claim: compare the
+policies with the table above, fix them and re-run.
 
 The switch from the old `PULUMI_ACCESS_TOKEN` repository secret runs in this order:
 
-1. Configure the trust policy above and set the `PULUMI_OIDC_USER` variable (the wizard's last
+1. Add the two policies above and set the `PULUMI_OIDC_USER` variable (the wizard's last
    stage does both) before the OIDC workflow reaches `master`; without the variable, the deploy
    fails at its first Pulumi step. The merge's own deploy is the validation.
 2. Until a deploy through OIDC has succeeded, the rollback is to revert the workflow commit: the

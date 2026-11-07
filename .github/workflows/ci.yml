@@ -116,9 +116,10 @@ jobs:
         with:
           pulumi-version: 3.272.0
 
-      # Pulumi Cloud trusts this job's OIDC subject (the `production` environment of this
-      # repository, by ID) and exchanges it for a one-hour personal token of PULUMI_OIDC_USER,
-      # exported masked as PULUMI_ACCESS_TOKEN (RUNBOOK.md → Pulumi Cloud sign-in).
+      # Pulumi Cloud trusts this job's OIDC claims (this repository by ID, the `production`
+      # environment, master, this workflow, a push or dispatch) and exchanges them for a one-hour
+      # personal token of PULUMI_OIDC_USER, exported masked as PULUMI_ACCESS_TOKEN (RUNBOOK.md →
+      # Pulumi Cloud sign-in).
       - name: Find the Pulumi organization
         id: pulumi-identity
         env:
