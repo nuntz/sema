@@ -263,3 +263,66 @@ func stringList(value any) []string {
 	}
 	return nil
 }
+
+// The dashboard body is assembled from positionally indexed Pulumi outputs, so
+// check it against what the program actually registers: every Lambda on the
+// Errors chart, every alarm on the Alarms widget, and each queue on the queue charts.
+func TestDashboardChartsEveryLambdaAlarmAndQueue(t *testing.T) {
+	mocks := runStack(t)
+	dashboards := mocks.of("aws:cloudwatch/dashboard:Dashboard")
+	if len(dashboards) != 1 {
+		t.Fatalf("dashboards = %d, want 1", len(dashboards))
+	}
+	var body struct {
+		Widgets []struct {
+			Properties struct {
+				Title   string   `json:"title"`
+				Alarms  []string `json:"alarms"`
+				Metrics [][]any  `json:"metrics"`
+			} `json:"properties"`
+		} `json:"widgets"`
+	}
+	if err := json.Unmarshal([]byte(dashboards[0].inputs["dashboardBody"].StringValue()), &body); err != nil {
+		t.Fatalf("decode dashboard body: %v", err)
+	}
+	alarms := map[string][]string{}
+	charted := map[string][]string{}
+	for _, widget := range body.Widgets {
+		alarms[widget.Properties.Title] = widget.Properties.Alarms
+		for _, metric := range widget.Properties.Metrics {
+			if len(metric) >= 4 {
+				charted[widget.Properties.Title] = append(charted[widget.Properties.Title], fmt.Sprint(metric[3]))
+			}
+		}
+	}
+
+	functions := mocks.of("aws:lambda/function:Function")
+	if len(functions) != 7 {
+		t.Fatalf("functions = %d, want 7", len(functions))
+	}
+	for _, function := range functions {
+		if name := function.inputs["name"].StringValue(); !slices.Contains(charted["Errors"], name) {
+			t.Errorf("Errors widget charts %v, missing %s", charted["Errors"], name)
+		}
+	}
+
+	metricAlarms := mocks.of("aws:cloudwatch/metricAlarm:MetricAlarm")
+	if len(alarms["Alarms"]) != len(metricAlarms) {
+		t.Errorf("Alarms widget lists %d alarms, stack registers %d", len(alarms["Alarms"]), len(metricAlarms))
+	}
+	for _, alarm := range metricAlarms {
+		if arn := "arn:aws:mock:us-east-1:" + mockAccount + ":" + alarm.name; !slices.Contains(alarms["Alarms"], arn) {
+			t.Errorf("Alarms widget lists %v, missing %s", alarms["Alarms"], arn)
+		}
+	}
+
+	for _, want := range []struct{ title, queue string }{
+		{"Queue depth", "deliveries-queue"},
+		{"Oldest message age", "deliveries-queue"},
+		{"Dead letters", "deliveries-dlq"},
+	} {
+		if !slices.Contains(charted[want.title], want.queue) {
+			t.Errorf("%s widget charts %v, missing %s", want.title, charted[want.title], want.queue)
+		}
+	}
+}

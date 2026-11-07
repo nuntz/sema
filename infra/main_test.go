@@ -155,10 +155,12 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		functions: dashboardFunctions{
 			scheduler: "sema-dev-scheduler", feedWorker: "sema-dev-feed-worker", itemWorker: "sema-dev-item-worker",
 			api: "sema-dev-api", rescore: "sema-dev-rescore", vectorCleanup: "sema-dev-vector-cleanup",
+			deliveryWorker: "sema-dev-delivery-worker",
 		},
 		feedsQueue: "feeds-queue", feedsDLQ: "feeds-dlq", itemsQueue: "items-queue", itemsDLQ: "items-dlq",
+		deliveriesQueue: "deliveries-queue", deliveriesDLQ: "deliveries-dlq",
 		table: "sema-dev", apiID: "abc123", distributionID: "E123456789",
-		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7", "arn:rescore-errors"},
+		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7", "arn:8", "arn:rescore-errors"},
 	})
 	if err != nil {
 		t.Fatalf("dashboardBody: %v", err)
@@ -196,7 +198,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		if title == "" {
 			t.Errorf("widget %d has no title", index)
 		}
-		if title == "Alarms" && (len(widget.Properties.Alarms) != 8 || widget.Properties.Alarms[7] != "arn:rescore-errors") {
+		if title == "Alarms" && (len(widget.Properties.Alarms) != 9 || widget.Properties.Alarms[8] != "arn:rescore-errors") {
 			t.Errorf("dashboard alarm set = %v", widget.Properties.Alarms)
 		}
 		metrics += len(widget.Properties.Metrics)
@@ -219,12 +221,17 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 	if metrics >= 50 {
 		t.Errorf("dashboard charts %d metrics, want fewer than 50", metrics)
 	}
-	if metrics != 40 {
-		t.Errorf("dashboard charts %d metrics, want 40", metrics)
+	if metrics != 45 {
+		t.Errorf("dashboard charts %d metrics, want 45", metrics)
 	}
 	if logWidgets != 1 {
 		t.Errorf("dashboard has %d log widgets, want 1 for failures by feed", logWidgets)
 	}
+	assertCharts(t, metricsByTitle, "Errors", "AWS/Lambda", "Errors", "FunctionName", "sema-dev-delivery-worker")
+	assertCharts(t, metricsByTitle, "Lambda duration p95", "AWS/Lambda", "Duration", "FunctionName", "sema-dev-delivery-worker")
+	assertCharts(t, metricsByTitle, "Queue depth", "AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "deliveries-queue")
+	assertCharts(t, metricsByTitle, "Oldest message age", "AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "deliveries-queue")
+	assertCharts(t, metricsByTitle, "Dead letters", "AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "deliveries-dlq")
 	storyMetrics := metricsByTitle["Story assignment"]
 	if len(storyMetrics) != 2 || storyMetrics[0][1] != "StoryCreated" || storyMetrics[1][1] != "StoryAssignmentFailed" {
 		t.Fatalf("Story assignment metrics = %#v, want StoryCreated and StoryAssignmentFailed", storyMetrics)
@@ -240,6 +247,17 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		t.Fatalf("DynamoDB errors metrics = %#v, want TransactionConflict", metricsByTitle["DynamoDB errors"])
 	}
 	t.Logf("dashboard charts %d metrics across %d widgets", metrics, len(dashboard.Widgets))
+}
+
+// assertCharts fails unless the titled widget charts namespace/name for the given dimension.
+func assertCharts(t *testing.T, metricsByTitle map[string][][]any, title, namespace, name, dimension, value string) {
+	t.Helper()
+	for _, metric := range metricsByTitle[title] {
+		if len(metric) >= 4 && metric[0] == namespace && metric[1] == name && metric[2] == dimension && metric[3] == value {
+			return
+		}
+	}
+	t.Errorf("widget %q metrics = %v, want %s/%s with %s=%s", title, metricsByTitle[title], namespace, name, dimension, value)
 }
 
 func TestOnlyItemsQueueHasBatchingWindow(t *testing.T) {

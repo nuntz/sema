@@ -547,10 +547,10 @@ func program(ctx *pulumi.Context, assets programAssets) error {
 
 	dashboardName := fmt.Sprintf("sema-%s", stack)
 	dashboardBodyOutput := pulumi.All(
-		scheduler.Name, feedWorker.Name, itemWorker.Name, apiLambda.Name, rescoreLambda.Name, cleanupLambda.Name,
-		feedsQueue.Name, feedsDLQ.Name, itemsQueue.Name, itemsDLQ.Name, table.Name,
+		scheduler.Name, feedWorker.Name, itemWorker.Name, apiLambda.Name, rescoreLambda.Name, cleanupLambda.Name, deliveryWorker.Name,
+		feedsQueue.Name, feedsDLQ.Name, itemsQueue.Name, itemsDLQ.Name, deliveriesQueue.Name, deliveriesDLQ.Name, table.Name,
 		httpAPI.ID().ToStringOutput(), distribution.ID().ToStringOutput(),
-		dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn, rescoreErrorsAlarm.Arn,
+		pulumi.StringArray{dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, dlqAlarms["deliveries"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn, rescoreErrorsAlarm.Arn},
 	).ApplyT(func(values []any) (string, error) {
 		return dashboardBody(dashboardResources{
 			stack:  stack,
@@ -558,12 +558,14 @@ func program(ctx *pulumi.Context, assets programAssets) error {
 			functions: dashboardFunctions{
 				scheduler: values[0].(string), feedWorker: values[1].(string), itemWorker: values[2].(string),
 				api: values[3].(string), rescore: values[4].(string), vectorCleanup: values[5].(string),
+				deliveryWorker: values[6].(string),
 			},
-			feedsQueue: values[6].(string), feedsDLQ: values[7].(string),
-			itemsQueue: values[8].(string), itemsDLQ: values[9].(string),
-			table: values[10].(string),
-			apiID: values[11].(string), distributionID: values[12].(string),
-			alarmArns: []string{values[13].(string), values[14].(string), values[15].(string), values[16].(string), values[17].(string), values[18].(string), values[19].(string), values[20].(string)},
+			feedsQueue: values[7].(string), feedsDLQ: values[8].(string),
+			itemsQueue: values[9].(string), itemsDLQ: values[10].(string),
+			deliveriesQueue: values[11].(string), deliveriesDLQ: values[12].(string),
+			table: values[13].(string),
+			apiID: values[14].(string), distributionID: values[15].(string),
+			alarmArns: values[16].([]string),
 		})
 	}).(pulumi.StringOutput)
 	if _, err := cloudwatch.NewDashboard(ctx, "dashboard", &cloudwatch.DashboardArgs{
@@ -975,33 +977,37 @@ func buildDeployAssets(googleClientID string) error {
 	return nil
 }
 
-// dashboardFunctions names the six Lambdas the dashboard charts.
+// dashboardFunctions names every Lambda the dashboard charts; all() lists them for
+// per-function widgets such as Errors.
 type dashboardFunctions struct {
-	scheduler     string
-	feedWorker    string
-	itemWorker    string
-	api           string
-	rescore       string
-	vectorCleanup string
+	scheduler      string
+	feedWorker     string
+	itemWorker     string
+	api            string
+	rescore        string
+	vectorCleanup  string
+	deliveryWorker string
 }
 
 func (f dashboardFunctions) all() []string {
-	return []string{f.scheduler, f.feedWorker, f.itemWorker, f.api, f.rescore, f.vectorCleanup}
+	return []string{f.scheduler, f.feedWorker, f.itemWorker, f.api, f.rescore, f.vectorCleanup, f.deliveryWorker}
 }
 
 // dashboardResources carries the resolved resource identifiers the dashboard body embeds.
 type dashboardResources struct {
-	stack          string
-	region         string
-	functions      dashboardFunctions
-	feedsQueue     string
-	feedsDLQ       string
-	itemsQueue     string
-	itemsDLQ       string
-	table          string
-	apiID          string
-	distributionID string
-	alarmArns      []string
+	stack           string
+	region          string
+	functions       dashboardFunctions
+	feedsQueue      string
+	feedsDLQ        string
+	itemsQueue      string
+	itemsDLQ        string
+	deliveriesQueue string
+	deliveriesDLQ   string
+	table           string
+	apiID           string
+	distributionID  string
+	alarmArns       []string
 }
 
 type dashboardWidget struct {
@@ -1099,16 +1105,19 @@ func dashboardBody(resources dashboardResources) (string, error) {
 	deadLetters := timeSeries(region, "Dead letters", "Maximum", 300,
 		dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.feedsDLQ),
 		dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.itemsDLQ),
+		dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.deliveriesDLQ),
 	)
 	deadLetters["annotations"] = horizontal(0, "empty")
 	grid.row(6,
 		timeSeries(region, "Queue depth", "Maximum", 300,
 			dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.feedsQueue),
 			dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.itemsQueue),
+			dashboardMetric("AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", resources.deliveriesQueue),
 		),
 		timeSeries(region, "Oldest message age", "Maximum", 300,
 			dashboardMetric("AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", resources.feedsQueue),
 			dashboardMetric("AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", resources.itemsQueue),
+			dashboardMetric("AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", resources.deliveriesQueue),
 		),
 		deadLetters,
 	)
@@ -1136,6 +1145,7 @@ func dashboardBody(resources dashboardResources) (string, error) {
 			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.api),
 			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.feedWorker),
 			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.itemWorker),
+			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.deliveryWorker),
 		),
 		timeSeries(region, "Scheduled job duration p95", "p95", 3600,
 			dashboardMetric("AWS/Lambda", "Duration", "FunctionName", resources.functions.scheduler),
