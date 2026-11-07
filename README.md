@@ -169,7 +169,7 @@ Set `VITE_GOOGLE_CLIENT_ID` in `web/.env.local`. Vite proxies `/api` to `SEMA_AP
 
 ## Deploy
 
-Production is the one stack, `untz/sema/prod` in Pulumi Cloud. Every green push to `master` deploys it from CI, through GitHub OIDC. Its config, secrets included, lives in the `untz/sema/prod` Pulumi ESC environment, and `infra/Pulumi.prod.yaml` only imports it. [RUNBOOK.md](RUNBOOK.md) covers:
+Production is the one stack, `untz/sema/prod` in Pulumi Cloud. Every green push to `master` deploys it from CI, which signs in to AWS and Pulumi Cloud through GitHub OIDC rather than with stored credentials. Its config, secrets included, lives in the `untz/sema/prod` Pulumi ESC environment, and `infra/Pulumi.prod.yaml` only imports it. [RUNBOOK.md](RUNBOOK.md) covers:
 
 - CI deploys, deploying by hand (`make preview`, then `make deploy`), and rollback.
 - The one-time setup, which `scripts/setup-deploy.sh` walks through.

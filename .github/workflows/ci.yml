@@ -84,11 +84,12 @@ jobs:
     concurrency:
       group: deploy
       cancel-in-progress: false
+    # id-token: write lets the job ask GitHub for OIDC tokens, which it exchanges for AWS and
+    # Pulumi Cloud credentials, so it reads no stored credential.
     permissions:
       contents: read
       id-token: write
     env:
-      PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
       GOCACHE: /tmp/sema-go-build
       GOMODCACHE: /tmp/sema-go-mod
     steps:
@@ -114,6 +115,36 @@ jobs:
       - uses: pulumi/actions@v7
         with:
           pulumi-version: 3.272.0
+
+      # Pulumi Cloud trusts this job's OIDC claims (this repository by ID, the `production`
+      # environment, master, this workflow, a push or dispatch) and exchanges them for a one-hour
+      # personal token of PULUMI_CI_USER, exported masked as PULUMI_ACCESS_TOKEN (RUNBOOK.md →
+      # Pulumi Cloud sign-in).
+      - name: Find the Pulumi organization
+        id: pulumi-identity
+        env:
+          PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+          PULUMI_CI_USER: ${{ vars.PULUMI_CI_USER }}
+        run: |
+          : "${PULUMI_CI_USER:?Set the PULUMI_CI_USER repository variable (RUNBOOK.md → Pulumi Cloud sign-in)}"
+          echo "organization=${PULUMI_STACK%%/*}" >> "$GITHUB_OUTPUT"
+
+      # v2.1.1; review the bundled dist/index.js before moving the pin.
+      - uses: pulumi/auth-actions@159c3e431aab767d4519b96f3f784d7d3d725622
+        with:
+          organization: ${{ steps.pulumi-identity.outputs.organization }}
+          requested-token-type: urn:pulumi:token-type:access_token:personal
+          scope: user:${{ vars.PULUMI_CI_USER }}
+          token-expiration: 3600
+
+      # Fails fast, before AWS credentials, if the trust policy issued a token for anyone else.
+      - name: Check the Pulumi identity
+        env:
+          PULUMI_CI_USER: ${{ vars.PULUMI_CI_USER }}
+        run: |
+          user="$(pulumi whoami)"
+          echo "Signed in to Pulumi Cloud as $user"
+          [[ "$user" == "$PULUMI_CI_USER" ]] || { echo "::error::Expected $PULUMI_CI_USER" >&2; exit 1; }
 
       # infra/Pulumi.prod.yaml already imports the environment; `config env add` would import it a
       # second time, so it only runs for a stack file that lacks it.
