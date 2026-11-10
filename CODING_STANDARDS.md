@@ -40,6 +40,11 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 
 - Each Lambda instance keeps its own `cmd/api` caches, and concurrent requests land on different instances. Data a client reads back after its own write must either be checked against shared state (as the Read markers are against `READ_VERSION`, ADR 0005, the Feed list against `FEED_VERSION`, ADR 0006, and the Story list against both plus `FEEDBACK_VERSION`, ADR 0007) or skip the cache. Clearing the cache on the instance that took the write is not enough. Test this with two `server` values sharing one store, as in `cmd/api/read_cache_instances_test.go`, `cmd/api/feed_cache_instances_test.go` and `cmd/api/story_cache_instances_test.go`.
 
+## Flaky tests
+
+- A change to how a test measures (garbage collection, waits, retries, settle loops, sampling) or to its bounds needs evidence in the PR that a deliberately injected bug still fails the test.
+- A loop that waits for a value to settle fails with the readings it saw once it hits its cap.
+
 ## Docs and decisions
 
 - `RUNBOOK.md`, `README.md` and ADRs describe what is in the tree. A doc that cites a package, stack or job the diff doesn't contain is ahead of the code: hold it back, or mark the ADR proposed.
