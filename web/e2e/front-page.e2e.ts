@@ -1847,11 +1847,10 @@ for (const width of [1470, 390]) {
   });
 }
 
-// Tagged @local: its node count varies by a few hundred between runs, so CI leaves it out until
-// the count is deterministic (#11). `make e2e-all` still runs it.
-test("grid releases detached nodes after repeated scrolling through loaded items", {
-  tag: "@local",
-}, async ({ page, browserName }) => {
+test("grid releases detached nodes after repeated scrolling through loaded items", async ({
+  page,
+  browserName,
+}) => {
   test.skip(browserName !== "chromium", "DOM counters require Chromium's CDP");
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1470, height: 833 });
@@ -1902,16 +1901,40 @@ test("grid releases detached nodes after repeated scrolling through loaded items
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       );
     });
-    await session.send("HeapProfiler.collectGarbage");
-    // Image decode completion and finalizers can release nodes on the next task.
-    await page.evaluate(
-      () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+    // In some runs Chromium frees unreachable cards only on a third forced
+    // collection: a heap snapshot then shows no retainer, yet the DOM counter
+    // stays a viewport high across two (#11). So collect at least three times,
+    // then until two collections in a row leave the count no lower. Retained
+    // cards stay reachable, so they still keep the count high.
+    const minCollections = 3;
+    const maxCollections = 10;
+    const settledCollections = 2;
+    const history: number[] = [];
+    let flatCollections = 0;
+    while (history.length < maxCollections) {
+      await session.send("HeapProfiler.collectGarbage");
+      // Image decode completion and finalizers can release nodes on the next task.
+      await page.evaluate(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 0)),
+      );
+      const counters = await session.send("Memory.getDOMCounters");
+      const previousNodes = history.at(-1) ?? Number.POSITIVE_INFINITY;
+      flatCollections =
+        counters.nodes < previousNodes ? 0 : flatCollections + 1;
+      history.push(counters.nodes);
+      if (
+        history.length >= minCollections &&
+        flatCollections >= settledCollections
+      ) {
+        return {
+          ...counters,
+          ...(await session.send("Runtime.getHeapUsage")),
+        };
+      }
+    }
+    throw new Error(
+      `DOM node count never settled after ${maxCollections} collections: ${history.join(", ")}`,
     );
-    await session.send("HeapProfiler.collectGarbage");
-    return {
-      ...(await session.send("Memory.getDOMCounters")),
-      ...(await session.send("Runtime.getHeapUsage")),
-    };
   };
   const initial = await sample();
   await roundTrip();
