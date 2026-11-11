@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/nuntz/sema/cmd/api/internal/requestsnapshot"
 	"github.com/nuntz/sema/internal/connector/reddit"
 	"github.com/nuntz/sema/internal/connector/rss"
 	"github.com/nuntz/sema/internal/connector/youtube"
@@ -22,84 +24,27 @@ import (
 	"github.com/nuntz/sema/internal/store"
 )
 
-const feedCacheTTL = time.Minute
-
 var errInvalidFeedTag = errors.New("invalid feed tag")
 
 type feedDiscoverer interface {
 	Discover(context.Context, string) ([]domain.FeedCandidate, error)
 }
 
-// cachedFeedList is one API instance's copy of a user's Feeds. Other
-// instances take Feed edits too, so a hit also needs the user's FeedVersion to
-// match the version the copy was loaded at (ADR 0006).
-type cachedFeedList struct {
-	loaded  time.Time
-	version int64
-	feeds   []domain.Feed
-}
-
-type feedVersionKey struct{}
-
-// feedVersionMemo holds one request's FeedVersion, so a request that reads
-// its Feeds several times (Scope, Stories, presentation) pays for one
-// strongly consistent read and sees one version throughout. Like the request
-// fields, it is unsynchronised: use it only from the request's own goroutine.
-type feedVersionMemo struct {
-	loaded  bool
-	version int64
-}
-
-// withFeedVersionMemo gives a request somewhere to keep its FeedVersion. A
-// request serves one user, so the memo needs no user key.
-func withFeedVersionMemo(ctx context.Context) context.Context {
-	return context.WithValue(ctx, feedVersionKey{}, &feedVersionMemo{})
-}
-
-func requestFeedVersionMemo(ctx context.Context) *feedVersionMemo {
-	memo, _ := ctx.Value(feedVersionKey{}).(*feedVersionMemo)
-	return memo
-}
-
-// feedVersion returns the user's FeedVersion, read once per request.
-func (s *server) feedVersion(ctx context.Context, userID string) (int64, error) {
-	memo := requestFeedVersionMemo(ctx)
-	if memo == nil {
-		return s.store.FeedVersion(ctx, userID)
-	}
-	if !memo.loaded {
-		version, err := s.store.FeedVersion(ctx, userID)
-		if err != nil {
-			return 0, err
-		}
-		memo.loaded, memo.version = true, version
-	}
-	return memo.version, nil
-}
-
-// saveFeeds writes Feeds as the user's own edit, then drops this instance's
-// Feed caches whether or not every write committed.
-func (s *server) saveFeeds(ctx context.Context, userID string, feeds ...domain.Feed) error {
-	_, err := s.store.SaveFeeds(ctx, userID, feeds)
-	s.invalidateFeeds(ctx, userID)
-	return err
-}
-
-func (s *server) feedRoute(ctx context.Context, userID, method, suffix, body string) events.APIGatewayV2HTTPResponse {
+func (s *server) feedRoute(ctx context.Context, user *requestsnapshot.Snapshot, method, suffix, body string) events.APIGatewayV2HTTPResponse {
 	if strings.HasSuffix(suffix, "/retry") {
 		if method != http.MethodPost {
 			return response(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		}
-		return s.retryFeed(ctx, userID, strings.TrimSuffix(suffix, "/retry"))
+		return s.retryFeed(ctx, user, strings.TrimSuffix(suffix, "/retry"))
 	}
 	if suffix == "" || strings.Contains(suffix, "/") {
 		return response(http.StatusNotFound, map[string]string{"error": "feed not found"})
 	}
 	switch method {
 	case http.MethodPatch:
-		return s.patchFeed(ctx, userID, suffix, body)
+		return s.patchFeed(ctx, user, suffix, body)
 	case http.MethodDelete:
-		return s.deleteFeed(ctx, userID, suffix)
+		return s.deleteFeed(ctx, user, suffix)
 	default:
 		return response(http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 	}
@@ -158,7 +103,8 @@ func (s *server) discoverFeeds(ctx context.Context, body string) events.APIGatew
 	return response(http.StatusOK, map[string]any{"candidates": candidates})
 }
 
-func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
+func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, body string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	var input struct {
 		FeedURL       string   `json:"feed_url"`
 		FetchInterval *int     `json:"fetch_interval_h"`
@@ -254,17 +200,26 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 		return s.failure("find feed", getErr)
 	}
 	if existingFeed == nil && connectorName == domain.ConnectorReddit {
-		rows, listErr := s.store.Feeds(ctx, userID)
+		rows, _, listErr := user.Feeds(ctx)
 		if listErr != nil {
 			return s.failure("find Reddit feed", listErr)
 		}
 		for index := range rows {
 			parsed, parseErr := reddit.ParseInput(rows[index].URL)
-			if parseErr == nil && parsed.Subreddit == redditInput.Subreddit {
-				existingFeed = &rows[index]
-				feedID = rows[index].FeedID
-				break
+			if parseErr != nil || parsed.Subreddit != redditInput.Subreddit {
+				continue
 			}
+			// The list can be up to a minute behind the feed worker, and the
+			// merged Feed is written back whole, so merge into the live row.
+			existing, getErr := s.store.Feed(ctx, userID, rows[index].FeedID)
+			if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
+				return s.failure("find Reddit feed", getErr)
+			}
+			if getErr == nil {
+				existingFeed = &existing
+				feedID = existing.FeedID
+			}
+			break
 		}
 	}
 	feed := domain.Feed{
@@ -308,7 +263,8 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 			feed.LastStatus = "queued"
 		}
 	}
-	if err := s.saveFeeds(ctx, userID, feed); err != nil {
+	defer s.invalidateStories(userID)
+	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("store feed", err)
 	}
 	if !feed.Muted {
@@ -323,7 +279,8 @@ func (s *server) addFeed(ctx context.Context, userID, body string) events.APIGat
 	return response(status, map[string]any{"feed": publicFeed(s.store, feed), "created": created})
 }
 
-func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) events.APIGatewayV2HTTPResponse {
+func (s *server) patchFeed(ctx context.Context, user *requestsnapshot.Snapshot, feedID, body string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	var input struct {
 		CustomTitle    *string         `json:"custom_title"`
 		Tags           *[]string       `json:"tags"`
@@ -427,7 +384,8 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 		feed.NextFetchAt = domain.Timestamp(time.Now().UTC())
 		feed.LastStatus = "queued"
 	}
-	if err := s.saveFeeds(ctx, userID, feed); err != nil {
+	defer s.invalidateStories(userID)
+	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("update feed", err)
 	}
 	if queueNow {
@@ -439,7 +397,8 @@ func (s *server) patchFeed(ctx context.Context, userID, feedID, body string) eve
 	return response(http.StatusOK, publicFeed(s.store, feed))
 }
 
-func (s *server) retryFeed(ctx context.Context, userID, feedID string) events.APIGatewayV2HTTPResponse {
+func (s *server) retryFeed(ctx context.Context, user *requestsnapshot.Snapshot, feedID string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	if feedID == "" {
 		return badRequest(errors.New("feed id is required"))
 	}
@@ -454,7 +413,8 @@ func (s *server) retryFeed(ctx context.Context, userID, feedID string) events.AP
 		return badRequest(errors.New("unmute the feed before retrying"))
 	}
 	feed = feedstatus.Retry(feed, time.Now().UTC())
-	if err := s.saveFeeds(ctx, userID, feed); err != nil {
+	defer s.invalidateStories(userID)
+	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("reset feed", err)
 	}
 	if err := s.enqueueFeeds(ctx, []domain.FeedMessage{{User: userID, FeedID: feedID}}); err != nil {
@@ -464,11 +424,12 @@ func (s *server) retryFeed(ctx context.Context, userID, feedID string) events.AP
 	return response(http.StatusAccepted, publicFeed(s.store, feed))
 }
 
-func (s *server) exportFeeds(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
-	feeds, err := s.store.Feeds(ctx, userID)
+func (s *server) exportFeeds(ctx context.Context, user *requestsnapshot.Snapshot) events.APIGatewayV2HTTPResponse {
+	shared, _, err := user.Feeds(ctx)
 	if err != nil {
 		return s.failure("list feeds for export", err)
 	}
+	feeds := slices.Clone(shared)
 	sort.Slice(feeds, func(i, j int) bool { return feeds[i].URL < feeds[j].URL })
 	subscriptions := make([]rss.Subscription, 0, len(feeds))
 	for _, feed := range feeds {
@@ -491,7 +452,7 @@ func (s *server) exportFeeds(ctx context.Context, userID string) events.APIGatew
 	}
 }
 
-func (s *server) allowedFeedIDs(ctx context.Context, userID, rawTag, rawFeed string) (map[string]bool, error) {
+func (s *server) allowedFeedIDs(ctx context.Context, user *requestsnapshot.Snapshot, rawTag, rawFeed string) (map[string]bool, error) {
 	tag := strings.ToLower(strings.TrimSpace(rawTag))
 	feedID := strings.TrimSpace(rawFeed)
 	if tag != "" && feedID != "" {
@@ -500,7 +461,7 @@ func (s *server) allowedFeedIDs(ctx context.Context, userID, rawTag, rawFeed str
 	if utf8.RuneCountInString(tag) > 32 {
 		return nil, fmt.Errorf("%w: tag must be at most 32 characters", errInvalidFeedTag)
 	}
-	feeds, err := s.cachedFeeds(ctx, userID)
+	feeds, _, err := user.Feeds(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -528,8 +489,8 @@ func (s *server) allowedFeedIDs(ctx context.Context, userID, rawTag, rawFeed str
 	return allowed, nil
 }
 
-func (s *server) applyFeedPresentation(ctx context.Context, userID string, items []domain.Item) error {
-	feeds, err := s.cachedFeeds(ctx, userID)
+func (s *server) applyFeedPresentation(ctx context.Context, user *requestsnapshot.Snapshot, items []domain.Item) error {
+	feeds, _, err := user.Feeds(ctx)
 	if err != nil {
 		return err
 	}
@@ -554,73 +515,6 @@ func (s *server) applyFeedPresentation(ctx context.Context, userID string, items
 		}
 	}
 	return nil
-}
-
-func (s *server) cachedFeeds(ctx context.Context, userID string) ([]domain.Feed, error) {
-	return s.feedList(ctx, userID, &s.feedCache, func() ([]domain.Feed, error) {
-		return s.store.Feeds(ctx, userID)
-	})
-}
-
-func (s *server) cachedDetailedFeeds(ctx context.Context, userID string) ([]domain.Feed, error) {
-	feeds, err := s.feedList(ctx, userID, &s.feedDetailCache, func() ([]domain.Feed, error) {
-		feeds, err := s.store.Feeds(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		return feeds, s.decorateFeeds(ctx, userID, feeds)
-	})
-	return append([]domain.Feed(nil), feeds...), err
-}
-
-// feedList returns the cached copy when it is younger than the TTL and at the
-// user's current FeedVersion, and otherwise loads and caches a new one.
-func (s *server) feedList(ctx context.Context, userID string, cache *map[string]cachedFeedList, load func() ([]domain.Feed, error)) ([]domain.Feed, error) {
-	// Read the version before any Feeds, so a copy is never newer-labelled
-	// than its contents.
-	version, err := s.feedVersion(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now()
-	s.feedMu.Lock()
-	entry, ok := (*cache)[userID]
-	s.feedMu.Unlock()
-	fresh := ok && now.Sub(entry.loaded) < feedCacheTTL
-	switch {
-	case fresh && entry.version == version:
-		annotateRequestOnce(ctx, "FeedCache", "hit")
-		return entry.feeds, nil
-	case fresh:
-		annotateRequestOnce(ctx, "FeedCache", "stale")
-	default:
-		annotateRequestOnce(ctx, "FeedCache", "miss")
-	}
-	feeds, err := load()
-	if err != nil {
-		return nil, err
-	}
-	s.feedMu.Lock()
-	if *cache == nil {
-		*cache = make(map[string]cachedFeedList)
-	}
-	(*cache)[userID] = cachedFeedList{loaded: now, version: version, feeds: feeds}
-	s.feedMu.Unlock()
-	return feeds, nil
-}
-
-// invalidateFeeds drops this instance's copies after its own Feed write
-// rather than patching them forward: Feed writes are rare, and the write
-// moved the FeedVersion, so other instances reload too.
-func (s *server) invalidateFeeds(ctx context.Context, userID string) {
-	if memo := requestFeedVersionMemo(ctx); memo != nil {
-		memo.loaded = false
-	}
-	s.invalidateStories(userID)
-	s.feedMu.Lock()
-	delete(s.feedCache, userID)
-	delete(s.feedDetailCache, userID)
-	s.feedMu.Unlock()
 }
 
 func normalizeFeedURL(raw string) (string, error) {

@@ -19,6 +19,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/nuntz/sema/internal/domain"
 )
 
 // Store is the state the Request snapshot reads and the writes that move a
@@ -27,6 +29,11 @@ type Store interface {
 	ReadVersion(ctx context.Context, userID string) (int64, error)
 	LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error)
 	SetRead(ctx context.Context, userID string, ids []string, read bool) (int64, error)
+
+	FeedVersion(ctx context.Context, userID string) (int64, error)
+	Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
+	SaveFeeds(ctx context.Context, userID string, feeds []domain.Feed) (int64, error)
+	DeleteFeed(ctx context.Context, userID, feedID string) (int64, error)
 }
 
 // readTTL bounds how long a Read marker copy can serve writes that did not
@@ -36,9 +43,11 @@ const readTTL = time.Minute
 // Cache is one API instance's copy of its users' state, shared by every
 // Snapshot it starts. It is safe for concurrent use.
 type Cache struct {
-	store Store
-	now   func() time.Time
-	read  *entries[string, map[string]bool]
+	store         Store
+	now           func() time.Time
+	read          *entries[string, map[string]bool]
+	feeds         *entries[string, []domain.Feed]
+	detailedFeeds *entries[string, []domain.Feed]
 }
 
 // NewCache returns an empty Cache over store that tells time with now, or
@@ -47,7 +56,13 @@ func NewCache(store Store, now func() time.Time) *Cache {
 	if now == nil {
 		now = time.Now
 	}
-	return &Cache{store: store, now: now, read: newEntries[string, map[string]bool](readTTL)}
+	return &Cache{
+		store:         store,
+		now:           now,
+		read:          newEntries[string, map[string]bool](readTTL),
+		feeds:         newEntries[string, []domain.Feed](feedTTL),
+		detailedFeeds: newEntries[string, []domain.Feed](feedTTL),
+	}
 }
 
 // Snapshot starts one request's view of userID's state. Nothing loads until
@@ -65,6 +80,9 @@ type Snapshot struct {
 
 	readMu sync.Mutex
 	read   *readState
+
+	feedMu sync.Mutex
+	feed   *feedState
 
 	outcomesMu sync.Mutex
 	outcomes   map[string]string
@@ -176,7 +194,7 @@ func patchRead(markers map[string]bool, ids []string, read bool) map[string]bool
 }
 
 // CacheOutcomes returns each kind's cache outcome for this request, by its
-// request event field name: ReadCache. Each records the first load's
+// request event field name: ReadCache and FeedCache. Each records the first load's
 // outcome, so a later hit in the same request can't hide an earlier miss.
 func (s *Snapshot) CacheOutcomes() map[string]string {
 	s.outcomesMu.Lock()

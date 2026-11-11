@@ -75,9 +75,6 @@ type server struct {
 	media            *media.Processor
 	storyMu          sync.Mutex
 	storyCache       map[storyCacheKey]cachedStoryList
-	feedMu           sync.Mutex
-	feedCache        map[string]cachedFeedList
-	feedDetailCache  map[string]cachedFeedList
 	embedder         embed.Embedder
 	vectors          vectorstore.Store
 	imageEmbedder    embed.ImageEmbedder
@@ -96,8 +93,9 @@ type server struct {
 }
 
 // requestSnapshot starts one request's Snapshot of userID's state. Handlers
-// read and write the user's Read state only through it; see
-// docs/adr/0005-read-state-is-read-your-writes.md.
+// read and write the user's Read state and Feeds only through it; see
+// docs/adr/0005-read-state-is-read-your-writes.md and
+// docs/adr/0006-feed-edits-are-read-your-writes.md.
 func (s *server) requestSnapshot(userID string) *requestsnapshot.Snapshot {
 	s.snapshotsOnce.Do(func() {
 		if s.snapshots == nil {
@@ -175,7 +173,6 @@ type importFeedsResult struct {
 func (s *server) handle(ctx context.Context, request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
 	started := time.Now()
 	ctx, fields := withRequestFields(ctx)
-	ctx = withFeedVersionMemo(ctx)
 	result, err := s.handleRequest(ctx, request)
 	status := result.StatusCode
 	if err != nil || status == 0 {
@@ -235,7 +232,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case method == http.MethodPost && path == "/ranking/recompute":
 		result = s.recomputeRanking(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/archive":
-		result = s.getArchive(ctx, claims.Subject, request.QueryStringParameters)
+		result = s.getArchive(ctx, snapshot, request.QueryStringParameters)
 	case method == http.MethodGet && strings.HasPrefix(path, "/archive/"):
 		result = s.getArchiveItem(ctx, claims.Subject, strings.TrimPrefix(path, "/archive/"))
 	case method == http.MethodGet && strings.HasPrefix(path, "/items/") && strings.HasSuffix(path, "/similar"):
@@ -244,21 +241,21 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case strings.HasPrefix(path, "/items/"):
 		result = s.itemRoute(ctx, snapshot, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
-		result = s.getFeeds(ctx, claims.Subject)
+		result = s.getFeeds(ctx, snapshot)
 	case method == http.MethodGet && path == "/feeds/counts":
 		result = s.getFeedItemCounts(ctx, snapshot, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/feeds/export.opml":
-		result = s.exportFeeds(ctx, claims.Subject)
+		result = s.exportFeeds(ctx, snapshot)
 	case method == http.MethodPost && path == "/feeds/discover":
 		result = s.discoverFeeds(ctx, request.Body)
 	case method == http.MethodPost && path == "/feeds":
-		result = s.addFeed(ctx, claims.Subject, request.Body)
+		result = s.addFeed(ctx, snapshot, request.Body)
 	case method == http.MethodPost && path == "/feeds/import":
-		result = s.importFeeds(ctx, claims.Subject, request)
+		result = s.importFeeds(ctx, snapshot, request)
 	case path == "/destination" || strings.HasPrefix(path, "/destination/"):
 		result = s.destinationRoute(ctx, claims.Subject, method, strings.TrimPrefix(strings.TrimPrefix(path, "/destination"), "/"), request.Body)
 	case strings.HasPrefix(path, "/feeds/"):
-		result = s.feedRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
+		result = s.feedRoute(ctx, snapshot, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
 	default:
 		result = response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
@@ -401,7 +398,7 @@ func (s *server) getSearch(ctx context.Context, user *requestsnapshot.Snapshot, 
 	var allowed map[string]bool
 	if strings.TrimSpace(query["tag"]) != "" || strings.TrimSpace(query["feed"]) != "" {
 		var err error
-		allowed, err = s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
+		allowed, err = s.allowedFeedIDs(ctx, user, query["tag"], query["feed"])
 		if err != nil {
 			if errors.Is(err, errInvalidFeedTag) {
 				return badRequest(err)
@@ -422,7 +419,7 @@ func (s *server) getSearch(ctx context.Context, user *requestsnapshot.Snapshot, 
 		return s.failure("search archive", err)
 	}
 	for _, items := range [][]domain.Item{window, archive} {
-		if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+		if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 			return s.failure("apply search feed presentation", err)
 		}
 		if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -435,7 +432,7 @@ func (s *server) getSearch(ctx context.Context, user *requestsnapshot.Snapshot, 
 			exact[item.ItemID] = true
 		}
 	}
-	related, semanticAvailable := s.semanticResults(ctx, userID, value, limit, exact, allowed, read)
+	related, semanticAvailable := s.semanticResults(ctx, user, value, limit, exact, allowed, read)
 	return response(http.StatusOK, map[string]any{
 		"matches": searchGroup{Window: window, Archive: archive},
 		"related": related, "semantic_available": semanticAvailable,
@@ -443,7 +440,8 @@ func (s *server) getSearch(ctx context.Context, user *requestsnapshot.Snapshot, 
 }
 
 // semanticResults finds Related Items, taking their Read state from read.
-func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude, allowed, read map[string]bool) (searchGroup, bool) {
+func (s *server) semanticResults(ctx context.Context, user *requestsnapshot.Snapshot, query string, limit int, exclude, allowed, read map[string]bool) (searchGroup, bool) {
+	userID := user.UserID()
 	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
 	textConfigured := s.embedder != nil && s.vectors != nil
 	imageConfigured := s.imageEmbedder != nil && s.imageVectors != nil
@@ -544,7 +542,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 		items[index].Similarity = &similarity
 		items[index].MatchSource = match.MatchSource
 	}
-	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+	if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 		return related, false
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -624,7 +622,7 @@ func (s *server) getSimilar(ctx context.Context, user *requestsnapshot.Snapshot,
 		items[index].Similarity = &value
 		items[index].MatchSource = match.MatchSource
 	}
-	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+	if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 		return s.failure("apply similar feed presentation", err)
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -757,7 +755,7 @@ func (s *server) getItems(ctx context.Context, user *requestsnapshot.Snapshot, q
 	annotateRequest(ctx, "Order", string(order))
 	annotateRequest(ctx, "Filtered", strconv.FormatBool(filtered))
 	annotateRequest(ctx, "ExcludeStories", strconv.FormatBool(excludeStories))
-	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
+	allowed, err := s.allowedFeedIDs(ctx, user, query["tag"], query["feed"])
 	if err != nil {
 		if errors.Is(err, errInvalidFeedTag) {
 			return badRequest(err)
@@ -794,7 +792,7 @@ func (s *server) getItems(ctx context.Context, user *requestsnapshot.Snapshot, q
 		return s.failure("list items", err)
 	}
 	annotateRequest(ctx, "ItemCount", strconv.Itoa(len(items)))
-	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+	if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 		return s.failure("apply feed presentation", err)
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -830,7 +828,7 @@ func (s *server) getStories(ctx context.Context, user *requestsnapshot.Snapshot,
 	if err != nil {
 		return badRequest(err)
 	}
-	allowed, err := s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
+	allowed, err := s.allowedFeedIDs(ctx, user, query["tag"], query["feed"])
 	if err != nil {
 		if errors.Is(err, errInvalidFeedTag) {
 			return badRequest(err)
@@ -895,7 +893,7 @@ func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot
 	userID := user.UserID()
 	// Stories bake in Feed titles, favicons and Connectors, so a Feed edit on
 	// any instance must miss this cache.
-	feedVersion, err := s.feedVersion(ctx, userID)
+	_, feedVersion, err := user.Feeds(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -935,7 +933,7 @@ func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot
 	if entry, ok := s.storyCache[key]; ok && now.Sub(entry.loaded) < storyCacheTTL {
 		return entry.stories, entry.hidden, nil
 	}
-	stories, hidden, err := s.renderStories(ctx, userID, allowed, unreadOnly, model, tag, window, snapshot)
+	stories, hidden, err := s.renderStories(ctx, user, allowed, unreadOnly, model, tag, window, snapshot)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -972,7 +970,8 @@ func (s *server) invalidateStories(userID string) {
 	}
 }
 
-func (s *server) renderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
+func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapshot, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
+	userID := user.UserID()
 	rows, err := s.store.Clusters(ctx, userID)
 	if err != nil {
 		return nil, nil, err
@@ -996,7 +995,7 @@ func (s *server) renderStories(ctx context.Context, userID string, allowed map[s
 		}
 	}
 	items = live
-	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+	if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 		return nil, nil, err
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -1024,7 +1023,8 @@ func (s *server) loadRankingModel(ctx context.Context, userID string) (domain.Mo
 	return model, err
 }
 
-func (s *server) getArchive(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+func (s *server) getArchive(ctx context.Context, user *requestsnapshot.Snapshot, query map[string]string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	limit, _ := strconv.Atoi(query["limit"])
 	if limit < 1 || limit > 100 {
 		limit = 100
@@ -1033,7 +1033,7 @@ func (s *server) getArchive(ctx context.Context, userID string, query map[string
 	var allowed map[string]bool
 	if filtered {
 		var err error
-		allowed, err = s.allowedFeedIDs(ctx, userID, query["tag"], query["feed"])
+		allowed, err = s.allowedFeedIDs(ctx, user, query["tag"], query["feed"])
 		if err != nil {
 			if errors.Is(err, errInvalidFeedTag) {
 				return badRequest(err)
@@ -1061,7 +1061,7 @@ func (s *server) getArchive(ctx context.Context, userID string, query map[string
 			break
 		}
 	}
-	if err := s.applyFeedPresentation(ctx, userID, items); err != nil {
+	if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 		return s.failure("apply archive feed presentation", err)
 	}
 	if err := s.prepareItems(ctx, userID, items); err != nil {
@@ -1374,8 +1374,10 @@ func (s *server) readBatch(ctx context.Context, user *requestsnapshot.Snapshot, 
 	return response(http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV2HTTPResponse {
-	feeds, err := s.cachedDetailedFeeds(ctx, userID)
+func (s *server) getFeeds(ctx context.Context, user *requestsnapshot.Snapshot) events.APIGatewayV2HTTPResponse {
+	feeds, err := user.DetailedFeeds(ctx, func(ctx context.Context, feeds []domain.Feed) error {
+		return s.decorateFeeds(ctx, user.UserID(), feeds)
+	})
 	if err != nil {
 		return s.failure("decorate feeds", err)
 	}
@@ -1396,7 +1398,7 @@ func (s *server) getFeedItemCounts(ctx context.Context, user *requestsnapshot.Sn
 	if err != nil {
 		return s.failure("count live feed items", err)
 	}
-	feeds, err := s.cachedFeeds(ctx, userID)
+	feeds, _, err := user.Feeds(ctx)
 	if err != nil {
 		return s.failure("load feeds for item counts", err)
 	}
@@ -1412,7 +1414,8 @@ func (s *server) getFeedItemCounts(ctx context.Context, user *requestsnapshot.Sn
 	return response(http.StatusOK, map[string]any{"feeds": counts})
 }
 
-func (s *server) importFeeds(ctx context.Context, userID string, request events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
+func (s *server) importFeeds(ctx context.Context, user *requestsnapshot.Snapshot, request events.APIGatewayV2HTTPRequest) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	contentType := request.Headers["content-type"]
 	if contentType == "" {
 		contentType = request.Headers["Content-Type"]
@@ -1546,7 +1549,8 @@ func (s *server) importFeeds(ctx context.Context, userID string, request events.
 	if err := errors.Join(mergeErrors...); err != nil {
 		return s.failure("merge imported feed", err)
 	}
-	if err := s.saveFeeds(ctx, userID, feeds...); err != nil {
+	defer s.invalidateStories(userID)
+	if err := user.SaveFeeds(ctx, feeds...); err != nil {
 		return s.failure("store imported feed", err)
 	}
 	messages := make([]domain.FeedMessage, 0, len(feeds))
@@ -1593,13 +1597,12 @@ func (s *server) enqueueFeeds(ctx context.Context, messages []domain.FeedMessage
 	return errors.Join(collected...)
 }
 
-func (s *server) deleteFeed(ctx context.Context, userID, feedID string) events.APIGatewayV2HTTPResponse {
+func (s *server) deleteFeed(ctx context.Context, user *requestsnapshot.Snapshot, feedID string) events.APIGatewayV2HTTPResponse {
 	if feedID == "" {
 		return badRequest(errors.New("feed id is required"))
 	}
-	_, err := s.store.DeleteFeed(ctx, userID, feedID)
-	s.invalidateFeeds(ctx, userID)
-	if err != nil {
+	defer s.invalidateStories(user.UserID())
+	if err := user.DeleteFeed(ctx, feedID); err != nil {
 		return s.failure("delete feed", err)
 	}
 	return events.APIGatewayV2HTTPResponse{StatusCode: http.StatusNoContent}
@@ -1743,7 +1746,7 @@ func main() {
 		store: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
 			return auth.VerifyGoogle(ctx, credential, googleClientID)
 		}, queue: queueClient, feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
-		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, media.MaxDownloadBytes)), feedCache: make(map[string]cachedFeedList),
+		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, media.MaxDownloadBytes)),
 		embedder: bedrockembed.NewWithModel(runtime, modelVersion),
 		vectors:  vectorstore.NewS3(vectorClient, vectorBucket, vectorIndex), imageSearchFloor: imageSearchFloor, storyConfig: storycluster.FromEnv(),
 		destinations: repository, sender: send.NewSender(), retries: &send.SQSQueue{Client: queueClient, URL: deliveriesURL}, newID: send.NewID, now: time.Now,

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/nuntz/sema/internal/domain"
 )
@@ -43,13 +42,13 @@ func TestArchiveFiltersAcrossPages(t *testing.T) {
 				}
 				return []domain.Item{{SK: "A#" + id, ItemID: id, FeedID: id, Archived: true, Hearted: true}}, next, nil
 			}}
-			s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+			s := &server{store: withFeeds(db, []domain.Feed{
 				{FeedID: "muted", Muted: true, Tags: []string{"tech"}}, {FeedID: "plain"}, {FeedID: "tech", Tags: []string{"tech"}},
-			}}}}
+			})}
 			tc.query["limit"] = "1"
 			got := []string{}
 			for {
-				response := s.getArchive(context.Background(), "user", tc.query)
+				response := s.getArchive(context.Background(), s.requestSnapshot("user"), tc.query)
 				if response.StatusCode != http.StatusOK {
 					t.Fatalf("response = %d %s", response.StatusCode, response.Body)
 				}

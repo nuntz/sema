@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"maps"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/store"
 )
 
 // sharedStoryStore is one user's Story led by a news Item with a wire Item
@@ -209,5 +211,70 @@ func TestBoostReachesAnotherInstancesStories(t *testing.T) {
 func TestKeepReachesAnotherInstancesStories(t *testing.T) {
 	if lead := leadAfter(t, "heart", `{"hearted":true}`); !lead.Hearted {
 		t.Fatal("Lead not Kept after a Keep on another instance")
+	}
+}
+
+// sharedFeedStore is one user's Feeds, seen by every API instance in a test.
+type sharedFeedStore struct {
+	*fakeAPIStore
+	rows  map[string]domain.Feed
+	loads int
+}
+
+func newSharedFeedStore(feeds ...domain.Feed) *sharedFeedStore {
+	shared := &sharedFeedStore{fakeAPIStore: &fakeAPIStore{}, rows: map[string]domain.Feed{}}
+	for _, feed := range feeds {
+		shared.rows[feed.FeedID] = feed
+	}
+	shared.feed = func(_ context.Context, _, feedID string) (domain.Feed, error) {
+		feed, ok := shared.rows[feedID]
+		if !ok {
+			return domain.Feed{}, store.ErrNotFound
+		}
+		return feed, nil
+	}
+	shared.feeds = func(context.Context, string) ([]domain.Feed, error) {
+		shared.loads++
+		ids := slices.Sorted(maps.Keys(shared.rows))
+		feeds := make([]domain.Feed, 0, len(ids))
+		for _, id := range ids {
+			feeds = append(feeds, shared.rows[id])
+		}
+		return feeds, nil
+	}
+	shared.putFeed = func(_ context.Context, feed domain.Feed) error {
+		shared.rows[feed.FeedID] = feed
+		return nil
+	}
+	shared.deleteFeed = func(_ context.Context, _, feedID string) error {
+		delete(shared.rows, feedID)
+		return nil
+	}
+	return shared
+}
+
+func testFeed(id string, tags ...string) domain.Feed {
+	return domain.Feed{PK: domain.UserPK("user"), SK: domain.FeedSK(id), FeedID: id, URL: "https://example.com/" + id + ".xml", Title: id, Tags: tags}
+}
+
+// writerAndWarmReader returns a writer and a reader serving the same user from one
+// store, the reader already holding a warm copy of the user's Feeds.
+func writerAndWarmReader(t *testing.T, db *sharedFeedStore) (writer, reader *server) {
+	t.Helper()
+	writer = &server{store: db, queue: &apiQueue{}}
+	reader = &server{store: db, queue: &apiQueue{}}
+	if _, err := reader.allowedFeedIDs(context.Background(), reader.requestSnapshot("user"), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := reader.getFeeds(context.Background(), reader.requestSnapshot("user")); got.StatusCode != http.StatusOK {
+		t.Fatalf("warm feeds: %d %s", got.StatusCode, got.Body)
+	}
+	return writer, reader
+}
+
+func mustStatus(t *testing.T, got int, body string, want int) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("status = %d, want %d: %s", got, want, body)
 	}
 }

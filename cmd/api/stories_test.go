@@ -107,8 +107,8 @@ func TestStoryRenderingIgnoresMissingMembersWithoutWriting(t *testing.T) {
 			}, nil
 		},
 	}
-	s := &server{store: source, feedCache: map[string]cachedFeedList{"user": {loaded: now}}}
-	stories, hidden, err := s.renderStories(context.Background(), "user", nil, false, domain.Model{}, "", domain.FetchWindow{}, nil)
+	s := &server{store: source}
+	stories, hidden, err := s.renderStories(context.Background(), s.requestSnapshot("user"), nil, false, domain.Model{}, "", domain.FetchWindow{}, nil)
 	if err != nil || len(stories) != 1 || len(stories[0].Items) != 2 || !hidden["lead"] || !hidden["member"] {
 		t.Fatalf("stories=%+v hidden=%v error=%v", stories, hidden, err)
 	}

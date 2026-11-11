@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
@@ -39,8 +40,7 @@ type fakeAPIStore struct {
 	// readVersion moves with every successful setRead, like the store's.
 	readVersion int64
 	// feedVersion moves with every SaveFeeds that wrote and every DeleteFeed.
-	feedVersion      int64
-	feedVersionReads int
+	feedVersion int64
 	// feedbackVersions move per user with every successful SetHeart and
 	// SetSignal, like the store's.
 	feedbackVersions map[string]int64
@@ -75,7 +75,6 @@ func (f *fakeAPIStore) SaveFeeds(ctx context.Context, _ string, feeds []domain.F
 	return f.feedVersion, nil
 }
 func (f *fakeAPIStore) FeedVersion(context.Context, string) (int64, error) {
-	f.feedVersionReads++
 	return f.feedVersion, nil
 }
 func (f *fakeAPIStore) Feed(ctx context.Context, userID, feedID string) (domain.Feed, error) {
@@ -234,4 +233,19 @@ func (f *fakeSessions) RenewSession(context.Context, string, int64, int64) error
 func (f *fakeSessions) DeleteSession(_ context.Context, hash string) error {
 	f.deleted = hash
 	return nil
+}
+
+// feedsStore serves a fixed Feed list over another store.
+type feedsStore struct {
+	apiStore
+	feeds []domain.Feed
+}
+
+func (f feedsStore) Feeds(context.Context, string) ([]domain.Feed, error) {
+	return slices.Clone(f.feeds), nil
+}
+
+// withFeeds gives db's user the Feeds feeds.
+func withFeeds(db apiStore, feeds []domain.Feed) apiStore {
+	return feedsStore{apiStore: db, feeds: feeds}
 }
