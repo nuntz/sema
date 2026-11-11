@@ -51,7 +51,8 @@ jobs:
 
   # The browser tests run beside the test job and gate the deploy as well (make e2e).
   e2e:
-    runs-on: ubuntu-latest
+    # Playwright 1.60 can't install Chromium on ubuntu-latest (26.04); unpin once it supports 26.04.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
