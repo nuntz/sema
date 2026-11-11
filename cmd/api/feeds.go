@@ -263,7 +263,6 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 			feed.LastStatus = "queued"
 		}
 	}
-	defer s.invalidateStories(userID)
 	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("store feed", err)
 	}
@@ -384,7 +383,6 @@ func (s *server) patchFeed(ctx context.Context, user *requestsnapshot.Snapshot, 
 		feed.NextFetchAt = domain.Timestamp(time.Now().UTC())
 		feed.LastStatus = "queued"
 	}
-	defer s.invalidateStories(userID)
 	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("update feed", err)
 	}
@@ -413,7 +411,6 @@ func (s *server) retryFeed(ctx context.Context, user *requestsnapshot.Snapshot, 
 		return badRequest(errors.New("unmute the feed before retrying"))
 	}
 	feed = feedstatus.Retry(feed, time.Now().UTC())
-	defer s.invalidateStories(userID)
 	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("reset feed", err)
 	}

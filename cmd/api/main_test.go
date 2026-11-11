@@ -344,10 +344,12 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		},
 		model: func(context.Context, string) (domain.Model, error) { return model, nil },
 	}
+	clock := now
 	server := &server{
 		store: withFeeds(db, []domain.Feed{
 			{FeedID: "one"}, {FeedID: "two"},
 		}),
+		now: func() time.Time { return clock },
 	}
 	got := server.getStories(context.Background(), server.requestSnapshot("user"), map[string]string{})
 	if got.StatusCode != http.StatusOK {
@@ -376,8 +378,10 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	if got.StatusCode != http.StatusOK || !strings.Contains(got.Body, `"story_id":"story"`) {
 		t.Fatalf("in-window story = %d, %s", got.StatusCode, got.Body)
 	}
+	// The Item's fetch time moves no version, so its cached Story shows it
+	// only once the Story TTL has passed.
 	items[1].FetchedTS = domain.Timestamp(now.Add(-24 * time.Hour))
-	server.invalidateStories("user")
+	clock = clock.Add(4 * time.Minute)
 	got = server.getStories(context.Background(), server.requestSnapshot("user"), windowQuery)
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
 		t.Fatalf("single-source story = %d, %s", got.StatusCode, got.Body)

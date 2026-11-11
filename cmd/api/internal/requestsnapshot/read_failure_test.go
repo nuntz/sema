@@ -28,6 +28,10 @@ type scriptedStore struct {
 	feedsErr    error
 	// feedWriteErr is what SaveFeeds and DeleteFeed return.
 	feedWriteErr error
+
+	feedbackVersion int64
+	// feedbackWriteErr is what SetHeart and SetSignal return.
+	feedbackWriteErr error
 }
 
 func (s *scriptedStore) ReadVersion(context.Context, string) (int64, error) {

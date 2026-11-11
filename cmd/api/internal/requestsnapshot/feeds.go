@@ -115,31 +115,33 @@ func (s *Snapshot) plainFeeds(ctx context.Context) ([]domain.Feed, error) {
 // Feed writes are rare and a reload is one Query, so rather than patching,
 // it drops the instance's Feed copies and the request reloads both its
 // FEED_VERSION and its Feeds on next use. It drops them after an error too,
-// because the write may have committed partway.
+// with the user's Stories, because the write may have committed partway.
 func (s *Snapshot) SaveFeeds(ctx context.Context, feeds ...domain.Feed) error {
-	s.feedMu.Lock()
-	defer s.feedMu.Unlock()
-	_, err := s.cache.store.SaveFeeds(ctx, s.userID, feeds)
-	s.dropFeeds()
-	return err
+	return s.writeFeeds(func() error {
+		_, err := s.cache.store.SaveFeeds(ctx, s.userID, feeds)
+		return err
+	})
 }
 
 // DeleteFeed deletes one of the user's Feeds, dropping Feed copies as
 // SaveFeeds does.
 func (s *Snapshot) DeleteFeed(ctx context.Context, feedID string) error {
-	s.feedMu.Lock()
-	defer s.feedMu.Unlock()
-	_, err := s.cache.store.DeleteFeed(ctx, s.userID, feedID)
-	s.dropFeeds()
-	return err
+	return s.writeFeeds(func() error {
+		_, err := s.cache.store.DeleteFeed(ctx, s.userID, feedID)
+		return err
+	})
 }
 
-// dropFeeds forgets the instance's and the request's Feeds. The caller holds
-// feedMu.
-func (s *Snapshot) dropFeeds() {
+// writeFeeds runs a Feed write, then forgets the instance's and the
+// request's Feeds.
+func (s *Snapshot) writeFeeds(write func() error) error {
+	s.feedMu.Lock()
+	err := write()
 	s.cache.feeds.drop(s.userID)
 	s.cache.detailedFeeds.drop(s.userID)
 	s.feed = nil
+	s.feedMu.Unlock()
+	return s.dropStoriesOnError(err)
 }
 
 // cloneFeeds copies feeds deeply enough that changing the copy, its Tags or
