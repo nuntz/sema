@@ -38,7 +38,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 
 ## API
 
-- Each Lambda instance keeps its own `cmd/api` caches, and concurrent requests land on different instances. Data a client reads back after its own write must either be checked against shared state (as the Read markers are against `READ_VERSION`, ADR 0005, the Feed list against `FEED_VERSION`, ADR 0006, and the Story list against both plus `FEEDBACK_VERSION`, ADR 0007) or skip the cache. Clearing the cache on the instance that took the write is not enough. Test this with two `server` values sharing one store, as in `cmd/api/read_instances_test.go`, `cmd/api/feed_instances_test.go` and `cmd/api/story_instances_test.go`.
+- Each Lambda instance caches a user's Read markers, Feed lists and Stories, and concurrent requests land on different instances. That caching lives only in the Request snapshot (`cmd/api/internal/requestsnapshot`), which checks each cached kind against its version row (ADRs 0005–0007). New cached per-user state becomes another kind there, with no protocol code of its own; a handler outside it reads live, strongly consistent state. Test a kind at the module's interface with two Caches over one DynamoDB Local table, aging entries only through the injected clock, as in `cmd/api/internal/requestsnapshot/read_test.go`, and add one two-server handler regression per bug, as in `cmd/api/read_instances_test.go`.
 
 ## Flaky tests
 

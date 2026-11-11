@@ -11,6 +11,10 @@ site root must answer 200 with the SPA's HTML, and `/api/items` 401 without a se
 requests run the tests and the workflow and shell-script lint (`scripts/lint-ci-files.sh`, also
 runnable locally with podman or docker) but never deploy.
 
+A stack of PRs, each based on the one below, lands one PR at a time from the bottom:
+`bash scripts/land-stacked-pr.sh <pr> --apply` merges it, retargets and rebases the PRs above it,
+then deletes its branch (without `--apply` it prints the plan). Each merge deploys.
+
 The job runs in the `production` GitHub environment, which GitHub limits to `master`, with
 `id-token: write`, in one `deploy` concurrency group that never cancels a run in progress. It
 reaches AWS through GitHub OIDC as `sema-github-deploy`, so no AWS key is stored in GitHub; the
