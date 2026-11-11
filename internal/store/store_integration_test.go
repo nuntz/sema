@@ -7,73 +7,26 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/dynamotest"
 )
 
 // newIntegrationStore creates an isolated table on DynamoDB Local and returns a
 // store bound to it. The table is dropped when the test finishes.
 func newIntegrationStore(t *testing.T) (context.Context, *Store) {
 	t.Helper()
-	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
-	if endpoint == "" {
-		t.Skip("DYNAMODB_ENDPOINT is not configured")
-	}
-	ctx := context.Background()
-	awsConfig, err := config.LoadDefaultConfig(ctx,
-		config.WithRegion("us-east-1"),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		config.WithBaseEndpoint(endpoint),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := dynamodb.NewFromConfig(awsConfig)
-	table := fmt.Sprintf("sema-test-%d", time.Now().UnixNano())
-	_, err = db.CreateTable(ctx, &dynamodb.CreateTableInput{
-		TableName:   aws.String(table),
-		BillingMode: types.BillingModePayPerRequest,
-		KeySchema: []types.KeySchemaElement{
-			{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash},
-			{AttributeName: aws.String("SK"), KeyType: types.KeyTypeRange},
-		},
-		AttributeDefinitions: []types.AttributeDefinition{
-			{AttributeName: aws.String("PK"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("SK"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("score"), AttributeType: types.ScalarAttributeTypeN},
-			{AttributeName: aws.String("gsi1pk"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("next_fetch_at"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("unread_pk"), AttributeType: types.ScalarAttributeTypeS},
-		},
-		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
-			{IndexName: aws.String("by-score"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("score"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll}},
-			{IndexName: aws.String("by-next-fetch"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("gsi1pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("next_fetch_at"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeKeysOnly}},
-			{IndexName: aws.String("unread-by-score"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("unread_pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("score"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll}},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = db.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(table)})
-	})
-	if err := dynamodb.NewTableExistsWaiter(db).Wait(ctx, &dynamodb.DescribeTableInput{TableName: aws.String(table)}, 10*time.Second); err != nil {
-		t.Fatal(err)
-	}
-
-	return ctx, New(db, nil, table, "", "")
+	db, table := dynamotest.NewTable(t)
+	return context.Background(), New(db, nil, table, "", "")
 }
 
 func putIntegrationFeed(t *testing.T, ctx context.Context, repository *Store, userID, feedID string) {

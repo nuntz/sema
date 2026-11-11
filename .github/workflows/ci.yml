@@ -16,12 +16,13 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
     services:
       dynamodb:
-        image: amazon/dynamodb-local:latest
+        # Keep in step with scripts/with-dynamodb-local.sh.
+        image: amazon/dynamodb-local:3.3.2
         ports:
           - 8000:8000
     env:
@@ -51,7 +52,7 @@ jobs:
 
   # The browser tests run beside the test job and gate the deploy as well (make e2e).
   e2e:
-    # Playwright 1.60 can't install Chromium on ubuntu-latest (26.04); unpin once it supports 26.04.
+    # Playwright 1.60 can't install Chromium on Ubuntu 26.04; move the jobs to 26.04 once it can.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -80,7 +81,7 @@ jobs:
   deploy:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master' && vars.PULUMI_STACK != ''
     needs: [test, e2e]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     concurrency:
       group: deploy

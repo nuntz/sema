@@ -23,15 +23,17 @@ test:
 	cd web && bun run test
 
 # check runs everything CI's test job runs (CI calls it), so a green check is a green CI test job.
-# The browser tests are CI's separate e2e job: make e2e.
+# It runs the unit tests against DynamoDB Local (scripts/with-dynamodb-local.sh), starting a
+# container when DYNAMODB_ENDPOINT isn't set. The browser tests are CI's separate e2e job: make e2e.
 check:
 	bash scripts/lint-ci-files.sh
+	bash scripts/lint-doc-paths.sh
 	@unformatted="$$(gofmt -l .)"; if [ -n "$$unformatted" ]; then echo "gofmt needed: $$unformatted" >&2; exit 1; fi
 	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go vet ./...
 	cd infra && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go vet ./...
 	cd web && bun install --frozen-lockfile
 	cd web && bun run lint
-	$(MAKE) test
+	bash scripts/with-dynamodb-local.sh $(MAKE) test
 	cd web && bun run build
 	$(MAKE) check-reproducible
 

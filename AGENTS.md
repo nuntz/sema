@@ -34,7 +34,7 @@ Header, reader, grid, and lightbox chrome follow fixed contracts (heights, inset
 
 ## Testing Guidelines
 
-Go tests use the standard `testing` package; frontend units use Vitest with `*.test.ts`/`*.test.tsx`, and Playwright specs use `*.e2e.ts`. Add focused regression tests beside changed code. There is no fixed coverage threshold, but CI must remain green. To exercise DynamoDB access patterns locally, run `DYNAMODB_ENDPOINT=http://localhost:8000 go test ./internal/store` with DynamoDB Local running.
+Go tests use the standard `testing` package; frontend units use Vitest with `*.test.ts`/`*.test.tsx`, and Playwright specs use `*.e2e.ts`. Add focused regression tests beside changed code. There is no fixed coverage threshold, but CI must remain green. Tests on DynamoDB Local skip without `DYNAMODB_ENDPOINT`; `make check` starts it, and `scripts/with-dynamodb-local.sh go test ./cmd/api/...` runs one package against it.
 
 ## Commit & Pull Request Guidelines
 

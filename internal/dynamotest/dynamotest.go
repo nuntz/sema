@@ -1,6 +1,7 @@
-// Package dynamotest creates throwaway Sema tables on DynamoDB Local for tests
-// outside package store. Tests that use it skip unless DYNAMODB_ENDPOINT is
-// set, as CI sets it.
+// Package dynamotest creates throwaway Sema tables on DynamoDB Local for tests.
+// Tests that use it skip unless DYNAMODB_ENDPOINT is set; `make check` sets it
+// (scripts/with-dynamodb-local.sh) together with SEMA_REQUIRE_DYNAMODB, which
+// turns that skip into a failure.
 package dynamotest
 
 import (
@@ -21,12 +22,16 @@ import (
 
 // NewTable creates a table with Sema's key schema and indexes, drops it when
 // the test finishes, and returns a client for it. It skips the test unless
-// DYNAMODB_ENDPOINT is set. Every worktree shares one DynamoDB Local
-// namespace, so the name carries a random suffix as well as the time.
+// DYNAMODB_ENDPOINT is set, or fails it when SEMA_REQUIRE_DYNAMODB is set.
+// Every worktree shares one DynamoDB Local namespace, so the name carries a
+// random suffix as well as the time.
 func NewTable(t testing.TB) (*dynamodb.Client, string) {
 	t.Helper()
 	endpoint := os.Getenv("DYNAMODB_ENDPOINT")
 	if endpoint == "" {
+		if os.Getenv("SEMA_REQUIRE_DYNAMODB") != "" {
+			t.Fatal("DYNAMODB_ENDPOINT is not configured, but SEMA_REQUIRE_DYNAMODB requires DynamoDB Local")
+		}
 		t.Skip("DYNAMODB_ENDPOINT is not configured")
 	}
 	ctx := context.Background()
