@@ -42,7 +42,7 @@ func TestArchiveFiltersAcrossPages(t *testing.T) {
 				}
 				return []domain.Item{{SK: "A#" + id, ItemID: id, FeedID: id, Archived: true, Hearted: true}}, next, nil
 			}}
-			s := &server{store: withFeeds(db, []domain.Feed{
+			s := &server{store: db, snapshotStore: withFeeds([]domain.Feed{
 				{FeedID: "muted", Muted: true, Tags: []string{"tech"}}, {FeedID: "plain"}, {FeedID: "tech", Tags: []string{"tech"}},
 			})}
 			tc.query["limit"] = "1"

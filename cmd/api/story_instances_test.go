@@ -26,7 +26,7 @@ func TestReadStoryDoesNotComeBackOnAnotherInstance(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	writer, reader := &server{store: repository}, &server{store: repository}
+	writer, reader := &server{store: repository, snapshotStore: repository}, &server{store: repository, snapshotStore: repository}
 	if got, _ := unreadStoryIDs(t, reader); len(got) != 1 || got[0] != "story" {
 		t.Fatalf("unread Stories before reading = %v, want the Story", got)
 	}

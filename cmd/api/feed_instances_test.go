@@ -21,7 +21,7 @@ func TestEditedFeedDoesNotShowItsOldStateOnAnotherInstance(t *testing.T) {
 	now := time.Now().UTC()
 	putTaggedFeedItems(t, repository, now, "news", "news-1")
 	putTaggedFeedItems(t, repository, now, "wire", "wire-1")
-	writer, reader := &server{store: repository}, &server{store: repository}
+	writer, reader := &server{store: repository, snapshotStore: repository}, &server{store: repository, snapshotStore: repository}
 	if got := scopeItemIDs(t, reader, "wire"); !slices.Equal(got, []string{"wire-1"}) {
 		t.Fatalf("wire Scope before the edit = %v", got)
 	}

@@ -22,7 +22,7 @@ func TestTagChipCountStaysDownAfterReadingItsScopeAndHopping(t *testing.T) {
 	now := time.Now().UTC()
 	putTaggedFeedItems(t, repository, now, "news", "news-1", "news-2")
 	putTaggedFeedItems(t, repository, now, "wire", "wire-1")
-	writer, reader := &server{store: repository}, &server{store: repository}
+	writer, reader := &server{store: repository, snapshotStore: repository}, &server{store: repository, snapshotStore: repository}
 	if got := unreadCounts(t, reader); got["news"] != 2 || got["wire"] != 1 {
 		t.Fatalf("unread counts before reading = %v", got)
 	}
@@ -127,7 +127,7 @@ func TestViewsReportAnItemReadOnAnotherInstance(t *testing.T) {
 			repository := store.New(db, nil, table, "", "")
 			putSearchableItems(t, repository, time.Now().UTC(), map[string]string{"news-1": "pulumi notes", "news-2": "lambda notes", "news-3": "other notes"})
 			instance := func() *server {
-				return &server{store: repository, embedder: searchEmbedder{}, vectors: newsVectors{}}
+				return &server{store: repository, snapshotStore: repository, embedder: searchEmbedder{}, vectors: newsVectors{}}
 			}
 			writer, reader := instance(), instance()
 			mustOK(t, reader, http.MethodGet, "/api/items", nil, "")

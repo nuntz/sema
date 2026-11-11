@@ -74,17 +74,12 @@ func (s *Snapshot) stories(ctx context.Context, filters any, render func(context
 		return list, nil
 	}
 	cache := s.cache
-	now := cache.now()
 	key := storyKey{userID: s.userID, filters: string(encoded)}
-	list, outcome := cache.stories.lookup(key, versions, now)
-	s.record("StoryCache", outcome)
-	if outcome != outcomeHit {
-		list, err = render(ctx, read)
-		if err != nil {
-			cache.stories.drop(key)
-			return nil, err
-		}
-		cache.stories.fill(key, versions, list, now)
+	list, err := cache.stories.load(key, versions, cache.now(), s.recorder("StoryCache"), func() (any, error) {
+		return render(ctx, read)
+	})
+	if err != nil {
+		return nil, err
 	}
 	if s.renders == nil {
 		s.renders = map[storyRender]any{}

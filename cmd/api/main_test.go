@@ -87,7 +87,7 @@ func TestResponseEncodesNilCollectionsAsArrays(t *testing.T) {
 }
 
 func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
-	server := &server{store: &fakeAPIStore{}}
+	server := &server{store: &fakeAPIStore{}, snapshotStore: &fakeSnapshotStore{}}
 	got := server.getSearch(context.Background(), server.requestSnapshot("user"), map[string]string{"q": "pulumi"})
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
@@ -116,12 +116,12 @@ func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
 }
 
 func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
-	server := &server{store: withFeeds(&fakeAPIStore{itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, limit int, includeRead, fill bool, allowed, excluded map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+	server := &server{store: &fakeAPIStore{itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, limit int, includeRead, fill bool, allowed, excluded map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 		if limit != 2 || includeRead {
 			t.Fatal("wrong unread page request")
 		}
 		return []domain.Item{{ItemID: "new"}, {ItemID: "old"}}, "", &domain.Item{ItemID: "anchor", PublishedTS: "2026-09-17T00:00:00Z"}, nil
-	}}, []domain.Feed{{FeedID: "feed"}})}
+	}}, snapshotStore: withFeeds([]domain.Feed{{FeedID: "feed"}})}
 	got := server.getItems(context.Background(), server.requestSnapshot("user"), map[string]string{
 		"order": "chrono", "limit": "2",
 	})
@@ -156,12 +156,13 @@ func TestGetItemsReportsHasReadWithoutAnchor(t *testing.T) {
 		{"no read markers", map[string]bool{}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := &server{store: withFeeds(&fakeAPIStore{
-				loadMarkers: func(context.Context, string) (map[string]bool, error) { return test.markers, nil },
+			state := withFeeds([]domain.Feed{{FeedID: "feed"}})
+			state.markers = test.markers
+			server := &server{store: &fakeAPIStore{
 				itemsForFeeds: func(context.Context, string, domain.Order, string, int, bool, bool, map[string]bool, map[string]bool, domain.FetchWindow, map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 					return []domain.Item{}, "", nil, nil
 				},
-			}, []domain.Feed{{FeedID: "feed"}})}
+			}, snapshotStore: state}
 			ctx, fields := withRequestFields(context.Background())
 			got := server.getItems(ctx, server.requestSnapshot("user"), map[string]string{"order": "interest"})
 			var body struct {
@@ -204,7 +205,7 @@ func TestGetItemsFiltersByFeed(t *testing.T) {
 				return nil, "", nil, nil
 			}}
 			server := &server{
-				store: withFeeds(db, []domain.Feed{
+				store: db, snapshotStore: withFeeds([]domain.Feed{
 					{FeedID: "alpha"}, {FeedID: "beta"}, {FeedID: "muted", Muted: true},
 				}),
 			}
@@ -248,7 +249,7 @@ func TestGetItemsAppliesTagCutoffsOnlyToTagScope(t *testing.T) {
 			return rows, "", nil, nil
 		}}
 	server := &server{
-		store: withFeeds(db, []domain.Feed{
+		store: db, snapshotStore: withFeeds([]domain.Feed{
 			{FeedID: "tagged-feed", Tags: []string{"tech"}},
 			{FeedID: "plain-feed"},
 		}),
@@ -320,7 +321,7 @@ func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 
 func TestGetStoriesReturnsArray(t *testing.T) {
 	server := &server{
-		store: withFeeds(&fakeAPIStore{}, []domain.Feed{{FeedID: "feed"}}),
+		store: &fakeAPIStore{}, snapshotStore: withFeeds([]domain.Feed{{FeedID: "feed"}}),
 	}
 	got := server.getStories(context.Background(), server.requestSnapshot("user"), map[string]string{})
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
@@ -346,7 +347,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	}
 	clock := now
 	server := &server{
-		store: withFeeds(db, []domain.Feed{
+		store: db, snapshotStore: withFeeds([]domain.Feed{
 			{FeedID: "one"}, {FeedID: "two"},
 		}),
 		now: func() time.Time { return clock },
@@ -425,7 +426,7 @@ func TestSessionRoutesCreateAndDeleteFirstPartySession(t *testing.T) {
 		return domain.User{Email: "reader@example.com", OrderPref: domain.OrderInterest}, nil
 	}, ensureUser: func(context.Context, string, string) error { updateCount++; return nil }}
 	server := &server{
-		store: repository, sessions: auth.NewSessions(sessions),
+		store: repository, snapshotStore: &fakeSnapshotStore{}, sessions: auth.NewSessions(sessions),
 		verifyGoogle: func(_ context.Context, credential string) (auth.Claims, error) {
 			if credential != "google-token" {
 				t.Fatalf("credential = %q", credential)
@@ -595,9 +596,9 @@ func TestNormalizeTagsAndFeedStatus(t *testing.T) {
 
 func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
 	var saved domain.Feed
-	db := &fakeAPIStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
+	state := &fakeSnapshotStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
-	server := &server{store: db, queue: queue}
+	server := &server{store: &fakeAPIStore{}, snapshotStore: state, queue: queue}
 	got := server.addFeed(context.Background(), server.requestSnapshot("user"), `{
 		"feed_url":"https://old.reddit.com/r/Castles/new.rss",
 		"connector":"reddit",
@@ -623,17 +624,15 @@ func TestAddRedditFeedMergesIntoTheLiveRow(t *testing.T) {
 	listed := domain.Feed{FeedID: "legacy", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/castles/.rss"}
 	live := listed
 	live.ItemCount = 7
-	db := &fakeAPIStore{
-		putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil },
-		feeds:   func(context.Context, string) ([]domain.Feed, error) { return []domain.Feed{listed}, nil },
-		feed: func(_ context.Context, _, feedID string) (domain.Feed, error) {
-			if feedID != "legacy" {
-				return domain.Feed{}, store.ErrNotFound
-			}
-			return live, nil
-		},
-	}
-	server := &server{store: db, queue: &apiQueue{}}
+	db := &fakeAPIStore{feed: func(_ context.Context, _, feedID string) (domain.Feed, error) {
+		if feedID != "legacy" {
+			return domain.Feed{}, store.ErrNotFound
+		}
+		return live, nil
+	}}
+	state := withFeeds([]domain.Feed{listed})
+	state.putFeed = func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }
+	server := &server{store: db, snapshotStore: state, queue: &apiQueue{}}
 	got := server.addFeed(context.Background(), server.requestSnapshot("user"), `{"feed_url":"https://www.reddit.com/r/castles/new.rss","connector":"reddit"}`)
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
@@ -651,9 +650,10 @@ func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
 		ETag: `"top"`, LastModified: "yesterday", ErrorCount: 3, LastError: "forbidden",
 	}
 	var saved domain.Feed
-	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }, putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
+	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }}
+	state := &fakeSnapshotStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
-	server := &server{store: db, queue: queue}
+	server := &server{store: db, snapshotStore: state, queue: queue}
 	got := server.patchFeed(context.Background(), server.requestSnapshot("user"), "legacy-id", `{"url":"https://www.reddit.com/r/castles/.rss"}`)
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
@@ -675,9 +675,10 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 		FetchIntervalH: 24, NextFetchAt: "2026-08-27T12:00:00Z",
 	}
 	var saved domain.Feed
-	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return existing, nil }, putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
+	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return existing, nil }}
+	state := &fakeSnapshotStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
-	server := &server{store: db, queue: queue}
+	server := &server{store: db, snapshotStore: state, queue: queue}
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -715,7 +716,7 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 func TestImportThatFailsPartwayShowsItsSavedFeeds(t *testing.T) {
 	writeFailure := errors.New("write failed")
 	rows := map[string]domain.Feed{}
-	db := &fakeAPIStore{
+	state := &fakeSnapshotStore{
 		putFeed: func(_ context.Context, feed domain.Feed) error {
 			if strings.Contains(feed.URL, "failed") {
 				return writeFailure
@@ -727,7 +728,7 @@ func TestImportThatFailsPartwayShowsItsSavedFeeds(t *testing.T) {
 			return slices.Collect(maps.Values(rows)), nil
 		},
 	}
-	server := &server{store: db, queue: &apiQueue{}}
+	server := &server{store: &fakeAPIStore{}, snapshotStore: state, queue: &apiQueue{}}
 	listedURLs := func() []string {
 		t.Helper()
 		got := server.getFeeds(context.Background(), server.requestSnapshot("user"))
@@ -1013,7 +1014,7 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 		}
 		return map[string]domain.FeedItemCount{"feed": {All: count, Unread: count}}, nil
 	}}
-	s := &server{store: withFeeds(db, []domain.Feed{{FeedID: "feed"}})}
+	s := &server{store: db, snapshotStore: withFeeds([]domain.Feed{{FeedID: "feed"}})}
 	for _, test := range []struct {
 		query map[string]string
 		want  int
@@ -1041,7 +1042,7 @@ func TestFeedCountsOmitsDeletedFeeds(t *testing.T) {
 	db := &fakeAPIStore{feedItemCounts: func(context.Context, string, domain.FetchWindow, map[string]bool) (map[string]domain.FeedItemCount, error) {
 		return map[string]domain.FeedItemCount{"current": {All: 1}, "deleted": {All: 1}}, nil
 	}}
-	s := &server{store: withFeeds(db, []domain.Feed{{FeedID: "current"}})}
+	s := &server{store: db, snapshotStore: withFeeds([]domain.Feed{{FeedID: "current"}})}
 	got := s.getFeedItemCounts(context.Background(), s.requestSnapshot("user"), nil)
 	var body struct {
 		Feeds map[string]domain.FeedItemCount `json:"feeds"`
@@ -1151,7 +1152,7 @@ func TestGetSearchScope(t *testing.T) {
 				},
 			}
 			vectors := &searchVectors{}
-			s := &server{store: withFeeds(db, []domain.Feed{
+			s := &server{store: db, snapshotStore: withFeeds([]domain.Feed{
 				{FeedID: "selected", Tags: []string{"tech"}},
 				{FeedID: "other", Tags: []string{"other"}},
 				{FeedID: "untagged"},
@@ -1217,8 +1218,9 @@ func TestBuryRejectsKeptItems(t *testing.T) {
 					return domain.Item{}, store.ErrNotFound
 				}
 				return item, nil
-			}, archiveItem: func(context.Context, string, string) (domain.Item, error) { return item, nil }, setSignal: func(context.Context, string, domain.Item, int) error { t.Fatal("bury must not write"); return nil }}
-			s := &server{store: db}
+			}, archiveItem: func(context.Context, string, string) (domain.Item, error) { return item, nil }}
+			state := &fakeSnapshotStore{setSignal: func(context.Context, string, domain.Item, int) error { t.Fatal("bury must not write"); return nil }}
+			s := &server{store: db, snapshotStore: state}
 			got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/signal", `{"value":-1}`)
 			if got.StatusCode != http.StatusConflict {
 				t.Fatalf("got %d: %s", got.StatusCode, got.Body)
