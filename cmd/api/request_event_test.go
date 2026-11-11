@@ -82,10 +82,7 @@ func TestPingRecordsItsOutcomeOnTheRequestEvent(t *testing.T) {
 }
 
 func TestGetItemsRecordsTheQueryShapeOnTheRequestEvent(t *testing.T) {
-	s := &server{store: &fakeAPIStore{
-		feeds: func(context.Context, string) ([]domain.Feed, error) {
-			return []domain.Feed{{FeedID: "feed"}}, nil
-		},
+	s := &server{snapshotStore: withFeeds([]domain.Feed{{FeedID: "feed"}}), store: &fakeAPIStore{
 		itemsForFeeds: func(context.Context, string, domain.Order, string, int, bool, bool, map[string]bool, map[string]bool, domain.FetchWindow, map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 			return []domain.Item{{ItemID: "a", FeedID: "feed"}, {ItemID: "b", FeedID: "feed"}}, "", nil, nil
 		},
@@ -157,7 +154,7 @@ func (failingRetries) EnqueueRetry(context.Context, send.Message, time.Duration)
 }
 
 func TestGetItemsThatFailEarlyStillRecordTheQueryShape(t *testing.T) {
-	s := &server{store: &fakeAPIStore{
+	s := &server{store: &fakeAPIStore{}, snapshotStore: &fakeSnapshotStore{
 		feeds: func(context.Context, string) ([]domain.Feed, error) {
 			return nil, errors.New("store unavailable")
 		},

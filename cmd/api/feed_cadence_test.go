@@ -25,8 +25,9 @@ func TestPatchCadencePinsAndAuto(t *testing.T) {
 	} {
 		t.Run(test.body+test.connector, func(t *testing.T) {
 			feed := domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: test.connector, FetchIntervalH: 24, HistoryStartedAt: domain.Timestamp(time.Now().Add(-8 * 24 * time.Hour))}
-			db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }, putFeed: func(_ context.Context, updated domain.Feed) error { feed = updated; return nil }}
-			s := &server{store: db}
+			db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }}
+			state := &fakeSnapshotStore{putFeed: func(_ context.Context, updated domain.Feed) error { feed = updated; return nil }}
+			s := &server{store: db, snapshotStore: state}
 			got := s.patchFeed(context.Background(), s.requestSnapshot("user"), "feed", test.body)
 			if got.StatusCode != test.wantStatus || feed.FetchIntervalH != test.wantPin {
 				t.Fatalf("response=%+v feed=%+v", got, feed)
@@ -46,13 +47,10 @@ func TestPatchCadencePinsAndAuto(t *testing.T) {
 
 func TestFeedListExcludesLinkItemsAndExposesRefusals(t *testing.T) {
 	since := domain.Timestamp(time.Now().Add(-25 * time.Hour))
-	db := &fakeAPIStore{feeds: func(context.Context, string) ([]domain.Feed, error) {
-		return []domain.Feed{
-			{FeedID: "mixed", EffectiveCadenceH: 6, RefusedSince: since, BodyOutcomes: strings.Repeat("0", 45) + strings.Repeat("1", 5), ItemCount: 60, ExtractionSample: 60, LinkItemCount: 50, ExtractionFailures: 2, ExtractionQualityTotal: 6},
-			{FeedID: "links", ItemCount: 50, ExtractionSample: 50, LinkItemCount: 50},
-		}, nil
-	}}
-	s := &server{store: db}
+	s := &server{store: &fakeAPIStore{}, snapshotStore: withFeeds([]domain.Feed{
+		{FeedID: "mixed", EffectiveCadenceH: 6, RefusedSince: since, BodyOutcomes: strings.Repeat("0", 45) + strings.Repeat("1", 5), ItemCount: 60, ExtractionSample: 60, LinkItemCount: 50, ExtractionFailures: 2, ExtractionQualityTotal: 6},
+		{FeedID: "links", ItemCount: 50, ExtractionSample: 50, LinkItemCount: 50},
+	})}
 	got := s.getFeeds(context.Background(), s.requestSnapshot("user"))
 	var body struct {
 		Feeds []domain.Feed `json:"feeds"`
@@ -69,8 +67,8 @@ func TestFeedListExcludesLinkItemsAndExposesRefusals(t *testing.T) {
 func TestSubscribeCadenceDefaultsAndPins(t *testing.T) {
 	for _, cadence := range []string{"", `,"fetch_interval_h":null`, `,"fetch_interval_h":6`, `,"fetch_interval_h":5`} {
 		var saved domain.Feed
-		db := &fakeAPIStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
-		s := &server{store: db, queue: &apiQueue{}}
+		state := &fakeSnapshotStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
+		s := &server{store: &fakeAPIStore{}, snapshotStore: state, queue: &apiQueue{}}
 		got := s.addFeed(context.Background(), s.requestSnapshot("user"), `{"feed_url":"https://example.com/feed"`+cadence+`}`)
 		if strings.Contains(cadence, ":5") {
 			if got.StatusCode != 400 {

@@ -16,7 +16,7 @@ func TestRenderedStoriesAreCachedPerFilters(t *testing.T) {
 		renders++
 		return nil, nil
 	}}
-	s := &server{store: db}
+	s := &server{store: db, snapshotStore: &fakeSnapshotStore{}}
 	load := func(user string, allowed map[string]bool, unread bool, tag string, window domain.FetchWindow, model domain.Model) {
 		t.Helper()
 		if _, _, err := s.loadAndRenderStories(context.Background(), s.requestSnapshot(user), allowed, unread, model, tag, window); err != nil {
@@ -53,7 +53,7 @@ func TestStoryRenderingIgnoresMissingMembersWithoutWriting(t *testing.T) {
 			}, nil
 		},
 	}
-	s := &server{store: source}
+	s := &server{store: source, snapshotStore: &fakeSnapshotStore{}}
 	stories, hidden, err := s.renderStories(context.Background(), s.requestSnapshot("user"), nil, false, domain.Model{}, "", domain.FetchWindow{}, nil)
 	if err != nil || len(stories) != 1 || len(stories[0].Items) != 2 || !hidden["lead"] || !hidden["member"] {
 		t.Fatalf("stories=%+v hidden=%v error=%v", stories, hidden, err)

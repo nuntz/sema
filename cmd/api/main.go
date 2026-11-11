@@ -60,9 +60,12 @@ type queueAPI interface {
 
 type server struct {
 	// snapshots is this instance's Request snapshot cache; requestSnapshot
-	// builds it from store and now on first use when it is nil.
-	snapshots        *requestsnapshot.Cache
-	snapshotsOnce    sync.Once
+	// builds it from snapshotStore and now on first use.
+	snapshots     *requestsnapshot.Cache
+	snapshotsOnce sync.Once
+	// snapshotStore holds the user state handlers reach only through the
+	// Request snapshot. Production passes the same *store.Store as store.
+	snapshotStore    requestsnapshot.Store
 	store            apiStore
 	sessions         *auth.Sessions
 	verifyGoogle     func(context.Context, string) (auth.Claims, error)
@@ -97,9 +100,7 @@ type server struct {
 // docs/adr/0007-stories-are-read-your-writes.md.
 func (s *server) requestSnapshot(userID string) *requestsnapshot.Snapshot {
 	s.snapshotsOnce.Do(func() {
-		if s.snapshots == nil {
-			s.snapshots = requestsnapshot.NewCache(s.store, s.now)
-		}
+		s.snapshots = requestsnapshot.NewCache(s.snapshotStore, s.now)
 	})
 	return s.snapshots.Snapshot(userID)
 }
@@ -1667,7 +1668,7 @@ func main() {
 	vectorClient := s3vectors.NewFromConfig(config)
 	queueClient := sqs.NewFromConfig(config)
 	s := &server{
-		store: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
+		store: repository, snapshotStore: repository, sessions: auth.NewSessions(repository), verifyGoogle: func(ctx context.Context, credential string) (auth.Claims, error) {
 			return auth.VerifyGoogle(ctx, credential, googleClientID)
 		}, queue: queueClient, feedsURL: queueURL, itemsURL: itemsURL, signer: signer,
 		rescore: invoker.invokeRescore, discover: discovery.New(discoveryHTTP, !strings.EqualFold(strings.TrimSpace(os.Getenv("YOUTUBE_DISCOVERY_ENABLED")), "false")), media: media.New(httpx.New(8*time.Second, media.MaxDownloadBytes)),

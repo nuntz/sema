@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 
+	"github.com/nuntz/sema/cmd/api/internal/requestsnapshot"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/score"
 	"github.com/nuntz/sema/internal/store"
@@ -14,36 +16,22 @@ type fakeAPIStore struct {
 	ensureUser      func(ctx context.Context, userID, email string) error
 	user            func(ctx context.Context, userID string) (domain.User, error)
 	updateUser      func(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error
-	putFeed         func(ctx context.Context, feed domain.Feed) error
 	feed            func(ctx context.Context, userID, feedID string) (domain.Feed, error)
-	feeds           func(ctx context.Context, userID string) ([]domain.Feed, error)
-	deleteFeed      func(ctx context.Context, userID, feedID string) error
 	feedItemCounts  func(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error)
 	itemsForFeeds   func(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error)
-	loadMarkers     func(ctx context.Context, userID string) (map[string]bool, error)
 	clusters        func(ctx context.Context, userID string) ([]domain.Cluster, error)
 	searchItems     func(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error)
 	resolve         func(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error)
 	item            func(ctx context.Context, userID, itemID string) (domain.Item, error)
 	archives        func(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error)
 	archiveItem     func(ctx context.Context, userID, itemID string) (domain.Item, error)
-	setHeart        func(ctx context.Context, userID, itemID string, hearted bool) (string, int, error)
 	recordBehaviour func(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error
 	model           func(ctx context.Context, userID string) (domain.Model, error)
 	signalValues    func(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
-	setSignal       func(ctx context.Context, userID string, item domain.Item, value int) error
 	resolveRead     func(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error
-	setRead         func(ctx context.Context, userID string, ids []string, read bool) error
 	putContent      func(ctx context.Context, objectKey, contentType string, body []byte) error
 	contentURL      func(objectKey string) string
 	publicItem      func(item domain.Item) domain.Item
-	// readVersion moves with every successful setRead, like the store's.
-	readVersion int64
-	// feedVersion moves with every SaveFeeds that wrote and every DeleteFeed.
-	feedVersion int64
-	// feedbackVersions move per user with every successful SetHeart and
-	// SetSignal, like the store's.
-	feedbackVersions map[string]int64
 }
 
 func (f *fakeAPIStore) EnsureUser(ctx context.Context, userID, email string) error {
@@ -55,48 +43,11 @@ func (f *fakeAPIStore) User(ctx context.Context, userID string) (domain.User, er
 func (f *fakeAPIStore) UpdateUser(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error {
 	return f.updateUser(ctx, userID, order, position, tag, feed)
 }
-func (f *fakeAPIStore) SaveFeeds(ctx context.Context, _ string, feeds []domain.Feed) (int64, error) {
-	var writeErrors []error
-	wrote := false
-	for _, feed := range feeds {
-		var err error
-		if f.putFeed != nil {
-			err = f.putFeed(ctx, feed)
-		}
-		writeErrors = append(writeErrors, err)
-		wrote = wrote || err == nil
-	}
-	if wrote {
-		f.feedVersion++
-	}
-	if err := errors.Join(writeErrors...); err != nil || !wrote {
-		return 0, err
-	}
-	return f.feedVersion, nil
-}
-func (f *fakeAPIStore) FeedVersion(context.Context, string) (int64, error) {
-	return f.feedVersion, nil
-}
 func (f *fakeAPIStore) Feed(ctx context.Context, userID, feedID string) (domain.Feed, error) {
 	if f.feed == nil {
 		return domain.Feed{}, store.ErrNotFound
 	}
 	return f.feed(ctx, userID, feedID)
-}
-func (f *fakeAPIStore) Feeds(ctx context.Context, userID string) ([]domain.Feed, error) {
-	if f.feeds == nil {
-		return nil, nil
-	}
-	return f.feeds(ctx, userID)
-}
-func (f *fakeAPIStore) DeleteFeed(ctx context.Context, userID, feedID string) (int64, error) {
-	if f.deleteFeed != nil {
-		if err := f.deleteFeed(ctx, userID, feedID); err != nil {
-			return 0, err
-		}
-	}
-	f.feedVersion++
-	return f.feedVersion, nil
 }
 func (f *fakeAPIStore) FeedItemCounts(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error) {
 	return f.feedItemCounts(ctx, userID, window, snapshot)
@@ -106,12 +57,6 @@ func (f *fakeAPIStore) ItemsForFeeds(ctx context.Context, userID string, order d
 		return nil, "", nil, nil
 	}
 	return f.itemsForFeeds(ctx, userID, order, encodedCursor, limit, includeRead, fillFilteredPage, allowedFeedIDs, excludeItemIDs, window, snapshot)
-}
-func (f *fakeAPIStore) LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
-	if f.loadMarkers == nil {
-		return map[string]bool{}, nil
-	}
-	return f.loadMarkers(ctx, userID)
 }
 func (f *fakeAPIStore) Clusters(ctx context.Context, userID string) ([]domain.Cluster, error) {
 	if f.clusters == nil {
@@ -140,13 +85,6 @@ func (f *fakeAPIStore) Archives(ctx context.Context, userID, encodedCursor strin
 func (f *fakeAPIStore) ArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error) {
 	return f.archiveItem(ctx, userID, itemID)
 }
-func (f *fakeAPIStore) SetHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error) {
-	archiveSK, count, err := f.setHeart(ctx, userID, itemID, hearted)
-	if err == nil {
-		f.bumpFeedback(userID)
-	}
-	return archiveSK, count, err
-}
 func (f *fakeAPIStore) RecordBehaviour(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error {
 	return f.recordBehaviour(ctx, userID, item, event)
 }
@@ -162,39 +100,8 @@ func (f *fakeAPIStore) SignalValues(ctx context.Context, userID string, itemIDs 
 	}
 	return f.signalValues(ctx, userID, itemIDs)
 }
-func (f *fakeAPIStore) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
-	if err := f.setSignal(ctx, userID, item, value); err != nil {
-		return err
-	}
-	f.bumpFeedback(userID)
-	return nil
-}
-func (f *fakeAPIStore) bumpFeedback(userID string) {
-	if f.feedbackVersions == nil {
-		f.feedbackVersions = map[string]int64{}
-	}
-	f.feedbackVersions[userID]++
-}
-func (f *fakeAPIStore) FeedbackVersion(_ context.Context, userID string) (int64, error) {
-	return f.feedbackVersions[userID], nil
-}
 func (f *fakeAPIStore) ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error {
 	return f.resolveRead(ctx, userID, items, snapshot)
-}
-func (f *fakeAPIStore) ReadVersion(context.Context, string) (int64, error) {
-	return f.readVersion, nil
-}
-func (f *fakeAPIStore) SetRead(ctx context.Context, userID string, ids []string, read bool) (int64, error) {
-	if f.setRead != nil {
-		if err := f.setRead(ctx, userID, ids, read); err != nil {
-			return 0, err
-		}
-	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	f.readVersion++
-	return f.readVersion, nil
 }
 func (f *fakeAPIStore) PutContent(ctx context.Context, objectKey, contentType string, body []byte) error {
 	return f.putContent(ctx, objectKey, contentType, body)
@@ -235,17 +142,64 @@ func (f *fakeSessions) DeleteSession(_ context.Context, hash string) error {
 	return nil
 }
 
-// feedsStore serves a fixed Feed list over another store.
-type feedsStore struct {
-	apiStore
-	feeds []domain.Feed
+// fakeSnapshotStore is the Request snapshot's store over state a test
+// supplies. Its versions are always zero and its writes report that nothing
+// moved, so it suits tests of one request's handling; a test that needs a
+// write seen by a later load, on this instance or another, uses DynamoDB
+// Local through internal/dynamotest instead.
+type fakeSnapshotStore struct {
+	markers   map[string]bool
+	feeds     func(ctx context.Context, userID string) ([]domain.Feed, error)
+	putFeed   func(ctx context.Context, feed domain.Feed) error
+	setSignal func(ctx context.Context, userID string, item domain.Item, value int) error
 }
 
-func (f feedsStore) Feeds(context.Context, string) ([]domain.Feed, error) {
-	return slices.Clone(f.feeds), nil
+var _ requestsnapshot.Store = (*fakeSnapshotStore)(nil)
+
+// withFeeds returns a fakeSnapshotStore whose user has the Feeds feeds.
+func withFeeds(feeds []domain.Feed) *fakeSnapshotStore {
+	return &fakeSnapshotStore{feeds: func(context.Context, string) ([]domain.Feed, error) {
+		return slices.Clone(feeds), nil
+	}}
 }
 
-// withFeeds gives db's user the Feeds feeds.
-func withFeeds(db apiStore, feeds []domain.Feed) apiStore {
-	return feedsStore{apiStore: db, feeds: feeds}
+func (*fakeSnapshotStore) ReadVersion(context.Context, string) (int64, error) { return 0, nil }
+func (f *fakeSnapshotStore) LoadReadMarkers(context.Context, string) (map[string]bool, error) {
+	return maps.Clone(f.markers), nil
+}
+func (*fakeSnapshotStore) SetRead(context.Context, string, []string, bool) (int64, error) {
+	return 0, nil
+}
+func (*fakeSnapshotStore) FeedVersion(context.Context, string) (int64, error) { return 0, nil }
+func (f *fakeSnapshotStore) Feeds(ctx context.Context, userID string) ([]domain.Feed, error) {
+	if f.feeds == nil {
+		return nil, nil
+	}
+	return f.feeds(ctx, userID)
+}
+
+// SaveFeeds writes each Feed on its own, like the store, so a failed write
+// leaves the others saved.
+func (f *fakeSnapshotStore) SaveFeeds(ctx context.Context, _ string, feeds []domain.Feed) (int64, error) {
+	if f.putFeed == nil {
+		return 0, nil
+	}
+	var writeErrors []error
+	for _, feed := range feeds {
+		writeErrors = append(writeErrors, f.putFeed(ctx, feed))
+	}
+	return 0, errors.Join(writeErrors...)
+}
+func (*fakeSnapshotStore) DeleteFeed(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+func (*fakeSnapshotStore) FeedbackVersion(context.Context, string) (int64, error) { return 0, nil }
+func (*fakeSnapshotStore) SetHeart(context.Context, string, string, bool) (string, int, error) {
+	return "", 0, nil
+}
+func (f *fakeSnapshotStore) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
+	if f.setSignal == nil {
+		return nil
+	}
+	return f.setSignal(ctx, userID, item, value)
 }
