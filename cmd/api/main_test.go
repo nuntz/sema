@@ -86,7 +86,7 @@ func TestResponseEncodesNilCollectionsAsArrays(t *testing.T) {
 
 func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
 	server := &server{store: &fakeAPIStore{}}
-	got := server.getSearch(context.Background(), "user", map[string]string{"q": "pulumi"})
+	got := server.getSearch(context.Background(), server.requestSnapshot("user"), map[string]string{"q": "pulumi"})
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
 	}
@@ -1109,7 +1109,7 @@ func TestGetSearchScope(t *testing.T) {
 					{FeedID: "untagged"},
 				}}},
 			}
-			got := s.getSearch(context.Background(), "user", map[string]string{"q": "topic", "limit": "2", "tag": test.tag, "feed": test.feed})
+			got := s.getSearch(context.Background(), s.requestSnapshot("user"), map[string]string{"q": "topic", "limit": "2", "tag": test.tag, "feed": test.feed})
 			if got.StatusCode != test.status {
 				t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
 			}

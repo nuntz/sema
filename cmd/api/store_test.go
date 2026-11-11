@@ -120,7 +120,7 @@ func (f *fakeAPIStore) Clusters(ctx context.Context, userID string) ([]domain.Cl
 	}
 	return f.clusters(ctx, userID)
 }
-func (f *fakeAPIStore) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error) {
+func (f *fakeAPIStore) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs, snapshot map[string]bool) ([]domain.Item, error) {
 	if f.searchItems == nil {
 		return nil, nil
 	}
