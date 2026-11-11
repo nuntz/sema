@@ -212,8 +212,46 @@ func TestIngestResolutionKeepsStrongReads(t *testing.T) {
 		}
 		return &dynamodb.BatchGetItemOutput{}, nil
 	}}
-	if _, err := New(db, nil, "table", "", "").ResolveItemIDsConsistent(context.Background(), "user", []string{"missing"}); err != nil || calls != 1 {
+	if _, err := New(db, nil, "table", "", "").ResolveItemIDsConsistent(context.Background(), "user", []string{"missing"}, nil); err != nil || calls != 1 {
 		t.Fatalf("calls = %d, error = %v", calls, err)
+	}
+}
+
+// A Story is cached under the FEEDBACK_VERSION read before it renders, so the
+// Keep state its Members show, on their identity and live rows, must be at
+// least that new. Read state still comes from the Request snapshot (#38).
+func TestStoryResolutionReadsKeepStrongly(t *testing.T) {
+	expires := time.Now().Add(time.Hour).Unix()
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		request := input.RequestItems["table"]
+		if !aws.ToBool(request.ConsistentRead) {
+			t.Fatal("Story Members were resolved eventually consistent")
+		}
+		rows := []map[string]types.AttributeValue{}
+		for _, requested := range request.Keys {
+			var value any
+			switch sk := requested["SK"].(*types.AttributeValueMemberS).Value; sk {
+			case "D#kept":
+				value = domain.ItemIdentity{SK: sk, ItemSK: "I#kept", TTL: expires}
+			case "I#kept":
+				value = domain.Item{SK: sk, ItemID: "kept", TTL: expires, ArchiveSK: "A#kept"}
+			default:
+				t.Fatalf("unexpected lookup of %s: Read state comes from the snapshot", sk)
+			}
+			row, err := attributevalue.MarshalMap(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row)
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": rows}}, nil
+	}}
+	items, err := New(db, nil, "table", "", "").ResolveItemIDsConsistent(context.Background(), "user", []string{"kept"}, map[string]bool{"kept": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ArchiveSK != "A#kept" || !items[0].Read {
+		t.Fatalf("items = %+v, want the Kept Item, Read per the snapshot", items)
 	}
 }
 

@@ -1545,6 +1545,24 @@ func TestSignalValuesSkipsEmptyBatch(t *testing.T) {
 	}
 }
 
+// A Story is cached under the FEEDBACK_VERSION read before it renders, so
+// the Boost and Bury values it shows must be at least that new (#38).
+func TestSignalValuesConsistentReadsStrongly(t *testing.T) {
+	stored, _ := attributevalue.MarshalMap(domain.Signal{PK: domain.UserPK("user"), SK: domain.SignalSK("boosted"), ItemID: "boosted", Value: 1})
+	calls := 0
+	db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+		calls++
+		if !aws.ToBool(input.RequestItems["table"].ConsistentRead) {
+			t.Fatal("Story Signal values were read eventually consistent")
+		}
+		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {stored}}}, nil
+	}}
+	values, err := New(db, nil, "table", "", "").SignalValuesConsistent(context.Background(), "user", []string{"boosted", "neutral"})
+	if err != nil || calls != 1 || len(values) != 1 || values["boosted"] != 1 {
+		t.Fatalf("SignalValuesConsistent = %#v, calls %d, %v", values, calls, err)
+	}
+}
+
 func TestBehaviourMergeIsMonotonic(t *testing.T) {
 	var updates []*dynamodb.UpdateItemInput
 	db := &fakeDynamoDB{updateItem: func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {

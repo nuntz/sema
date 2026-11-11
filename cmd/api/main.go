@@ -917,7 +917,10 @@ func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapsh
 	for _, row := range rows {
 		ids = append(ids, row.MemberIDs...)
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids, read)
+	// The Story is cached under the FEEDBACK_VERSION read before this render,
+	// so the Boost, Bury and Keep state it shows is read strongly consistent:
+	// an older value would serve under the newer version (ADR 0007).
+	items, err := s.store.ResolveItemIDsConsistent(ctx, userID, ids, read)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -932,7 +935,7 @@ func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapsh
 	if err := s.applyFeedPresentation(ctx, user, items); err != nil {
 		return nil, nil, err
 	}
-	if err := s.prepareItems(ctx, userID, items); err != nil {
+	if err := s.prepareItemsWith(ctx, userID, items, s.store.SignalValuesConsistent); err != nil {
 		return nil, nil, err
 	}
 	byID := make(map[string]domain.Item, len(items))
@@ -1023,11 +1026,17 @@ func (s *server) getArchiveItem(ctx context.Context, userID, itemID string) even
 }
 
 func (s *server) prepareItems(ctx context.Context, userID string, items []domain.Item) error {
+	return s.prepareItemsWith(ctx, userID, items, s.store.SignalValues)
+}
+
+// prepareItemsWith sets each Item's Signal from signalValues and makes it
+// public.
+func (s *server) prepareItemsWith(ctx context.Context, userID string, items []domain.Item, signalValues func(context.Context, string, []string) (map[string]int, error)) error {
 	itemIDs := make([]string, len(items))
 	for i := range items {
 		itemIDs[i] = items[i].ItemID
 	}
-	byID, err := s.store.SignalValues(ctx, userID, itemIDs)
+	byID, err := signalValues(ctx, userID, itemIDs)
 	if err != nil {
 		return err
 	}

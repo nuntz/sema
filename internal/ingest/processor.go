@@ -112,7 +112,7 @@ type itemStore interface {
 	PutItem(context.Context, domain.Item) (bool, error)
 	PutItemFailure(context.Context, string, string, int64) error
 	Signals(context.Context, string) ([]domain.Signal, error)
-	ResolveItemIDsConsistent(context.Context, string, []string) ([]domain.Item, error)
+	ResolveItemIDsConsistent(context.Context, string, []string, map[string]bool) ([]domain.Item, error)
 	CreateCluster(context.Context, domain.Cluster) (bool, error)
 	AddClusterMember(context.Context, string, string, string, int64) error
 	SetItemCluster(context.Context, domain.Item, string) error
@@ -673,7 +673,7 @@ func (h *Processor) assignCluster(ctx context.Context, userID string, vector []f
 		ids = append(ids, match.Key)
 		similarities[match.Key] = match.Similarity
 	}
-	resolved, err := h.Store.ResolveItemIDsConsistent(ctx, userID, ids)
+	resolved, err := h.Store.ResolveItemIDsConsistent(ctx, userID, ids, nil)
 	if err != nil {
 		return metrics, err
 	}

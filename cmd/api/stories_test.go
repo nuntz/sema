@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func TestStoryRenderingIgnoresMissingMembersWithoutWriting(t *testing.T) {
 		clusters: func(context.Context, string) ([]domain.Cluster, error) {
 			return []domain.Cluster{{StoryID: "story", MemberIDs: []string{"dead", "archive", "expired", "lead", "member"}}}, nil
 		},
-		resolve: func(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
+		resolveConsistent: func(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
 			return []domain.Item{
 				{ItemID: "archive", SK: "A#archive"}, {ItemID: "expired", TTL: now.Unix()},
 				{ItemID: "lead", FeedID: "one", TTL: now.Add(time.Hour).Unix()},
@@ -58,6 +59,59 @@ func TestStoryRenderingIgnoresMissingMembersWithoutWriting(t *testing.T) {
 	stories, hidden, err := s.renderStories(context.Background(), s.requestSnapshot("user"), storyFilters{}, nil)
 	if err != nil || len(stories) != 1 || len(stories[0].Items) != 2 || !hidden["lead"] || !hidden["member"] {
 		t.Fatalf("stories=%+v hidden=%v error=%v", stories, hidden, err)
+	}
+}
+
+// A Story is cached under the FEEDBACK_VERSION read before it renders. An
+// eventually consistent read of a Lead's Boost or Keep could predate that
+// version and serve it reverted until the Story expires (#38).
+func TestStoriesRenderFeedbackReadStrongly(t *testing.T) {
+	now := time.Now()
+	lead := domain.Item{ItemID: "lead", FeedID: "one", SK: "I#lead", ArchiveSK: "A#lead", TTL: now.Add(time.Hour).Unix()}
+	source := &fakeAPIStore{
+		clusters: func(context.Context, string) ([]domain.Cluster, error) {
+			return []domain.Cluster{{StoryID: "story", MemberIDs: []string{"lead", "member"}}}, nil
+		},
+		resolve: func(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
+			t.Fatal("Story Members were resolved eventually consistent")
+			return nil, nil
+		},
+		resolveConsistent: func(_ context.Context, _ string, _ []string, read map[string]bool) ([]domain.Item, error) {
+			if read == nil {
+				t.Fatal("Story Members must take Read state from the Request snapshot")
+			}
+			return []domain.Item{lead, {ItemID: "member", FeedID: "two", SK: "I#member", TTL: now.Add(time.Hour).Unix()}}, nil
+		},
+		signalValues: func(context.Context, string, []string) (map[string]int, error) {
+			t.Fatal("Story Signal values were read eventually consistent")
+			return nil, nil
+		},
+		signalValuesConsistent: func(context.Context, string, []string) (map[string]int, error) {
+			return map[string]int{"lead": 1}, nil
+		},
+	}
+	s := &server{store: source, snapshotStore: withFeeds([]domain.Feed{{FeedID: "one"}, {FeedID: "two"}})}
+	got, _ := handleSignedIn(t, s, http.MethodGet, "/api/stories", map[string]string{"include_read": "true"})
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("stories = %d: %s", got.StatusCode, got.Body)
+	}
+	var body struct {
+		Stories []struct {
+			Items []struct {
+				ItemID  string `json:"item_id"`
+				Signal  int    `json:"signal"`
+				Hearted bool   `json:"hearted"`
+			} `json:"items"`
+		} `json:"stories"`
+	}
+	decodeJSONBody(t, got.Body, &body)
+	if len(body.Stories) != 1 || len(body.Stories[0].Items) == 0 {
+		t.Fatalf("stories = %s", got.Body)
+	}
+	for _, item := range body.Stories[0].Items {
+		if item.ItemID == "lead" && (item.Signal != 1 || !item.Hearted) {
+			t.Fatalf("Lead = %+v, want Boosted and Kept", item)
+		}
 	}
 }
 

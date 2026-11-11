@@ -15,7 +15,8 @@ import (
 // Feed list. Handlers reach those only through the Snapshot, whose own
 // requestsnapshot.Store the same *store.Store satisfies. Handlers still read
 // one Feed (Feed) and Boost or Bury values (SignalValues) here directly. The
-// read parameters below are the Request snapshot's Read markers.
+// read parameters below are the Request snapshot's Read markers. Story
+// renders, cached under FEEDBACK_VERSION, use the Consistent reads (ADR 0007).
 type apiStore interface {
 	EnsureUser(ctx context.Context, userID, email string) error
 	User(ctx context.Context, userID string) (domain.User, error)
@@ -26,12 +27,14 @@ type apiStore interface {
 	Clusters(ctx context.Context, userID string) ([]domain.Cluster, error)
 	SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs, read map[string]bool) ([]domain.Item, error)
 	ResolveItemIDs(ctx context.Context, userID string, ids []string, read map[string]bool) ([]domain.Item, error)
+	ResolveItemIDsConsistent(ctx context.Context, userID string, ids []string, read map[string]bool) ([]domain.Item, error)
 	Item(ctx context.Context, userID, itemID string) (domain.Item, error)
 	Archives(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error)
 	ArchiveItem(ctx context.Context, userID, itemID string) (domain.Item, error)
 	RecordBehaviour(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error
 	Model(ctx context.Context, userID string) (domain.Model, error)
 	SignalValues(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
+	SignalValuesConsistent(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
 	ResolveRead(ctx context.Context, userID string, items []domain.Item, read map[string]bool) error
 	PutContent(ctx context.Context, objectKey, contentType string, body []byte) error
 	ContentURL(objectKey string) string

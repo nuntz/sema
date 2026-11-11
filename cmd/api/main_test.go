@@ -340,7 +340,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 	model := domain.Model{PK: pk, SK: "MODEL", ExplicitCount: 10, SizeCutoffs: &domain.SizeCutoffs{P60: 1.2, P90: 1.3}}
 	db := &fakeAPIStore{
 		clusters: func(context.Context, string) ([]domain.Cluster, error) { return []domain.Cluster{storyRow}, nil },
-		resolve: func(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
+		resolveConsistent: func(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
 			return append([]domain.Item(nil), items...), nil
 		},
 		model: func(context.Context, string) (domain.Model, error) { return model, nil },

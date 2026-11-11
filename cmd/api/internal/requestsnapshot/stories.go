@@ -40,9 +40,10 @@ type storyRender struct {
 // instance renders it again, and so does the request's own write.
 //
 // render may read the Snapshot's Read markers and Feeds, but must not write
-// through it or ask it for Stories. It must return the same type for every
-// call on a Cache, and what it shows that no version moves can be up to four
-// minutes old. The list is shared: callers must not change it.
+// through it or ask it for Stories. It must read Boost, Bury and Keep state
+// strongly consistent, or it could cache values older than FEEDBACK_VERSION.
+// It must return the same type for every call on a Cache, and what it shows
+// that no version moves can be up to four minutes old. The list is shared: callers must not change it.
 func Stories[T any](ctx context.Context, s *Snapshot, filters any, render func(ctx context.Context, read map[string]bool) (T, error)) (T, error) {
 	var zero T
 	list, err := s.stories(ctx, filters, func(ctx context.Context, read map[string]bool) (any, error) {

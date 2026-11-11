@@ -13,25 +13,30 @@ import (
 )
 
 type fakeAPIStore struct {
-	ensureUser      func(ctx context.Context, userID, email string) error
-	user            func(ctx context.Context, userID string) (domain.User, error)
-	updateUser      func(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error
-	feed            func(ctx context.Context, userID, feedID string) (domain.Feed, error)
-	feedItemCounts  func(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error)
-	itemsForFeeds   func(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error)
-	clusters        func(ctx context.Context, userID string) ([]domain.Cluster, error)
-	searchItems     func(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error)
-	resolve         func(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error)
-	item            func(ctx context.Context, userID, itemID string) (domain.Item, error)
-	archives        func(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error)
-	archiveItem     func(ctx context.Context, userID, itemID string) (domain.Item, error)
-	recordBehaviour func(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error
-	model           func(ctx context.Context, userID string) (domain.Model, error)
-	signalValues    func(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
-	resolveRead     func(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error
-	putContent      func(ctx context.Context, objectKey, contentType string, body []byte) error
-	contentURL      func(objectKey string) string
-	publicItem      func(item domain.Item) domain.Item
+	ensureUser     func(ctx context.Context, userID, email string) error
+	user           func(ctx context.Context, userID string) (domain.User, error)
+	updateUser     func(ctx context.Context, userID string, order *domain.Order, position, tag, feed *string) error
+	feed           func(ctx context.Context, userID, feedID string) (domain.Feed, error)
+	feedItemCounts func(ctx context.Context, userID string, window domain.FetchWindow, snapshot map[string]bool) (map[string]domain.FeedItemCount, error)
+	itemsForFeeds  func(ctx context.Context, userID string, order domain.Order, encodedCursor string, limit int, includeRead, fillFilteredPage bool, allowedFeedIDs, excludeItemIDs map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error)
+	clusters       func(ctx context.Context, userID string) ([]domain.Cluster, error)
+	searchItems    func(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error)
+	resolve        func(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error)
+	// resolveConsistent and signalValuesConsistent serve the strongly
+	// consistent reads; unset, they find nothing, like resolve and
+	// signalValues.
+	resolveConsistent      func(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error)
+	signalValuesConsistent func(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
+	item                   func(ctx context.Context, userID, itemID string) (domain.Item, error)
+	archives               func(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error)
+	archiveItem            func(ctx context.Context, userID, itemID string) (domain.Item, error)
+	recordBehaviour        func(ctx context.Context, userID string, item domain.Item, event store.BehaviourEvent) error
+	model                  func(ctx context.Context, userID string) (domain.Model, error)
+	signalValues           func(ctx context.Context, userID string, itemIDs []string) (map[string]int, error)
+	resolveRead            func(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error
+	putContent             func(ctx context.Context, objectKey, contentType string, body []byte) error
+	contentURL             func(objectKey string) string
+	publicItem             func(item domain.Item) domain.Item
 }
 
 func (f *fakeAPIStore) EnsureUser(ctx context.Context, userID, email string) error {
@@ -76,6 +81,12 @@ func (f *fakeAPIStore) ResolveItemIDs(ctx context.Context, userID string, ids []
 	}
 	return f.resolve(ctx, userID, ids, snapshot)
 }
+func (f *fakeAPIStore) ResolveItemIDsConsistent(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error) {
+	if f.resolveConsistent == nil {
+		return nil, nil
+	}
+	return f.resolveConsistent(ctx, userID, ids, snapshot)
+}
 func (f *fakeAPIStore) Item(ctx context.Context, userID, itemID string) (domain.Item, error) {
 	return f.item(ctx, userID, itemID)
 }
@@ -99,6 +110,12 @@ func (f *fakeAPIStore) SignalValues(ctx context.Context, userID string, itemIDs 
 		return map[string]int{}, nil
 	}
 	return f.signalValues(ctx, userID, itemIDs)
+}
+func (f *fakeAPIStore) SignalValuesConsistent(ctx context.Context, userID string, itemIDs []string) (map[string]int, error) {
+	if f.signalValuesConsistent == nil {
+		return map[string]int{}, nil
+	}
+	return f.signalValuesConsistent(ctx, userID, itemIDs)
 }
 func (f *fakeAPIStore) ResolveRead(ctx context.Context, userID string, items []domain.Item, snapshot map[string]bool) error {
 	return f.resolveRead(ctx, userID, items, snapshot)

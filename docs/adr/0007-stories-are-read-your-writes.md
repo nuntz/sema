@@ -18,6 +18,7 @@ Every Story list renders from the request's Read snapshot, whether unread only i
 
 - Every writer of Signal values or Keep state bumps `FEEDBACK_VERSION`. Today `SetSignal` and `SetHeart` are the only ones. Embedding updates on Signal rows don't change what Stories show, so they don't bump.
 - Ranking order needed no new version: the model is already in the key, read strongly consistent, and a Signal updates it before returning.
+- A Story renders its Members' Item rows (which carry Keep state) and Signal values with strongly consistent reads. An eventually consistent read could return a value older than the `FEEDBACK_VERSION` in the key, and the Story would serve it until it expires. Those reads cost double, but only on a Story cache miss.
 - Each Story request costs one more small strongly consistent GetItem, for `FEEDBACK_VERSION`. Stories rendered with Read Items included now use the cached markers instead of a BatchGet of `R#` rows.
 - Every Boost, Bury or Keep makes the user's other instances re-render their Stories, but leaves their Read marker caches warm.
 - While old and new code overlap during a deploy, feedback written on old instances doesn't bump the version, so new instances can serve Stories up to four minutes old. A missing row reads as 0, so no backfill is needed.

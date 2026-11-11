@@ -134,7 +134,7 @@ func (s *fakeItemStore) PutItemFailure(_ context.Context, user, item string, ttl
 	return nil
 }
 func (*fakeItemStore) Signals(context.Context, string) ([]domain.Signal, error) { return nil, nil }
-func (s *fakeItemStore) ResolveItemIDsConsistent(context.Context, string, []string) ([]domain.Item, error) {
+func (s *fakeItemStore) ResolveItemIDsConsistent(context.Context, string, []string, map[string]bool) ([]domain.Item, error) {
 	return append([]domain.Item(nil), s.resolved...), s.resolveErr
 }
 func (s *fakeItemStore) CreateCluster(_ context.Context, row domain.Cluster) (bool, error) {

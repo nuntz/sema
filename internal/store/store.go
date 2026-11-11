@@ -1264,9 +1264,12 @@ func (s *Store) ResolveItemIDs(ctx context.Context, userID string, ids []string,
 	return s.resolveItemIDs(ctx, userID, ids, false, snapshot)
 }
 
-// ResolveItemIDsConsistent preserves strong reads for ingestion candidate selection.
-func (s *Store) ResolveItemIDsConsistent(ctx context.Context, userID string, ids []string) ([]domain.Item, error) {
-	return s.resolveItemIDs(ctx, userID, ids, true, nil)
+// ResolveItemIDsConsistent is ResolveItemIDs with the Item rows, and so
+// their Keep state, read strongly consistent. Ingestion selects candidates
+// with it, and Stories, cached under a FEEDBACK_VERSION read before them,
+// render with it (ADR 0007). A nil snapshot resolves Read from R# rows.
+func (s *Store) ResolveItemIDsConsistent(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error) {
+	return s.resolveItemIDs(ctx, userID, ids, true, snapshot)
 }
 
 func (s *Store) resolveItemIDs(ctx context.Context, userID string, ids []string, consistent bool, snapshot map[string]bool) ([]domain.Item, error) {
@@ -2569,7 +2572,19 @@ func (s *Store) RecomputeModel(ctx context.Context, userID, version, imageVersio
 	return domain.Model{}, errors.New("ranking model changed too frequently")
 }
 
+// SignalValues returns the user's Boost (1) and Bury (-1) values for itemIDs,
+// leaving out neutral Items.
 func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []string) (map[string]int, error) {
+	return s.signalValues(ctx, userID, itemIDs, false)
+}
+
+// SignalValuesConsistent is SignalValues read strongly consistent, for
+// renders cached under a FEEDBACK_VERSION read before them (ADR 0007).
+func (s *Store) SignalValuesConsistent(ctx context.Context, userID string, itemIDs []string) (map[string]int, error) {
+	return s.signalValues(ctx, userID, itemIDs, true)
+}
+
+func (s *Store) signalValues(ctx context.Context, userID string, itemIDs []string, consistent bool) (map[string]int, error) {
 	result := make(map[string]int, len(itemIDs))
 	if len(itemIDs) == 0 {
 		return result, nil
@@ -2588,6 +2603,7 @@ func (s *Store) SignalValues(ctx context.Context, userID string, itemIDs []strin
 		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
 			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
 				Keys: pending, ProjectionExpression: aws.String("SK, #value"), ExpressionAttributeNames: map[string]string{"#value": "value"},
+				ConsistentRead: aws.Bool(consistent),
 			}}})
 			if err != nil {
 				return nil, err
