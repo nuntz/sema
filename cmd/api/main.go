@@ -30,6 +30,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+	"github.com/nuntz/sema/cmd/api/internal/requestsnapshot"
 	"github.com/nuntz/sema/internal/auth"
 	"github.com/nuntz/sema/internal/connector/reddit"
 	"github.com/nuntz/sema/internal/connector/rss"
@@ -58,8 +59,10 @@ type queueAPI interface {
 }
 
 type server struct {
-	readMu           sync.Mutex
-	readCache        map[string]cachedReadMarkers
+	// snapshots is this instance's Request snapshot cache; requestSnapshot
+	// builds it from store and now on first use when it is nil.
+	snapshots        *requestsnapshot.Cache
+	snapshotsOnce    sync.Once
 	store            apiStore
 	sessions         *auth.Sessions
 	verifyGoogle     func(context.Context, string) (auth.Claims, error)
@@ -90,6 +93,18 @@ type server struct {
 	contentSigner    urlSigner
 	publicOrigin     string
 	imageCopier      imageCopier
+}
+
+// requestSnapshot starts one request's Snapshot of userID's state. Handlers
+// read and write the user's Read state only through it; see
+// docs/adr/0005-read-state-is-read-your-writes.md.
+func (s *server) requestSnapshot(userID string) *requestsnapshot.Snapshot {
+	s.snapshotsOnce.Do(func() {
+		if s.snapshots == nil {
+			s.snapshots = requestsnapshot.NewCache(s.store, s.now)
+		}
+	})
+	return s.snapshots.Snapshot(userID)
 }
 
 type fusedMatch struct {
@@ -202,6 +217,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 			StatusCode: http.StatusNoContent, Headers: map[string]string{"cache-control": "no-store"}, Cookies: append(auth.ClearContentCookies(claims.Subject), auth.ClearSessionCookie()),
 		}, nil
 	}
+	snapshot := s.requestSnapshot(claims.Subject)
 	var result events.APIGatewayV2HTTPResponse
 	switch {
 	case method == http.MethodGet && path == "/me":
@@ -209,13 +225,13 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case method == http.MethodPatch && path == "/me":
 		result = s.patchMe(ctx, claims.Subject, request.Body)
 	case method == http.MethodGet && path == "/items":
-		result = s.getItems(ctx, claims.Subject, request.QueryStringParameters)
+		result = s.getItems(ctx, snapshot, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/stories":
-		result = conditionalStories(s.getStories(ctx, claims.Subject, request.QueryStringParameters), request.Headers)
+		result = conditionalStories(s.getStories(ctx, snapshot, request.QueryStringParameters), request.Headers)
 	case method == http.MethodGet && path == "/search":
 		result = s.getSearch(ctx, claims.Subject, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
-		result = s.readBatch(ctx, claims.Subject, request.Body)
+		result = s.readBatch(ctx, snapshot, request.Body)
 	case method == http.MethodPost && path == "/ranking/recompute":
 		result = s.recomputeRanking(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/archive":
@@ -226,11 +242,11 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 		itemID := strings.TrimSuffix(strings.TrimPrefix(path, "/items/"), "/similar")
 		result = s.getSimilar(ctx, claims.Subject, itemID, request.QueryStringParameters)
 	case strings.HasPrefix(path, "/items/"):
-		result = s.itemRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/items/"), request.Body)
+		result = s.itemRoute(ctx, snapshot, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
 		result = s.getFeeds(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/feeds/counts":
-		result = s.getFeedItemCounts(ctx, claims.Subject, request.QueryStringParameters)
+		result = s.getFeedItemCounts(ctx, snapshot, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/feeds/export.opml":
 		result = s.exportFeeds(ctx, claims.Subject)
 	case method == http.MethodPost && path == "/feeds/discover":
@@ -245,6 +261,9 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 		result = s.feedRoute(ctx, claims.Subject, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
 	default:
 		result = response(http.StatusNotFound, map[string]string{"error": "not found"})
+	}
+	for field, outcome := range snapshot.CacheOutcomes() {
+		annotateRequestOnce(ctx, field, outcome)
 	}
 	if cookies, cookieErr := s.signer.Cookies(claims.Subject, time.Now().UTC()); cookieErr != nil {
 		return s.failure("sign content cookies", cookieErr), nil
@@ -699,7 +718,8 @@ func (s *server) patchMe(ctx context.Context, userID, body string) events.APIGat
 	return response(http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *server) getItems(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+func (s *server) getItems(ctx context.Context, user *requestsnapshot.Snapshot, query map[string]string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	order := domain.Order(query["order"])
 	if order == "" {
 		order = domain.OrderChrono
@@ -741,18 +761,16 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 			return s.failure("load ranking model", err)
 		}
 	}
-	var read *readSnapshot
 	var snapshot map[string]bool
 	if !includeRead {
-		loaded, err := s.readMarkers(ctx, userID)
+		snapshot, _, err = user.ReadMarkers(ctx)
 		if err != nil {
 			return s.failure("load read markers", err)
 		}
-		read, snapshot = &loaded, loaded.ids
 	}
 	var hidden map[string]bool
 	if excludeStories {
-		_, hidden, err = s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window, read)
+		_, hidden, err = s.loadAndRenderStories(ctx, user, allowed, !includeRead, model, tag, window)
 		if err != nil {
 			return s.failure("render stories for item filtering", err)
 		}
@@ -794,7 +812,8 @@ func (s *server) getItems(ctx context.Context, userID string, query map[string]s
 	return response(http.StatusOK, payload)
 }
 
-func (s *server) getStories(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+func (s *server) getStories(ctx context.Context, user *requestsnapshot.Snapshot, query map[string]string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	window, err := parseFetchWindow(query)
 	if err != nil {
 		return badRequest(err)
@@ -815,7 +834,7 @@ func (s *server) getStories(ctx context.Context, userID string, query map[string
 	if err != nil {
 		return s.failure("load ranking model", err)
 	}
-	stories, _, err := s.loadAndRenderStories(ctx, userID, allowed, !includeRead, model, tag, window, nil)
+	stories, _, err := s.loadAndRenderStories(ctx, user, allowed, !includeRead, model, tag, window)
 	if err != nil {
 		return s.failure("list stories", err)
 	}
@@ -846,112 +865,6 @@ func conditionalStories(result events.APIGatewayV2HTTPResponse, headers map[stri
 	return result
 }
 
-const readCacheTTL = time.Minute
-
-// cachedReadMarkers is one API instance's copy of a user's Read markers.
-// Other instances take Read changes too, so a hit also needs the user's
-// ReadVersion to match the version the copy was loaded at.
-type cachedReadMarkers struct {
-	loaded  time.Time
-	version int64
-	ids     map[string]bool
-}
-
-// readSnapshot is a request's copy of the user's Read markers and the
-// ReadVersion they were loaded at, so a cache built from them can be labelled
-// no newer than its contents.
-type readSnapshot struct {
-	ids     map[string]bool
-	version int64
-}
-
-func (s *server) loadReadMarkers(ctx context.Context, userID string) (map[string]bool, error) {
-	snapshot, err := s.readMarkers(ctx, userID)
-	return snapshot.ids, err
-}
-
-func (s *server) readMarkers(ctx context.Context, userID string) (readSnapshot, error) {
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
-	now := time.Now()
-	// Read the version before any markers, so a copy is never newer-labelled
-	// than its contents.
-	version, err := s.store.ReadVersion(ctx, userID)
-	if err != nil {
-		return readSnapshot{}, err
-	}
-	entry, ok := s.readCache[userID]
-	switch {
-	case ok && now.Sub(entry.loaded) < readCacheTTL && entry.version == version:
-		annotateRequest(ctx, "ReadCache", "hit")
-	default:
-		if ok && now.Sub(entry.loaded) < readCacheTTL {
-			annotateRequest(ctx, "ReadCache", "stale")
-		} else {
-			annotateRequest(ctx, "ReadCache", "miss")
-		}
-		ids, err := s.store.LoadReadMarkers(ctx, userID)
-		if err != nil {
-			delete(s.readCache, userID)
-			return readSnapshot{}, err
-		}
-		if s.readCache == nil {
-			s.readCache = make(map[string]cachedReadMarkers)
-		}
-		for key, cached := range s.readCache {
-			if now.Sub(cached.loaded) >= readCacheTTL {
-				delete(s.readCache, key)
-			}
-		}
-		if len(s.readCache) >= 128 {
-			oldest, oldestTime := "", now
-			for key, cached := range s.readCache {
-				if cached.loaded.Before(oldestTime) {
-					oldest, oldestTime = key, cached.loaded
-				}
-			}
-			delete(s.readCache, oldest)
-		}
-		entry = cachedReadMarkers{now, version, ids}
-		s.readCache[userID] = entry
-	}
-	// Copy under the lock so mutations cannot race with request readers.
-	snapshot := make(map[string]bool, len(entry.ids))
-	for id, read := range entry.ids {
-		snapshot[id] = read
-	}
-	return readSnapshot{snapshot, entry.version}, nil
-}
-
-func (s *server) setRead(ctx context.Context, userID string, ids []string, read bool) error {
-	s.readMu.Lock()
-	defer s.readMu.Unlock()
-	version, err := s.store.SetRead(ctx, userID, ids, read)
-	if err != nil {
-		delete(s.readCache, userID)
-		return err
-	}
-	entry, ok := s.readCache[userID]
-	switch {
-	case !ok || version == 0:
-	case version == entry.version+1:
-		// Only this write moved the version: patch the copy forward.
-		for _, id := range ids {
-			if read {
-				entry.ids[id] = true
-			} else {
-				delete(entry.ids, id)
-			}
-		}
-		entry.version = version
-		s.readCache[userID] = entry
-	default:
-		// Another instance wrote in between; this copy misses its changes.
-		delete(s.readCache, userID)
-	}
-	return nil
-}
-
 const storyCacheTTL = 4 * time.Minute
 
 type storyCacheKey struct {
@@ -968,9 +881,10 @@ type cachedStoryList struct {
 // Results are immutable after rendering. Include the model's public ranking
 // cutoffs as well as filters so a newly computed model cannot reuse old sizes.
 //
-// Stories render from read, or from a snapshot loaded here when read is nil,
-// and are keyed by its ReadVersion: every rendered Member shows its Read state.
-func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, read *readSnapshot) ([]storycluster.Rendered, map[string]bool, error) {
+// Stories render from the request's Read markers and are keyed by their
+// ReadVersion: every rendered Member shows its Read state.
+func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot.Snapshot, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
+	userID := user.UserID()
 	// Stories bake in Feed titles, favicons and Connectors, so a Feed edit on
 	// any instance must miss this cache.
 	feedVersion, err := s.feedVersion(ctx, userID)
@@ -987,14 +901,10 @@ func (s *server) loadAndRenderStories(ctx context.Context, userID string, allowe
 	// A Read on any instance must miss this cache too. Render from the
 	// strongly consistent snapshot rather than resolving Read rows directly,
 	// which can be older than its version.
-	if read == nil {
-		loaded, err := s.readMarkers(ctx, userID)
-		if err != nil {
-			return nil, nil, err
-		}
-		read = &loaded
+	snapshot, readVersion, err := user.ReadMarkers(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
-	snapshot, readVersion := read.ids, read.version
 	filters, err := json.Marshal(struct {
 		Allowed         map[string]bool
 		UnreadOnly      bool
@@ -1227,7 +1137,8 @@ func parseBool(value, name string) (bool, error) {
 	}
 }
 
-func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body string) events.APIGatewayV2HTTPResponse {
+func (s *server) itemRoute(ctx context.Context, user *requestsnapshot.Snapshot, method, suffix, body string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	parts := strings.Split(suffix, "/")
 	itemID := parts[0]
 	if itemID == "" || len(parts) > 2 {
@@ -1347,7 +1258,7 @@ func (s *server) itemRoute(ctx context.Context, userID, method, suffix, body str
 			return badRequest(err)
 		}
 		defer s.invalidateStories(userID)
-		if err := s.setRead(ctx, userID, []string{itemID}, input.Read); err != nil {
+		if err := user.SetRead(ctx, []string{itemID}, input.Read); err != nil {
 			return s.failure("set read state", err)
 		}
 	// Keep the legacy path for installed PWAs until they refresh.
@@ -1429,7 +1340,7 @@ func (s *server) syncHeartVector(ctx context.Context, userID, itemID string, hea
 	return err
 }
 
-func (s *server) readBatch(ctx context.Context, userID, body string) events.APIGatewayV2HTTPResponse {
+func (s *server) readBatch(ctx context.Context, user *requestsnapshot.Snapshot, body string) events.APIGatewayV2HTTPResponse {
 	var input struct {
 		IDs  []string `json:"ids"`
 		Read *bool    `json:"read,omitempty"`
@@ -1444,8 +1355,8 @@ func (s *server) readBatch(ctx context.Context, userID, body string) events.APIG
 	if input.Read != nil {
 		read = *input.Read
 	}
-	defer s.invalidateStories(userID)
-	if err := s.setRead(ctx, userID, input.IDs, read); err != nil {
+	defer s.invalidateStories(user.UserID())
+	if err := user.SetRead(ctx, input.IDs, read); err != nil {
 		return s.failure("batch read state", err)
 	}
 	return response(http.StatusOK, map[string]bool{"ok": true})
@@ -1459,12 +1370,13 @@ func (s *server) getFeeds(ctx context.Context, userID string) events.APIGatewayV
 	return response(http.StatusOK, map[string]any{"feeds": feeds})
 }
 
-func (s *server) getFeedItemCounts(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+func (s *server) getFeedItemCounts(ctx context.Context, user *requestsnapshot.Snapshot, query map[string]string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	window, err := parseFetchWindow(query)
 	if err != nil {
 		return badRequest(err)
 	}
-	snapshot, err := s.loadReadMarkers(ctx, userID)
+	snapshot, _, err := user.ReadMarkers(ctx)
 	if err != nil {
 		return s.failure("load read markers", err)
 	}

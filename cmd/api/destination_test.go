@@ -233,7 +233,7 @@ func TestSendAndPingAreRateLimited(t *testing.T) {
 		if route == "ping" {
 			got = s.destinationRoute(context.Background(), "user", http.MethodPost, "ping", "").StatusCode
 		} else {
-			got = s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "").StatusCode
+			got = s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "").StatusCode
 		}
 
 		if got != http.StatusTooManyRequests || len(attempter.deliveries) != 0 {
@@ -260,7 +260,7 @@ func sendItemServer(outcome send.Outcome) (*server, *fakeDestinationStore, *reco
 func TestSendDeliversTheItemInline(t *testing.T) {
 	s, destinations, attempter, _ := sendItemServer(send.Outcome{Kind: send.Delivered, Status: 202})
 
-	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("response = %d %s", got.StatusCode, got.Body)
@@ -281,7 +281,7 @@ func TestSendDeliversTheItemInline(t *testing.T) {
 func TestSendQueuesARetryableFailure(t *testing.T) {
 	s, _, _, retries := sendItemServer(send.Outcome{Kind: send.Retryable, Status: 503})
 
-	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	if body := decodeBody(t, got.Body); got.StatusCode != http.StatusOK || body["outcome"] != "queued" || body["status"] != float64(503) {
 		t.Fatalf("response = %d %v", got.StatusCode, body)
@@ -294,7 +294,7 @@ func TestSendQueuesARetryableFailure(t *testing.T) {
 func TestSendReportsAPermanentFailure(t *testing.T) {
 	s, _, _, retries := sendItemServer(send.Outcome{Kind: send.Permanent, Reason: "blocked address"})
 
-	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	if body := decodeBody(t, got.Body); got.StatusCode != http.StatusOK || body["outcome"] != "failed" || body["reason"] != "blocked address" || len(retries.messages) != 0 {
 		t.Fatalf("response = %d %v", got.StatusCode, body)
@@ -306,7 +306,7 @@ func TestSendNeedsAnEnabledDestination(t *testing.T) {
 		s, destinations, attempter, _ := sendItemServer(send.Outcome{})
 		destinations.destination = destination
 
-		got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+		got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 		if got.StatusCode != http.StatusConflict || len(attempter.deliveries) != 0 || destinations.reserved != 0 {
 			t.Fatalf("response = %d %s", got.StatusCode, got.Body)
@@ -321,7 +321,7 @@ func TestSendFallsBackToTheArchiveRow(t *testing.T) {
 		return domain.Item{ItemID: "item", SK: "A#item", URL: "https://example.com/kept", HeartedTS: "2026-09-20T00:00:00.000000000Z"}, nil
 	}
 
-	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	if got.StatusCode != http.StatusOK || !strings.Contains(string(attempter.deliveries[0].Body), `"url":"https://example.com/kept"`) || !strings.Contains(string(attempter.deliveries[0].Body), `"kept":true`) {
 		t.Fatalf("response = %d %s, body %s", got.StatusCode, got.Body, attempter.deliveries[0].Body)
@@ -384,7 +384,7 @@ func TestSendAddsASignedNeutralCopyOfTheLargestStoredImage(t *testing.T) {
 		}, nil
 	}
 
-	s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	// The copy's key carries no user identifier: it is a fresh id under send/.
 	if copier.source != "media/user/item/lead.jpg" || copier.destination != "send/id-1.jpg" {
@@ -408,7 +408,7 @@ func TestSendOmitsTheCopyWhenTheStoredImageIsGone(t *testing.T) {
 		return domain.Item{ItemID: "item", URL: "https://example.com/a", MediaKey: "media/user/item/lead.jpg"}, nil
 	}
 
-	s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	if signer.resource != "" || !strings.Contains(string(attempter.deliveries[0].Body), `"images":[]`) {
 		t.Fatalf("signed %q, body %s", signer.resource, attempter.deliveries[0].Body)
@@ -426,7 +426,7 @@ func TestSendOmitsTheCopyWithoutStoredMediaOrAPublicOrigin(t *testing.T) {
 			}
 		}
 
-		s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+		s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 		if signer.resource != "" || !strings.Contains(string(attempter.deliveries[0].Body), `"images":[]`) {
 			t.Fatalf("origin %q: signed %q, body %s", origin, signer.resource, attempter.deliveries[0].Body)
@@ -440,7 +440,7 @@ func TestSendRefusesAnItemTooLargeToSend(t *testing.T) {
 		return domain.Item{ItemID: "item", URL: "https://example.com/" + strings.Repeat("u", 70_000)}, nil
 	}
 
-	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/send", "")
+	got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/send", "")
 
 	if got.StatusCode != http.StatusUnprocessableEntity || len(attempter.deliveries) != 0 || len(destinations.recorded) != 0 {
 		t.Fatalf("response = %d %s", got.StatusCode, got.Body)

@@ -83,7 +83,7 @@ func newSharedStoryStore() *sharedStoryStore {
 // renderedStories returns the Stories s serves, keyed by Story ID.
 func renderedStories(t *testing.T, s *server, query map[string]string) map[string][]domain.Item {
 	t.Helper()
-	result := s.getStories(context.Background(), "user", query)
+	result := s.getStories(context.Background(), s.requestSnapshot("user"), query)
 	mustStatus(t, result.StatusCode, result.Body, http.StatusOK)
 	var body struct {
 		Stories []struct {
@@ -110,7 +110,7 @@ func TestReadReachesAnotherInstancesUnreadStories(t *testing.T) {
 	if got := renderedStories(t, reader, map[string]string{}); len(got["story"]) != 2 {
 		t.Fatalf("warm unread stories = %v, want the Story", got)
 	}
-	got := writer.readBatch(context.Background(), "user", `{"ids":["lead","member"]}`)
+	got := writer.readBatch(context.Background(), writer.requestSnapshot("user"), `{"ids":["lead","member"]}`)
 	mustStatus(t, got.StatusCode, got.Body, http.StatusOK)
 	if got := renderedStories(t, reader, map[string]string{}); len(got) != 0 {
 		t.Fatalf("unread stories = %v after another instance read the Story, want none", got)
@@ -126,7 +126,7 @@ func TestReadReachesAnotherInstancesStoriesWithReadIncluded(t *testing.T) {
 	if got := renderedStories(t, reader, query)["story"]; len(got) != 2 || got[0].Read {
 		t.Fatalf("warm Story = %+v, want an unread Lead", got)
 	}
-	got := writer.readBatch(context.Background(), "user", `{"ids":["lead","member"]}`)
+	got := writer.readBatch(context.Background(), writer.requestSnapshot("user"), `{"ids":["lead","member"]}`)
 	mustStatus(t, got.StatusCode, got.Body, http.StatusOK)
 	for _, item := range renderedStories(t, reader, query)["story"] {
 		if !item.Read {
@@ -138,7 +138,7 @@ func TestReadReachesAnotherInstancesStoriesWithReadIncluded(t *testing.T) {
 // listedItems returns the IDs of the unread Items s lists outside Stories.
 func listedItems(t *testing.T, s *server) []string {
 	t.Helper()
-	result := s.getItems(context.Background(), "user", map[string]string{"exclude_stories": "true"})
+	result := s.getItems(context.Background(), s.requestSnapshot("user"), map[string]string{"exclude_stories": "true"})
 	mustStatus(t, result.StatusCode, result.Body, http.StatusOK)
 	var body struct {
 		Items []domain.Item `json:"items"`
@@ -172,7 +172,7 @@ func TestUnreadOnAnotherInstanceHidesStoryMembersFromItemList(t *testing.T) {
 	if got := listedItems(t, reader); len(got) != 0 {
 		t.Fatalf("warm unread items = %v, want none", got)
 	}
-	got := writer.readBatch(context.Background(), "user", `{"ids":["lead"],"read":false}`)
+	got := writer.readBatch(context.Background(), writer.requestSnapshot("user"), `{"ids":["lead"],"read":false}`)
 	mustStatus(t, got.StatusCode, got.Body, http.StatusOK)
 	if got := listedItems(t, reader); len(got) != 0 {
 		t.Fatalf("unread items = %v after another instance brought the Story back, want none", got)
@@ -189,7 +189,7 @@ func leadAfter(t *testing.T, action, body string) domain.Item {
 	if got := renderedStories(t, reader, query)["story"]; len(got) != 2 || got[0].Signal != 0 || got[0].Hearted {
 		t.Fatalf("warm Story = %+v, want a neutral Lead", got)
 	}
-	got := writer.itemRoute(context.Background(), "user", http.MethodPost, "lead/"+action, body)
+	got := writer.itemRoute(context.Background(), writer.requestSnapshot("user"), http.MethodPost, "lead/"+action, body)
 	mustStatus(t, got.StatusCode, got.Body, http.StatusOK)
 	story := renderedStories(t, reader, query)["story"]
 	if len(story) == 0 || story[0].ItemID != "lead" {
