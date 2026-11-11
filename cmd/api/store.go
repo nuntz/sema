@@ -25,7 +25,7 @@ type apiStore interface {
 	LoadReadMarkers(ctx context.Context, userID string) (map[string]bool, error)
 	ReadVersion(ctx context.Context, userID string) (int64, error)
 	Clusters(ctx context.Context, userID string) ([]domain.Cluster, error)
-	SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error)
+	SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs, snapshot map[string]bool) ([]domain.Item, error)
 	ResolveItemIDs(ctx context.Context, userID string, ids []string, snapshot map[string]bool) ([]domain.Item, error)
 	Item(ctx context.Context, userID, itemID string) (domain.Item, error)
 	Archives(ctx context.Context, userID, encodedCursor string, limit int) ([]domain.Item, string, error)

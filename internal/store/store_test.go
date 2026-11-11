@@ -503,9 +503,27 @@ func TestSearchItemsUsesMultiTermAndAndPageFills(t *testing.T) {
 		}
 		return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{marshal("one"), marshal("two")}}, nil
 	}}
-	items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", "I#", []string{"pulumi", "lambda"}, 2, nil)
+	items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", "I#", []string{"pulumi", "lambda"}, 2, nil, nil)
 	if err != nil || calls != 2 || len(items) != 2 {
 		t.Fatalf("SearchItems = %#v, calls %d, err %v", items, calls, err)
+	}
+}
+
+func TestSearchItemsTakesLiveReadStateFromTheSnapshot(t *testing.T) {
+	db := &fakeDynamoDB{query: func(*dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+		rows := []map[string]types.AttributeValue{}
+		for _, id := range []string{"read", "unread"} {
+			row, err := attributevalue.MarshalMap(domain.Item{PK: domain.UserPK("user"), SK: "I#" + id, ItemID: id, SearchText: "topic", TTL: time.Now().Add(time.Hour).Unix()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows = append(rows, row)
+		}
+		return &dynamodb.QueryOutput{Items: rows}, nil
+	}}
+	items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", "I#", []string{"topic"}, 2, nil, map[string]bool{"read": true})
+	if err != nil || len(items) != 2 || !items[0].Read || items[1].Read {
+		t.Fatalf("SearchItems = %#v, err %v; want only \"read\" Read", items, err)
 	}
 }
 
@@ -2113,7 +2131,7 @@ func TestSearchItemsScopedPageFill(t *testing.T) {
 				}
 				return &dynamodb.QueryOutput{Items: []map[string]types.AttributeValue{row}, LastEvaluatedKey: key("user", prefix+strconv.Itoa(calls))}, nil
 			}}
-			items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", prefix, []string{"topic"}, 2, map[string]bool{"inside": true})
+			items, err := New(db, nil, "table", "", "").SearchItems(context.Background(), "user", prefix, []string{"topic"}, 2, map[string]bool{"inside": true}, nil)
 			if err != nil || calls != 3 || len(items) != 2 || items[0].ItemID != "2" || items[1].ItemID != "3" {
 				t.Fatalf("items = %#v, calls = %d, err = %v", items, calls, err)
 			}

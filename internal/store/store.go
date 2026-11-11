@@ -1189,7 +1189,8 @@ func (s *Store) UpdateMediaVariants(ctx context.Context, item domain.Item, varia
 
 // SearchItems page-fills after DynamoDB applies the multi-term contains
 // post-filter and feed filtering (nil allows all feeds). Results retain partition order (newest publication/heart first).
-func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs map[string]bool) ([]domain.Item, error) {
+// Live results take their Read state from snapshot, as ResolveRead does.
+func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []string, limit int, allowedFeedIDs, snapshot map[string]bool) ([]domain.Item, error) {
 	if prefix != "I#" && prefix != "A#" {
 		return nil, errors.New("search prefix must be I# or A#")
 	}
@@ -1247,7 +1248,7 @@ func (s *Store) SearchItems(ctx context.Context, userID, prefix string, terms []
 		}
 	}
 	if prefix == "I#" {
-		if err := s.ResolveRead(ctx, userID, items, nil); err != nil {
+		if err := s.ResolveRead(ctx, userID, items, snapshot); err != nil {
 			return nil, err
 		}
 	}

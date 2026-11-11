@@ -229,7 +229,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case method == http.MethodGet && path == "/stories":
 		result = conditionalStories(s.getStories(ctx, snapshot, request.QueryStringParameters), request.Headers)
 	case method == http.MethodGet && path == "/search":
-		result = s.getSearch(ctx, claims.Subject, request.QueryStringParameters)
+		result = s.getSearch(ctx, snapshot, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
 		result = s.readBatch(ctx, snapshot, request.Body)
 	case method == http.MethodPost && path == "/ranking/recompute":
@@ -240,7 +240,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 		result = s.getArchiveItem(ctx, claims.Subject, strings.TrimPrefix(path, "/archive/"))
 	case method == http.MethodGet && strings.HasPrefix(path, "/items/") && strings.HasSuffix(path, "/similar"):
 		itemID := strings.TrimSuffix(strings.TrimPrefix(path, "/items/"), "/similar")
-		result = s.getSimilar(ctx, claims.Subject, itemID, request.QueryStringParameters)
+		result = s.getSimilar(ctx, snapshot, itemID, request.QueryStringParameters)
 	case strings.HasPrefix(path, "/items/"):
 		result = s.itemRoute(ctx, snapshot, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
@@ -387,7 +387,8 @@ type searchGroup struct {
 	Archive []domain.Item `json:"archive"`
 }
 
-func (s *server) getSearch(ctx context.Context, userID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+func (s *server) getSearch(ctx context.Context, user *requestsnapshot.Snapshot, query map[string]string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	value := strings.TrimSpace(query["q"])
 	terms := strings.Fields(strings.ToLower(value))
 	if len([]rune(value)) < 2 || len(terms) == 0 {
@@ -408,11 +409,15 @@ func (s *server) getSearch(ctx context.Context, userID string, query map[string]
 			return s.failure("load feeds for search filtering", err)
 		}
 	}
-	window, err := s.store.SearchItems(ctx, userID, "I#", terms, limit, allowed)
+	read, _, err := user.ReadMarkers(ctx)
+	if err != nil {
+		return s.failure("load read markers", err)
+	}
+	window, err := s.store.SearchItems(ctx, userID, "I#", terms, limit, allowed, read)
 	if err != nil {
 		return s.failure("search live items", err)
 	}
-	archive, err := s.store.SearchItems(ctx, userID, "A#", terms, limit, allowed)
+	archive, err := s.store.SearchItems(ctx, userID, "A#", terms, limit, allowed, read)
 	if err != nil {
 		return s.failure("search archive", err)
 	}
@@ -430,14 +435,15 @@ func (s *server) getSearch(ctx context.Context, userID string, query map[string]
 			exact[item.ItemID] = true
 		}
 	}
-	related, semanticAvailable := s.semanticResults(ctx, userID, value, limit, exact, allowed)
+	related, semanticAvailable := s.semanticResults(ctx, userID, value, limit, exact, allowed, read)
 	return response(http.StatusOK, map[string]any{
 		"matches": searchGroup{Window: window, Archive: archive},
 		"related": related, "semantic_available": semanticAvailable,
 	})
 }
 
-func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude, allowed map[string]bool) (searchGroup, bool) {
+// semanticResults finds Related Items, taking their Read state from read.
+func (s *server) semanticResults(ctx context.Context, userID, query string, limit int, exclude, allowed, read map[string]bool) (searchGroup, bool) {
 	related := searchGroup{Window: []domain.Item{}, Archive: []domain.Item{}}
 	textConfigured := s.embedder != nil && s.vectors != nil
 	imageConfigured := s.imageEmbedder != nil && s.imageVectors != nil
@@ -512,7 +518,7 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 	for index := range fused {
 		ids[index] = fused[index].Key
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids, nil)
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids, read)
 	if err != nil {
 		return related, false
 	}
@@ -554,7 +560,8 @@ func (s *server) semanticResults(ctx context.Context, userID, query string, limi
 	return related, available
 }
 
-func (s *server) getSimilar(ctx context.Context, userID, itemID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+func (s *server) getSimilar(ctx context.Context, user *requestsnapshot.Snapshot, itemID string, query map[string]string) events.APIGatewayV2HTTPResponse {
+	userID := user.UserID()
 	if itemID == "" || strings.Contains(itemID, "/") {
 		return response(http.StatusNotFound, map[string]string{"error": "item not found"})
 	}
@@ -599,7 +606,11 @@ func (s *server) getSimilar(ctx context.Context, userID, itemID string, query ma
 	for index := range fused {
 		ids[index] = fused[index].Key
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids, nil)
+	read, _, err := user.ReadMarkers(ctx)
+	if err != nil {
+		return s.failure("load read markers", err)
+	}
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids, read)
 	if err != nil {
 		return s.failure("resolve similar items", err)
 	}
@@ -761,12 +772,9 @@ func (s *server) getItems(ctx context.Context, user *requestsnapshot.Snapshot, q
 			return s.failure("load ranking model", err)
 		}
 	}
-	var snapshot map[string]bool
-	if !includeRead {
-		snapshot, _, err = user.ReadMarkers(ctx)
-		if err != nil {
-			return s.failure("load read markers", err)
-		}
+	snapshot, _, err := user.ReadMarkers(ctx)
+	if err != nil {
+		return s.failure("load read markers", err)
 	}
 	var hidden map[string]bool
 	if excludeStories {
@@ -1152,8 +1160,12 @@ func (s *server) itemRoute(ctx context.Context, user *requestsnapshot.Snapshot, 
 			}
 			return s.failure("get item", err)
 		}
+		read, _, err := user.ReadMarkers(ctx)
+		if err != nil {
+			return s.failure("load read markers", err)
+		}
 		items := []domain.Item{item}
-		if err := s.store.ResolveRead(ctx, userID, items, nil); err != nil {
+		if err := s.store.ResolveRead(ctx, userID, items, read); err != nil {
 			return s.failure("resolve read state", err)
 		}
 		if err := s.prepareItems(ctx, userID, items); err != nil {
