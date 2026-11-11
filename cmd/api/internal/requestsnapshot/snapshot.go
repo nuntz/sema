@@ -145,19 +145,16 @@ func (s *Snapshot) loadRead(ctx context.Context) (*readState, error) {
 	if err != nil {
 		return nil, err
 	}
-	markers, outcome := cache.read.lookup(s.userID, version, now)
-	s.record("ReadCache", outcome)
-	if outcome != outcomeHit {
-		markers, err = cache.store.LoadReadMarkers(ctx, s.userID)
-		if err != nil {
-			cache.read.drop(s.userID)
-			return nil, err
-		}
-		if markers == nil {
+	markers, err := cache.read.load(s.userID, version, now, s.recorder("ReadCache"), func() (map[string]bool, error) {
+		markers, err := cache.store.LoadReadMarkers(ctx, s.userID)
+		if err == nil && markers == nil {
 			// The store reads a nil snapshot as "load from storage".
 			markers = map[string]bool{}
 		}
-		cache.read.fill(s.userID, version, markers, now)
+		return markers, err
+	})
+	if err != nil {
+		return nil, err
 	}
 	return &readState{markers: markers, version: version}, nil
 }
@@ -230,6 +227,11 @@ func (s *Snapshot) CacheOutcomes() map[string]string {
 		outcomes[field] = outcome
 	}
 	return outcomes
+}
+
+// recorder returns a func that records outcomes for field.
+func (s *Snapshot) recorder(field string) func(outcome string) {
+	return func(outcome string) { s.record(field, outcome) }
 }
 
 // record keeps the first outcome a request records for field.

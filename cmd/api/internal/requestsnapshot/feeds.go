@@ -51,21 +51,16 @@ func (s *Snapshot) DetailedFeeds(ctx context.Context, decorate func(context.Cont
 		return s.feed.detailed, nil
 	}
 	cache := s.cache
-	now := cache.now()
-	detailed, outcome := cache.detailedFeeds.lookup(s.userID, s.feed.version, now)
-	s.record("FeedCache", outcome)
-	if outcome != outcomeHit {
+	detailed, err := cache.detailedFeeds.load(s.userID, s.feed.version, cache.now(), s.recorder("FeedCache"), func() ([]domain.Feed, error) {
 		plain, err := s.plainFeeds(ctx)
 		if err != nil {
-			cache.detailedFeeds.drop(s.userID)
 			return nil, err
 		}
-		detailed = cloneFeeds(plain)
-		if err := decorate(ctx, detailed); err != nil {
-			cache.detailedFeeds.drop(s.userID)
-			return nil, err
-		}
-		cache.detailedFeeds.fill(s.userID, s.feed.version, detailed, now)
+		detailed := cloneFeeds(plain)
+		return detailed, decorate(ctx, detailed)
+	})
+	if err != nil {
+		return nil, err
 	}
 	s.feed.detailed, s.feed.detailedLoaded = detailed, true
 	return detailed, nil
@@ -95,17 +90,11 @@ func (s *Snapshot) plainFeeds(ctx context.Context) ([]domain.Feed, error) {
 		return s.feed.plain, nil
 	}
 	cache := s.cache
-	now := cache.now()
-	feeds, outcome := cache.feeds.lookup(s.userID, s.feed.version, now)
-	s.record("FeedCache", outcome)
-	if outcome != outcomeHit {
-		var err error
-		feeds, err = cache.store.Feeds(ctx, s.userID)
-		if err != nil {
-			cache.feeds.drop(s.userID)
-			return nil, err
-		}
-		cache.feeds.fill(s.userID, s.feed.version, feeds, now)
+	feeds, err := cache.feeds.load(s.userID, s.feed.version, cache.now(), s.recorder("FeedCache"), func() ([]domain.Feed, error) {
+		return cache.store.Feeds(ctx, s.userID)
+	})
+	if err != nil {
+		return nil, err
 	}
 	s.feed.plain, s.feed.plainLoaded = feeds, true
 	return feeds, nil

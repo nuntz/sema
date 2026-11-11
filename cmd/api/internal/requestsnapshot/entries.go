@@ -57,6 +57,27 @@ func (e *entries[K, Ver, V]) lookup(key K, version Ver, now time.Time) (V, strin
 	}
 }
 
+// load returns the value cached for key if it is fresh at now and labelled
+// with version, and otherwise what fetch returns, cached as loaded at now and
+// labelled with version. A failed fetch drops key's entry. record gets the
+// outcome before fetch runs, so a fetch that records an outcome of its own
+// can't record first. The lock is not held while fetch runs.
+func (e *entries[K, Ver, V]) load(key K, version Ver, now time.Time, record func(outcome string), fetch func() (V, error)) (V, error) {
+	value, outcome := e.lookup(key, version, now)
+	record(outcome)
+	if outcome == outcomeHit {
+		return value, nil
+	}
+	value, err := fetch()
+	if err != nil {
+		e.drop(key)
+		var zero V
+		return zero, err
+	}
+	e.fill(key, version, value, now)
+	return value, nil
+}
+
 // fill caches value for key, loaded at now and labelled with version.
 func (e *entries[K, Ver, V]) fill(key K, version Ver, value V, now time.Time) {
 	e.mu.Lock()

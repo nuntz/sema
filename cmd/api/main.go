@@ -214,7 +214,7 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 			StatusCode: http.StatusNoContent, Headers: map[string]string{"cache-control": "no-store"}, Cookies: append(auth.ClearContentCookies(claims.Subject), auth.ClearSessionCookie()),
 		}, nil
 	}
-	snapshot := s.requestSnapshot(claims.Subject)
+	user := s.requestSnapshot(claims.Subject)
 	var result events.APIGatewayV2HTTPResponse
 	switch {
 	case method == http.MethodGet && path == "/me":
@@ -222,44 +222,44 @@ func (s *server) handleRequest(ctx context.Context, request events.APIGatewayV2H
 	case method == http.MethodPatch && path == "/me":
 		result = s.patchMe(ctx, claims.Subject, request.Body)
 	case method == http.MethodGet && path == "/items":
-		result = s.getItems(ctx, snapshot, request.QueryStringParameters)
+		result = s.getItems(ctx, user, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/stories":
-		result = conditionalStories(s.getStories(ctx, snapshot, request.QueryStringParameters), request.Headers)
+		result = conditionalStories(s.getStories(ctx, user, request.QueryStringParameters), request.Headers)
 	case method == http.MethodGet && path == "/search":
-		result = s.getSearch(ctx, snapshot, request.QueryStringParameters)
+		result = s.getSearch(ctx, user, request.QueryStringParameters)
 	case method == http.MethodPost && path == "/items/read-batch":
-		result = s.readBatch(ctx, snapshot, request.Body)
+		result = s.readBatch(ctx, user, request.Body)
 	case method == http.MethodPost && path == "/ranking/recompute":
 		result = s.recomputeRanking(ctx, claims.Subject)
 	case method == http.MethodGet && path == "/archive":
-		result = s.getArchive(ctx, snapshot, request.QueryStringParameters)
+		result = s.getArchive(ctx, user, request.QueryStringParameters)
 	case method == http.MethodGet && strings.HasPrefix(path, "/archive/"):
 		result = s.getArchiveItem(ctx, claims.Subject, strings.TrimPrefix(path, "/archive/"))
 	case method == http.MethodGet && strings.HasPrefix(path, "/items/") && strings.HasSuffix(path, "/similar"):
 		itemID := strings.TrimSuffix(strings.TrimPrefix(path, "/items/"), "/similar")
-		result = s.getSimilar(ctx, snapshot, itemID, request.QueryStringParameters)
+		result = s.getSimilar(ctx, user, itemID, request.QueryStringParameters)
 	case strings.HasPrefix(path, "/items/"):
-		result = s.itemRoute(ctx, snapshot, method, strings.TrimPrefix(path, "/items/"), request.Body)
+		result = s.itemRoute(ctx, user, method, strings.TrimPrefix(path, "/items/"), request.Body)
 	case method == http.MethodGet && path == "/feeds":
-		result = s.getFeeds(ctx, snapshot)
+		result = s.getFeeds(ctx, user)
 	case method == http.MethodGet && path == "/feeds/counts":
-		result = s.getFeedItemCounts(ctx, snapshot, request.QueryStringParameters)
+		result = s.getFeedItemCounts(ctx, user, request.QueryStringParameters)
 	case method == http.MethodGet && path == "/feeds/export.opml":
-		result = s.exportFeeds(ctx, snapshot)
+		result = s.exportFeeds(ctx, user)
 	case method == http.MethodPost && path == "/feeds/discover":
 		result = s.discoverFeeds(ctx, request.Body)
 	case method == http.MethodPost && path == "/feeds":
-		result = s.addFeed(ctx, snapshot, request.Body)
+		result = s.addFeed(ctx, user, request.Body)
 	case method == http.MethodPost && path == "/feeds/import":
-		result = s.importFeeds(ctx, snapshot, request)
+		result = s.importFeeds(ctx, user, request)
 	case path == "/destination" || strings.HasPrefix(path, "/destination/"):
 		result = s.destinationRoute(ctx, claims.Subject, method, strings.TrimPrefix(strings.TrimPrefix(path, "/destination"), "/"), request.Body)
 	case strings.HasPrefix(path, "/feeds/"):
-		result = s.feedRoute(ctx, snapshot, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
+		result = s.feedRoute(ctx, user, method, strings.TrimPrefix(path, "/feeds/"), request.Body)
 	default:
 		result = response(http.StatusNotFound, map[string]string{"error": "not found"})
 	}
-	for field, outcome := range snapshot.CacheOutcomes() {
+	for field, outcome := range user.CacheOutcomes() {
 		annotateRequestOnce(ctx, field, outcome)
 	}
 	if cookies, cookieErr := s.signer.Cookies(claims.Subject, time.Now().UTC()); cookieErr != nil {
@@ -770,19 +770,19 @@ func (s *server) getItems(ctx context.Context, user *requestsnapshot.Snapshot, q
 			return s.failure("load ranking model", err)
 		}
 	}
-	snapshot, _, err := user.ReadMarkers(ctx)
+	read, _, err := user.ReadMarkers(ctx)
 	if err != nil {
 		return s.failure("load read markers", err)
 	}
 	var hidden map[string]bool
 	if excludeStories {
-		_, hidden, err = s.loadAndRenderStories(ctx, user, allowed, !includeRead, model, tag, window)
+		_, hidden, err = s.loadAndRenderStories(ctx, user, storyFilters{Allowed: allowed, UnreadOnly: !includeRead, Tag: tag, Window: window, Model: model})
 		if err != nil {
 			return s.failure("render stories for item filtering", err)
 		}
 	}
 	listCtx, stats := store.WithQueryStats(ctx)
-	items, next, readAnchor, err := s.store.ItemsForFeeds(listCtx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, snapshot)
+	items, next, readAnchor, err := s.store.ItemsForFeeds(listCtx, userID, order, query["cursor"], limit, includeRead, filtered, allowed, hidden, window, read)
 	annotateRequest(ctx, "QueryCalls", strconv.Itoa(stats.Queries))
 	annotateRequest(ctx, "ScannedCount", strconv.Itoa(stats.Scanned))
 	if err != nil {
@@ -806,8 +806,8 @@ func (s *server) getItems(ctx context.Context, user *requestsnapshot.Snapshot, q
 	payload := map[string]any{"items": items, "next_cursor": next}
 	if !includeRead {
 		// The unread index never visits Read items, so the empty-state signal
-		// comes from the read snapshot rather than an anchor row.
-		payload["has_read"] = len(snapshot) > 0
+		// comes from the Read markers rather than an anchor row.
+		payload["has_read"] = len(read) > 0
 	}
 	if !includeRead && readAnchor != nil {
 		payload["read_anchor"] = map[string]string{
@@ -840,7 +840,7 @@ func (s *server) getStories(ctx context.Context, user *requestsnapshot.Snapshot,
 	if err != nil {
 		return s.failure("load ranking model", err)
 	}
-	stories, _, err := s.loadAndRenderStories(ctx, user, allowed, !includeRead, model, tag, window)
+	stories, _, err := s.loadAndRenderStories(ctx, user, storyFilters{Allowed: allowed, UnreadOnly: !includeRead, Tag: tag, Window: window, Model: model})
 	if err != nil {
 		return s.failure("list stories", err)
 	}
@@ -878,21 +878,24 @@ type renderedStories struct {
 	hidden  map[string]bool
 }
 
-// loadAndRenderStories returns the user's Stories for these filters through
-// the Request snapshot, which caches them under the filters plus the
-// request's Feed, Read and feedback versions. The model's public ranking
-// cutoffs are part of the filters, so a newly computed model can't reuse old
-// sizes.
-func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot.Snapshot, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
-	filters := struct {
-		Allowed    map[string]bool
-		UnreadOnly bool
-		Tag        string
-		Window     domain.FetchWindow
-		Model      domain.Model
-	}{allowed, unreadOnly, tag, window, model}
+// storyFilters is what a Story list is rendered for. It encodes as the
+// Request snapshot's Story cache key, so every field that changes the
+// rendering belongs here. The model's public ranking cutoffs are part of it,
+// so a newly computed model can't reuse old sizes.
+type storyFilters struct {
+	Allowed    map[string]bool
+	UnreadOnly bool
+	Tag        string
+	Window     domain.FetchWindow
+	Model      domain.Model
+}
+
+// loadAndRenderStories returns the user's Stories for filters through the
+// Request snapshot, which caches them under the filters plus the request's
+// Feed, Read and feedback versions.
+func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot.Snapshot, filters storyFilters) ([]storycluster.Rendered, map[string]bool, error) {
 	list, err := requestsnapshot.Stories(ctx, user, filters, func(ctx context.Context, read map[string]bool) (renderedStories, error) {
-		stories, hidden, err := s.renderStories(ctx, user, allowed, unreadOnly, model, tag, window, read)
+		stories, hidden, err := s.renderStories(ctx, user, filters, read)
 		return renderedStories{stories, hidden}, err
 	})
 	if err != nil {
@@ -901,7 +904,7 @@ func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot
 	return list.stories, list.hidden, nil
 }
 
-func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapshot, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
+func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapshot, filters storyFilters, read map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
 	userID := user.UserID()
 	rows, err := s.store.Clusters(ctx, userID)
 	if err != nil {
@@ -914,14 +917,14 @@ func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapsh
 	for _, row := range rows {
 		ids = append(ids, row.MemberIDs...)
 	}
-	items, err := s.store.ResolveItemIDs(ctx, userID, ids, snapshot)
+	items, err := s.store.ResolveItemIDs(ctx, userID, ids, read)
 	if err != nil {
 		return nil, nil, err
 	}
 	live := items[:0]
 	now := time.Now().Unix()
 	for _, item := range items {
-		if domain.Live(item, now) && window.Contains(item.FetchedTS) {
+		if domain.Live(item, now) && filters.Window.Contains(item.FetchedTS) {
 			live = append(live, item)
 		}
 	}
@@ -941,7 +944,7 @@ func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapsh
 		members[row.StoryID] = storycluster.LiveMembers(row, byID, now)
 	}
 
-	rendered, hidden := storycluster.Render(rows, members, allowed, unreadOnly, model, tag)
+	rendered, hidden := storycluster.Render(rows, members, filters.Allowed, filters.UnreadOnly, filters.Model, filters.Tag)
 
 	return rendered, hidden, nil
 }
@@ -1317,11 +1320,11 @@ func (s *server) getFeedItemCounts(ctx context.Context, user *requestsnapshot.Sn
 	if err != nil {
 		return badRequest(err)
 	}
-	snapshot, _, err := user.ReadMarkers(ctx)
+	read, _, err := user.ReadMarkers(ctx)
 	if err != nil {
 		return s.failure("load read markers", err)
 	}
-	counts, err := s.store.FeedItemCounts(ctx, userID, window, snapshot)
+	counts, err := s.store.FeedItemCounts(ctx, userID, window, read)
 	if err != nil {
 		return s.failure("count live feed items", err)
 	}
