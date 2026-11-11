@@ -9,6 +9,7 @@ import type {
   Item,
   ItemsResponse,
 } from "./types";
+import { feedTagOptions } from "./ui/tag-options";
 import { createUnreadCounts } from "./unread-counts";
 
 // Read's optimistic unread adjustment, summed over Feeds.
@@ -512,14 +513,23 @@ describe("Unread counts", () => {
       cleanup();
     });
 
-    it("agrees with the Tag's Feed counts while Reads are optimistic", async () => {
-      const { reads, unread, cleanup } = await scoped({
-        kind: "tag",
-        value: "culture",
-      });
+    it("agrees with the Tag chip while Reads are optimistic", async () => {
+      const both = feeds.map((feed) => ({
+        ...feed,
+        tags: [...(feed.tags ?? []), "daily"],
+      }));
+      const { reads, unread, cleanup } = await scoped(
+        { kind: "tag", value: "daily" },
+        both,
+      );
       reads.queueRead(["apple", "art"]);
+      const chip = feedTagOptions(both, unread.feedCounts(), true).find(
+        (option) => option.tag === "daily",
+      );
+      expect(chip?.count).toBe(1);
       expect(unread.scopeCell().count).toBe(1);
-      expect(unread.feedCounts()["art-feed"].unread).toBe(1);
+      // apple-feed has nothing left unread, so only art-feed contributes.
+      expect(unread.scopeCell().text).toBe("1 unread item · 1 feed");
       cleanup();
     });
   });

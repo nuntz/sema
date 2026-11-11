@@ -80,8 +80,7 @@ export function createUnreadCounts(
       view.itemWindow(),
       view.unreadOnly(),
       view.feeds(),
-      ready() ? counts() : undefined,
-      reads.feedReadAdjust(),
+      ready() ? optimistic(counts()) : undefined,
       view.phone(),
     ),
   );

@@ -35,7 +35,6 @@ export function scopeCellModel(
   unreadOnly: boolean,
   feeds: Feed[],
   counts: FeedItemCounts | undefined,
-  feedReadAdjust: Record<string, number>,
   phone: boolean,
 ): ScopeCellModel {
   const selected = feeds.filter(
@@ -66,16 +65,10 @@ export function scopeCellModel(
     selected.map(
       (feed) => counts[feed.feed_id]?.[unreadOnly ? "unread" : "all"] ?? 0,
     );
-  const readAdjust = unreadOnly
-    ? selected.reduce(
-        (sum, feed) => sum + (feedReadAdjust[feed.feed_id] ?? 0),
-        0,
-      )
-    : 0;
   const count = contributions
     ? Math.max(
         0,
-        contributions.reduce((sum, value) => sum + value, 0) - readAdjust,
+        contributions.reduce((sum, value) => sum + value, 0),
       )
     : undefined;
   const contributingFeeds =
@@ -107,7 +100,7 @@ export function windowScopeCounts(
   return Object.fromEntries(
     ITEM_WINDOWS.map(({ value }) => [
       value,
-      scopeCellModel(scope, value, unreadOnly, feeds, counts[value], {}, false)
+      scopeCellModel(scope, value, unreadOnly, feeds, counts[value], false)
         .count,
     ]),
   );
