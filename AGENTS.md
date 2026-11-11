@@ -8,7 +8,7 @@ Ranking uses parallel text and lead-image embedding channels; image embeddings u
 
 Change an `R#` marker and its `unread_pk` in one transaction conditioned on the live row existing, then bump `READ_VERSION`, and keep optimistic unread UI rather than reloading to confirm; see `docs/adr/0002-sparse-unread-index.md` and `docs/adr/0005-read-state-is-read-your-writes.md`.
 
-API handlers read and write a user's Read, Feed and Feedback state only through the Request snapshot; see ADRs 0005–0007.
+Per-user caching and its version rows live in the Request snapshot (`cmd/api/internal/requestsnapshot`); see ADRs 0005–0007.
 
 Video playback keeps one fixed iframe host positioned over its slot, because moving the iframe reloads it; read `docs/adr/0003-video-dock-fixed-iframe-host.md` before changing the Peek, reader lead, or Dock.
 
