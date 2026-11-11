@@ -13,7 +13,7 @@ ZIP_EPOCH := 198001010000
 # A go line without a patch version names a language, not a toolchain, so 1.26 becomes go1.26.0.
 GO_TOOLCHAIN := $(shell awk '$$1 == "toolchain" { t = $$2 } $$1 == "go" { g = "go" $$2 (split($$2, v, ".") == 2 ? ".0" : "") } END { print (t != "" ? t : g) }' go.mod)
 
-.PHONY: all check check-reproducible e2e e2e-all screenshot test build lambdas web infra preview deploy rescore replay redrive backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
+.PHONY: all check check-reproducible e2e e2e-all screenshot test build lambdas web infra preview deploy rescore replay redrive redrive-deliveries backfill-archive-identities backfill-feed-cadence backfill-image-signals backfill-item-identities backfill-item-vectors backfill-media-variants backfill-reddit-connector backfill-search-text backfill-stories backfill-unread-pk backfill-vectors backfill-youtube-connector purge-legacy-vectors clean
 
 all: test build
 
@@ -104,6 +104,11 @@ replay:
 redrive:
 	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output feedsDlqArn --stack $(PULUMI_STACK))" --destination-arn "$$(cd infra && pulumi stack output feedsQueueArn --stack $(PULUMI_STACK))"
 	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output itemsDlqArn --stack $(PULUMI_STACK))" --destination-arn "$$(cd infra && pulumi stack output itemsQueueArn --stack $(PULUMI_STACK))"
+
+# Outward-facing: each redriven Send POSTs to a user's Destination, so read RUNBOOK.md first.
+# With no --destination-arn, SQS returns each message to the deliveries queue it came from.
+redrive-deliveries:
+	aws sqs start-message-move-task --region $(AWS_REGION) --source-arn "$$(cd infra && pulumi stack output deliveriesDlqArn --stack $(PULUMI_STACK))"
 
 backfill-image-signals:
 	AWS_REGION=$(AWS_REGION) TABLE_NAME=sema-$(STACK) CONTENT_BUCKET=$$(cd infra && pulumi stack output contentBucket --stack $(PULUMI_STACK)) VECTOR_BUCKET=$$(cd infra && pulumi stack output vectorBucket --stack $(PULUMI_STACK)) IMAGE_VECTOR_INDEX=$$(cd infra && pulumi stack output imageVectorIndex --stack $(PULUMI_STACK)) IMAGE_MODEL_VERSION=$$(cd infra && pulumi stack output imageModelVersion --stack $(PULUMI_STACK)) GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run ./cmd/backfill-image-signals $(BACKFILL_ARGS)

@@ -126,7 +126,8 @@ a newer Go on your `PATH` still wins there. Nothing checks that the two lines ag
 together.
 
 To target another organization's copy of the stack, pass `PULUMI_ORG=<org>`; every Make target
-that reads stack outputs (`rescore`, `replay`, `redrive`, the backfills) uses the same stack.
+that reads stack outputs (`rescore`, `replay`, `redrive`, `redrive-deliveries`, the backfills) uses
+the same stack.
 
 ## Rollback
 
@@ -262,8 +263,62 @@ make redrive
 ```
 
 Use credentials for the target stack and review the queues before redriving production messages.
-`make redrive` does not cover the deliveries dead-letter queue; to redrive it, run
-`aws sqs start-message-move-task` with the stack's `deliveriesDlqArn` output as the source.
+`make redrive` does not cover the deliveries dead-letter queue, because redriving it is
+outward-facing; use `make redrive-deliveries`, below.
+
+#### Deliveries
+
+```sh
+make redrive-deliveries
+```
+
+This moves the deliveries dead-letter queue back to the deliveries queue, where the delivery worker
+picks each message up as if it were its next retry, and POSTs the Send to its user's Destination
+unless a guard below cancels it. If that attempt fails in a retryable way, the message resumes its
+retry schedule where it stopped.
+
+A Send whose retries all fail does not land here: once the schedule is exhausted the delivery worker
+records the result and SQS deletes the message. A message reaches the dead-letter queue after three
+receives only when Sema itself failed:
+
+- loading the Destination failed, so no POST was made;
+- the POST failed in a retryable way and queueing the next retry then failed. A timeout counts as
+  retryable, so the Destination may in fact have processed that POST;
+- the delivery worker crashed or timed out.
+
+These guards still apply to a redriven message:
+
+- a removed or disabled Destination, or one whose URL has changed since the Send, cancels the
+  delivery without a POST;
+- each attempt is signed with the Destination's current secret and a fresh `X-Sema-Timestamp`;
+- `X-Sema-Delivery` keeps the id from the original Send;
+- the body is the one frozen when the user pressed Send, and its `sent_at` says when that was.
+
+The remaining risks:
+
+- the delivery is late: the dead-letter queue keeps messages for 14 days, so a redrive can POST a
+  Send that old;
+- a Destination that doesn't drop repeated `X-Sema-Delivery` ids may get a duplicate;
+- the latest result shown in Settings is overwritten by the outcome of the old Send, even if the
+  user has sent something newer since.
+
+Before redriving, check how many messages are waiting and how old the oldest one is. The dashboard's
+Dead letters chart shows the count; for both numbers from the command line:
+
+```sh
+dlq="$(cd infra && pulumi stack output deliveriesDlqArn --stack untz/sema/prod)"
+aws sqs get-queue-attributes --region us-east-1 --attribute-names ApproximateNumberOfMessages \
+  --queue-url "$(aws sqs get-queue-url --region us-east-1 --queue-name "${dlq##*:}" --query QueueUrl --output text)"
+aws cloudwatch get-metric-statistics --region us-east-1 --namespace AWS/SQS \
+  --metric-name ApproximateAgeOfOldestMessage --dimensions Name=QueueName,Value="${dlq##*:}" \
+  --statistics Maximum --period 300 \
+  --start-time "$(date -u -d '-15 minutes' +%FT%TZ)" --end-time "$(date -u +%FT%TZ)"
+```
+
+The age is in seconds and counts from when the message reached the dead-letter queue, a few minutes
+after the Send; the `sent_at` in each message body is exact. If the oldest message is older than its
+Destinations would still want, or you don't know why the messages failed, leave them in the queue to
+expire instead of redriving.
 
 ## Updating an existing stack
 

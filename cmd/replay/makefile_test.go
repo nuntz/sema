@@ -14,16 +14,22 @@ func TestMaintenanceCommandsUseRequestedStack(t *testing.T) {
 		target string
 		args   []string
 		want   []string
+		absent []string
 	}{
-		{"replay", []string{"STACK=prod"}, []string{"table=sema-prod", "queue=untz/sema/prod-itemsQueueUrl", "model=untz/sema/prod-modelVersion"}},
-		{"redrive", []string{"STACK=prod"}, []string{"--source-arn untz/sema/prod-feedsDlqArn", "--destination-arn untz/sema/prod-feedsQueueArn", "--source-arn untz/sema/prod-itemsDlqArn", "--destination-arn untz/sema/prod-itemsQueueArn"}},
-		{"backfill-youtube-connector", []string{"STACK=prod"}, []string{"table=sema-prod", "bucket=untz/sema/prod-contentBucket"}},
+		{"replay", []string{"STACK=prod"}, []string{"table=sema-prod", "queue=untz/sema/prod-itemsQueueUrl", "model=untz/sema/prod-modelVersion"}, nil},
+		{"redrive", []string{"STACK=prod"}, []string{"--source-arn untz/sema/prod-feedsDlqArn", "--destination-arn untz/sema/prod-feedsQueueArn", "--source-arn untz/sema/prod-itemsDlqArn", "--destination-arn untz/sema/prod-itemsQueueArn"}, nil},
+		// Redriving deliveries POSTs to users' Destinations, so it moves only the
+		// deliveries DLQ, back to the queue each message came from.
+		{"redrive-deliveries", []string{"STACK=prod"}, []string{"start-message-move-task --region us-east-1 --source-arn untz/sema/prod-deliveriesDlqArn"}, []string{"--destination-arn", "feedsDlqArn", "itemsDlqArn"}},
+		{"backfill-youtube-connector", []string{"STACK=prod"}, []string{"table=sema-prod", "bucket=untz/sema/prod-contentBucket"}, nil},
 		// prod is the default stack, in the untz Pulumi Cloud organization.
-		{"replay", nil, []string{"table=sema-prod", "queue=untz/sema/prod-itemsQueueUrl"}},
-		{"rescore", nil, []string{"--function-name sema-prod-rescore"}},
-		{"replay", []string{"PULUMI_ORG=other"}, []string{"table=sema-prod", "queue=other/sema/prod-itemsQueueUrl"}},
+		{"replay", nil, []string{"table=sema-prod", "queue=untz/sema/prod-itemsQueueUrl"}, nil},
+		{"rescore", nil, []string{"--function-name sema-prod-rescore"}, nil},
+		{"replay", []string{"PULUMI_ORG=other"}, []string{"table=sema-prod", "queue=other/sema/prod-itemsQueueUrl"}, nil},
+		{"redrive-deliveries", []string{"PULUMI_ORG=other", "AWS_REGION=eu-west-1"}, []string{"--region eu-west-1 --source-arn other/sema/prod-deliveriesDlqArn"}, nil},
+		{"redrive", nil, nil, []string{"deliveriesDlqArn"}},
 		// make deploy updates the Cloud stack, not whichever stack is selected.
-		{"deploy", nil, []string{"pulumi up --stack untz/sema/prod", "--distribution-id untz/sema/prod-distributionId"}},
+		{"deploy", nil, []string{"pulumi up --stack untz/sema/prod", "--distribution-id untz/sema/prod-distributionId"}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(strings.Join(append([]string{tc.target}, tc.args...), " "), func(t *testing.T) {
@@ -67,6 +73,11 @@ printf '%s\n' "$*" >> "$REVIEW_COMMAND_LOG"
 			for _, value := range tc.want {
 				if !strings.Contains(string(logged), value) {
 					t.Errorf("missing %q in commands:\n%s", value, logged)
+				}
+			}
+			for _, value := range tc.absent {
+				if strings.Contains(string(logged), value) {
+					t.Errorf("unexpected %q in commands:\n%s", value, logged)
 				}
 			}
 		})
