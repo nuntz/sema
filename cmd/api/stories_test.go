@@ -22,7 +22,7 @@ func TestRenderedStoriesCache(t *testing.T) {
 	s := &server{store: db}
 	load := func(user string, allowed map[string]bool, unread bool, tag string, window domain.FetchWindow) {
 		t.Helper()
-		if _, _, err := s.loadAndRenderStories(context.Background(), user, allowed, unread, domain.Model{}, tag, window, nil); err != nil {
+		if _, _, err := s.loadAndRenderStories(context.Background(), s.requestSnapshot(user), allowed, unread, domain.Model{}, tag, window); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestRenderedStoriesCache(t *testing.T) {
 	}
 	s.invalidateStories("user")
 	fail = true
-	if _, _, err := s.loadAndRenderStories(context.Background(), "user", nil, true, domain.Model{}, "", domain.FetchWindow{}, nil); err == nil {
+	if _, _, err := s.loadAndRenderStories(context.Background(), s.requestSnapshot("user"), nil, true, domain.Model{}, "", domain.FetchWindow{}); err == nil {
 		t.Fatal("expected store error")
 	}
 	fail = false
@@ -79,7 +79,7 @@ func TestRenderedStoriesCache(t *testing.T) {
 			if action == "signal" {
 				body = `{"value":0}`
 			}
-			got := s.itemRoute(context.Background(), "user", "POST", "item/"+action, body)
+			got := s.itemRoute(context.Background(), s.requestSnapshot("user"), "POST", "item/"+action, body)
 			if got.StatusCode != 200 {
 				t.Fatalf("mutation = %d, %s", got.StatusCode, got.Body)
 			}

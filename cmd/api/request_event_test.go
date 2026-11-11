@@ -19,6 +19,12 @@ import (
 // returns the response with the dimensions of the per-request event it emitted.
 func handleSignedIn(t *testing.T, s *server, method, path string, query map[string]string) (events.APIGatewayV2HTTPResponse, map[string]string) {
 	t.Helper()
+	return handleSignedInWithBody(t, s, method, path, query, "")
+}
+
+// handleSignedInWithBody is handleSignedIn for a request with a body.
+func handleSignedInWithBody(t *testing.T, s *server, method, path string, query map[string]string, body string) (events.APIGatewayV2HTTPResponse, map[string]string) {
+	t.Helper()
 	s.sessions = auth.NewSessions(&fakeSessions{})
 	setCookie, err := s.sessions.Create(context.Background(), auth.Claims{Subject: "user", Email: "reader@example.com"})
 	if err != nil {
@@ -30,7 +36,7 @@ func handleSignedIn(t *testing.T, s *server, method, path string, query map[stri
 	}
 	var dimensions []map[string]string
 	s.emit = func(_ map[string]float64, d map[string]string) { dimensions = append(dimensions, d) }
-	request := apiRequest(method, path, "")
+	request := apiRequest(method, path, body)
 	request.QueryStringParameters = query
 	request.Cookies = []string{auth.SessionCookieName + "=" + cookie.Value}
 	got, err := s.handle(context.Background(), request)

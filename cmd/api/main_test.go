@@ -120,7 +120,7 @@ func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
 		}
 		return []domain.Item{{ItemID: "new"}, {ItemID: "old"}}, "", &domain.Item{ItemID: "anchor", PublishedTS: "2026-09-17T00:00:00Z"}, nil
 	}}, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
-	got := server.getItems(context.Background(), "user", map[string]string{
+	got := server.getItems(context.Background(), server.requestSnapshot("user"), map[string]string{
 		"order": "chrono", "limit": "2",
 	})
 	if got.StatusCode != http.StatusOK {
@@ -161,7 +161,7 @@ func TestGetItemsReportsHasReadWithoutAnchor(t *testing.T) {
 				},
 			}, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
 			ctx, fields := withRequestFields(context.Background())
-			got := server.getItems(ctx, "user", map[string]string{"order": "interest"})
+			got := server.getItems(ctx, server.requestSnapshot("user"), map[string]string{"order": "interest"})
 			var body struct {
 				HasRead *bool `json:"has_read"`
 			}
@@ -207,7 +207,7 @@ func TestGetItemsFiltersByFeed(t *testing.T) {
 					{FeedID: "alpha"}, {FeedID: "beta"}, {FeedID: "muted", Muted: true},
 				}}},
 			}
-			got := server.getItems(context.Background(), "user", map[string]string{
+			got := server.getItems(context.Background(), server.requestSnapshot("user"), map[string]string{
 				"order": "chrono", "feed": test.feedID,
 			})
 			if got.StatusCode != http.StatusOK {
@@ -255,7 +255,7 @@ func TestGetItemsAppliesTagCutoffsOnlyToTagScope(t *testing.T) {
 	}
 	get := func(query map[string]string) []domain.Item {
 		t.Helper()
-		got := server.getItems(context.Background(), "user", query)
+		got := server.getItems(context.Background(), server.requestSnapshot("user"), query)
 		if got.StatusCode != http.StatusOK {
 			t.Fatalf("query %#v returned %d: %s", query, got.StatusCode, got.Body)
 		}
@@ -300,10 +300,10 @@ func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 		get  func() events.APIGatewayV2HTTPResponse
 	}{
 		{name: "items", get: func() events.APIGatewayV2HTTPResponse {
-			return server.getItems(context.Background(), "user", query)
+			return server.getItems(context.Background(), server.requestSnapshot("user"), query)
 		}},
 		{name: "stories", get: func() events.APIGatewayV2HTTPResponse {
-			return server.getStories(context.Background(), "user", query)
+			return server.getStories(context.Background(), server.requestSnapshot("user"), query)
 		}},
 		{name: "archive", get: func() events.APIGatewayV2HTTPResponse {
 			return server.getArchive(context.Background(), "user", query)
@@ -323,7 +323,7 @@ func TestGetStoriesReturnsArray(t *testing.T) {
 		store:     &fakeAPIStore{},
 		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}},
 	}
-	got := server.getStories(context.Background(), "user", map[string]string{})
+	got := server.getStories(context.Background(), server.requestSnapshot("user"), map[string]string{})
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
 		t.Fatalf("stories response = %d, %s", got.StatusCode, got.Body)
 	}
@@ -351,7 +351,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 			{FeedID: "one"}, {FeedID: "two"},
 		}}},
 	}
-	got := server.getStories(context.Background(), "user", map[string]string{})
+	got := server.getStories(context.Background(), server.requestSnapshot("user"), map[string]string{})
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
 	}
@@ -374,13 +374,13 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		"fetched_from":   domain.Timestamp(now.Add(-time.Hour)),
 		"fetched_before": domain.Timestamp(now.Add(time.Hour)),
 	}
-	got = server.getStories(context.Background(), "user", windowQuery)
+	got = server.getStories(context.Background(), server.requestSnapshot("user"), windowQuery)
 	if got.StatusCode != http.StatusOK || !strings.Contains(got.Body, `"story_id":"story"`) {
 		t.Fatalf("in-window story = %d, %s", got.StatusCode, got.Body)
 	}
 	items[1].FetchedTS = domain.Timestamp(now.Add(-24 * time.Hour))
 	server.invalidateStories("user")
-	got = server.getStories(context.Background(), "user", windowQuery)
+	got = server.getStories(context.Background(), server.requestSnapshot("user"), windowQuery)
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
 		t.Fatalf("single-source story = %d, %s", got.StatusCode, got.Body)
 	}
@@ -390,7 +390,7 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		}
 		return items[:1], "", nil, nil
 	}
-	got = server.getItems(context.Background(), "user", windowQuery)
+	got = server.getItems(context.Background(), server.requestSnapshot("user"), windowQuery)
 	var itemBody struct {
 		Items []domain.Item `json:"items"`
 	}
@@ -870,15 +870,15 @@ func TestBehaviourValidatesAndWritesMonotonicRow(t *testing.T) {
 		return nil
 	}}
 	s := &server{store: source}
-	got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
+	got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/behaviour", `{"opened":true,"dwell_ms":31000,"clicked_through":true}`)
 	if got.StatusCode != 200 || len(writes) != 1 || !writes[0].Opened || writes[0].DwellMS == nil || *writes[0].DwellMS != 31000 || !writes[0].ClickedThrough {
 		t.Fatalf("event=%v response=%v", writes, got)
 	}
-	got = s.itemRoute(context.Background(), "user", http.MethodPost, "item/behaviour", `{}`)
+	got = s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/behaviour", `{}`)
 	if got.StatusCode != 400 || len(writes) != 1 {
 		t.Fatal("empty event accepted")
 	}
-	got = s.itemRoute(context.Background(), "user", http.MethodPost, "item/events", `{"shared":true}`)
+	got = s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/events", `{"shared":true}`)
 	if got.StatusCode != 200 || len(writes) != 2 || !writes[1].Shared {
 		t.Fatal("share event not written")
 	}
@@ -889,7 +889,7 @@ func TestRetryItemQueuesForcedExtractionAndSummary(t *testing.T) {
 	server := &server{store: &fakeAPIStore{item: func(context.Context, string, string) (domain.Item, error) {
 		return domain.Item{ItemID: "item", FeedID: "feed", URL: "https://example.com/story", Title: "Title", PublishedTS: "2026-08-20T12:00:00Z"}, nil
 	}}, queue: queue, itemsURL: "items-queue"}
-	response := server.itemRoute(context.Background(), "user", http.MethodPost, "item/retry", "")
+	response := server.itemRoute(context.Background(), server.requestSnapshot("user"), http.MethodPost, "item/retry", "")
 	if response.StatusCode != http.StatusAccepted || queue.input == nil || aws.ToString(queue.input.QueueUrl) != "items-queue" || len(queue.input.Entries) != 1 {
 		t.Fatalf("response = %d %s, queue = %#v", response.StatusCode, response.Body, queue.input)
 	}
@@ -912,8 +912,8 @@ func TestGridEndpointsRejectInvalidFetchWindows(t *testing.T) {
 	} {
 		s := &server{}
 		for _, response := range []events.APIGatewayV2HTTPResponse{
-			s.getItems(context.Background(), "user", query),
-			s.getStories(context.Background(), "user", query),
+			s.getItems(context.Background(), s.requestSnapshot("user"), query),
+			s.getStories(context.Background(), s.requestSnapshot("user"), query),
 		} {
 			if response.StatusCode != http.StatusBadRequest {
 				t.Fatalf("query %#v: response = %#v", query, response)
@@ -928,8 +928,8 @@ func TestListEndpointsRejectRemovedParameters(t *testing.T) {
 			s := &server{}
 			query := map[string]string{key: value}
 			for _, got := range []events.APIGatewayV2HTTPResponse{
-				s.getItems(context.Background(), "user", query),
-				s.getFeedItemCounts(context.Background(), "user", query),
+				s.getItems(context.Background(), s.requestSnapshot("user"), query),
+				s.getFeedItemCounts(context.Background(), s.requestSnapshot("user"), query),
 			} {
 				if got.StatusCode != http.StatusBadRequest {
 					t.Fatalf("query %#v: response = %#v", query, got)
@@ -945,7 +945,8 @@ func TestFeedCountsRejectsInvalidFetchWindow(t *testing.T) {
 		{"fetched_from": "2026-09-07T00:00:00Z", "fetched_before": "2026-09-06T00:00:00Z"},
 		{"fetched_before": "2026-09-07T00:00:00Z"},
 	} {
-		got := (&server{}).getFeedItemCounts(context.Background(), "user", query)
+		s := &server{}
+		got := s.getFeedItemCounts(context.Background(), s.requestSnapshot("user"), query)
 		if got.StatusCode != http.StatusBadRequest {
 			t.Fatalf("response = %#v", got)
 		}
@@ -971,7 +972,7 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 		{nil, 3},
 		{map[string]string{"fetched_from": "2026-09-07T00:00:00Z", "fetched_before": "2026-09-08T00:00:00Z"}, 1},
 	} {
-		got := s.getFeedItemCounts(context.Background(), "user", test.query)
+		got := s.getFeedItemCounts(context.Background(), s.requestSnapshot("user"), test.query)
 		var body struct {
 			Feeds map[string]domain.FeedItemCount `json:"feeds"`
 		}
@@ -992,7 +993,7 @@ func TestFeedCountsOmitsDeletedFeeds(t *testing.T) {
 		return map[string]domain.FeedItemCount{"current": {All: 1}, "deleted": {All: 1}}, nil
 	}}
 	s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "current"}}}}}
-	got := s.getFeedItemCounts(context.Background(), "user", nil)
+	got := s.getFeedItemCounts(context.Background(), s.requestSnapshot("user"), nil)
 	var body struct {
 		Feeds map[string]domain.FeedItemCount `json:"feeds"`
 	}
@@ -1170,7 +1171,7 @@ func TestBuryRejectsKeptItems(t *testing.T) {
 				return item, nil
 			}, archiveItem: func(context.Context, string, string) (domain.Item, error) { return item, nil }, setSignal: func(context.Context, string, domain.Item, int) error { t.Fatal("bury must not write"); return nil }}
 			s := &server{store: db}
-			got := s.itemRoute(context.Background(), "user", http.MethodPost, "item/signal", `{"value":-1}`)
+			got := s.itemRoute(context.Background(), s.requestSnapshot("user"), http.MethodPost, "item/signal", `{"value":-1}`)
 			if got.StatusCode != http.StatusConflict {
 				t.Fatalf("got %d: %s", got.StatusCode, got.Body)
 			}

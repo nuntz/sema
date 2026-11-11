@@ -122,12 +122,12 @@ func TestAddedFeedReachesAnotherInstancesCounts(t *testing.T) {
 		return map[string]domain.FeedItemCount{"news": {All: 1}, added: {All: 2}}, nil
 	}
 	writer, reader := writerAndWarmReader(t, db)
-	if got := reader.getFeedItemCounts(context.Background(), "user", map[string]string{}); got.StatusCode != http.StatusOK {
+	if got := reader.getFeedItemCounts(context.Background(), reader.requestSnapshot("user"), map[string]string{}); got.StatusCode != http.StatusOK {
 		t.Fatalf("warm counts: %s", got.Body)
 	}
 	got := writer.addFeed(context.Background(), "user", `{"feed_url":"https://example.com/added.xml"}`)
 	mustStatus(t, got.StatusCode, got.Body, http.StatusAccepted)
-	result := reader.getFeedItemCounts(context.Background(), "user", map[string]string{})
+	result := reader.getFeedItemCounts(context.Background(), reader.requestSnapshot("user"), map[string]string{})
 	var body struct {
 		Feeds map[string]domain.FeedItemCount `json:"feeds"`
 	}
@@ -166,7 +166,7 @@ func TestRenameReachesAnotherInstancesCachedStories(t *testing.T) {
 	writer, reader := writerAndWarmReader(t, db)
 	storyTitles := func() map[string]string {
 		t.Helper()
-		result := reader.getStories(context.Background(), "user", map[string]string{"include_read": "true"})
+		result := reader.getStories(context.Background(), reader.requestSnapshot("user"), map[string]string{"include_read": "true"})
 		var body struct {
 			Stories []struct {
 				Items []domain.Item `json:"items"`
@@ -237,7 +237,7 @@ func TestRequestReadsFeedVersionOnce(t *testing.T) {
 	db := newSharedFeedStore(testFeed("news"), testFeed("wire"))
 	withNewsAndWireStory(db)
 	s := &server{store: db}
-	result := s.getStories(withFeedVersionMemo(context.Background()), "user", map[string]string{"include_read": "true"})
+	result := s.getStories(withFeedVersionMemo(context.Background()), s.requestSnapshot("user"), map[string]string{"include_read": "true"})
 	mustStatus(t, result.StatusCode, result.Body, http.StatusOK)
 	if db.feedVersionReads != 1 {
 		t.Fatalf("FeedVersion reads = %d, want 1", db.feedVersionReads)
