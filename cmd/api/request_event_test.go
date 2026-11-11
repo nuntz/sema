@@ -95,14 +95,14 @@ func TestGetItemsRecordsTheQueryShapeOnTheRequestEvent(t *testing.T) {
 	_, first := handleSignedIn(t, s, http.MethodGet, "/api/items", query)
 	_, second := handleSignedIn(t, s, http.MethodGet, "/api/items", query)
 
-	want := map[string]string{"Order": "interest", "Filtered": "true", "ExcludeStories": "false", "ItemCount": "2", "ReadCache": "miss"}
+	want := map[string]string{"Order": "interest", "Filtered": "true", "ExcludeStories": "false", "ItemCount": "2", "ReadCache": "miss", "FeedCache": "miss"}
 	for key, value := range want {
 		if first[key] != value {
 			t.Fatalf("first dimensions = %v, want %s=%s", first, key, value)
 		}
 	}
-	if second["ReadCache"] != "hit" {
-		t.Fatalf("second dimensions = %v, want ReadCache=hit", second)
+	if second["ReadCache"] != "hit" || second["FeedCache"] != "hit" {
+		t.Fatalf("second dimensions = %v, want ReadCache=hit and FeedCache=hit", second)
 	}
 }
 

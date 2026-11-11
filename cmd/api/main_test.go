@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"mime/multipart"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -114,12 +116,12 @@ func TestGetSearchEncodesEmptyGroupsAsArrays(t *testing.T) {
 }
 
 func TestGetItemsReturnsUnreadPageWithReadAnchor(t *testing.T) {
-	server := &server{store: &fakeAPIStore{itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, limit int, includeRead, fill bool, allowed, excluded map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
+	server := &server{store: withFeeds(&fakeAPIStore{itemsForFeeds: func(_ context.Context, _ string, _ domain.Order, _ string, limit int, includeRead, fill bool, allowed, excluded map[string]bool, window domain.FetchWindow, snapshot map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 		if limit != 2 || includeRead {
 			t.Fatal("wrong unread page request")
 		}
 		return []domain.Item{{ItemID: "new"}, {ItemID: "old"}}, "", &domain.Item{ItemID: "anchor", PublishedTS: "2026-09-17T00:00:00Z"}, nil
-	}}, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
+	}}, []domain.Feed{{FeedID: "feed"}})}
 	got := server.getItems(context.Background(), server.requestSnapshot("user"), map[string]string{
 		"order": "chrono", "limit": "2",
 	})
@@ -154,12 +156,12 @@ func TestGetItemsReportsHasReadWithoutAnchor(t *testing.T) {
 		{"no read markers", map[string]bool{}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := &server{store: &fakeAPIStore{
+			server := &server{store: withFeeds(&fakeAPIStore{
 				loadMarkers: func(context.Context, string) (map[string]bool, error) { return test.markers, nil },
 				itemsForFeeds: func(context.Context, string, domain.Order, string, int, bool, bool, map[string]bool, map[string]bool, domain.FetchWindow, map[string]bool) ([]domain.Item, string, *domain.Item, error) {
 					return []domain.Item{}, "", nil, nil
 				},
-			}, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
+			}, []domain.Feed{{FeedID: "feed"}})}
 			ctx, fields := withRequestFields(context.Background())
 			got := server.getItems(ctx, server.requestSnapshot("user"), map[string]string{"order": "interest"})
 			var body struct {
@@ -202,10 +204,9 @@ func TestGetItemsFiltersByFeed(t *testing.T) {
 				return nil, "", nil, nil
 			}}
 			server := &server{
-				store: db,
-				feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+				store: withFeeds(db, []domain.Feed{
 					{FeedID: "alpha"}, {FeedID: "beta"}, {FeedID: "muted", Muted: true},
-				}}},
+				}),
 			}
 			got := server.getItems(context.Background(), server.requestSnapshot("user"), map[string]string{
 				"order": "chrono", "feed": test.feedID,
@@ -247,11 +248,10 @@ func TestGetItemsAppliesTagCutoffsOnlyToTagScope(t *testing.T) {
 			return rows, "", nil, nil
 		}}
 	server := &server{
-		store: db,
-		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+		store: withFeeds(db, []domain.Feed{
 			{FeedID: "tagged-feed", Tags: []string{"tech"}},
 			{FeedID: "plain-feed"},
-		}}},
+		}),
 	}
 	get := func(query map[string]string) []domain.Item {
 		t.Helper()
@@ -306,7 +306,7 @@ func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 			return server.getStories(context.Background(), server.requestSnapshot("user"), query)
 		}},
 		{name: "archive", get: func() events.APIGatewayV2HTTPResponse {
-			return server.getArchive(context.Background(), "user", query)
+			return server.getArchive(context.Background(), server.requestSnapshot("user"), query)
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -320,8 +320,7 @@ func TestGridEndpointsRejectCombinedTagAndFeed(t *testing.T) {
 
 func TestGetStoriesReturnsArray(t *testing.T) {
 	server := &server{
-		store:     &fakeAPIStore{},
-		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}},
+		store: withFeeds(&fakeAPIStore{}, []domain.Feed{{FeedID: "feed"}}),
 	}
 	got := server.getStories(context.Background(), server.requestSnapshot("user"), map[string]string{})
 	if got.StatusCode != http.StatusOK || got.Body != `{"stories":[]}` {
@@ -346,10 +345,9 @@ func TestGetStoriesIncludesOrderingAndSize(t *testing.T) {
 		model: func(context.Context, string) (domain.Model, error) { return model, nil },
 	}
 	server := &server{
-		store: db,
-		feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
+		store: withFeeds(db, []domain.Feed{
 			{FeedID: "one"}, {FeedID: "two"},
-		}}},
+		}),
 	}
 	got := server.getStories(context.Background(), server.requestSnapshot("user"), map[string]string{})
 	if got.StatusCode != http.StatusOK {
@@ -596,7 +594,7 @@ func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
 	db := &fakeAPIStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
 	server := &server{store: db, queue: queue}
-	got := server.addFeed(context.Background(), "user", `{
+	got := server.addFeed(context.Background(), server.requestSnapshot("user"), `{
 		"feed_url":"https://old.reddit.com/r/Castles/new.rss",
 		"connector":"reddit",
 		"title":"untrusted listing title",
@@ -614,6 +612,33 @@ func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
 	}
 }
 
+// Adding a subreddit already followed under another sort merges into the
+// live Feed row, not the Feed list, which can trail the feed worker.
+func TestAddRedditFeedMergesIntoTheLiveRow(t *testing.T) {
+	var saved domain.Feed
+	listed := domain.Feed{FeedID: "legacy", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/castles/.rss"}
+	live := listed
+	live.ItemCount = 7
+	db := &fakeAPIStore{
+		putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil },
+		feeds:   func(context.Context, string) ([]domain.Feed, error) { return []domain.Feed{listed}, nil },
+		feed: func(_ context.Context, _, feedID string) (domain.Feed, error) {
+			if feedID != "legacy" {
+				return domain.Feed{}, store.ErrNotFound
+			}
+			return live, nil
+		},
+	}
+	server := &server{store: db, queue: &apiQueue{}}
+	got := server.addFeed(context.Background(), server.requestSnapshot("user"), `{"feed_url":"https://www.reddit.com/r/castles/new.rss","connector":"reddit"}`)
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+	}
+	if saved.FeedID != "legacy" || saved.ItemCount != 7 || saved.URL != "https://www.reddit.com/r/castles/new.rss" {
+		t.Fatalf("saved feed = %#v", saved)
+	}
+}
+
 func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
 	feed := domain.Feed{
 		PK: domain.UserPK("user"), SK: domain.FeedSK("legacy-id"), FeedID: "legacy-id",
@@ -625,7 +650,7 @@ func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
 	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }, putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
 	queue := &apiQueue{}
 	server := &server{store: db, queue: queue}
-	got := server.patchFeed(context.Background(), "user", "legacy-id", `{"url":"https://www.reddit.com/r/castles/.rss"}`)
+	got := server.patchFeed(context.Background(), server.requestSnapshot("user"), "legacy-id", `{"url":"https://www.reddit.com/r/castles/.rss"}`)
 	if got.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
 	}
@@ -664,7 +689,7 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := server.importFeeds(context.Background(), "user", events.APIGatewayV2HTTPRequest{
+	got := server.importFeeds(context.Background(), server.requestSnapshot("user"), events.APIGatewayV2HTTPRequest{
 		Body: body.String(), Headers: map[string]string{"content-type": writer.FormDataContentType()},
 	})
 	if got.StatusCode != http.StatusAccepted {
@@ -681,18 +706,41 @@ func TestImportFeedsPreservesMutedFeedSettings(t *testing.T) {
 	}
 }
 
-func TestImportFeedsInvalidatesCacheAfterPartialWriteFailure(t *testing.T) {
+// An import that failed partway still shows the Feeds it saved on the next
+// Feed list, so the user can see which were added.
+func TestImportThatFailsPartwayShowsItsSavedFeeds(t *testing.T) {
 	writeFailure := errors.New("write failed")
-	db := &fakeAPIStore{putFeed: func(_ context.Context, feed domain.Feed) error {
-		if strings.Contains(feed.URL, "failed") {
-			return writeFailure
+	rows := map[string]domain.Feed{}
+	db := &fakeAPIStore{
+		putFeed: func(_ context.Context, feed domain.Feed) error {
+			if strings.Contains(feed.URL, "failed") {
+				return writeFailure
+			}
+			rows[feed.FeedID] = feed
+			return nil
+		},
+		feeds: func(context.Context, string) ([]domain.Feed, error) {
+			return slices.Collect(maps.Values(rows)), nil
+		},
+	}
+	server := &server{store: db, queue: &apiQueue{}}
+	listedURLs := func() []string {
+		t.Helper()
+		got := server.getFeeds(context.Background(), server.requestSnapshot("user"))
+		var body struct {
+			Feeds []domain.Feed `json:"feeds"`
 		}
-		return nil
-	}}
-	server := &server{
-		store: db, queue: &apiQueue{},
-		feedCache:       map[string]cachedFeedList{"user": {}},
-		feedDetailCache: map[string]cachedFeedList{"user": {}},
+		if err := json.Unmarshal([]byte(got.Body), &body); err != nil || got.StatusCode != http.StatusOK {
+			t.Fatalf("feeds = %d %s: %v", got.StatusCode, got.Body, err)
+		}
+		urls := []string{}
+		for _, feed := range body.Feeds {
+			urls = append(urls, feed.URL)
+		}
+		return urls
+	}
+	if got := listedURLs(); len(got) != 0 {
+		t.Fatalf("Feeds before the import = %v", got)
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -707,17 +755,14 @@ func TestImportFeedsInvalidatesCacheAfterPartialWriteFailure(t *testing.T) {
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got := server.importFeeds(context.Background(), "user", events.APIGatewayV2HTTPRequest{
+	got := server.importFeeds(context.Background(), server.requestSnapshot("user"), events.APIGatewayV2HTTPRequest{
 		Body: body.String(), Headers: map[string]string{"content-type": writer.FormDataContentType()},
 	})
 	if got.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
 	}
-	if _, ok := server.feedCache["user"]; ok {
-		t.Fatal("feed list cache was not invalidated")
-	}
-	if _, ok := server.feedDetailCache["user"]; ok {
-		t.Fatal("feed detail cache was not invalidated")
+	if got := listedURLs(); !slices.Equal(got, []string{"https://example.com/saved.xml"}) {
+		t.Fatalf("Feeds after the partly failed import = %v, want the saved one", got)
 	}
 }
 
@@ -964,7 +1009,7 @@ func TestFeedCountsAppliesFetchWindow(t *testing.T) {
 		}
 		return map[string]domain.FeedItemCount{"feed": {All: count, Unread: count}}, nil
 	}}
-	s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "feed"}}}}}
+	s := &server{store: withFeeds(db, []domain.Feed{{FeedID: "feed"}})}
 	for _, test := range []struct {
 		query map[string]string
 		want  int
@@ -992,7 +1037,7 @@ func TestFeedCountsOmitsDeletedFeeds(t *testing.T) {
 	db := &fakeAPIStore{feedItemCounts: func(context.Context, string, domain.FetchWindow, map[string]bool) (map[string]domain.FeedItemCount, error) {
 		return map[string]domain.FeedItemCount{"current": {All: 1}, "deleted": {All: 1}}, nil
 	}}
-	s := &server{store: db, feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{{FeedID: "current"}}}}}
+	s := &server{store: withFeeds(db, []domain.Feed{{FeedID: "current"}})}
 	got := s.getFeedItemCounts(context.Background(), s.requestSnapshot("user"), nil)
 	var body struct {
 		Feeds map[string]domain.FeedItemCount `json:"feeds"`
@@ -1102,12 +1147,11 @@ func TestGetSearchScope(t *testing.T) {
 				},
 			}
 			vectors := &searchVectors{}
-			s := &server{store: db, embedder: searchEmbedder{}, vectors: vectors,
-				feedCache: map[string]cachedFeedList{"user": {loaded: time.Now(), feeds: []domain.Feed{
-					{FeedID: "selected", Tags: []string{"tech"}},
-					{FeedID: "other", Tags: []string{"other"}},
-					{FeedID: "untagged"},
-				}}},
+			s := &server{store: withFeeds(db, []domain.Feed{
+				{FeedID: "selected", Tags: []string{"tech"}},
+				{FeedID: "other", Tags: []string{"other"}},
+				{FeedID: "untagged"},
+			}), embedder: searchEmbedder{}, vectors: vectors,
 			}
 			got := s.getSearch(context.Background(), s.requestSnapshot("user"), map[string]string{"q": "topic", "limit": "2", "tag": test.tag, "feed": test.feed})
 			if got.StatusCode != test.status {

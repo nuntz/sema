@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/nuntz/sema/cmd/api/internal/requestsnapshot"
+	"github.com/nuntz/sema/internal/domain"
 )
 
 // scriptedStore returns whatever versions, markers and errors a test sets. It
@@ -21,6 +22,12 @@ type scriptedStore struct {
 	// setReadVersion and setReadErr are what SetRead returns.
 	setReadVersion int64
 	setReadErr     error
+
+	feedVersion int64
+	feeds       []domain.Feed
+	feedsErr    error
+	// feedWriteErr is what SaveFeeds and DeleteFeed return.
+	feedWriteErr error
 }
 
 func (s *scriptedStore) ReadVersion(context.Context, string) (int64, error) {
