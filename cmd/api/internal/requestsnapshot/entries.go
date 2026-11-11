@@ -17,10 +17,11 @@ const (
 )
 
 // entry is one cached value, labelled with the version read before it was
-// loaded, so it is never labelled newer than what it holds.
-type entry[V any] struct {
+// loaded, so it is never labelled newer than what it holds. A kind derived
+// from several kinds of state is labelled with all their versions.
+type entry[Ver comparable, V any] struct {
 	loaded  time.Time
-	version int64
+	version Ver
 	value   V
 }
 
@@ -28,19 +29,19 @@ type entry[V any] struct {
 // sweep on fill, and at most maxEntries entries with the oldest evicted. Its
 // lock covers map access only, never store I/O: version checks, not the lock,
 // keep a concurrent fill or patch from serving another write's state.
-type entries[K comparable, V any] struct {
+type entries[K, Ver comparable, V any] struct {
 	ttl time.Duration
 	mu  sync.Mutex
-	m   map[K]entry[V]
+	m   map[K]entry[Ver, V]
 }
 
-func newEntries[K comparable, V any](ttl time.Duration) *entries[K, V] {
-	return &entries[K, V]{ttl: ttl, m: make(map[K]entry[V])}
+func newEntries[K, Ver comparable, V any](ttl time.Duration) *entries[K, Ver, V] {
+	return &entries[K, Ver, V]{ttl: ttl, m: make(map[K]entry[Ver, V])}
 }
 
 // lookup returns the value cached for key if it is fresh at now and labelled
 // with version, and the outcome either way.
-func (e *entries[K, V]) lookup(key K, version int64, now time.Time) (V, string) {
+func (e *entries[K, Ver, V]) lookup(key K, version Ver, now time.Time) (V, string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	cached, ok := e.m[key]
@@ -57,7 +58,7 @@ func (e *entries[K, V]) lookup(key K, version int64, now time.Time) (V, string) 
 }
 
 // fill caches value for key, loaded at now and labelled with version.
-func (e *entries[K, V]) fill(key K, version int64, value V, now time.Time) {
+func (e *entries[K, Ver, V]) fill(key K, version Ver, value V, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for cachedKey, cached := range e.m {
@@ -75,12 +76,12 @@ func (e *entries[K, V]) fill(key K, version int64, value V, now time.Time) {
 		}
 		delete(e.m, oldest)
 	}
-	e.m[key] = entry[V]{loaded: now, version: version, value: value}
+	e.m[key] = entry[Ver, V]{loaded: now, version: version, value: value}
 }
 
 // update replaces key's entry with what change returns, or drops it when
 // change reports false. An absent key passes ok false and stays absent.
-func (e *entries[K, V]) update(key K, change func(cached entry[V]) (entry[V], bool)) {
+func (e *entries[K, Ver, V]) update(key K, change func(cached entry[Ver, V]) (entry[Ver, V], bool)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	cached, ok := e.m[key]
@@ -95,8 +96,19 @@ func (e *entries[K, V]) update(key K, change func(cached entry[V]) (entry[V], bo
 }
 
 // drop forgets key's entry.
-func (e *entries[K, V]) drop(key K) {
+func (e *entries[K, Ver, V]) drop(key K) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	delete(e.m, key)
+}
+
+// dropMatching forgets every entry whose key matches.
+func (e *entries[K, Ver, V]) dropMatching(match func(K) bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for key := range e.m {
+		if match(key) {
+			delete(e.m, key)
+		}
+	}
 }

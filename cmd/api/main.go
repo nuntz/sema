@@ -73,8 +73,6 @@ type server struct {
 	rescore          func(context.Context, string) error
 	discover         feedDiscoverer
 	media            *media.Processor
-	storyMu          sync.Mutex
-	storyCache       map[storyCacheKey]cachedStoryList
 	embedder         embed.Embedder
 	vectors          vectorstore.Store
 	imageEmbedder    embed.ImageEmbedder
@@ -93,9 +91,10 @@ type server struct {
 }
 
 // requestSnapshot starts one request's Snapshot of userID's state. Handlers
-// read and write the user's Read state and Feeds only through it; see
-// docs/adr/0005-read-state-is-read-your-writes.md and
-// docs/adr/0006-feed-edits-are-read-your-writes.md.
+// read and write the user's Read state, Feeds, Stories and Boost, Bury and
+// Keep only through it; see docs/adr/0005-read-state-is-read-your-writes.md,
+// docs/adr/0006-feed-edits-are-read-your-writes.md and
+// docs/adr/0007-stories-are-read-your-writes.md.
 func (s *server) requestSnapshot(userID string) *requestsnapshot.Snapshot {
 	s.snapshotsOnce.Do(func() {
 		if s.snapshots == nil {
@@ -871,103 +870,34 @@ func conditionalStories(result events.APIGatewayV2HTTPResponse, headers map[stri
 	return result
 }
 
-const storyCacheTTL = 4 * time.Minute
-
-type storyCacheKey struct {
-	userID  string
-	filters string
-}
-
-type cachedStoryList struct {
-	loaded  time.Time
+// renderedStories is one rendered Story list and the Item IDs its Stories
+// show, which the item list leaves out. Both are shared once rendered.
+type renderedStories struct {
 	stories []storycluster.Rendered
 	hidden  map[string]bool
 }
 
-// Results are immutable after rendering. Include the model's public ranking
-// cutoffs as well as filters so a newly computed model cannot reuse old sizes.
-//
-// Stories render from the request's Read markers and are keyed by their
-// ReadVersion: every rendered Member shows its Read state.
+// loadAndRenderStories returns the user's Stories for these filters through
+// the Request snapshot, which caches them under the filters plus the
+// request's Feed, Read and feedback versions. The model's public ranking
+// cutoffs are part of the filters, so a newly computed model can't reuse old
+// sizes.
 func (s *server) loadAndRenderStories(ctx context.Context, user *requestsnapshot.Snapshot, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow) ([]storycluster.Rendered, map[string]bool, error) {
-	userID := user.UserID()
-	// Stories bake in Feed titles, favicons and Connectors, so a Feed edit on
-	// any instance must miss this cache.
-	_, feedVersion, err := user.Feeds(ctx)
+	filters := struct {
+		Allowed    map[string]bool
+		UnreadOnly bool
+		Tag        string
+		Window     domain.FetchWindow
+		Model      domain.Model
+	}{allowed, unreadOnly, tag, window, model}
+	list, err := requestsnapshot.Stories(ctx, user, filters, func(ctx context.Context, read map[string]bool) (renderedStories, error) {
+		stories, hidden, err := s.renderStories(ctx, user, allowed, unreadOnly, model, tag, window, read)
+		return renderedStories{stories, hidden}, err
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	// Rendered Items show the user's Boost, Bury and Keep, so feedback on any
-	// instance must miss this cache. Read the version before rendering, so a
-	// list is never newer-labelled than its contents.
-	feedbackVersion, err := s.store.FeedbackVersion(ctx, userID)
-	if err != nil {
-		return nil, nil, err
-	}
-	// A Read on any instance must miss this cache too. Render from the
-	// strongly consistent snapshot rather than resolving Read rows directly,
-	// which can be older than its version.
-	snapshot, readVersion, err := user.ReadMarkers(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	filters, err := json.Marshal(struct {
-		Allowed         map[string]bool
-		UnreadOnly      bool
-		Tag             string
-		Window          domain.FetchWindow
-		Model           domain.Model
-		FeedVersion     int64
-		ReadVersion     int64
-		FeedbackVersion int64
-	}{allowed, unreadOnly, tag, window, model, feedVersion, readVersion, feedbackVersion})
-	if err != nil {
-		return nil, nil, err
-	}
-	key := storyCacheKey{userID, string(filters)}
-	// Serialize fills and invalidation so a concurrent read mutation cannot
-	// leave a stale in-flight fill cached after invalidation.
-	s.storyMu.Lock()
-	defer s.storyMu.Unlock()
-	now := time.Now()
-	if entry, ok := s.storyCache[key]; ok && now.Sub(entry.loaded) < storyCacheTTL {
-		return entry.stories, entry.hidden, nil
-	}
-	stories, hidden, err := s.renderStories(ctx, user, allowed, unreadOnly, model, tag, window, snapshot)
-	if err != nil {
-		return nil, nil, err
-	}
-	if s.storyCache == nil {
-		s.storyCache = make(map[storyCacheKey]cachedStoryList)
-	}
-	for key, entry := range s.storyCache {
-		if now.Sub(entry.loaded) >= storyCacheTTL {
-			delete(s.storyCache, key)
-		}
-	}
-	// Bound memory across users and arbitrary filter combinations in warm Lambdas.
-	if len(s.storyCache) >= 128 {
-		var oldest storyCacheKey
-		oldestTime := now
-		for key, entry := range s.storyCache {
-			if entry.loaded.Before(oldestTime) {
-				oldest, oldestTime = key, entry.loaded
-			}
-		}
-		delete(s.storyCache, oldest)
-	}
-	s.storyCache[key] = cachedStoryList{now, stories, hidden}
-	return stories, hidden, nil
-}
-
-func (s *server) invalidateStories(userID string) {
-	s.storyMu.Lock()
-	defer s.storyMu.Unlock()
-	for key := range s.storyCache {
-		if key.userID == userID {
-			delete(s.storyCache, key)
-		}
-	}
+	return list.stories, list.hidden, nil
 }
 
 func (s *server) renderStories(ctx context.Context, user *requestsnapshot.Snapshot, allowed map[string]bool, unreadOnly bool, model domain.Model, tag string, window domain.FetchWindow, snapshot map[string]bool) ([]storycluster.Rendered, map[string]bool, error) {
@@ -1212,8 +1142,7 @@ func (s *server) itemRoute(ctx context.Context, user *requestsnapshot.Snapshot, 
 		if input.Hearted == nil {
 			return badRequest(errors.New("hearted is required"))
 		}
-		defer s.invalidateStories(userID)
-		archiveSK, heartCount, err := s.store.SetHeart(ctx, userID, itemID, *input.Hearted)
+		archiveSK, heartCount, err := user.SetKeep(ctx, itemID, *input.Hearted)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return response(http.StatusNotFound, map[string]string{"error": "item not found"})
@@ -1252,8 +1181,7 @@ func (s *server) itemRoute(ctx context.Context, user *requestsnapshot.Snapshot, 
 		if input.Value != 0 && len(item.Vector) == 0 {
 			return response(http.StatusConflict, map[string]string{"error": "item has no embedding"})
 		}
-		defer s.invalidateStories(userID)
-		if err := s.store.SetSignal(ctx, userID, item, input.Value); err != nil {
+		if err := user.SetSignal(ctx, item, input.Value); err != nil {
 			return s.failure("set signal", err)
 		}
 	case "read":
@@ -1269,7 +1197,6 @@ func (s *server) itemRoute(ctx context.Context, user *requestsnapshot.Snapshot, 
 		if err := decodeJSON(body, &input); err != nil {
 			return badRequest(err)
 		}
-		defer s.invalidateStories(userID)
 		if err := user.SetRead(ctx, []string{itemID}, input.Read); err != nil {
 			return s.failure("set read state", err)
 		}
@@ -1367,7 +1294,6 @@ func (s *server) readBatch(ctx context.Context, user *requestsnapshot.Snapshot, 
 	if input.Read != nil {
 		read = *input.Read
 	}
-	defer s.invalidateStories(user.UserID())
 	if err := user.SetRead(ctx, input.IDs, read); err != nil {
 		return s.failure("batch read state", err)
 	}
@@ -1549,7 +1475,6 @@ func (s *server) importFeeds(ctx context.Context, user *requestsnapshot.Snapshot
 	if err := errors.Join(mergeErrors...); err != nil {
 		return s.failure("merge imported feed", err)
 	}
-	defer s.invalidateStories(userID)
 	if err := user.SaveFeeds(ctx, feeds...); err != nil {
 		return s.failure("store imported feed", err)
 	}
@@ -1601,7 +1526,6 @@ func (s *server) deleteFeed(ctx context.Context, user *requestsnapshot.Snapshot,
 	if feedID == "" {
 		return badRequest(errors.New("feed id is required"))
 	}
-	defer s.invalidateStories(user.UserID())
 	if err := user.DeleteFeed(ctx, feedID); err != nil {
 		return s.failure("delete feed", err)
 	}

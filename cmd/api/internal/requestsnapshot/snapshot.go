@@ -10,6 +10,14 @@
 // from the request's own writes. Every write that moves a version goes
 // through the Snapshot, which patches or drops the instance's cached copy.
 //
+// The kinds are Read markers (READ_VERSION), Feed lists (FEED_VERSION) and
+// rendered Stories. Stories are derived: the caller renders them from the
+// Snapshot's Read markers and Feeds, and they are labelled with all three
+// versions, FEEDBACK_VERSION included, so a Read, Feed edit, Boost, Bury,
+// Keep or Unkeep on any instance renders them again. A write error drops the
+// instance's copy of what it wrote, and its Stories, because the write may
+// have committed partway without moving a version.
+//
 // A Cache lives as long as the API instance and holds what its Snapshots
 // loaded, under one eviction policy with a TTL per kind. Handlers never see
 // cache entries or version rows.
@@ -34,6 +42,10 @@ type Store interface {
 	Feeds(ctx context.Context, userID string) ([]domain.Feed, error)
 	SaveFeeds(ctx context.Context, userID string, feeds []domain.Feed) (int64, error)
 	DeleteFeed(ctx context.Context, userID, feedID string) (int64, error)
+
+	FeedbackVersion(ctx context.Context, userID string) (int64, error)
+	SetHeart(ctx context.Context, userID, itemID string, hearted bool) (archiveSK string, heartCount int, err error)
+	SetSignal(ctx context.Context, userID string, item domain.Item, value int) error
 }
 
 // readTTL bounds how long a Read marker copy can serve writes that did not
@@ -45,9 +57,10 @@ const readTTL = time.Minute
 type Cache struct {
 	store         Store
 	now           func() time.Time
-	read          *entries[string, map[string]bool]
-	feeds         *entries[string, []domain.Feed]
-	detailedFeeds *entries[string, []domain.Feed]
+	read          *entries[string, int64, map[string]bool]
+	feeds         *entries[string, int64, []domain.Feed]
+	detailedFeeds *entries[string, int64, []domain.Feed]
+	stories       *entries[storyKey, storyVersions, any]
 }
 
 // NewCache returns an empty Cache over store that tells time with now, or
@@ -59,9 +72,10 @@ func NewCache(store Store, now func() time.Time) *Cache {
 	return &Cache{
 		store:         store,
 		now:           now,
-		read:          newEntries[string, map[string]bool](readTTL),
-		feeds:         newEntries[string, []domain.Feed](feedTTL),
-		detailedFeeds: newEntries[string, []domain.Feed](feedTTL),
+		read:          newEntries[string, int64, map[string]bool](readTTL),
+		feeds:         newEntries[string, int64, []domain.Feed](feedTTL),
+		detailedFeeds: newEntries[string, int64, []domain.Feed](feedTTL),
+		stories:       newEntries[storyKey, storyVersions, any](storyTTL),
 	}
 }
 
@@ -73,7 +87,8 @@ func (c *Cache) Snapshot(userID string) *Snapshot {
 
 // Snapshot is one user's state for one request. It is safe for concurrent
 // use, and each kind still loads only once. Each kind has its own lock, held
-// across its loads and writes, so one kind's load may use another kind.
+// across its loads and writes, so one kind's load may use another kind:
+// rendering Stories reads Read markers and Feeds.
 type Snapshot struct {
 	cache  *Cache
 	userID string
@@ -83,6 +98,12 @@ type Snapshot struct {
 
 	feedMu sync.Mutex
 	feed   *feedState
+
+	feedbackMu sync.Mutex
+	feedback   *int64
+
+	storyMu sync.Mutex
+	renders map[storyRender]any
 
 	outcomesMu sync.Mutex
 	outcomes   map[string]string
@@ -144,9 +165,13 @@ func (s *Snapshot) loadRead(ctx context.Context) (*readState, error) {
 // SetRead marks ids Read, or unread when read is false. The request sees its
 // own write afterwards. When the write moved READ_VERSION by exactly one, no
 // other write landed in between, so the instance's copy is patched forward;
-// otherwise it is dropped. A write error drops it too, because the write may
-// have committed partway.
+// otherwise it is dropped. A write error drops it, and the user's Stories,
+// too, because the write may have committed partway.
 func (s *Snapshot) SetRead(ctx context.Context, ids []string, read bool) error {
+	return s.dropStoriesOnError(s.setRead(ctx, ids, read))
+}
+
+func (s *Snapshot) setRead(ctx context.Context, ids []string, read bool) error {
 	s.readMu.Lock()
 	defer s.readMu.Unlock()
 	cache := s.cache
@@ -160,7 +185,7 @@ func (s *Snapshot) SetRead(ctx context.Context, ids []string, read bool) error {
 		// Nothing was written, so nothing moved.
 		return nil
 	}
-	cache.read.update(s.userID, func(cached entry[map[string]bool]) (entry[map[string]bool], bool) {
+	cache.read.update(s.userID, func(cached entry[int64, map[string]bool]) (entry[int64, map[string]bool], bool) {
 		if version != cached.version+1 {
 			return cached, false
 		}
@@ -194,8 +219,9 @@ func patchRead(markers map[string]bool, ids []string, read bool) map[string]bool
 }
 
 // CacheOutcomes returns each kind's cache outcome for this request, by its
-// request event field name: ReadCache and FeedCache. Each records the first load's
-// outcome, so a later hit in the same request can't hide an earlier miss.
+// request event field name: ReadCache, FeedCache and StoryCache. Each records
+// the first load's outcome, so a later hit in the same request can't hide an
+// earlier miss.
 func (s *Snapshot) CacheOutcomes() map[string]string {
 	s.outcomesMu.Lock()
 	defer s.outcomesMu.Unlock()

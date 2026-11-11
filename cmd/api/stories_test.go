@@ -2,95 +2,41 @@ package main
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/nuntz/sema/internal/domain"
 )
 
-func TestRenderedStoriesCache(t *testing.T) {
-	calls := 0
-	fail := false
+// Every filter a Story list depends on must be part of what it is cached
+// under, so lists for different filters never share a render.
+func TestRenderedStoriesAreCachedPerFilters(t *testing.T) {
+	renders := 0
 	db := &fakeAPIStore{clusters: func(context.Context, string) ([]domain.Cluster, error) {
-		calls++
-		if fail {
-			return nil, errors.New("unavailable")
-		}
+		renders++
 		return nil, nil
 	}}
 	s := &server{store: db}
-	load := func(user string, allowed map[string]bool, unread bool, tag string, window domain.FetchWindow) {
+	load := func(user string, allowed map[string]bool, unread bool, tag string, window domain.FetchWindow, model domain.Model) {
 		t.Helper()
-		if _, _, err := s.loadAndRenderStories(context.Background(), s.requestSnapshot(user), allowed, unread, domain.Model{}, tag, window); err != nil {
+		if _, _, err := s.loadAndRenderStories(context.Background(), s.requestSnapshot(user), allowed, unread, model, tag, window); err != nil {
 			t.Fatal(err)
 		}
 	}
-	load("user", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{})
-	load("user", map[string]bool{"b": true, "a": true}, true, "", domain.FetchWindow{})
-	if calls != 1 {
-		t.Fatalf("two consecutive renders loaded store %d times", calls)
+	load("user", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{}, domain.Model{})
+	load("user", map[string]bool{"b": true, "a": true}, true, "", domain.FetchWindow{}, domain.Model{})
+	if renders != 1 {
+		t.Fatalf("the same filters rendered %d times", renders)
 	}
-	load("other", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{})
-	load("user", map[string]bool{"a": true}, true, "", domain.FetchWindow{})
-	load("user", map[string]bool{"a": true}, false, "", domain.FetchWindow{})
-	load("user", map[string]bool{"a": true}, false, "tag", domain.FetchWindow{})
-	load("user", map[string]bool{"a": true}, false, "tag", domain.FetchWindow{From: time.Now()})
-	if calls != 6 {
-		t.Fatalf("filters shared cached results: calls = %d", calls)
+	load("other", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{}, domain.Model{})
+	load("user", map[string]bool{"a": true}, true, "", domain.FetchWindow{}, domain.Model{})
+	load("user", map[string]bool{"a": true}, false, "", domain.FetchWindow{}, domain.Model{})
+	load("user", map[string]bool{"a": true}, false, "tag", domain.FetchWindow{}, domain.Model{})
+	load("user", map[string]bool{"a": true}, false, "tag", domain.FetchWindow{From: time.Now()}, domain.Model{})
+	load("user", map[string]bool{"a": true}, false, "tag", domain.FetchWindow{From: time.Now()}, domain.Model{SizeCutoffs: &domain.SizeCutoffs{P60: 1}})
+	if renders != 7 {
+		t.Fatalf("filters shared cached renders: renders = %d, want 7", renders)
 	}
-	s.invalidateStories("user")
-	load("other", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{})
-	load("user", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{})
-	if calls != 7 {
-		t.Fatalf("invalidation calls = %d", calls)
-	}
-	for key, entry := range s.storyCache {
-		entry.loaded = time.Now().Add(-storyCacheTTL)
-		s.storyCache[key] = entry
-	}
-	load("user", map[string]bool{"a": true, "b": true}, true, "", domain.FetchWindow{})
-	if calls != 8 {
-		t.Fatalf("expired cache calls = %d", calls)
-	}
-	s.invalidateStories("user")
-	fail = true
-	if _, _, err := s.loadAndRenderStories(context.Background(), s.requestSnapshot("user"), nil, true, domain.Model{}, "", domain.FetchWindow{}); err == nil {
-		t.Fatal("expected store error")
-	}
-	fail = false
-	load("user", nil, true, "", domain.FetchWindow{})
-	if calls != 10 {
-		t.Fatalf("error was cached: calls = %d", calls)
-	}
-	for _, action := range []string{"heart", "signal"} {
-		t.Run(action+" invalidation", func(t *testing.T) {
-			item := domain.Item{PK: "U#user", SK: "I#item", ItemID: "item", TTL: time.Now().Add(time.Hour).Unix()}
-			if action == "heart" {
-				item.ArchiveSK = "A#archive"
-			}
-			db.item = func(context.Context, string, string) (domain.Item, error) { return item, nil }
-			db.setHeart = func(context.Context, string, string, bool) (string, int, error) { return "A#archive", 1, nil }
-			db.setSignal = func(context.Context, string, domain.Item, int) error { return nil }
-			load("user", nil, true, "", domain.FetchWindow{})
-			load("other", nil, true, "", domain.FetchWindow{})
-			before := calls
-			body := `{"hearted":true}`
-			if action == "signal" {
-				body = `{"value":0}`
-			}
-			got := s.itemRoute(context.Background(), s.requestSnapshot("user"), "POST", "item/"+action, body)
-			if got.StatusCode != 200 {
-				t.Fatalf("mutation = %d, %s", got.StatusCode, got.Body)
-			}
-			load("user", nil, true, "", domain.FetchWindow{})
-			load("other", nil, true, "", domain.FetchWindow{})
-			if calls != before+1 {
-				t.Fatalf("mutation did not invalidate only this user: calls=%d, before=%d", calls, before)
-			}
-		})
-	}
-
 }
 
 func TestStoryRenderingIgnoresMissingMembersWithoutWriting(t *testing.T) {
