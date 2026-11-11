@@ -44,7 +44,7 @@ it.each<[GridScope, ItemWindow | "unread", number, number, string, string]>([
       view === "unread",
       feeds,
       counts,
-      0,
+      {},
       false,
     ),
   ).toMatchObject({
@@ -76,20 +76,25 @@ it("handles zero, loading, untagged, muted feeds and contributors", () => {
     c: { all: 1, unread: 1 },
     d: { all: 3, unread: 0 },
   };
-  expect(scopeCellModel(tag, "all", true, feeds, counts, 0, false).text).toBe(
+  expect(scopeCellModel(tag, "all", true, feeds, counts, {}, false).text).toBe(
     "24 unread items · 1 feed",
   );
-  expect(scopeCellModel(tag, "all", true, feeds, counts, 30, false).text).toBe(
-    "0 unread items · 1 feed",
-  );
-  expect(scopeCellModel(null, "all", true, feeds, counts, 30, false).text).toBe(
-    "0 unread items",
-  );
-  expect(scopeCellModel(null, "today", false, feeds, {}, 0, false).text).toBe(
+  // Reads in muted b and untagged c leave #design alone.
+  const reads = { a: 4, b: 50, c: 1 };
+  expect(
+    scopeCellModel(tag, "all", true, feeds, counts, reads, false).text,
+  ).toBe("20 unread items · 1 feed");
+  expect(
+    scopeCellModel(null, "all", true, feeds, counts, reads, false).text,
+  ).toBe("20 unread items · 2 feeds");
+  expect(
+    scopeCellModel(tag, "all", true, feeds, counts, { a: 30 }, false).text,
+  ).toBe("0 unread items · 1 feed");
+  expect(scopeCellModel(null, "today", false, feeds, {}, {}, false).text).toBe(
     "0 items today",
   );
   expect(
-    scopeCellModel(tag, "all", true, feeds, undefined, 0, false).count,
+    scopeCellModel(tag, "all", true, feeds, undefined, {}, false).count,
   ).toBeUndefined();
   expect(
     scopeCellModel(
@@ -98,7 +103,7 @@ it("handles zero, loading, untagged, muted feeds and contributors", () => {
       true,
       feeds,
       counts,
-      0,
+      {},
       false,
     ).text,
   ).toBe("1 unread item · 1 feed");
@@ -109,7 +114,7 @@ it("handles zero, loading, untagged, muted feeds and contributors", () => {
       false,
       feeds,
       counts,
-      0,
+      {},
       false,
     ).text,
   ).toBe("3 items today");
@@ -144,6 +149,6 @@ it("aggregates independent window buckets across scoped, unmuted feeds", () => {
     windowScopeCounts({ kind: "feed", value: "b" }, true, feeds, counts).today,
   ).toBe(3);
   expect(
-    scopeCellModel(null, "today", true, feeds, counts.today, 1, false),
+    scopeCellModel(null, "today", true, feeds, counts.today, { a: 1 }, false),
   ).toMatchObject({ title: "Today", count: 4, qualifier: "unread" });
 });

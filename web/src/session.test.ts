@@ -4,6 +4,10 @@ import { createItemSession } from "./item-session";
 import { createReadState, type ReadGeometry } from "./read-state";
 import type { Item, ItemsResponse, Story } from "./types";
 
+// Read's optimistic unread adjustment, summed over Feeds.
+const adjusted = (byFeed: Record<string, number>) =>
+  Object.values(byFeed).reduce((sum, value) => sum + value, 0);
+
 const item = (id: string): Item => ({
   item_id: id,
   feed_id: "feed",
@@ -201,13 +205,13 @@ describe("Read state", () => {
     session.scrollTop = 42;
     reads.finishAndClear(["one"]);
     expect(session.gridIDs()).toEqual([]);
-    expect(reads.readAdjust()).toBe(1);
+    expect(adjusted(reads.feedReadAdjust())).toBe(1);
     reads.undoLast();
     await reads.flushRead();
     expect(session.gridIDs()).toEqual(["one"]);
     expect(session.scrollTop).toBe(42);
     expect(session.items()[0].read).toBe(false);
-    expect(reads.readAdjust()).toBe(0);
+    expect(adjusted(reads.feedReadAdjust())).toBe(0);
     expect(api.readBatch).not.toHaveBeenCalled();
     reads.dispose();
     session.dispose();
@@ -240,7 +244,7 @@ describe("Read state", () => {
     });
     expect(session.readerItem()?.read).toBe(false);
     expect(session.stories()[0].items[1].read).toBe(true);
-    expect(reads.readAdjust()).toBe(0);
+    expect(adjusted(reads.feedReadAdjust())).toBe(0);
     reads.dispose();
     session.dispose();
   });
@@ -272,7 +276,7 @@ describe("Read state", () => {
     session.setItems([item("kept")]);
     reads.queueRead(["kept"]);
     reads.toggleRead(item("kept"));
-    expect(reads.readAdjust()).toBe(0);
+    expect(adjusted(reads.feedReadAdjust())).toBe(0);
     expect(api.read).not.toHaveBeenCalled();
     reads.dispose();
     session.dispose();

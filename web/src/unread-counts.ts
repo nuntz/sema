@@ -23,7 +23,7 @@ export interface UnreadCountView {
  */
 export function createUnreadCounts(
   api: Pick<AppAPI, "feedItemCounts">,
-  reads: Pick<ReadState, "readAdjust" | "feedReadAdjust" | "settledSnapshot">,
+  reads: Pick<ReadState, "feedReadAdjust" | "settledSnapshot">,
   view: UnreadCountView,
   handleError: (error: unknown) => void,
 ) {
@@ -81,7 +81,7 @@ export function createUnreadCounts(
       view.unreadOnly(),
       view.feeds(),
       ready() ? counts() : undefined,
-      reads.readAdjust(),
+      reads.feedReadAdjust(),
       view.phone(),
     ),
   );

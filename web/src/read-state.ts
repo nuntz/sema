@@ -54,8 +54,8 @@ export function createReadState(
   let disposed = false;
   let revision = 0;
   const [undo, setUndo] = createSignal<Undo>();
-  const [readAdjust, setReadAdjust] = createSignal(0);
-  // The same adjustment split by Feed, for per-Feed and per-Tag counts.
+  // Read's optimistic unread adjustment by Feed, for every count that
+  // subtracts it until a settled snapshot is accepted.
   const [feedReadAdjust, setFeedReadAdjust] = createSignal<
     Record<string, number>
   >({});
@@ -69,20 +69,20 @@ export function createReadState(
   const pendingRead = new PendingReads();
   const readFlushes = new Set<Promise<void>>();
 
-  const changeAdjust = (update: (value: number) => number) => {
-    revision++;
-    setReadAdjust(update);
-  };
   // Feed of each Item Read has adjusted, so Undo can reverse it by Feed.
   const adjustedFeeds = new Map<string, string>();
   const feedsOf = (ids: Iterable<string>) =>
     [...ids].flatMap((id) => adjustedFeeds.get(id) ?? []);
-  const changeFeedAdjust = (feedIDs: Iterable<string>, delta: number) =>
+  // Every Read change bumps revision, even one with no known Feed, so a
+  // snapshot requested before it is rejected.
+  const changeFeedAdjust = (feedIDs: Iterable<string>, delta: number) => {
+    revision++;
     setFeedReadAdjust((current) => {
       const next = { ...current };
       for (const feedID of feedIDs) next[feedID] = (next[feedID] ?? 0) + delta;
       return next;
     });
+  };
   const finishUndo = () => undo()?.gridSnapshot;
   const patchRead = (ids: Iterable<string>, read: boolean) =>
     batch(() => {
@@ -182,7 +182,6 @@ export function createReadState(
     for (const item of loaded)
       if (requested.has(item.item_id))
         adjustedFeeds.set(item.item_id, item.feed_id);
-    changeAdjust((value) => value + unread.length);
     changeFeedAdjust(feedsOf(unread), 1);
     for (const id of unread) {
       pendingRead.add(id);
@@ -243,7 +242,6 @@ export function createReadState(
       pendingRead.delete(item.item_id);
       changes.set(item.item_id, token);
     }
-    changeAdjust((value) => value + changed.length * (read ? 1 : -1));
     changeFeedAdjust(
       changed.map((item) => item.feed_id),
       read ? 1 : -1,
@@ -265,7 +263,6 @@ export function createReadState(
         const rollback = changed.filter(
           (item) => changes.get(item.item_id) === token,
         );
-        changeAdjust((value) => value - rollback.length * (read ? 1 : -1));
         changeFeedAdjust(
           rollback.map((item) => item.feed_id),
           read ? -1 : 1,
@@ -392,7 +389,6 @@ export function createReadState(
   function undoLast() {
     const operation = undo();
     if (!operation) return;
-    changeAdjust((value) => value - operation.ids.length);
     changeFeedAdjust(feedsOf(operation.ids), -1);
     clearUndoTimer();
     undoRemaining = 8_000;
@@ -458,7 +454,6 @@ export function createReadState(
         if (requested !== revision) return false;
         batch(() => {
           apply(value);
-          setReadAdjust(0);
           setFeedReadAdjust({});
         });
         return true;
@@ -506,7 +501,6 @@ export function createReadState(
     undoLast,
     finishAndClear,
     discardFinishUndo,
-    readAdjust,
     feedReadAdjust,
     undo,
     markBelow,

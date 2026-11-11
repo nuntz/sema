@@ -11,6 +11,10 @@ import type {
 } from "./types";
 import { createUnreadCounts } from "./unread-counts";
 
+// Read's optimistic unread adjustment, summed over Feeds.
+const adjusted = (byFeed: Record<string, number>) =>
+  Object.values(byFeed).reduce((sum, value) => sum + value, 0);
+
 const item = (id: string, feed = "feed"): Item => ({
   item_id: id,
   feed_id: feed,
@@ -51,7 +55,7 @@ const flushMicrotasks = async () => {
   for (let index = 0; index < 20; index++) await Promise.resolve();
 };
 
-function setup() {
+function setup(options: { scope?: GridScope; feeds?: Feed[] } = {}) {
   const requests: CountRequest[] = [];
   const api = {
     items: vi.fn(
@@ -72,8 +76,10 @@ function setup() {
   };
   const errors = vi.fn();
   const [feedsScreen, setFeedsScreen] = createSignal(false);
-  const [scope] = createSignal<GridScope>(null);
-  const [feeds] = createSignal<Feed[]>([{ feed_id: "feed" } as Feed]);
+  const [scope] = createSignal<GridScope>(options.scope ?? null);
+  const [feeds] = createSignal<Feed[]>(
+    options.feeds ?? [{ feed_id: "feed" } as Feed],
+  );
   let dispose!: () => void;
   const built = createRoot((rootDispose) => {
     dispose = rootDispose;
@@ -200,7 +206,7 @@ describe("Unread counts", () => {
     expect(unread.scopeCell().count).toBe(3);
     requests[1].reply.resolve(counts(3));
     await refresh;
-    expect(reads.readAdjust()).toBe(0);
+    expect(adjusted(reads.feedReadAdjust())).toBe(0);
     expect(unread.scopeCell().count).toBe(3);
     cleanup();
   });
@@ -228,7 +234,7 @@ describe("Unread counts", () => {
     await unread.refresh();
     expect(errors).toHaveBeenCalled();
     expect(requests).toHaveLength(1);
-    expect(reads.readAdjust()).toBe(1);
+    expect(adjusted(reads.feedReadAdjust())).toBe(1);
     expect(unread.scopeCell().count).toBe(3);
     cleanup();
   });
@@ -243,7 +249,7 @@ describe("Unread counts", () => {
     await refresh;
     await flushMicrotasks();
     expect(requests).toHaveLength(2);
-    expect(reads.readAdjust()).toBe(1);
+    expect(adjusted(reads.feedReadAdjust())).toBe(1);
     expect(unread.scopeCell().count).toBe(3);
     cleanup();
   });
@@ -275,7 +281,7 @@ describe("Unread counts", () => {
     requests[2].reply.reject(new Error("offline"));
     await failed;
     expect(errors).toHaveBeenCalledTimes(1);
-    expect(reads.readAdjust()).toBe(1);
+    expect(adjusted(reads.feedReadAdjust())).toBe(1);
     expect(unread.scopeCell().count).toBe(3);
     cleanup();
   });
@@ -423,6 +429,97 @@ describe("Unread counts", () => {
         "art-feed": { unread: 0, all: 1 },
         "news-feed": { unread: 0, all: 1 },
       });
+      cleanup();
+    });
+  });
+
+  describe("Scope cell", () => {
+    const feeds = [
+      { feed_id: "apple-feed", tags: ["fruit"] },
+      { feed_id: "art-feed", tags: ["culture"] },
+    ] as Feed[];
+
+    async function scoped(scope: GridScope, feedList = feeds) {
+      const harness = setup({ scope, feeds: feedList });
+      harness.session.setItems([
+        item("apple", "apple-feed"),
+        item("art", "art-feed"),
+      ]);
+      const first = harness.unread.refresh();
+      await flushMicrotasks();
+      harness.requests[0].reply.resolve({
+        "apple-feed": { unread: 1, all: 3 },
+        "art-feed": { unread: 2, all: 5 },
+      });
+      await first;
+      return harness;
+    }
+
+    it("ignores a Read in a Feed outside the Tag Scope", async () => {
+      const { reads, unread, cleanup } = await scoped({
+        kind: "tag",
+        value: "fruit",
+      });
+      reads.queueRead(["art"]);
+      expect(unread.scopeCell().count).toBe(1);
+      cleanup();
+    });
+
+    it("ignores a Read in another Feed under a Feed Scope", async () => {
+      const { reads, unread, cleanup } = await scoped({
+        kind: "feed",
+        value: "art-feed",
+      });
+      reads.queueRead(["apple"]);
+      expect(unread.scopeCell().count).toBe(2);
+      cleanup();
+    });
+
+    it("ignores a Read in a muted Feed with no Scope", async () => {
+      const { reads, unread, cleanup } = await scoped(null, [
+        feeds[0],
+        { ...feeds[1], muted: true },
+      ]);
+      reads.queueRead(["art"]);
+      expect(unread.scopeCell().count).toBe(1);
+      cleanup();
+    });
+
+    it("lowers for a Read in the Scope and restores on Undo", async () => {
+      const { reads, unread, cleanup } = await scoped({
+        kind: "tag",
+        value: "culture",
+      });
+      reads.queueRead(["art"]);
+      expect(unread.scopeCell().count).toBe(1);
+      reads.undoLast();
+      expect(unread.scopeCell().count).toBe(2);
+      cleanup();
+    });
+
+    it("restores a toggled Read in the Scope when its write fails", async () => {
+      const { api, session, reads, unread, cleanup } = await scoped({
+        kind: "tag",
+        value: "fruit",
+      });
+      const write = deferred<void>();
+      api.read.mockImplementationOnce(() => write.promise);
+      const toggle = reads.toggleRead(session.items()[0]);
+      expect(unread.scopeCell().count).toBe(0);
+      write.reject(new Error("offline"));
+      await toggle;
+      expect(unread.scopeCell().count).toBe(1);
+      cleanup();
+    });
+
+    it("agrees with the Tag's Feed counts while Reads are optimistic", async () => {
+      const { reads, unread, cleanup } = await scoped({
+        kind: "tag",
+        value: "culture",
+      });
+      reads.queueRead(["apple", "art"]);
+      expect(unread.scopeCell().count).toBe(1);
+      expect(unread.feedCounts()["art-feed"].unread).toBe(1);
       cleanup();
     });
   });
