@@ -48,11 +48,11 @@ Keep credentials out of Git. Store the browser OAuth ID in `web/.env.local`, and
 
 ### Issue tracker
 
-Issues live in GitHub Issues (`nuntz/sema`) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues (`nuntz/sema`) via the `gh` CLI. See `~/repos/home/docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `~/repos/home/docs/agents/triage-labels.md`.
 
 ### Domain docs
 
