@@ -36,6 +36,7 @@ check:
 	bash scripts/with-dynamodb-local.sh $(MAKE) test
 	cd web && bun run build
 	$(MAKE) check-reproducible
+	@echo "make check: passed"
 
 # The Lambda ZIPs must come out byte-identical from any build of the same code, or every deploy
 # updates all seven functions. Two builds 2s apart (a ZIP's clock ticks in 2s) must match, no

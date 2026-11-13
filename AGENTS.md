@@ -22,7 +22,7 @@ Send is a public webhook contract: within `version: 1` only add optional fields,
 - `cd web && bun run lint` checks TypeScript with Biome; `bun run format` formats it.
 - `make e2e` is CI's e2e job (Playwright), after `cd web && bunx playwright install chromium`.
 - `make preview` previews Pulumi changes. Reserve `make deploy` for intentional AWS deployments.
-- Every green push to `master` deploys production from CI; `RUNBOOK.md` covers CI deploys, deploys by hand, and rollback. The deploy role and the Lambda boundary are fenced on purpose: never widen them or bypass the boundary to make a deploy pass; see `docs/adr/0004-ci-deploys-through-github-oidc.md`.
+- Every green push to `master` deploys production from CI; `RUNBOOK.md` covers CI deploys, confirming one, deploys by hand, and rollback. The deploy role and the Lambda boundary are fenced on purpose: never widen them or bypass the boundary to make a deploy pass; see `docs/adr/0004-ci-deploys-through-github-oidc.md`.
 
 ## Coding Style & Naming Conventions
 

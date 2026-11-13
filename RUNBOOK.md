@@ -11,6 +11,12 @@ site root must answer 200 with the SPA's HTML, and `/api/items` 401 without a se
 requests run the tests and the workflow and shell-script lint (`scripts/lint-ci-files.sh`, also
 runnable locally with podman or docker) but never deploy.
 
+A push is not a deploy until its run finishes: after pushing `master`, run
+`bash scripts/watch-deploy.sh`, which fails unless test, e2e and deploy all succeed for `HEAD`.
+GitHub can leave a push's run queued with no jobs for hours, and it can't be cancelled or re-run;
+the script fails on a run queued over ten minutes, and `gh workflow run ci.yml --ref master` starts
+a fresh one.
+
 A stack of PRs, each based on the one below, lands one PR at a time from the bottom:
 `bash scripts/land-stacked-pr.sh <pr> --apply` merges it, retargets and rebases the PRs above it,
 then deletes its branch (without `--apply` it prints the plan). Each merge deploys.
