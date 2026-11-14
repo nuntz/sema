@@ -2848,6 +2848,195 @@ test.describe("mobile shared grid design", () => {
   }
 });
 
+test.describe("text-only cells", () => {
+  const longSummary = Array.from(
+    { length: 8 },
+    (_, index) =>
+      `Paragraph ${index + 1} of the summary explains what the article covers and why a reader might care about it today.`,
+  ).join(" ");
+  const textOnly = (
+    itemID: string,
+    title: string,
+    score: number,
+    size: "S" | "M" | "L",
+    extra: Record<string, unknown> = {},
+  ) => ({
+    ...item(itemID, "atlantic", title, score, size),
+    media_url: undefined,
+    media_w: undefined,
+    media_h: undefined,
+    feed_title: "The Atlantic",
+    summary: longSummary,
+    ...extra,
+  });
+  const items = [
+    textOnly(
+      "text-large",
+      "How cities plan for the next century of growth and what it costs them",
+      0.99,
+      "L",
+    ),
+    textOnly(
+      "text-medium",
+      "A thoughtful look at Vancouver's changing neighbourhoods and the people who live in them",
+      0.8,
+      "M",
+    ),
+    textOnly("text-bare", "An Item that arrived without a summary", 0.7, "M", {
+      summary: "",
+    }),
+    textOnly("text-small", "Developers discuss a new approach", 0.6, "S"),
+    textOnly("text-read", "A Read text-only Item", 0.5, "S", { read: true }),
+    textOnly("text-short", "Short summary", 0.4, "M", {
+      summary: "One line.",
+    }),
+  ];
+
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [320, 393, 430, 1440]) {
+      test(`put the title at the top and the summary in the spare space at ${width}px in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 1400 });
+        await page.addInitScript(
+          (theme) => localStorage.setItem("sema:theme", theme),
+          theme,
+        );
+        await stubFrontPage(page, [], items, []);
+        await page.goto("/");
+        await expect(page.locator(".grid-cell").first()).toBeVisible();
+        if (width < 700) {
+          await page.locator(".filter-button").click();
+          await page
+            .getByRole("switch", { name: "Unread only", exact: true })
+            .uncheck();
+          await page.getByRole("button", { name: "Close filter" }).click();
+        } else {
+          await page
+            .getByRole("switch", { name: "Unread", exact: true })
+            .uncheck();
+        }
+        await expect(page.locator(".grid-cell")).toHaveCount(items.length);
+        await page.evaluate(() => document.fonts.ready);
+
+        const read = page.locator('[data-item-id="text-read"]');
+        await expect(read.locator(".unread-dot")).toHaveCount(0);
+        const unread = page.locator('[data-item-id="text-medium"]');
+        await expect(unread.locator(".cell-meta .unread-dot")).toBeVisible();
+        await expect(unread.locator(".cell-copy p")).toHaveText(longSummary);
+        await expect(unread.locator(".cell-meta")).toContainText(
+          /The Atlantic\s*·\s*1d/,
+        );
+        await expect(unread).toHaveCSS(
+          "background-color",
+          theme === "light" ? "rgb(255, 255, 255)" : "rgb(23, 24, 26)",
+        );
+        await expect(unread.locator("h2")).toHaveCSS(
+          "color",
+          theme === "light" ? "rgb(20, 22, 26)" : "rgb(244, 242, 238)",
+        );
+        if (theme === "light")
+          await expect(unread.locator(".cell-meta .unread-dot")).toHaveCSS(
+            "box-shadow",
+            "rgb(20, 22, 26) 0px 0px 0px 1.5px",
+          );
+
+        await expect
+          .poll(() =>
+            page.locator(".grid-cell").evaluateAll((cells) => {
+              const problems: string[] = [];
+              for (const cell of cells as HTMLElement[]) {
+                const id = cell.dataset.itemId ?? "";
+                const box = cell.getBoundingClientRect();
+                const title = cell.querySelector("h2")?.getBoundingClientRect();
+                const meta = cell.querySelector(".cell-meta");
+                const metaBox = meta?.getBoundingClientRect();
+                const summary = cell.querySelector<HTMLElement>(".cell-copy p");
+                if (!title || !meta || !metaBox) {
+                  problems.push(`${id}: missing copy`);
+                  continue;
+                }
+                const inside = (r: DOMRect) =>
+                  r.top >= box.top - 1 &&
+                  r.bottom <= box.bottom + 1 &&
+                  r.left >= box.left - 1 &&
+                  r.right <= box.right + 1;
+                if (title.top - box.top > 16)
+                  problems.push(`${id}: title not at top`);
+                if (box.bottom - metaBox.bottom > 16)
+                  problems.push(`${id}: bottom line not at bottom`);
+                for (const el of [
+                  cell.querySelector("h2"),
+                  meta,
+                  ...meta.children,
+                  summary,
+                ]) {
+                  if (!el) continue;
+                  const r = el.getBoundingClientRect();
+                  if (r.width > 0 && !inside(r))
+                    problems.push(`${id}: ${el.className || el.tagName} out`);
+                }
+                const parts = [
+                  ".cell-feed-filter",
+                  ".refined-age",
+                  ".unread-dot",
+                ]
+                  .map((selector) => meta.querySelector(selector))
+                  .filter((el): el is Element => !!el)
+                  .map((el) => el.getBoundingClientRect());
+                const middle = (r: DOMRect) => (r.top + r.bottom) / 2;
+                if (
+                  parts.length < 2 ||
+                  parts.some(
+                    (r) =>
+                      r.width === 0 ||
+                      Math.abs(middle(r) - middle(parts[0])) > 3,
+                  )
+                )
+                  problems.push(`${id}: bottom line not one line`);
+                if (id === "text-bare") {
+                  if (summary && summary.getBoundingClientRect().height > 0)
+                    problems.push(`${id}: empty summary shown`);
+                  continue;
+                }
+                const summaryBox = summary?.getBoundingClientRect();
+                if (!summary || !summaryBox || summaryBox.height === 0) {
+                  problems.push(`${id}: no summary`);
+                  continue;
+                }
+                const lineHeight = Number.parseFloat(
+                  getComputedStyle(summary).lineHeight,
+                );
+                const lines = summaryBox.height / lineHeight;
+                if (lines < 0.95 || Math.abs(lines - Math.round(lines)) > 0.05)
+                  problems.push(`${id}: summary shows ${lines} lines`);
+                if (summaryBox.top < title.bottom - 1)
+                  problems.push(`${id}: summary over title`);
+                if (summaryBox.bottom > metaBox.top + 1)
+                  problems.push(`${id}: summary over bottom line`);
+                if (
+                  id !== "text-short" &&
+                  summary.scrollHeight <= summary.clientHeight
+                )
+                  problems.push(`${id}: long summary not clamped`);
+                if (
+                  id !== "text-short" &&
+                  metaBox.top - summaryBox.bottom > lineHeight + 12
+                )
+                  problems.push(`${id}: summary leaves a spare line`);
+              }
+              return problems;
+            }),
+          )
+          .toEqual([]);
+        await page.screenshot({
+          path: `/tmp/sema-text-cells-${theme}-${width}.png`,
+        });
+      });
+    }
+  }
+});
+
 test.describe("grid thumbnail budget", () => {
   test.use({ viewport: { width: 1470, height: 833 }, deviceScaleFactor: 2 });
 

@@ -380,6 +380,7 @@
   --cell-pad-pair: 16px;
   --cell-pad-l: 14px;
   --cell-pad-compact: 11px;
+  --cell-summary-gap: 8px;
   --scrim-h-pair: 58%;
   --scrim-h-l-span: 62%;
   --scrim-h-l-tall: 70%;
@@ -2451,6 +2452,27 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .mobile-tile-cell button.story-stack-badge::before { background: var(--surface-raised); border: 1px solid var(--border-hairline); }
 
 .mobile-refined-grid .age-separator { display: none; }
+
+/* Text-only singletons: title at the top, the summary in the spare height, and feed · age · dot on one bottom line. */
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy { inset: 0; height: auto; min-height: 0; justify-content: flex-start; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy p {
+  display: -webkit-box; flex: 0 1 auto; min-height: 0; margin: 6px 0 var(--cell-summary-gap);
+  -webkit-line-clamp: var(--summary-lines, 1); line-clamp: var(--summary-lines, 1);
+  font: 400 13.5px/1.45 "Instrument Sans", sans-serif;
+}
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy p[data-no-room] { visibility: hidden; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-meta { flex: none; margin-top: auto; padding-top: 0; flex-wrap: nowrap; gap: 6px; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-l:not(.story-cell) .cell-copy h2 { font: 600 27px/1.15 "Instrument Sans", sans-serif; letter-spacing: -.02em; -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-m:not(.story-cell) .cell-copy h2 { font: 500 17px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-l:not(.story-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-m:not(.story-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 4; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy p { font-size: 13px; line-height: 1.4; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-meta > span:not(:is(.unread-dot, .refined-age, .refined-read-label, .source-badge)),
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-feed-filter { flex: 0 1 auto; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .age-separator { display: inline; }
+
 .refined-sheet .sheet-headline { height: auto; min-height: 76px; padding: 12px 4px; gap: 9px; }
 .refined-sheet .sheet-headline.related-also { min-height: 56px; align-items: center; }
 .refined-sheet .sheet-headline > .icon { flex: none; color: var(--fg-quaternary); }
@@ -2583,8 +2605,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @keyframes signal-label-in { from { opacity: 0; } to { opacity: 1; } }
 .refined-grid .grid-cell[data-signal]:not([data-signal="0"]) .cell-corner { display: flex; }
 .refined-grid .grid-cell .why-hint.has-signal { display: block; opacity: 1; position: absolute; bottom: 2px; left: 14px; right: 14px; z-index: 4; margin: 0; pointer-events: auto; }
-/* Reserve the hint line in every L/M cell, including neutral, so feedback never moves copy. */
-.refined-grid .grid-row > .grid-cell[data-signal]:not(.size-s) .cell-copy,
+/* Reserve the hint line in every L/M cell, including neutral, so feedback never moves copy.
+   A text-only singleton keeps its bottom line at the foot and reserves the line only while a Signal shows. */
+.refined-grid .grid-row > .grid-cell[data-signal]:not(.size-s):not(.text-cell) .cell-copy,
+.refined-grid .grid-row > .grid-cell.text-cell.story-cell[data-signal]:not(.size-s) .cell-copy,
+.refined-grid .grid-row > .grid-cell.text-cell[data-signal]:not([data-signal="0"]):not(.size-s) .cell-copy,
 .refined-grid .grid-row > .grid-cell .story-lead { padding-bottom: 32px; }
 .grid-cell[data-signal="1"] .why-hint.has-signal { color: var(--signal-label-ink); }
 .signal-why button { padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
