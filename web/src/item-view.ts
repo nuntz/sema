@@ -6,6 +6,10 @@ export const ITEM_WINDOWS: { value: ItemWindow; label: string }[] = [
   { value: "all", label: "All" },
 ];
 
+/**
+ * Mirrors `domain.FetchWindow` (`internal/domain/fetch-window.go`): it selects
+ * Items by `fetched_ts`, whenever they were published.
+ */
 export interface FetchWindow {
   from: string;
   before: string;

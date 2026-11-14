@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { scopeSummary, windowRange } from "./item-view";
+import fixture from "../../testdata/fetch-window.json";
+import { inWindow, scopeSummary, windowRange } from "./item-view";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -55,4 +56,14 @@ it.each([
   ["all", true, "All · Unread"],
 ] as const)("summarizes %s with unread %s", (window, unread, expected) => {
   expect(scopeSummary(window, unread)).toBe(expected);
+});
+
+// The server's FetchWindow.Contains runs the same cases.
+describe("Window membership", () => {
+  for (const { fetched, inWindow: want } of fixture.cases) {
+    it(`${want ? "holds" : "leaves out"} an Item fetched at "${fetched}"`, () => {
+      expect(inWindow(fixture.window, fetched)).toBe(want);
+      expect(inWindow(undefined, fetched)).toBe(true);
+    });
+  }
 });

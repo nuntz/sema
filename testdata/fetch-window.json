@@ -1,0 +1,13 @@
+{
+ "window": {"from": "2026-09-07T07:00:00.000Z", "before": "2026-09-08T07:00:00.000Z"},
+ "cases": [
+  {"fetched": "2026-09-07T06:59:59.999Z", "inWindow": false},
+  {"fetched": "2026-09-07T07:00:00Z", "inWindow": true},
+  {"fetched": "2026-09-07T00:00:00-07:00", "inWindow": true},
+  {"fetched": "2026-09-08T06:59:59.999Z", "inWindow": true},
+  {"fetched": "2026-09-08T07:00:00Z", "inWindow": false},
+  {"fetched": "2026-09-07T12:00:00.123456789Z", "inWindow": true},
+  {"fetched": "", "inWindow": false},
+  {"fetched": "invalid", "inWindow": false}
+ ]
+}

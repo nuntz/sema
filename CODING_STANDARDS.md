@@ -39,6 +39,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 ## Web
 
 - Every unread count shown while Reads are optimistic comes from `createUnreadCounts`' optimistic per-Feed counts; a count display never applies Read's adjustment itself, so the Scope cell, Tag chips and Scope picker can't disagree (#32).
+- Behaviour that depends on the Window is tested in Today or Yesterday, with an Item fetched on a different day from the one it was published, as in `web/src/unread-counts.test.ts`: All holds every Item, and a same-day Item can't tell `fetched_ts` from `published_ts` (#46).
 
 ## Items
 
@@ -56,6 +57,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 ## Docs and decisions
 
 - `RUNBOOK.md`, `README.md` and ADRs describe what is in the tree. A doc that cites a package, stack or job the diff doesn't contain is ahead of the code: hold it back, or mark the ADR proposed.
+- A `CONTEXT.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
 - A rule that changes in one doc changes everywhere it is stated; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
 ## Wizards
