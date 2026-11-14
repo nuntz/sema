@@ -119,6 +119,155 @@ async function stubFrontPage(
   });
 }
 
+// The brightest photo a cell can carry: a title over it relies on the scrim.
+const whitePhoto =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="640" height="400" fill="#fff"/></svg>';
+
+// Lists how single Items with a lead image depart from the title-over-image
+// cell: the image fills the cell, the title and feed line sit inside it, and
+// the age and unread dot sit in the top-right corner.
+function singleImageCellProblems(grid: Element): string[] {
+  const problems: string[] = [];
+  const cells = grid.querySelectorAll<HTMLElement>(
+    ".grid-cell[data-item-id]:not([data-story-id])",
+  );
+  for (const cell of cells) {
+    const img = cell.querySelector(":scope > img");
+    if (!img) continue;
+    const id = cell.dataset.itemId;
+    const box = cell.getBoundingClientRect();
+    const media = img.getBoundingClientRect();
+    const inner = {
+      top: box.top + cell.clientTop,
+      left: box.left + cell.clientLeft,
+      width: cell.clientWidth,
+      height: cell.clientHeight,
+    };
+    if (
+      Math.abs(media.top - inner.top) > 1 ||
+      Math.abs(media.left - inner.left) > 1 ||
+      Math.abs(media.width - inner.width) > 1 ||
+      Math.abs(media.height - inner.height) > 1
+    )
+      problems.push(`${id}: image does not cover the cell`);
+    const onImage = (element: Element | null, what: string) => {
+      const r = element?.getBoundingClientRect();
+      if (!r || r.width === 0) return problems.push(`${id}: no ${what}`);
+      if (
+        r.top < media.top - 1 ||
+        r.bottom > media.bottom + 1 ||
+        r.left < media.left - 1 ||
+        r.right > media.right + 1
+      )
+        problems.push(`${id}: ${what} is not inside the image`);
+    };
+    const title = cell.querySelector(".cell-copy h2");
+    const meta = cell.querySelector<HTMLElement>(".cell-meta");
+    const feed = meta?.querySelector<HTMLElement>(".cell-feed-filter");
+    onImage(title, "title");
+    onImage(meta, "feed line");
+    const summary = cell.querySelector(".cell-copy p");
+    if (summary && summary.getBoundingClientRect().height > 0)
+      onImage(summary, "summary");
+    if (
+      title &&
+      meta &&
+      meta.getBoundingClientRect().top < title.getBoundingClientRect().bottom
+    )
+      problems.push(`${id}: feed line is not under the title`);
+    if (meta && feed && meta.innerText.trim() !== feed.innerText.trim())
+      problems.push(`${id}: feed line reads "${meta.innerText.trim()}"`);
+    if (feed) {
+      const style = getComputedStyle(feed);
+      if (
+        style.whiteSpace !== "nowrap" ||
+        style.textOverflow !== "ellipsis" ||
+        style.overflowX !== "hidden"
+      )
+        problems.push(`${id}: feed name is not one ellipsed line`);
+    }
+    const corner = cell.querySelector(".cell-corner");
+    const c = corner?.getBoundingClientRect();
+    if (
+      !corner ||
+      !c ||
+      c.width === 0 ||
+      c.top - box.top > 14 ||
+      box.right - c.right > 60
+    )
+      problems.push(`${id}: corner is not at the top right`);
+    const age = corner?.querySelector(".cell-age, .expiry-pill");
+    if (!age || age.getBoundingClientRect().width === 0)
+      problems.push(`${id}: corner shows no age`);
+    const unread = /, unread/.test(
+      cell.querySelector(".cell-main")?.getAttribute("aria-label") ?? "",
+    );
+    const dots = [...cell.querySelectorAll(".unread-dot")].filter(
+      (dot) => dot.getBoundingClientRect().width > 0,
+    );
+    if (unread && !(dots.length === 1 && corner?.contains(dots[0])))
+      problems.push(`${id}: unread dot is not in the corner`);
+    const d = dots[0]?.getBoundingClientRect();
+    const a = age?.getBoundingClientRect();
+    if (d && a && Math.max(d.left - a.right, a.left - d.right) > 10)
+      problems.push(`${id}: unread dot is not beside the age`);
+    if (!unread && dots.length > 0)
+      problems.push(`${id}: read cell shows an unread dot`);
+  }
+  return problems;
+}
+
+// Contrast between a cell's title colour and the brightest scrim pixel beside
+// its first line, measured from a screenshot of the painted cell.
+async function titleContrast(page: Page, cellSelector: string) {
+  const cell = page.locator(cellSelector);
+  const title = cell.locator(".cell-copy h2");
+  await title.scrollIntoViewIfNeeded();
+  const geometry = await title.evaluate((h2) => {
+    const r = h2.getBoundingClientRect();
+    const style = getComputedStyle(h2);
+    return {
+      x: r.left,
+      y: r.top,
+      line: Number.parseFloat(style.lineHeight),
+      color: style.color,
+    };
+  });
+  const png = await page.screenshot({
+    clip: { x: geometry.x - 9, y: geometry.y, width: 7, height: geometry.line },
+  });
+  return page.evaluate(
+    async ({ data, color }) => {
+      const luminance = (r: number, g: number, b: number) => {
+        const channel = (value: number) => {
+          const v = value / 255;
+          return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+      };
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      if (!context) return 0;
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, image.width, image.height).data;
+      let background = 0;
+      for (let i = 0; i < pixels.length; i += 4)
+        background = Math.max(
+          background,
+          luminance(pixels[i], pixels[i + 1], pixels[i + 2]),
+        );
+      const [r, g, b] = (color.match(/\d+/g) ?? []).map(Number);
+      return (luminance(r, g, b) + 0.05) / (background + 0.05);
+    },
+    { data: png.toString("base64"), color: geometry.color },
+  );
+}
+
 test.describe("mobile front-page tile grammar", () => {
   test.use({
     viewport: { width: 393, height: 852 },
@@ -1436,7 +1585,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
   );
 });
 
-test("Direction A fits singleton headlines and metadata in compact cards", async ({
+test("medium and small singleton photos fit title, feed name and corner", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1513, height: 1071 });
@@ -1445,12 +1594,12 @@ test("Direction A fits singleton headlines and metadata in compact cards", async
     ...item(
       `compact-light-${index}`,
       "feed",
-      "A long headline about the next generation of software and the people building it",
+      "A long headline about the next generation of software and the people building it, and what they plan to ship next",
       0.8 - index * 0.01,
       index % 2 ? "S" : "M",
     ),
     feed_title: "Hacker News: Front Page",
-    summary: "",
+    summary: "A summary that only large cells show",
     read: index === 0,
     media_url: "/sema-mark.svg",
     media_w: 320,
@@ -1459,42 +1608,39 @@ test("Direction A fits singleton headlines and metadata in compact cards", async
   await stubFrontPage(page, [], items, []);
   await page.goto("/");
   await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
+  const grid = page.locator(".grid-scroll");
   for (const width of [1513, 1024, 768]) {
     await page.setViewportSize({ width, height: 1071 });
     const first = page.locator('[data-item-id="compact-light-0"]');
     await expect(first).toBeVisible();
     await expect(first.locator(".cell-copy h2")).toHaveCSS(
       "color",
-      "rgb(20, 22, 26)",
+      "rgb(244, 242, 238)",
     );
-    await expect(first).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(first.locator(":scope > img")).toHaveCSS("filter", "none");
-    await expect(first.locator(".cell-corner")).toBeHidden();
-    await expect(first.locator(".refined-age")).toHaveCSS(
+    await expect(first.locator(".cell-age")).toHaveCSS(
       "color",
-      "rgb(92, 97, 105)",
+      "rgb(199, 204, 211)",
     );
+    await expect.poll(() => grid.evaluate(singleImageCellProblems)).toEqual([]);
     await expect
       .poll(() =>
-        page.locator(".grid-cell").evaluateAll((cells) =>
-          cells.every((cell) => {
-            const title = cell.querySelector("h2")?.getBoundingClientRect();
-            const meta = cell
-              .querySelector(".cell-meta")
-              ?.getBoundingClientRect();
-            const bounds = cell.getBoundingClientRect();
-            return (
-              title &&
-              meta &&
-              title.bottom <= meta.top + 1 &&
-              meta.bottom < bounds.bottom
-            );
-          }),
-        ),
+        grid.evaluate((el) => ({
+          titlesOverTwoLines: [
+            ...el.querySelectorAll<HTMLElement>(".cell-copy h2"),
+          ].filter(
+            (h2) =>
+              h2.getBoundingClientRect().height >
+              Number.parseFloat(getComputedStyle(h2).lineHeight) * 2 + 1,
+          ).length,
+          visibleSummaries: [
+            ...el.querySelectorAll<HTMLElement>(".cell-copy p"),
+          ].filter((p) => p.getBoundingClientRect().height > 0).length,
+        })),
       )
-      .toBe(true);
+      .toEqual({ titlesOverTwoLines: 0, visibleSummaries: 0 });
   }
-  await page.screenshot({ path: "/tmp/sema-direction-a-compact.png" });
+  await page.screenshot({ path: "/tmp/sema-compact-photos.png" });
   await page.locator(".filter-button").click();
   await page.getByRole("switch", { name: "Unread only", exact: true }).check();
   await page.keyboard.press("Escape");
@@ -1506,91 +1652,168 @@ test("Direction A fits singleton headlines and metadata in compact cards", async
   await expect(sessionRead).toHaveCSS("background-color", "rgb(247, 245, 241)");
   await expect(sessionRead.locator(".cell-copy h2")).toHaveCSS(
     "color",
-    "rgb(92, 97, 105)",
+    "rgb(199, 204, 211)",
   );
   await expect(sessionRead.locator(":scope > img")).toHaveCSS(
     "filter",
     "opacity(0.55)",
   );
+  await expect(sessionRead.locator(".unread-dot")).toHaveCount(0);
 });
 
-test("light singleton photos use spare height while keeping copy together", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1513, height: 1071 });
-  await page.addInitScript(() => localStorage.setItem("sema:theme", "light"));
-  const titles = [
-    "Letter from Paris | Paris, people and power",
-    "WhatsApp will soon let users chat with up to five third-party AI agents",
-    "UBC and Langara College formalize partnership to strengthen student pathways and success",
-    "The complex corporate web behind a $3.2 billion AI data center",
-    "Reports describe two ways for Apple to make more money: only one is good",
-    "Oil prices rise to 6-week high after Iran and U.S. trade blows",
-  ];
-  const items = titles.map((title, index) => ({
-    ...item(`photo-space-${index}`, "feed", title, 0.9 - index * 0.01, "L"),
-    summary: "",
-    media_w: 600,
-    media_h: 400,
-    ...(index === 2
-      ? {
-          connector: "reddit",
-          post_type: "link",
-          external_url: "https://news.ubc.ca/example",
-          feed_title: "r/vancouver",
-        }
-      : {}),
-  }));
-  await stubFrontPage(page, [], items, []);
-  await page.goto("/");
-  await expect(page.locator(".grid-cell")).toHaveCount(items.length);
-  await expect(page.locator(".grid-scroll .unread-dot")).toHaveCount(0);
-  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
-  for (const width of [1513, 1024, 768]) {
-    await page.setViewportSize({ width, height: 1071 });
-    await expect(
-      page.locator('[data-item-id="photo-space-2"] .cell-meta .unread-dot'),
-    ).toHaveCSS("width", "6px");
-    await expect
-      .poll(() =>
-        page.locator(".grid-cell").evaluateAll((cells) =>
-          cells.every((cell) => {
-            const img = cell
-              .querySelector(":scope > img")
+for (const theme of ["light", "dark"] as const) {
+  test(`large singleton photos carry the title, summary and corner in ${theme}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 1071 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addInitScript(
+      (value) => localStorage.setItem("sema:theme", value),
+      theme,
+    );
+    await page.route("**/white-photo.svg", (route) =>
+      route.fulfill({ contentType: "image/svg+xml", body: whitePhoto }),
+    );
+    const titles = [
+      "Letter from Paris | Paris, people and power",
+      "WhatsApp will soon let users chat with up to five third-party AI agents",
+      "UBC and Langara College formalize partnership to strengthen student pathways and success",
+      "The complex corporate web behind a $3.2 billion AI data center",
+      "Reports describe two ways for Apple to make more money: only one is good",
+      "Oil prices rise to 6-week high after Iran and U.S. trade blows",
+    ];
+    const items = titles.map((title, index) => ({
+      ...item(`photo-space-${index}`, "feed", title, 0.9 - index * 0.01, "L"),
+      summary:
+        "A summary long enough to need more than one line in any large cell, so the cell has to clamp it to a single line of text.",
+      feed_title:
+        "A feed whose name is far too long to fit on one line in any cell",
+      media_url: "/white-photo.svg",
+      media_w: 640,
+      media_h: 400,
+      read: index === 1,
+      ...(index === 2
+        ? {
+            connector: "reddit",
+            post_type: "link",
+            external_url: "https://news.ubc.ca/example",
+            feed_title: "r/vancouver",
+          }
+        : {}),
+      ...(index === 5 ? { published_ts: "2026-08-29T23:00:00Z" } : {}),
+    }));
+    await stubFrontPage(page, [], items, []);
+    await page.goto("/");
+    await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
+    await expect(page.locator(".grid-cell")).toHaveCount(items.length);
+    const grid = page.locator(".grid-scroll");
+    const first = page.locator('[data-item-id="photo-space-0"]');
+    const read = page.locator('[data-item-id="photo-space-1"]');
+    const expiring = page.locator('[data-item-id="photo-space-5"]');
+    await page.evaluate(() => document.fonts.ready);
+    for (const width of [1440, 1024, 768]) {
+      await page.setViewportSize({ width, height: 1071 });
+      await expect
+        .poll(() => grid.evaluate(singleImageCellProblems))
+        .toEqual([]);
+      for (const id of [0, 1, 3, 4, 5]) {
+        const cell = page.locator(`[data-item-id="photo-space-${id}"]`);
+        const summary = cell.locator(".cell-copy p");
+        await expect(summary).toBeVisible();
+        expect(
+          await summary.evaluate((p) => {
+            const r = p.getBoundingClientRect();
+            const title = p.parentElement
+              ?.querySelector("h2")
               ?.getBoundingClientRect();
-            const copy = cell
-              .querySelector(".cell-copy")
+            const meta = p.parentElement
+              ?.querySelector(".cell-meta")
               ?.getBoundingClientRect();
-            const title = cell.querySelector("h2")?.getBoundingClientRect();
-            const meta = cell
-              .querySelector(".cell-meta")
-              ?.getBoundingClientRect();
-            const lastText =
-              cell.querySelector(".reddit-domain")?.getBoundingClientRect() ??
-              title;
-            const bounds = cell.getBoundingClientRect();
             return (
-              img &&
-              copy &&
-              title &&
-              meta &&
-              lastText &&
-              img.height >= Math.min(126, bounds.height * 0.4) - 1 &&
-              Math.abs(img.bottom - copy.top) < 1 &&
-              title.bottom <= meta.top &&
-              meta.top - lastText.bottom < 20 &&
-              meta.bottom < bounds.bottom
+              r.height <=
+                Number.parseFloat(getComputedStyle(p).lineHeight) + 1 &&
+              !!title &&
+              !!meta &&
+              title.bottom <= r.top &&
+              r.bottom <= meta.top
             );
           }),
-        ),
-      )
-      .toBe(true);
-  }
-  await page.setViewportSize({ width: 1513, height: 1071 });
-  await page.screenshot({ path: "/tmp/sema-direction-a-singleton-photos.png" });
-  await page.locator('[data-item-id="photo-space-0"] .cell-main').click();
-  await expect(page.locator(".reader")).toBeVisible();
-});
+        ).toBe(true);
+      }
+    }
+    await page.setViewportSize({ width: 1440, height: 1071 });
+    await page.mouse.move(1, 1);
+    // Media surfaces never invert, so these read the same in both themes.
+    await expect(first.locator("h2")).toHaveCSS("color", "rgb(244, 242, 238)");
+    await expect(first.locator(".cell-feed-filter")).toHaveCSS(
+      "color",
+      "rgb(199, 204, 211)",
+    );
+    await expect(first.locator(".cell-copy p")).toHaveCSS(
+      "color",
+      "rgb(199, 204, 211)",
+    );
+    await expect(first.locator(".cell-age")).toHaveText("1d");
+    await expect(first.locator(".cell-age")).toHaveCSS(
+      "color",
+      "rgb(199, 204, 211)",
+    );
+    await expect(first.locator(".cell-age")).toHaveCSS(
+      "background-color",
+      "rgba(6, 7, 9, 0.62)",
+    );
+    await expect(first.locator(".cell-corner .unread-dot")).toHaveCSS(
+      "background-color",
+      "rgb(214, 242, 75)",
+    );
+    await expect(read.locator(".unread-dot")).toHaveCount(0);
+    await expect(expiring.locator(".cell-corner .expiry-pill")).toHaveText(
+      "5h left",
+    );
+    await expect(expiring.locator(".cell-age")).toHaveCount(0);
+    for (const id of [0, 1, 3, 4, 5]) {
+      expect(
+        await titleContrast(page, `[data-item-id="photo-space-${id}"]`),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+    await page.screenshot({
+      path: `/tmp/sema-singleton-photos-${theme}.png`,
+    });
+
+    await first.hover();
+    await expect(first.locator(".cell-rank")).toHaveText("top 10%");
+    await expect(first.locator(".cell-rank")).toHaveCSS("opacity", "1");
+    await expect(first.locator(".cell-age")).toHaveCSS("opacity", "0");
+    const peek = first.getByRole("button", { name: "View images" });
+    await expect(peek).toBeVisible();
+    const [peekBox, cornerBox, actionsBox] = await Promise.all([
+      peek.boundingBox(),
+      first.locator(".cell-corner").boundingBox(),
+      first.locator(".cell-actions").boundingBox(),
+    ]);
+    if (!peekBox || !cornerBox || !actionsBox)
+      throw new Error("Missing corner bounds");
+    expect(cornerBox.x + cornerBox.width).toBeLessThanOrEqual(peekBox.x + 1);
+    expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(cornerBox.x);
+    await expiring.hover();
+    await expect(expiring.locator(".expiry-pill")).toHaveCSS("opacity", "1");
+    await expect(expiring.locator(".cell-rank")).toHaveCSS("opacity", "1");
+
+    await first.locator(".cell-main").focus();
+    await page.keyboard.press("ArrowRight");
+    const cursor = page.locator(".grid-cell.focused");
+    await expect(cursor).not.toHaveAttribute("data-item-id", "photo-space-0");
+    await expect(cursor).toHaveCSS("outline-style", "solid");
+    await expect(cursor).toHaveCSS("outline-width", "2px");
+    await expect(cursor).toHaveCSS(
+      "outline-color",
+      theme === "light" ? "rgb(95, 122, 12)" : "rgb(214, 242, 75)",
+    );
+
+    await page.locator('[data-item-id="photo-space-0"] .cell-main').click();
+    await expect(page.locator(".reader")).toBeVisible();
+  });
+}
 
 test("delayed singleton photos fill their cards after resizing and scrolling", async ({
   page,
@@ -1635,16 +1858,20 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
         .poll(() =>
           photo.evaluate((img: HTMLImageElement) => {
             const bounds = img.getBoundingClientRect();
-            const copy = img.parentElement
-              ?.querySelector(".cell-copy")
+            const cell = img.parentElement;
+            const title = cell
+              ?.querySelector(".cell-copy h2")
               ?.getBoundingClientRect();
             return (
               img.complete &&
               img.dataset.decodeAttempted === "true" &&
               img.naturalWidth === 640 &&
-              bounds.height >= 125 &&
-              !!copy &&
-              Math.abs(bounds.bottom - copy.top) < 1
+              !!cell &&
+              Math.abs(bounds.width - cell.clientWidth) < 1 &&
+              Math.abs(bounds.height - cell.clientHeight) < 1 &&
+              !!title &&
+              title.top >= bounds.top &&
+              title.bottom <= bounds.bottom
             );
           }),
         )
@@ -2319,7 +2546,7 @@ for (const preference of ["dark", "system"] as const) {
     );
     await expect(singleton.locator("h2")).toHaveCSS(
       "color",
-      "rgb(168, 174, 182)",
+      "rgb(199, 204, 211)",
     );
     await page.screenshot({
       path: `/tmp/sema-direction-a-dark-unread-${preference}.png`,
@@ -2331,7 +2558,7 @@ test.describe("mobile shared grid design", () => {
   test.use({ hasTouch: true, isMobile: true });
   for (const theme of ["light", "dark"] as const) {
     for (const width of [320, 393, 430]) {
-      test(`fits solid cards and related coverage at ${width}px in ${theme}`, async ({
+      test(`fits cells and related coverage at ${width}px in ${theme}`, async ({
         page,
       }) => {
         await page.setViewportSize({ width, height: 920 });
@@ -2479,10 +2706,6 @@ test.describe("mobile shared grid design", () => {
           "filter",
           "opacity(0.55)",
         );
-        await expect(single).toHaveCSS(
-          "background-color",
-          theme === "light" ? "rgb(255, 255, 255)" : "rgb(23, 24, 26)",
-        );
         await page.evaluate(() => document.fonts.ready);
         await expect
           .poll(() =>
@@ -2506,7 +2729,10 @@ test.describe("mobile shared grid design", () => {
                       `${card.dataset.itemId}: ${copy.className || copy.tagName}`,
                     );
                 }
-                const img = card.querySelector<HTMLElement>(":scope > img");
+                // Story cells still stack their copy under the image.
+                const img = card.dataset.storyId
+                  ? card.querySelector<HTMLElement>(":scope > img")
+                  : null;
                 const title = card.querySelector(".cell-copy h2");
                 if (
                   img &&
@@ -2526,6 +2752,9 @@ test.describe("mobile shared grid design", () => {
               return problems;
             }),
           )
+          .toEqual([]);
+        await expect
+          .poll(() => grid.evaluate(singleImageCellProblems))
           .toEqual([]);
         await card.getByRole("button", { name: "+1 more" }).tap();
         await expect(card.locator(".story-related-title")).toHaveText(
@@ -2568,12 +2797,21 @@ test.describe("mobile shared grid design", () => {
           "color",
           theme === "light" ? "rgb(20, 22, 26)" : "rgb(244, 242, 238)",
         );
-        await expect(single.locator(".cell-meta .unread-dot")).toBeVisible();
+        await expect(single.locator(".cell-corner .unread-dot")).toBeVisible();
+        await expect(single.locator(".cell-corner .cell-age")).toHaveText("1d");
         await expect(readCard.locator(".unread-dot")).toHaveCount(0);
         await expect(single.locator(".cell-feed-filter")).toHaveText("Polygon");
-        await expect(
-          single.locator(".refined-age .age-separator"),
-        ).toBeHidden();
+        await expect(single.locator("h2")).toHaveCSS(
+          "color",
+          "rgb(244, 242, 238)",
+        );
+        await expect
+          .poll(() => grid.evaluate(singleImageCellProblems))
+          .toEqual([]);
+        for (const id of ["phone-single", "phone-medium", "phone-small-1"])
+          expect(
+            await titleContrast(page, `[data-item-id="${id}"]`),
+          ).toBeGreaterThanOrEqual(4.5);
         await expect
           .poll(() =>
             grid

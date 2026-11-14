@@ -1263,7 +1263,10 @@ function GridContent(props: GridProps) {
                   const primaryRoute = createMemo(() =>
                     redditPrimaryRoute(item()),
                   );
-                  const [mediaHeight, setMediaHeight] = createSignal(0);
+                  const [mediaSize, setMediaSize] = createSignal({
+                    width: 0,
+                    height: 0,
+                  });
                   return (
                     <article
                       class="grid-cell"
@@ -1317,7 +1320,10 @@ function GridContent(props: GridProps) {
                           ref={(image) => {
                             const observer = new ResizeObserver(([entry]) => {
                               if (entry)
-                                setMediaHeight(entry.contentRect.height);
+                                setMediaSize({
+                                  width: entry.contentRect.width,
+                                  height: entry.contentRect.height,
+                                });
                             });
                             observer.observe(image);
                             onCleanup(() => observer.disconnect());
@@ -1341,7 +1347,7 @@ function GridContent(props: GridProps) {
                         <button
                           type="button"
                           class="video-play"
-                          style={{ top: `${mediaHeight() / 2}px` }}
+                          style={{ top: `${mediaSize().height / 2}px` }}
                           aria-label={`Play ${headlineText(item().title)}`}
                           onPointerDown={(event) => event.stopPropagation()}
                           onDblClick={(event) => event.stopPropagation()}
@@ -1517,7 +1523,10 @@ function GridContent(props: GridProps) {
                         />
                       </Show>
                       <SignalActions
-                        compact={!!item().media_url && mediaHeight() < 126}
+                        compact={
+                          !!item().media_url &&
+                          mediaSize().width < fullActionRowWidth
+                        }
                         item={item()}
                         size={cell.effectiveSize}
                         archive={props.model.archive}
@@ -2131,6 +2140,10 @@ function publishedDate(value: string): string {
     new Date(value),
   );
 }
+
+// A photo narrower than this can't fit the full feedback row beside the
+// corner's age or rank and the Peek, so feedback moves into More.
+const fullActionRowWidth = 260;
 
 function rankBand(size: "S" | "M" | "L"): string {
   if (size === "L") return "top 10%";

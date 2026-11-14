@@ -253,7 +253,8 @@
   --play-color: #e8e6e1;
   --play-shadow: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
   --scrim-title: linear-gradient(to top, rgba(6,7,9,.95), rgba(6,7,9,.7) 40%, rgba(6,7,9,0));
-  --cell-scrim-title: linear-gradient(to top, rgba(6, 7, 9, 0.95) 40%, rgba(6, 7, 9, 0));
+  /* Dense from the title's first line down, so it reads over a white photo. */
+  --cell-scrim-title: linear-gradient(to top, rgba(6, 7, 9, 0.95), rgba(6, 7, 9, 0.8) calc(100% - var(--cell-scrim-pad-top)), rgba(6, 7, 9, 0));
   --related-scrim: linear-gradient(to top, rgba(6,7,9,.95) 15%, rgba(6,7,9,.16));
   --tooltip-bg: #16191e;
   --tooltip-fg: #f4f2ee;
@@ -386,6 +387,8 @@
   --scrim-h-mobile-l-run: 76%;
   --scrim-h-sub: 78%;
   --scrim-h-compact: 82%;
+  --cell-scrim-pad-top: 36px;
+  --cell-hint-top: 44px;
 }
 
 /* Light token blocks must stay in sync. */
@@ -2368,14 +2371,14 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .story-headline:hover { background: var(--card-footer-hover-bg); }
 .refined-grid.keyboard-focus .story-headline.focused,
 .refined-grid .story-headline:focus-visible { outline: 2px solid var(--fg-accent); outline-offset: -2px; }
-.refined-grid .grid-row > .grid-cell:not(.story-card) > img { height: min(126px, 40%); }
-.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-copy {
+.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card) > img { height: min(126px, 40%); }
+.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card):not(.text-cell) .cell-copy {
   inset: min(126px, 40%) 0 0; height: auto; padding: 13px 14px 12px;
   display: flex; flex-direction: column; justify-content: flex-start; background: transparent;
 }
 .refined-grid .grid-row > .grid-cell:not(.story-card) .cell-copy h2 { color: var(--fg-primary); font-weight: 700; }
-.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-copy p { display: none; }
-.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-meta { margin-top: auto; padding-top: 7px; }
+.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card):not(.text-cell) .cell-copy p { display: none; }
+.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card):not(.text-cell) .cell-meta { margin-top: auto; padding-top: 7px; }
 .refined-grid .cell-scrim { display: none; }
 .refined-grid .ranking-hint {
   position: absolute; z-index: 7; top: 8px; right: 8px; max-width: calc(100% - 92px);
@@ -2389,14 +2392,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell.is-read .cell-copy h2 { color: var(--fg-tertiary); }
 .refined-grid .grid-row > .grid-cell.size-m .cell-copy h2 { font: 700 17px/1.22 "Instrument Sans", sans-serif; -webkit-line-clamp: 2; }
 .refined-grid .grid-row > .grid-cell.size-s .cell-copy h2 { font: 700 15px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 2; }
-.refined-grid .grid-row > .grid-cell.size-s:not(.text-cell) .cell-copy { padding: 10px; }
 .refined-grid .grid-row > .grid-cell .cell-meta > :is(.unread-dot, .refined-age, .refined-read-label) { flex: none; }
-
-/* Singletons give spare height to the image, with copy sized to its content. */
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) { display: flex; flex-direction: column; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > img { flex: 1 1 0; min-height: 0; height: 0; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy { position: relative; inset: auto; height: auto; flex: none; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-meta { margin-top: 9px; padding-top: 0; }
 
 /* Phone cards keep the shared surfaces and copy hierarchy with room for touch. */
 .mobile-refined-grid .grid-row > .grid-cell:not(.story-card) { display: flex; flex-direction: column; }
@@ -2464,6 +2460,51 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-sheet .story-related-title { color: var(--fg-secondary); font: 500 14px/1.35 "Instrument Sans", sans-serif; }
 .refined-sheet .sheet-headline.read .story-related-title { color: var(--fg-tertiary); }
 .refined-sheet .sheet-headline-more { min-height: 44px; }
+
+/* A single Item with a lead image shows the photo across the whole cell. The
+   title and feed name sit over the title scrim and the age and unread dot sit
+   in the corner, all on media tokens so they read the same in both themes.
+   This follows the phone card rules so it replaces their stacked copy. */
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) {
+  --cell-label-bg: var(--media-overlay-label);
+  --cell-label-fg: var(--media-fg-secondary);
+  --signal-label-ink: var(--accent-loud);
+  --signal-bury-meta: var(--media-fg-secondary);
+}
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy {
+  position: absolute; inset: auto 0 0; height: auto; padding: var(--cell-scrim-pad-top) 12px 12px;
+  display: flex; flex-direction: column; justify-content: flex-end; background: var(--cell-scrim-title);
+}
+.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy { padding-left: var(--cell-pad-l); padding-right: var(--cell-pad-l); }
+.refined-grid .grid-row > .grid-cell.reddit-cell:not(.story-cell):not(.text-cell) .cell-copy { padding-right: 42px; }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy h2 {
+  padding-right: 0; color: var(--media-fg-primary); font: 500 15px/1.25 "Instrument Sans", sans-serif; letter-spacing: -.008em; -webkit-line-clamp: 2;
+}
+.refined-grid .grid-row > .grid-cell.size-m:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; }
+.refined-grid .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 600 27px/1.12 "Instrument Sans", sans-serif; letter-spacing: -.018em; -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy p { display: none; }
+.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy p {
+  display: -webkit-box; margin: 6px 0 0; color: var(--media-fg-secondary); font: 400 14px/1.4 "Instrument Sans", sans-serif; -webkit-line-clamp: 1;
+}
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .reddit-domain { color: var(--media-fg-secondary); }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell):is(:hover, .focused, :focus-within) .reddit-domain { color: var(--media-fg-primary); }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-meta { margin-top: 7px; padding-top: 0; flex-wrap: nowrap; }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-meta > :is(.unread-dot, .source-badge, .refined-age, .refined-read-label) { display: none; }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) :is(.cell-feed-filter, .cell-meta > span) {
+  flex: 0 1 auto; min-width: 0; min-height: 0; overflow: hidden; color: var(--media-fg-secondary);
+  font: 400 12px/1.2 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis;
+}
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-feed-filter:hover { color: var(--media-fg-primary); }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > .cell-corner { display: flex; }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > .cell-corner .unread-dot {
+  order: 1; background: var(--media-unread-dot); box-shadow: 0 0 0 2px var(--media-unread-dot-ring);
+}
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > .ranking-hint { top: var(--cell-hint-top); }
+.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell):is(.is-read, [data-signal="-1"]) .cell-copy h2 { color: var(--media-fg-secondary); }
+.mobile-refined-grid .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 4; }
+.mobile-refined-grid .grid-row > .grid-cell.size-m:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 4; }
+.mobile-refined-grid .grid-row > .grid-cell.size-s:not(.story-cell):not(.text-cell) .cell-copy h2 { -webkit-line-clamp: 3; }
 
 .scope-cell { position: absolute; top: 0; left: 16px; right: 16px; height: var(--scope-cell-h); margin: 0; display: flex; align-items: baseline; gap: 14px; padding-top: 16px; color: var(--fg-primary); font-family: "Instrument Sans", sans-serif; font-weight: 600; font-size: 26px; letter-spacing: -0.02em; }
 .scope-cell__title { max-width: var(--scope-title-max); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

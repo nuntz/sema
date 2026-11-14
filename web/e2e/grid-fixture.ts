@@ -1,4 +1,18 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+
+/** Opens a cell's Item the way a reader does, by clicking its title, away from
+ * the Play control centred on a video's photo. */
+export async function clickCellTitle(cell: Locator) {
+  const main = cell.locator(".cell-main");
+  const [mainBox, titleBox] = await Promise.all([
+    main.boundingBox(),
+    cell.locator(".cell-copy h2").boundingBox(),
+  ]);
+  if (!mainBox || !titleBox) throw new Error("Missing cell bounds");
+  await main.click({
+    position: { x: titleBox.x - mainBox.x + 4, y: titleBox.y - mainBox.y + 4 },
+  });
+}
 
 /** The full app over one mocked Item, focused on its cell. */
 export async function openGrid(

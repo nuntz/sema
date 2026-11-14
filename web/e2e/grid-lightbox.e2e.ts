@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openGrid } from "./grid-fixture";
+import { clickCellTitle, openGrid } from "./grid-fixture";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { stubYouTube } from "./youtube-stub";
 
@@ -436,7 +436,7 @@ test("Video Item main button opens the Poster; Play failure stays in the frame",
 }) => {
   await stubYouTube(page, true);
   const { cell } = await openGrid(page, "youtube");
-  await cell.locator(".cell-main").click();
+  await clickCellTitle(cell);
   await expect(page.locator(".video-media-card")).toBeVisible();
   await expect(page.locator(".article-body")).toContainText("Article body");
   await page.keyboard.press("i");
@@ -690,7 +690,7 @@ test.describe("touch video Play", () => {
 });
 
 for (const kind of ["youtube", "image"]) {
-  test(`${kind} short thumbnails put feedback in More and larger thumbnails retain the action row`, async ({
+  test(`${kind} narrow thumbnails put feedback in More and wider thumbnails retain the action row`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });

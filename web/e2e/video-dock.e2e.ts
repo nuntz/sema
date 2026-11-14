@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { openGrid } from "./grid-fixture";
+import { clickCellTitle, openGrid } from "./grid-fixture";
 import { stubYouTube } from "./youtube-stub";
 
 const stage = (page: Page) => page.locator(".video-stage");
@@ -153,7 +153,7 @@ test("a reader closing on a playing lead Docks it at its position, and Expand re
 }) => {
   await stubYouTube(page);
   const { cell } = await openGrid(page, "youtube");
-  await cell.locator(".cell-main").click();
+  await clickCellTitle(cell);
   await page.keyboard.press("i");
   const lead = page.locator(".reader .video-embed iframe");
   await expect(lead).toHaveAttribute("data-state", "1");
@@ -174,7 +174,7 @@ test("a reader moving to the next Item Docks its playing lead", async ({
 }) => {
   await stubYouTube(page);
   await openGrid(page, "youtube", false, "M", { second: "article" });
-  await page.locator('[data-item-id="peek"] .cell-main').click();
+  await clickCellTitle(page.locator('[data-item-id="peek"]'));
   await page.keyboard.press("i");
   await expect(page.locator(".reader iframe")).toHaveAttribute(
     "data-state",
@@ -194,7 +194,7 @@ test("Playing in the reader stops the Dock", async ({ page }) => {
   await stubYouTube(page);
   await openGrid(page, "youtube", false, "M", { second: true });
   await dockFromPeek(page);
-  await page.locator('[data-item-id="other"] .cell-main').click();
+  await clickCellTitle(page.locator('[data-item-id="other"]'));
   await expect(page.locator(".reader")).toHaveAttribute(
     "aria-label",
     "Other image",
@@ -212,7 +212,7 @@ test("on a phone the Dock rides above the reader toolbar and Expands into the re
   await stubYouTube(page);
   await openGrid(page, "youtube", false, "M", { second: "article" });
   await dockFromPeek(page);
-  await page.locator('[data-item-id="other"] .cell-main').click();
+  await clickCellTitle(page.locator('[data-item-id="other"]'));
   await expect(page.locator(".reader")).toHaveAttribute(
     "aria-label",
     "Other article",
@@ -419,7 +419,7 @@ test("Expand from Settings & Feeds resumes a reader-born Dock in its reader", as
 }) => {
   await stubYouTube(page);
   const { cell } = await openGrid(page, "youtube");
-  await cell.locator(".cell-main").click();
+  await clickCellTitle(cell);
   await page.keyboard.press("i");
   await expect(page.locator(".reader iframe")).toHaveAttribute(
     "data-state",
