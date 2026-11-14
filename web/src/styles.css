@@ -390,6 +390,8 @@
   --scrim-h-compact: 82%;
   --cell-scrim-pad-top: 36px;
   --cell-hint-top: 44px;
+  --cell-badge-clear: 44px;
+  --story-strip-h: 52px;
 }
 
 /* Light token blocks must stay in sync. */
@@ -1180,7 +1182,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-cell.size-s .unread-dot, .grid-cell.text-cell .unread-dot { width: 6px; height: 6px; }
 .unread-dot.exiting { opacity: 0; transform: scale(.4); animation: none; transition: opacity var(--unread-dot-exit), transform var(--unread-dot-exit); }
 @keyframes unread-dot-enter { from { opacity: 0; } }
-.grid-cell:not(.archive-cell):hover .cell-age, .grid-cell:not(.archive-cell).focused .cell-age, .grid-cell:not(.archive-cell):focus-within .cell-age { opacity: 0; }
+/* Hover swaps the age for the rank; a Story has no rank, so its age stays. */
+.grid-cell:not(.archive-cell):not(.story-cell):hover .cell-age, .grid-cell:not(.archive-cell):not(.story-cell).focused .cell-age, .grid-cell:not(.archive-cell):not(.story-cell):focus-within .cell-age { opacity: 0; }
 .grid-cell:not(.archive-cell):hover .cell-rank, .grid-cell:not(.archive-cell).focused .cell-rank, .grid-cell:not(.archive-cell):focus-within .cell-rank { opacity: 1; }
 .why-hint { height: 18px; margin-top: 5px; overflow: hidden; color: var(--fg-quaternary); font: 400 var(--type-xs)/18px "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
 .why-m { opacity: 0; transition: opacity 120ms ease-out; }
@@ -1263,12 +1266,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .action-sheet header strong { overflow: hidden; color: var(--fg-primary); font: 500 var(--type-sm)/1.3 "Instrument Sans", sans-serif; white-space: nowrap; text-overflow: ellipsis; }
 .action-sheet header span { color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .sheet-headlines { min-height: 0; max-height: 312px; flex: 0 1 auto; overflow-y: auto; overscroll-behavior: contain; border-bottom: 1px solid var(--line); touch-action: pan-y; }
-:is(.mobile-story-card .story-headline, .sheet-headline) { height: 52px; display: flex; align-items: flex-start; gap: 8px; }
-.mobile-story-card .story-headline { padding: 6px 0; }
+.sheet-headline { height: 52px; display: flex; align-items: flex-start; gap: 8px; }
 .sheet-headline { width: 100%; min-height: 44px; padding: 6px 4px; flex: none; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; color: inherit; text-align: left; }
 .sheet-headline:last-child { border-bottom: 0; }
-:is(.mobile-story-card .story-headline, .sheet-headline) > .source-badge { margin-top: 2px; }
-:is(.mobile-story-card .story-headline, .sheet-headline) time { flex: none; align-self: flex-start; margin-top: 2px; color: var(--fg-quaternary); font: 400 13px/1 "IBM Plex Mono", monospace; }
+.sheet-headline > .source-badge { margin-top: 2px; }
+.sheet-headline time { flex: none; align-self: flex-start; margin-top: 2px; color: var(--fg-quaternary); font: 400 13px/1 "IBM Plex Mono", monospace; }
 .sheet-headline-more { align-items: center; justify-content: center; color: var(--fg-secondary); font: 500 13px/1 "IBM Plex Mono", monospace; letter-spacing: .04em; text-transform: uppercase; }
 .action-sheet > button { width: 100%; height: var(--sheet-row); padding: 0 4px; display: flex; align-items: center; gap: 13px; flex: none; border-bottom: 1px solid var(--line); background: transparent; color: var(--fg-primary); font: 400 var(--type-md)/1 "Instrument Sans", sans-serif; text-align: left; }
 .action-sheet > button:last-child { border-bottom: 0; }
@@ -1797,23 +1799,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .related-panel > header { min-height: 66px; padding-top: 8px; }
   .grid-row { left: 12px; right: 12px; }
   .mobile-story-card { border-radius: 10px; transition: height 180ms ease-out; }
-  .grid-cell.mobile-story-card.size-l { background: var(--surface-raised); }
-  .mobile-story-card .story-media-action { display: none; }
-  .mobile-story-card .story-badges { top: 12px; left: 12px; }
-  .mobile-story-card .story-source-label, .story-badges em { display: none; }
-  .mobile-story-card .story-source-count { height: 24px; padding: 0 7px; display: flex; align-items: center; gap: 5px; border-radius: 5px; background: var(--control-wash-medium); color: var(--fg-secondary); font: 500 13px/1 "IBM Plex Mono", monospace; font-style: normal; letter-spacing: .04em; }
-  .mobile-story-card .story-source-count .icon { color: currentColor; }
-  .mobile-story-card .story-source-count b { font: inherit; }
-  .mobile-story-card .story-corner { top: 12px; right: 12px; }
-  .mobile-story-card .story-corner > span:not(.unread-dot):not(.expiry-pill) { font-size: 13px; }
-  .mobile-story-card .story-lead { position: absolute; inset: 0; padding: 46px 12px 12px; }
-  .mobile-story-card.no-media .story-lead { padding-top: 46px; }
-  .mobile-story-card .story-lead h2 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-size: 24px; line-height: 1.16; letter-spacing: -.02em; }
-  .mobile-story-card .story-lead p, .mobile-story-card .story-meta { display: none; }
-  .mobile-story-card .story-headlines { margin: 0 12px; }
-  .mobile-story-card .story-more { height: 44px; padding: 0; gap: 6px; border-top: 1px solid var(--line); color: var(--fg-secondary); font: 500 13px/1 "IBM Plex Mono", monospace; letter-spacing: .04em; text-transform: uppercase; }
-  .mobile-story-card .story-more:hover { background: transparent; color: var(--fg-secondary); }
-  .mobile-story-card .story-less .icon { color: currentColor; }
   .end-of-feed { left: 12px; right: 12px; }
   .grid-cell { border-radius: 10px; }
   .grid-cell .cell-corner { top: 8px; right: 8px; gap: 6px; }
@@ -2310,10 +2295,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell.is-read .story-media { filter: opacity(.55); }
 .refined-grid .grid-row > .grid-cell.is-read :is(.cell-copy h2, .story-lead h2),
 .refined-grid .story-lead h2.read { color: var(--fg-tertiary); }
-.refined-grid .story-media-action { padding: 0; min-height: 126px; max-height: 126px; flex: 0 0 126px; }
+.refined-grid .story-media-action { padding: 0; min-height: 0; max-height: none; }
 .refined-grid .story-lead { flex: 1; padding: 13px 14px 12px; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; }
 .refined-grid .story-meta { width: 100%; }
-.refined-grid .story-card.no-media .story-lead { padding-top: 13px; }
+.refined-grid .story-card.no-media .story-lead { padding-top: var(--cell-badge-clear); }
 .refined-grid .story-lead h2,
 .refined-grid .grid-row > .grid-cell.size-l .cell-copy h2 {
   font: 700 21px/1.18 "Instrument Sans", sans-serif;
@@ -2334,8 +2319,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .refined-read-label { display: inline-flex; align-items: center; gap: 4px; }
 .refined-grid .grid-row > .grid-cell .unread-dot { background: var(--accent-loud); width: 6px; height: 6px; box-shadow: var(--unread-dot-ring); }
 .refined-grid :is(.story-badges, .story-corner, .cell-corner, .story-meta em, .why-hint) { display: none; }
-.refined-grid .story-headlines { border-color: var(--card-inner-rule); background: var(--card-footer-bg); }
-.refined-grid .is-read .story-headlines { background: var(--card-read-footer-bg); }
+.refined-grid .story-headlines { border-color: var(--card-inner-rule); background: var(--surface-raised); }
+.refined-grid .is-read .story-headlines { background: var(--card-read-bg); }
 .refined-grid .story-headline { padding: 10px 14px 11px; gap: 7px; border-color: var(--card-inner-rule); }
 .refined-grid .story-headline.related-also { height: 44px; }
 .refined-grid .story-headline.related-angle { height: 72px; align-items: flex-start; }
@@ -2355,14 +2340,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .story-headline:hover { background: var(--card-footer-hover-bg); }
 .refined-grid.keyboard-focus .story-headline.focused,
 .refined-grid .story-headline:focus-visible { outline: 2px solid var(--fg-accent); outline-offset: -2px; }
-.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card) > img { height: min(126px, 40%); }
-.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card):not(.text-cell) .cell-copy {
-  inset: min(126px, 40%) 0 0; height: auto; padding: 13px 14px 12px;
-  display: flex; flex-direction: column; justify-content: flex-start; background: transparent;
-}
 .refined-grid .grid-row > .grid-cell:not(.story-card) .cell-copy h2 { color: var(--fg-primary); font-weight: 700; }
-.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card):not(.text-cell) .cell-copy p { display: none; }
-.refined-grid .grid-row > .grid-cell:where(.story-cell):not(.story-card):not(.text-cell) .cell-meta { margin-top: auto; padding-top: 7px; }
 .refined-grid .cell-scrim { display: none; }
 .refined-grid .ranking-hint {
   position: absolute; z-index: 7; top: 8px; right: 8px; max-width: calc(100% - 92px);
@@ -2386,7 +2364,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   display: flex; flex-direction: column; justify-content: flex-start; background: transparent;
 }
 .mobile-refined-grid.refined-grid .grid-row > .grid-cell.text-cell .cell-copy { flex: 1; justify-content: flex-end; }
-.mobile-refined-grid.refined-grid .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: 56px; }
 .mobile-refined-grid .grid-row > .grid-cell:is(.size-l, .size-m, .size-s) .cell-copy h2 {
   padding-right: 0; font: 700 16px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; -webkit-line-clamp: 4;
 }
@@ -2403,27 +2380,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .cell-feed-filter { min-height: 24px; }
 .mobile-refined-grid .grid-row > .grid-cell .cell-meta > .refined-age { white-space: pre; }
 .mobile-refined-grid .grid-row > .grid-cell .ranking-hint { display: none; }
-.mobile-refined-grid .story-stack-badge { opacity: 1; background: var(--surface-raised); color: var(--fg-secondary); border: 1px solid var(--border-hairline); }
-.mobile-refined-grid .grid-cell .story-badges { display: flex; opacity: 1; top: 10px; left: 10px; }
-.mobile-refined-grid .story-badges > :not(.story-source-count) { display: none; }
-.mobile-refined-grid .story-source-count { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; background: var(--surface-raised); color: var(--fg-secondary); border: 1px solid var(--border-hairline); font: 500 12px/1 "IBM Plex Mono", monospace; }
-.mobile-refined-grid .story-source-count b { font: inherit; }
-.mobile-refined-grid .story-source-count .icon { color: currentColor; }
-.mobile-refined-grid .story-media-action { display: block; padding: 0; min-height: 126px; max-height: 126px; flex: 0 0 126px; }
-.mobile-refined-grid .story-lead { position: relative; inset: auto; padding: 12px; }
-.mobile-refined-grid .story-card.no-media .story-lead { padding-top: 46px; }
+.mobile-refined-grid .story-card.no-media .story-lead { padding-top: var(--cell-badge-clear); }
 .mobile-refined-grid .story-lead h2 { font-size: 22px; line-height: 1.18; -webkit-line-clamp: 3; }
 .mobile-refined-grid .story-meta { display: flex; flex-wrap: wrap; row-gap: 6px; }
 .mobile-refined-grid .story-meta > span:not(.source-badge) { min-width: 0; }
 .mobile-refined-grid .story-meta > .unread-dot { flex: none; }
-.mobile-refined-grid .story-headlines { margin: 0; }
-.mobile-refined-grid .story-headline { padding: 11px 12px; gap: 8px; }
-.mobile-refined-grid .story-headline.related-also { height: 56px; }
-.mobile-refined-grid .story-headline.related-angle { height: 84px; }
-.mobile-refined-grid .story-related-copy { flex: 1; }
-.mobile-refined-grid .story-related-source { font-size: 12px; }
-.mobile-refined-grid .related-also .story-related-source { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.mobile-refined-grid .story-related-title { font-size: 14px; line-height: 1.35; }
 .mobile-refined-grid .story-more { height: 44px; text-transform: none; letter-spacing: 0; font-size: 13px; }
 @media (hover: none) {
   .mobile-refined-grid .grid-row > .grid-cell:hover { background: var(--surface-raised); border-color: var(--border-hairline); }
@@ -2435,26 +2396,26 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .age-separator { display: none; }
 
 /* Text-only singletons: title at the top, the summary in the spare height, and feed · age · dot on one bottom line. */
-.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy { inset: 0; height: auto; min-height: 0; justify-content: flex-start; }
-.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy p {
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-copy { inset: 0; height: auto; min-height: 0; justify-content: flex-start; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-copy p {
   display: -webkit-box; flex: 0 1 auto; min-height: 0; margin: 6px 0 var(--cell-summary-gap);
   -webkit-line-clamp: var(--summary-lines, 1); line-clamp: var(--summary-lines, 1);
   font: 400 13.5px/1.45 "Instrument Sans", sans-serif;
 }
-.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy p[data-no-room] { visibility: hidden; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-copy p[data-no-room] { visibility: hidden; }
 /* The title keeps its clamped lines; the summary gives way when a row is short. */
-.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy h2 { flex: none; }
-.refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-meta { flex: none; margin-top: auto; padding-top: 0; flex-wrap: nowrap; gap: 6px; }
-.refined-grid .grid-row > .grid-cell.text-cell.size-l:not(.story-cell) .cell-copy h2 { font: 600 27px/1.15 "Instrument Sans", sans-serif; letter-spacing: -.02em; -webkit-line-clamp: 3; }
-.refined-grid .grid-row > .grid-cell.text-cell.size-m:not(.story-cell) .cell-copy h2 { font: 500 17px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
-.refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-l:not(.story-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; -webkit-line-clamp: 3; }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-m:not(.story-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 4; }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-copy p { font-size: 13px; line-height: 1.4; }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-meta > span:not(:is(.unread-dot, .refined-age, .refined-read-label, .source-badge)),
-.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .cell-feed-filter { flex: 0 1 auto; }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-cell) .age-separator { display: inline; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-copy h2 { flex: none; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-meta { flex: none; margin-top: auto; padding-top: 0; flex-wrap: nowrap; gap: 6px; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-l:not(.story-card) .cell-copy h2 { font: 600 27px/1.15 "Instrument Sans", sans-serif; letter-spacing: -.02em; -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-m:not(.story-card) .cell-copy h2 { font: 500 17px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-l:not(.story-card) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-m:not(.story-card) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 4; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-copy p { font-size: 13px; line-height: 1.4; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-meta > span:not(:is(.unread-dot, .refined-age, .refined-read-label, .source-badge)),
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-feed-filter { flex: 0 1 auto; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .age-separator { display: inline; }
 
 .refined-sheet .sheet-headline { height: auto; min-height: 76px; padding: 12px 4px; gap: 9px; }
 .refined-sheet .sheet-headline.related-also { min-height: 56px; align-items: center; }
@@ -2466,50 +2427,90 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-sheet .sheet-headline.read .story-related-title { color: var(--fg-tertiary); }
 .refined-sheet .sheet-headline-more { min-height: 44px; }
 
-/* A single Item with a lead image shows the photo across the whole cell. The
-   title and feed name sit over the title scrim and the age and unread dot sit
-   in the corner, all on media tokens so they read the same in both themes.
-   This follows the phone card rules so it replaces their stacked copy. */
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) {
+/* A cell with a lead image shows the photo across the whole cell, or across a
+   Story's Lead. The title and feed name sit over the title scrim and the age
+   and unread dot sit in the corner, all on media tokens so they read the same
+   in both themes. This follows the phone card rules so it replaces their
+   stacked copy. M Stories are such cells; an L Story's Lead follows the same
+   rules through its own elements. */
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell),
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead-shell {
   --cell-label-bg: var(--media-overlay-label);
   --cell-label-fg: var(--media-fg-secondary);
   --signal-label-ink: var(--accent-loud);
   --signal-bury-meta: var(--media-fg-secondary);
 }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > img { position: absolute; inset: 0; width: 100%; height: 100%; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy {
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) > img,
+.refined-grid .grid-row > .story-card .story-media-action { position: absolute; inset: 0; width: 100%; height: 100%; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-copy,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead {
   position: absolute; inset: auto 0 0; height: auto; padding: var(--cell-scrim-pad-top) 12px 12px;
   display: flex; flex-direction: column; justify-content: flex-end; background: var(--cell-scrim-title);
 }
-.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy { padding-left: var(--cell-pad-l); padding-right: var(--cell-pad-l); }
-.refined-grid .grid-row > .grid-cell.reddit-cell:not(.story-cell):not(.text-cell) .cell-copy { padding-right: 42px; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy h2 {
+.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.size-l:not(.story-card):not(.text-cell) .cell-copy,
+.refined-grid:not(.mobile-refined-grid) .grid-row > .story-card:not(.no-media) .story-lead { padding-left: var(--cell-pad-l); padding-right: var(--cell-pad-l); }
+.refined-grid .grid-row > .grid-cell.reddit-cell:not(.story-card):not(.text-cell) .cell-copy { padding-right: 42px; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-copy h2,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead h2 {
   padding-right: 0; color: var(--media-fg-primary); font: 500 15px/1.25 "Instrument Sans", sans-serif; letter-spacing: -.008em; -webkit-line-clamp: 2;
 }
-.refined-grid .grid-row > .grid-cell.size-m:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; }
-.refined-grid .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 600 27px/1.12 "Instrument Sans", sans-serif; letter-spacing: -.018em; -webkit-line-clamp: 3; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-copy p { display: none; }
-.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy p {
+.refined-grid .grid-row > .grid-cell.size-m:not(.story-card):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; letter-spacing: -.012em; }
+.refined-grid .grid-row > .grid-cell.size-l:not(.story-card):not(.text-cell) .cell-copy h2,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead h2 { font: 600 27px/1.12 "Instrument Sans", sans-serif; letter-spacing: -.018em; -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-copy p { display: none; }
+.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.size-l:not(.story-card):not(.text-cell) .cell-copy p,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead p:not(.story-summary-hidden) {
   display: -webkit-box; margin: 6px 0 0; color: var(--media-fg-secondary); font: 400 14px/1.4 "Instrument Sans", sans-serif; -webkit-line-clamp: 1;
 }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .reddit-domain { color: var(--media-fg-secondary); }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell):is(:hover, .focused, :focus-within) .reddit-domain { color: var(--media-fg-primary); }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-meta { margin-top: 7px; padding-top: 0; flex-wrap: nowrap; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-meta > :is(.unread-dot, .source-badge, .refined-age, .refined-read-label) { display: none; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) :is(.cell-feed-filter, .cell-meta > span) {
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .reddit-domain { color: var(--media-fg-secondary); }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell):is(:hover, .focused, :focus-within) .reddit-domain { color: var(--media-fg-primary); }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-meta,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-meta { margin-top: 7px; padding-top: 0; flex-wrap: nowrap; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-meta > :is(.unread-dot, .source-badge, .refined-age, .refined-read-label),
+.refined-grid .grid-row > .story-card:not(.no-media) .story-meta > :is(.unread-dot, .source-badge, small, .refined-read-label, em) { display: none; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) :is(.cell-feed-filter, .cell-meta > span),
+.refined-grid .grid-row > .story-card:not(.no-media) .story-meta > .story-feed {
   flex: 0 1 auto; min-width: 0; min-height: 0; overflow: hidden; color: var(--media-fg-secondary);
   font: 400 12px/1.2 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis;
 }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) .cell-feed-filter:hover { color: var(--media-fg-primary); }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > .cell-corner { display: flex; }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > .cell-corner .unread-dot {
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) .cell-feed-filter:hover { color: var(--media-fg-primary); }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) > .cell-corner,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead-shell > .cell-corner { display: flex; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) > .cell-corner .unread-dot,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead-shell > .cell-corner .unread-dot {
   order: 1; background: var(--media-unread-dot); box-shadow: 0 0 0 2px var(--media-unread-dot-ring);
 }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell) > .ranking-hint { top: var(--cell-hint-top); }
-.refined-grid .grid-row > .grid-cell:not(.story-cell):not(.text-cell):is(.is-read, [data-signal="-1"]) .cell-copy h2 { color: var(--media-fg-secondary); }
-.mobile-refined-grid .grid-row > .grid-cell.size-l:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
-.mobile-refined-grid .grid-row > .grid-cell.size-m:not(.story-cell):not(.text-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
-.mobile-refined-grid .grid-row > .grid-cell.size-s:not(.story-cell):not(.text-cell) .cell-copy h2 { -webkit-line-clamp: 3; }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell) > .ranking-hint,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead-shell > .ranking-hint { top: var(--cell-hint-top); }
+.refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell):is(.is-read, [data-signal="-1"]) .cell-copy h2,
+.refined-grid .grid-row > .story-card:not(.no-media):is(.is-read, [data-signal="-1"]) .story-lead h2,
+.refined-grid .grid-row > .story-card:not(.no-media) .story-lead h2.read { color: var(--media-fg-secondary); }
+.mobile-refined-grid .grid-row > .grid-cell.size-l:not(.story-card):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.size-m:not(.story-card):not(.text-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.size-s:not(.story-card):not(.text-cell) .cell-copy h2 { -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .story-card:not(.no-media) .story-lead h2 { font: 600 22px/1.18 "Instrument Sans", sans-serif; letter-spacing: -.016em; -webkit-line-clamp: 3; }
+
+/* A Story shows its Source count at the top left of the Lead, and its Headline
+   strip sits directly under the Lead on the page surface. On a phone each
+   strip is one 52px tap target: unread dot, feed name and age, then the
+   Headline's title on one line. */
+.refined-grid .story-card .story-badges { display: flex; top: 7px; left: 7px; }
+.refined-grid .story-badges > :not(.story-source-count) { display: none; }
+.refined-grid .story-badges .story-source-count {
+  height: 24px; padding: 0 7px; display: flex; align-items: center; gap: 4px; border-radius: 6px;
+  background: var(--cell-label-bg); color: var(--cell-label-fg); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; letter-spacing: 0;
+}
+.refined-grid .story-source-count b { font: inherit; }
+.refined-grid .story-source-count .icon { color: currentColor; }
+.refined-grid .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: var(--cell-badge-clear); }
+.refined-grid .story-headline > .unread-dot { display: none; }
+.mobile-refined-grid .story-card .story-headlines { border-top: 0; }
+.mobile-refined-grid .story-card .story-headline { height: var(--story-strip-h); padding: 0 12px; align-items: center; gap: 8px; }
+.mobile-refined-grid .story-headline > .icon { display: none; }
+.mobile-refined-grid .story-headline > .unread-dot { display: block; }
+.mobile-refined-grid .story-card .story-related-copy { flex: 1; gap: 3px; }
+.mobile-refined-grid .story-card .story-related-source { font-size: 12px; line-height: 1.25; }
+.mobile-refined-grid .story-card .story-related-title { display: block; overflow: hidden; font-size: 14px; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; }
 
 .scope-cell { position: absolute; top: 0; left: 16px; right: 16px; height: var(--scope-cell-h); margin: 0; display: flex; align-items: baseline; gap: 14px; padding-top: 16px; color: var(--fg-primary); font-family: "Instrument Sans", sans-serif; font-weight: 600; font-size: 26px; letter-spacing: -0.02em; }
 .scope-cell__title { max-width: var(--scope-title-max); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2591,9 +2592,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 /* Reserve the hint line in every L/M cell, including neutral, so feedback never moves copy.
    A text-only singleton keeps its bottom line at the foot and reserves the line only while a Signal shows. */
 .refined-grid .grid-row > .grid-cell[data-signal]:not(.size-s):not(.text-cell) .cell-copy,
-.refined-grid .grid-row > .grid-cell.text-cell.story-cell[data-signal]:not(.size-s) .cell-copy,
 .refined-grid .grid-row > .grid-cell.text-cell[data-signal]:not([data-signal="0"]):not(.size-s) .cell-copy,
-.refined-grid .grid-row > .grid-cell .story-lead { padding-bottom: 32px; }
+.refined-grid .grid-row > .grid-cell[data-signal] .story-lead { padding-bottom: 32px; }
 .grid-cell[data-signal="1"] .why-hint.has-signal { color: var(--signal-label-ink); }
 .signal-why button { padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
 .signal-why button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; }

@@ -268,8 +268,7 @@ function GridContent(props: GridProps) {
               (item) =>
                 [
                   item.item_id,
-                  relatedCoverageHeight(story.items[0], item) +
-                    (mobile() ? 12 : 0),
+                  relatedCoverageHeight(story.items[0], item),
                 ] as const,
             ),
         ),
@@ -1988,8 +1987,8 @@ export function CellCopy(props: {
     props.item.post_type === "link"
       ? externalHost(props.item.external_url)
       : "";
-  // Text-only single Items give their spare height to the summary.
-  const textOnly = () => !props.item.media_url && !props.story;
+  // Text-only cells, M Stories among them, give their spare height to the summary.
+  const textOnly = () => !props.item.media_url;
   return (
     <div class="cell-copy">
       <h2 classList={{ read: props.dimmed }}>

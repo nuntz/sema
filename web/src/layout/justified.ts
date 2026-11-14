@@ -57,9 +57,12 @@ export const storyMoreHeight = 33;
 export const storyCardBorderHeight = 3;
 export const mobileStoryHeadlineHeight = 52;
 export const mobileStoryMoreHeight = 44;
+/** A phone Story's Lead; its Headline strips and more row sit below it. */
+export const mobileStoryLeadHeight = 200;
+/** A phone Story card's top and bottom border lines. */
+export const mobileStoryCardBorderHeight = 2;
 const storyLeadMinimumHeight = 120;
 const mobileLargeHeight = 168;
-const mobileStoryHeight = 246;
 const mobileMediumHeight = 150;
 const mobileSmallHeight = 124;
 
@@ -755,7 +758,7 @@ function mobileRows(
     const item = items[index];
     if (item.size === "L") {
       const story = storyFor(item);
-      const height = story ? mobileStoryHeight : mobileLargeHeight;
+      const height = story ? mobileStoryLeadHeight : mobileLargeHeight;
       const cells = cellsWithWidths(
         [item],
         [containerWidth],
@@ -816,7 +819,20 @@ function layoutStoryHeadlines(
       const mode = (cell.item as LayoutItem).layoutHeadlineMode;
       if (!mode) continue;
       const headlineCount = Math.max(0, story.items.length - 1);
-      if (headlineCount === 0 && mobile && !headlineHeights) continue;
+      if (mobile) {
+        // A phone Story is its Lead plus a 52px strip per shown Headline: the
+        // first one collapsed, every one expanded, then a more or less row.
+        const expanded = mode === "expanded";
+        const shown = expanded ? headlineCount : Math.min(1, headlineCount);
+        cell.headlineItemCount = shown;
+        cell.headlineRemaining = headlineCount - shown;
+        cell.headlineHeight =
+          shown * mobileStoryHeadlineHeight +
+          (expanded || shown < headlineCount ? mobileStoryMoreHeight : 0);
+        if (expanded) cell.headlineExpanded = true;
+        cell.height = (cell.height ?? row.height) + cell.headlineHeight;
+        continue;
+      }
       const heights = story.items
         .slice(1)
         .map(
@@ -829,42 +845,15 @@ function layoutStoryHeadlines(
       const baseHeight = cell.height ?? row.height;
       const leadMinimumHeight = Math.max(
         storyLeadMinimumHeight,
-        mobile && !headlineHeights
-          ? 0
-          : (leadHeights?.get(story.story_id) ?? 0),
+        leadHeights?.get(story.story_id) ?? 0,
       );
       if (mode === "collapsed") {
-        if (mobile && !headlineHeights) {
-          const availableHeight = Math.max(
-            0,
-            baseHeight - storyLeadMinimumHeight,
-          );
-          const allHeadlinesFit =
-            headlineCount * mobileStoryHeadlineHeight <= availableHeight;
-          const headlineItemCount = allHeadlinesFit
-            ? headlineCount
-            : Math.max(
-                0,
-                Math.floor(
-                  (availableHeight - mobileStoryMoreHeight) /
-                    mobileStoryHeadlineHeight,
-                ),
-              );
-          const headlineRemaining = headlineCount - headlineItemCount;
-          cell.headlineHeight =
-            headlineItemCount * mobileStoryHeadlineHeight +
-            (headlineRemaining > 0 ? mobileStoryMoreHeight : 0);
-          cell.headlineItemCount = headlineItemCount;
-          cell.headlineRemaining = headlineRemaining;
-          continue;
-        }
         // Taller related-coverage rows must retain at least one actionable
         // headline. Grow the card instead of replacing its entire footer with +1.
-        const moreHeight = mobile ? mobileStoryMoreHeight : storyMoreHeight;
         const availableHeight = Math.max(
           baseHeight - leadMinimumHeight - storyCardBorderHeight,
           headlineHeights
-            ? (heights[0] ?? 0) + (headlineCount > 1 ? moreHeight : 0)
+            ? (heights[0] ?? 0) + (headlineCount > 1 ? storyMoreHeight : 0)
             : 0,
         );
         let headlineItemCount = headlineCount;
@@ -873,34 +862,27 @@ function layoutStoryHeadlines(
           headlineItemCount = 0;
           headlineHeight = 0;
           for (const height of heights) {
-            if (headlineHeight + height + moreHeight > availableHeight) break;
+            if (headlineHeight + height + storyMoreHeight > availableHeight)
+              break;
             headlineHeight += height;
             headlineItemCount++;
           }
         }
         const headlineRemaining = headlineCount - headlineItemCount;
         cell.headlineHeight =
-          headlineHeight + (headlineRemaining > 0 ? moreHeight : 0);
+          headlineHeight + (headlineRemaining > 0 ? storyMoreHeight : 0);
         cell.headlineItemCount = headlineItemCount;
         cell.headlineRemaining = headlineRemaining;
       } else {
-        cell.headlineHeight = mobile
-          ? (headlineHeights
-              ? allHeadlineHeight
-              : headlineCount * mobileStoryHeadlineHeight) +
-            mobileStoryMoreHeight
-          : allHeadlineHeight;
+        cell.headlineHeight = allHeadlineHeight;
         cell.headlineItemCount = headlineCount;
         cell.headlineRemaining = 0;
-        if (mobile) cell.headlineExpanded = true;
       }
 
       // Desktop borders surround both the lead and the related-headline strip.
       const expandedHeight = Math.max(
         minimumCardHeight,
-        leadMinimumHeight +
-          (cell.headlineHeight ?? 0) +
-          (mobile && !headlineHeights ? 0 : storyCardBorderHeight),
+        leadMinimumHeight + (cell.headlineHeight ?? 0) + storyCardBorderHeight,
       );
       const growth = Math.max(0, expandedHeight - baseHeight);
       cell.height = baseHeight + growth;

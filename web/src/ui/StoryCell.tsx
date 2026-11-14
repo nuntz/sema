@@ -17,6 +17,7 @@ import {
 import {
   type LayoutCell,
   type LayoutRow,
+  mobileStoryCardBorderHeight,
   storyCardBorderHeight,
 } from "../layout/justified";
 import { type ReadStateContext, readVisualState } from "../layout/read-state";
@@ -75,30 +76,27 @@ export function StoryCell(props: StoryCellProps) {
   const showHeadlines = () => (props.cell.headlineHeight ?? 0) > 0;
   const cellHeight = () => props.cell.height ?? props.row.height;
   const leadHeight = () =>
-    cellHeight() - (props.cell.headlineHeight ?? 0) - storyCardBorderHeight;
+    cellHeight() -
+    (props.cell.headlineHeight ?? 0) -
+    (props.cell.mobileStoryCard
+      ? mobileStoryCardBorderHeight
+      : storyCardBorderHeight);
   const editorial = () => props.story.size === "L";
   const [copyMetrics, setCopyMetrics] = createSignal({
     height: 0,
-    mediaHeight: 0,
     summaryLineHeight: 0,
     summaryMargin: 0,
   });
+  // The Lead shows a one-line summary on desktop when it has room for one.
   const summaryLines = () => {
     const metrics = copyMetrics();
     if (props.cell.mobileStoryCard || !metrics.summaryLineHeight) return 0;
-    const available = leadHeight() - metrics.height - metrics.mediaHeight;
-    return Math.max(
-      0,
-      Math.min(
-        3,
-        Math.floor(
-          (available - metrics.summaryMargin) / metrics.summaryLineHeight,
-        ),
-      ),
-    );
+    const available = leadHeight() - metrics.height - metrics.summaryMargin;
+    return available >= metrics.summaryLineHeight ? 1 : 0;
   };
   const measureTitle = (title: HTMLHeadingElement) => {
     // Keep optional summaries out of the minimum height to avoid a layout loop.
+    // The Lead image fills whatever height the copy leaves.
     const observer = new ResizeObserver(() => {
       const copy = title.parentElement;
       const meta = copy?.querySelector<HTMLElement>(".story-meta");
@@ -113,18 +111,12 @@ export function StoryCell(props: StoryCellProps) {
         Number.parseFloat(getComputedStyle(meta).marginTop);
       const summary = copy.querySelector("p");
       const summaryStyle = summary ? getComputedStyle(summary) : undefined;
-      const media = copy.parentElement?.querySelector(".story-media-action");
-      const mediaStyle = media ? getComputedStyle(media) : undefined;
       setCopyMetrics({
         height,
-        mediaHeight: Number.parseFloat(mediaStyle?.maxHeight ?? "0"),
         summaryLineHeight: Number.parseFloat(summaryStyle?.lineHeight ?? "0"),
         summaryMargin: Number.parseFloat(summaryStyle?.marginTop ?? "0"),
       });
-      props.onLeadHeight(
-        props.story.story_id,
-        Math.ceil(height + Number.parseFloat(mediaStyle?.minHeight ?? "0")),
-      );
+      props.onLeadHeight(props.story.story_id, Math.ceil(height));
     });
     observer.observe(title);
     onCleanup(() => observer.disconnect());
@@ -368,7 +360,11 @@ export function StoryCell(props: StoryCellProps) {
                   </Show>
                   <Show
                     when={expiring()}
-                    fallback={<span>{relativeTime(item.published_ts)}</span>}
+                    fallback={
+                      <span class="story-age">
+                        {relativeTime(item.published_ts)}
+                      </span>
+                    }
                   >
                     <div class="cell-corner-meta has-expiry">
                       <span class="cell-rank">
@@ -417,7 +413,7 @@ export function StoryCell(props: StoryCellProps) {
                       title={item.feed_title}
                       size={16}
                     />
-                    <span>{gridSourceName(item)}</span>
+                    <span class="story-feed">{gridSourceName(item)}</span>
                     <small>· {relativeTime(item.published_ts)}</small>
                     <Show when={item.read}>
                       <span class="refined-read-label">
@@ -493,6 +489,7 @@ export function StoryCell(props: StoryCellProps) {
                   onOpen={() => props.onOpen(item)}
                   onExternalOpen={props.onExternalOpen}
                 >
+                  <UnreadDot visible={readVisuals().unreadDot} />
                   <RelatedCoverage
                     lead={lead()}
                     item={item}

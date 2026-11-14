@@ -1034,72 +1034,79 @@ describe("phone Story rows", () => {
       ),
     ],
   });
+  // What Grid passes: measured desktop copy and related-coverage heights.
+  const measured = (story: Story) => ({
+    storyLeadHeights: new Map([[story.story_id, 270]]),
+    storyHeadlineHeights: new Map(
+      story.items
+        .slice(1)
+        .map((item, index) => [item.item_id, index === 0 ? 44 : 72] as const),
+    ),
+  });
 
-  it("reserves measured mobile copy plus an actionable related row", () => {
-    const story = largeStory("refined", 3);
-    const options = {
-      storyLeadHeights: new Map([[story.story_id, 270]]),
-      storyHeadlineHeights: new Map(
-        story.items
-          .slice(1)
-          .map((item, index) => [item.item_id, index === 0 ? 56 : 84]),
-      ),
-    };
-    const [collapsed, tail] = justify(
-      [{ kind: "story", story }, item("tail", "M")],
-      296,
-      false,
-      options,
-    );
-    expect(collapsed.cells[0].headlineItemCount).toBe(1);
-    expect(collapsed.cells[0].headlineHeight).toBe(100);
-    expect(collapsed.height).toBe(373);
-    expect(tail.top).toBe(collapsed.height + collapsed.gap);
-    const [expanded] = justify([{ kind: "story", story }], 296, false, {
-      ...options,
-      expandedStoryIDs: new Set([story.story_id]),
+  for (const width of phoneWidths) {
+    describe(`at ${width}px`, () => {
+      it("is a full-width 200px Lead plus one 52px Headline strip", () => {
+        const story = largeStory("pair", 1);
+        const [row, tail] = justify(
+          [{ kind: "story", story }, item("tail", "M"), item("next", "S")],
+          width,
+          false,
+          measured(story),
+        );
+        const [cell] = row.cells;
+
+        expect(row.cells).toHaveLength(1);
+        expect(cell.left).toBe(0);
+        expect(cell.width).toBe(width);
+        expect(row.height).toBe(200 + 52);
+        expect(cell.height ?? row.height).toBe(252);
+        expect(cell.headlineItemCount).toBe(1);
+        expect(cell.headlineRemaining).toBe(0);
+        expect(cell.headlineHeight).toBe(52);
+        expect(tail.top).toBe(252 + 8);
+      });
+
+      it("shows the first Headline and a 44px more row when more remain", () => {
+        const story = largeStory("more", 3);
+        const [row] = justify(
+          [{ kind: "story", story }],
+          width,
+          false,
+          measured(story),
+        );
+        const [cell] = row.cells;
+
+        expect(row.height).toBe(200 + 52 + 44);
+        expect(cell.headlineItemCount).toBe(1);
+        expect(cell.headlineRemaining).toBe(2);
+        expect(cell.headlineHeight).toBe(52 + 44);
+        expect((cell.height ?? row.height) - (cell.headlineHeight ?? 0)).toBe(
+          200,
+        );
+      });
+
+      it("lists every Headline in 52px strips and a 44px show-less row when expanded", () => {
+        const story = largeStory("open", 3);
+        const [row] = justify([{ kind: "story", story }], width, false, {
+          ...measured(story),
+          expandedStoryIDs: new Set(["open"]),
+        });
+        const [cell] = row.cells;
+
+        expect(row.height).toBe(200 + 3 * 52 + 44);
+        expect(cell.height).toBe(400);
+        expect(cell.headlineItemCount).toBe(3);
+        expect(cell.headlineRemaining).toBe(0);
+        expect(cell.headlineExpanded).toBe(true);
+        expect(cell.headlineHeight).toBe(3 * 52 + 44);
+      });
     });
-    expect(expanded.cells[0].headlineItemCount).toBe(3);
-    expect(expanded.cells[0].headlineHeight).toBe(268);
-    expect(expanded.height).toBe(541);
-  });
+  }
 
-  it("budgets 52px headlines and one 44px more row in a lead card", () => {
-    const [row] = justify(
-      [{ kind: "story", story: largeStory("lead", 3) }],
-      369,
-    );
-    const [cell] = row.cells;
-
-    expect(row.kind).toBe("tall");
-    expect(row.height).toBe(246);
-    expect(cell.mobileStoryCard).toBe(true);
-    expect(cell.headlineItemCount).toBe(1);
-    expect(cell.headlineRemaining).toBe(2);
-    expect(cell.headlineHeight).toBe(
-      mobileStoryHeadlineHeight + mobileStoryMoreHeight,
-    );
-    expect((cell.height ?? row.height) - (cell.headlineHeight ?? 0)).toBe(150);
-  });
-
-  it("lists every headline and includes a 44px show-less row when expanded", () => {
-    const [row] = justify(
-      [{ kind: "story", story: largeStory("lead", 3) }],
-      369,
-      false,
-      { expandedStoryIDs: new Set(["lead"]) },
-    );
-    const [cell] = row.cells;
-
-    expect(row.height).toBe(320);
-    expect(cell.height).toBe(320);
-    expect(cell.headlineItemCount).toBe(3);
-    expect(cell.headlineRemaining).toBe(0);
-    expect(cell.headlineExpanded).toBe(true);
-    expect(cell.headlineHeight).toBe(
-      3 * mobileStoryHeadlineHeight + mobileStoryMoreHeight,
-    );
-    expect((cell.height ?? row.height) - (cell.headlineHeight ?? 0)).toBe(120);
+  it("budgets the strips Cursor navigation assumes", () => {
+    expect(mobileStoryHeadlineHeight).toBe(52);
+    expect(mobileStoryMoreHeight).toBe(44);
   });
 });
 

@@ -231,6 +231,165 @@ function singleImageCellProblems(grid: Element): string[] {
   return problems;
 }
 
+// Lists how Story cells with a lead image depart from the image-cell anatomy:
+// the image fills the Lead, the title and feed name sit on it, the Source count
+// is at the top left, the age and unread dot are at the top right, and any
+// Headline strip starts where the image ends. `unread` holds the Story IDs
+// whose Lead should show an unread dot.
+function storyCellProblems(grid: Element, unread: string[]): string[] {
+  const problems: string[] = [];
+  const visible = (element: Element | null | undefined) => {
+    const r = element?.getBoundingClientRect();
+    return r && r.width > 0 && r.height > 0 ? r : undefined;
+  };
+  for (const cell of grid.querySelectorAll<HTMLElement>(
+    ".grid-cell[data-story-id]",
+  )) {
+    const id = cell.dataset.storyId ?? "";
+    const img = cell.querySelector(".story-media img, :scope > img");
+    if (!img) continue;
+    const shell = cell.querySelector(".story-lead-shell");
+    const box = cell.getBoundingClientRect();
+    const lead = shell
+      ? shell.getBoundingClientRect()
+      : new DOMRect(
+          box.left + cell.clientLeft,
+          box.top + cell.clientTop,
+          cell.clientWidth,
+          cell.clientHeight,
+        );
+    const media = img.getBoundingClientRect();
+    if (
+      Math.abs(media.top - lead.top) > 1 ||
+      Math.abs(media.left - lead.left) > 1 ||
+      Math.abs(media.right - lead.right) > 1 ||
+      Math.abs(media.bottom - lead.bottom) > 1
+    )
+      problems.push(`${id}: image does not cover the Lead`);
+    const onImage = (element: Element | null, what: string) => {
+      const r = visible(element);
+      if (!r) return problems.push(`${id}: no ${what}`);
+      if (
+        r.top < media.top - 1 ||
+        r.bottom > media.bottom + 1 ||
+        r.left < media.left - 1 ||
+        r.right > media.right + 1
+      )
+        problems.push(`${id}: ${what} is not inside the image`);
+    };
+    const title = cell.querySelector(".story-lead h2, .cell-copy h2");
+    const meta = cell.querySelector<HTMLElement>(".story-meta, .cell-meta");
+    const feed = meta?.querySelector<HTMLElement>(
+      ".story-feed, .cell-feed-filter",
+    );
+    onImage(title, "title");
+    onImage(meta, "feed line");
+    const summary = cell.querySelector(".story-lead p, .cell-copy p");
+    if (visible(summary)) onImage(summary, "summary");
+    const t = visible(title);
+    const m = visible(meta);
+    if (t && m && m.top < t.bottom)
+      problems.push(`${id}: feed line is not under the title`);
+    if (!meta || !feed || meta.innerText.trim() !== feed.innerText.trim())
+      problems.push(`${id}: feed line reads "${meta?.innerText.trim()}"`);
+    const badge = visible(
+      cell.querySelector('[role="img"][aria-label$=" sources"]'),
+    );
+    if (!badge || badge.top - lead.top > 14 || badge.left - lead.left > 14)
+      problems.push(`${id}: Source count is not at the top left`);
+    const corner = cell.querySelector(".cell-corner");
+    const c = visible(corner);
+    if (!c || c.top - lead.top > 14 || lead.right - c.right > 60)
+      problems.push(`${id}: corner is not at the top right`);
+    // A Story has no rank to swap in, so its age stays under the Cursor too.
+    const ageLabel = corner?.querySelector(
+      ".cell-age, .story-age, .expiry-pill",
+    );
+    const age = visible(ageLabel);
+    if (!age || !ageLabel || getComputedStyle(ageLabel).opacity === "0")
+      problems.push(`${id}: corner shows no age`);
+    for (const r of [
+      age,
+      badge,
+      visible(cell.querySelector(".peek-pill > span")),
+    ])
+      if (
+        t &&
+        r &&
+        t.top < r.bottom &&
+        r.top < t.bottom &&
+        t.left < r.right &&
+        r.left < t.right
+      )
+        problems.push(`${id}: title runs into the top of the Lead`);
+    const headlines = cell.querySelector(".story-headlines");
+    const dots = [...cell.querySelectorAll(".unread-dot")].filter(
+      (dot) => visible(dot) && !headlines?.contains(dot),
+    );
+    if (unread.includes(id)) {
+      if (!(dots.length === 1 && corner?.contains(dots[0])))
+        problems.push(`${id}: unread dot is not in the corner`);
+      const d = dots[0]?.getBoundingClientRect();
+      if (d && age && Math.max(d.left - age.right, age.left - d.right) > 10)
+        problems.push(`${id}: unread dot is not beside the age`);
+    } else if (dots.length > 0)
+      problems.push(`${id}: read Lead shows an unread dot`);
+    const strip = visible(headlines);
+    if (strip && Math.abs(strip.top - media.bottom) > 1)
+      problems.push(`${id}: blank band between the Lead and its Headlines`);
+  }
+  return problems;
+}
+
+// Lists how a phone Story's Headline strips depart from one 52px full-width
+// tap target each, with the unread dot, feed name and age over a title that
+// stays on one line. `unread` holds the Member IDs that should show a dot.
+function phoneHeadlineStripProblems(grid: Element, unread: string[]): string[] {
+  const problems: string[] = [];
+  for (const strip of grid.querySelectorAll<HTMLElement>(
+    "[data-story-id] .story-headline",
+  )) {
+    const id = strip.dataset.focusId ?? "";
+    const cell = strip.closest<HTMLElement>(".grid-cell");
+    if (!cell) continue;
+    const r = strip.getBoundingClientRect();
+    if (Math.abs(r.height - 52) > 0.5)
+      problems.push(`${id}: strip is ${r.height}px tall`);
+    if (Math.abs(r.width - cell.clientWidth) > 1)
+      problems.push(`${id}: strip is not the full cell width`);
+    const source = strip.querySelector<HTMLElement>(".story-related-source");
+    const s = source?.getBoundingClientRect();
+    if (!source || !s || s.width === 0)
+      problems.push(`${id}: strip shows no feed name and age`);
+    else if (!/ · \d+[mhd]$/.test(source.innerText.trim()))
+      problems.push(`${id}: strip source reads "${source.innerText}"`);
+    const title = strip.querySelector<HTMLElement>(".story-related-title");
+    if (title) {
+      const style = getComputedStyle(title);
+      if (
+        title.getBoundingClientRect().height >
+          Number.parseFloat(style.lineHeight) + 1 ||
+        style.whiteSpace !== "nowrap" ||
+        style.textOverflow !== "ellipsis"
+      )
+        problems.push(`${id}: title is not one ellipsed line`);
+    }
+    for (const part of [source, title]) {
+      const p = part?.getBoundingClientRect();
+      if (p && p.width > 0 && (p.top < r.top - 1 || p.bottom > r.bottom + 1))
+        problems.push(`${id}: copy overflows the strip`);
+    }
+    const dots = [...strip.querySelectorAll(".unread-dot")].filter(
+      (dot) => dot.getBoundingClientRect().width > 0,
+    );
+    if (unread.includes(id) !== (dots.length === 1))
+      problems.push(
+        `${id}: ${dots.length} unread dots for a${unread.includes(id) ? "n unread" : " read"} Member`,
+      );
+  }
+  return problems;
+}
+
 // Contrast between a cell's title colour and the brightest scrim pixel beside
 // its first line, measured from a screenshot of the painted cell.
 async function titleContrast(page: Page, cellSelector: string) {
@@ -472,8 +631,8 @@ test.describe("mobile front-page Size grammar", () => {
     expect(
       await collapsedHeadlines
         .first()
-        .evaluate((element) => element.clientHeight),
-    ).toBeGreaterThanOrEqual(44);
+        .evaluate((element) => element.getBoundingClientRect().height),
+    ).toBe(52);
     await leadCard.screenshot({
       path: "/tmp/sema-mobile-lead-collapsed.png",
     });
@@ -540,6 +699,98 @@ test.describe("mobile front-page Size grammar", () => {
       "Release date analysis",
     );
   });
+
+  for (const theme of ["light", "dark"] as const) {
+    test(`a Headline strip opens its Member and Lead actions stay on the Lead in ${theme}`, async ({
+      page,
+    }) => {
+      const members = [
+        ["strip-lead", "lead", "A Story Lead over its photo", 0.99, "L"],
+        ["strip-one", "one", "The first Member's own angle", 0.9, "S"],
+        ["strip-two", "two", "The second Member's own angle", 0.8, "S"],
+      ] as const;
+      const story = {
+        story_id: "strip-story",
+        source_count: 3,
+        order_key: 0.99,
+        size: "L",
+        items: members.map((member) => ({
+          ...item(...member),
+          story_id: "strip-story",
+        })),
+      };
+      const readBatches: Array<{ ids: string[]; read: boolean }> = [];
+      const signals: Array<{ itemID: string; value: number }> = [];
+      await page.addInitScript(
+        (theme) => localStorage.setItem("sema:theme", theme),
+        theme,
+      );
+      await stubFrontPage(
+        page,
+        [story],
+        [item("strip-tail", "tail", "A medium Item", 0.5, "M")],
+        readBatches,
+        signals,
+      );
+      await page.goto("/");
+      await page.locator(".filter-button").tap();
+      await page
+        .getByRole("switch", { name: "Unread only", exact: true })
+        .uncheck();
+      await page.getByRole("button", { name: "Close filter" }).tap();
+
+      const grid = page.locator(".grid-scroll");
+      const cell = page.locator('[data-story-id="strip-story"]');
+      await expect(cell.locator(".story-headline")).toHaveCount(1);
+      await expect
+        .poll(() => grid.evaluate(storyCellProblems, ["strip-story"]))
+        .toEqual([]);
+      await expect
+        .poll(() => grid.evaluate(phoneHeadlineStripProblems, ["strip-one"]))
+        .toEqual([]);
+      const strip = cell.locator(".story-headline");
+      await expect(strip).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      await expect(cell.locator(".story-headlines")).toHaveCSS(
+        "background-color",
+        theme === "light" ? "rgb(255, 255, 255)" : "rgb(23, 24, 26)",
+      );
+      await expect(strip.locator(".story-related-title")).toHaveCSS(
+        "color",
+        theme === "light" ? "rgb(61, 67, 75)" : "rgb(199, 204, 211)",
+      );
+      await expect(strip.locator(".unread-dot")).toHaveCSS(
+        "box-shadow",
+        theme === "light" ? "rgb(20, 22, 26) 0px 0px 0px 1.5px" : "none",
+      );
+      await expect(strip).toHaveAccessibleName(
+        "Open The first Member's own angle",
+      );
+      await cell.screenshot({ path: `/tmp/sema-mobile-strip-${theme}.png` });
+
+      // Bury acts on the Lead only; Mark read reaches every Member.
+      await cell.locator(".story-lead").focus();
+      await page.keyboard.press("Shift+F10");
+      const sheet = page.getByRole("dialog", {
+        name: "Actions for A Story Lead over its photo",
+      });
+      await sheet.getByRole("button", { name: "Bury" }).tap();
+      await expect
+        .poll(() => signals)
+        .toEqual([{ itemID: "strip-lead", value: -1 }]);
+      await cell.locator(".story-lead").focus();
+      await page.keyboard.press("Shift+F10");
+      await sheet.getByRole("button", { name: "Mark read" }).tap();
+      await expect
+        .poll(() => readBatches.at(-1)?.ids)
+        .toEqual(["strip-lead", "strip-one", "strip-two"]);
+
+      await strip.tap();
+      await expect(page.locator(".reader-scroll")).toBeVisible();
+      await expect(page.locator(".article h1")).toHaveText(
+        "The first Member's own angle",
+      );
+    });
+  }
 });
 
 test("holds below-floor stories until page 2 without moving painted cells", async ({
@@ -680,6 +931,9 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
   await expect(storyCell.locator(".story-badges")).toHaveCount(0);
   await expect(storyCell.locator(".cell-rank")).toHaveCount(0);
   await expect(storyCell.locator(".story-headlines")).toHaveCount(0);
+  await expect
+    .poll(() => page.locator(".grid-scroll").evaluate(storyCellProblems, []))
+    .toEqual([]);
   await page.screenshot({ path: "/tmp/sema-medium-story.png" });
 
   await storyCell.hover();
@@ -767,7 +1021,8 @@ test("editorial story actions match singleton hover behavior and light colors", 
     .locator(".cell-actions");
   const storyBadges = storyCell.locator(".story-badges");
 
-  await expect(storyBadges).toBeHidden();
+  // The Source count holds the top left until the actions take its place.
+  await expect(storyBadges).toHaveCSS("opacity", "1");
   await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "0");
   await expect(storyActions.locator("button.more")).toHaveCSS(
     "pointer-events",
@@ -790,7 +1045,7 @@ test("editorial story actions match singleton hover behavior and light colors", 
   );
 
   await storyCell.hover();
-  await expect(storyBadges).toBeHidden();
+  await expect(storyBadges).toHaveCSS("opacity", "0");
   await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "1");
   await expect(storyActions.locator("button.more")).toHaveCSS(
     "pointer-events",
@@ -826,10 +1081,10 @@ test("editorial story actions match singleton hover behavior and light colors", 
 
   await page.locator(".app-header a").first().focus();
   await page.locator(".app-header").hover();
-  await expect(storyBadges).toBeHidden();
+  await expect(storyBadges).toHaveCSS("opacity", "1");
   await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "0");
   await storyActions.getByRole("button", { name: "More actions" }).focus();
-  await expect(storyBadges).toBeHidden();
+  await expect(storyBadges).toHaveCSS("opacity", "0");
   await expect(storyActions.locator("button.more")).toHaveCSS("opacity", "1");
   await expect(storyActions.locator("button.more")).toHaveCSS(
     "pointer-events",
@@ -1214,7 +1469,7 @@ test("dark story read visuals follow the grid's All and Unread contexts", async 
   const storyCell = page.locator('[data-story-id="read-story"]');
   const leadTitle = storyCell.locator(".story-lead h2");
   const headlines = storyCell.locator(".story-headline");
-  await storyCell.getByRole("button", { name: /\+\d+ more/ }).click();
+  // The Lead's copy over its photo leaves room for both Headlines.
   await expect(headlines).toHaveCount(2);
   await expect(storyCell).not.toHaveClass(/\bread\b/);
   await expect(leadTitle).not.toHaveClass(/\bread\b/);
@@ -1475,14 +1730,18 @@ test("Direction A keeps light stories readable and related coverage actionable",
   const first = page.locator('[data-story-id="light-0"]');
   const related = first.locator(".story-headline");
   await expect(grid).toHaveClass(/refined-grid/);
-  await expect(first.locator(".story-meta .unread-dot")).toBeVisible();
-  await expect(
-    page.locator('[data-story-id="light-1"] .story-meta .unread-dot'),
-  ).toHaveCount(0);
+  const unreadLeads = titles
+    .map((_, index) => `light-${index}`)
+    .filter((id) => id !== "light-1");
+  await expect
+    .poll(() => grid.evaluate(storyCellProblems, unreadLeads))
+    .toEqual([]);
   await expect(first).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await expect(first.locator(".story-badges")).toBeHidden();
-  await expect(first.locator(".story-corner")).toBeHidden();
-  await expect(first.locator(".story-meta")).toContainText("Hacker News");
+  await expect(first.locator(".story-headlines")).toHaveCSS(
+    "background-color",
+    "rgb(255, 255, 255)",
+  );
+  await expect(first.locator(".story-feed")).toHaveText("Hacker News");
   await expect(related).toHaveText(/Also covered by The Register/);
   await expect(related).toHaveAccessibleName(`Open ${titles[0]}`);
   await expect(
@@ -1496,7 +1755,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
   await expect(readStory).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await expect(readStory.locator(".story-lead h2")).toHaveCSS(
     "color",
-    "rgb(20, 22, 26)",
+    "rgb(244, 242, 238)",
   );
   await expect(readStory.locator(".story-media")).toHaveCSS("filter", "none");
   await expect(
@@ -1525,10 +1784,9 @@ test("Direction A keeps light stories readable and related coverage actionable",
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBeLessThanOrEqual(width);
     if (width >= 768) {
-      await expect(first.locator(".story-media-action")).toHaveCSS(
-        "height",
-        "126px",
-      );
+      await expect
+        .poll(() => grid.evaluate(storyCellProblems, unreadLeads))
+        .toEqual([]);
       await expect(first.locator(".story-headline")).toBeVisible();
     } else {
       await expect(grid).toHaveClass(/mobile-refined-grid/);
@@ -1540,7 +1798,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
   await expect(readStory).toHaveCSS("background-color", "rgb(247, 245, 241)");
   await expect(readStory.locator(".story-lead h2")).toHaveCSS(
     "color",
-    "rgb(92, 97, 105)",
+    "rgb(199, 204, 211)",
   );
   await expect(readStory.locator(".story-media")).toHaveCSS(
     "filter",
@@ -1548,22 +1806,26 @@ test("Direction A keeps light stories readable and related coverage actionable",
   );
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(grid).toHaveClass(/refined-grid/);
-  await expect(first.locator(".story-badges")).toBeHidden();
+  await expect(first.locator(".story-badges")).toBeVisible();
   await expect(first).toHaveCSS("background-color", "rgb(23, 24, 26)");
   await expect(first.locator(".story-headlines")).toHaveCSS(
     "background-color",
-    "rgb(16, 17, 19)",
+    "rgb(23, 24, 26)",
   );
   await expect(readStory).toHaveCSS("background-color", "rgb(16, 17, 19)");
   await expect(readStory.locator(".story-headlines")).toHaveCSS(
     "background-color",
-    "rgb(11, 12, 14)",
+    "rgb(16, 17, 19)",
   );
   await page.emulateMedia({ colorScheme: "light" });
   await expect(first).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await expect(first.locator(".story-headlines")).toHaveCSS(
     "background-color",
-    "rgb(250, 249, 245)",
+    "rgb(255, 255, 255)",
+  );
+  await expect(readStory.locator(".story-headlines")).toHaveCSS(
+    "background-color",
+    "rgb(247, 245, 241)",
   );
 });
 
@@ -2448,26 +2710,22 @@ for (const preference of ["dark", "system"] as const) {
       "filter",
       "none",
     );
-    await expect(card.locator(".story-badges")).toBeHidden();
-    await expect(card.locator(".story-corner")).toBeHidden();
+    await expect
+      .poll(() => grid.evaluate(storyCellProblems, ["dark-story"]))
+      .toEqual([]);
     await expect(card.locator(".story-headlines")).toHaveCSS(
       "background-color",
-      "rgb(16, 17, 19)",
+      "rgb(23, 24, 26)",
     );
-    await expect(
-      card
-        .locator(".story-meta > span:not(.source-badge):not(.unread-dot)")
-        .first(),
-    ).toHaveCSS("color", "rgb(168, 174, 182)");
-    await expect(card.locator(".story-meta .unread-dot")).toHaveCSS(
-      "box-shadow",
-      "none",
+    await expect(card.locator(".story-feed")).toHaveCSS(
+      "color",
+      "rgb(199, 204, 211)",
     );
-    await expect(card.locator(".story-meta .unread-dot")).toHaveCSS(
+    await expect(card.locator(".cell-corner .unread-dot")).toHaveCSS(
       "background-color",
       "rgb(214, 242, 75)",
     );
-    await expect(readCard.locator(".story-meta .unread-dot")).toHaveCount(0);
+    await expect(readCard.locator(".unread-dot")).toHaveCount(0);
     await expect(card.locator(".story-headline").first()).toContainText(
       "Also covered by The Register",
     );
@@ -2491,10 +2749,9 @@ for (const preference of ["dark", "system"] as const) {
     });
     for (const width of [1024, 768]) {
       await page.setViewportSize({ width, height: 1071 });
-      await expect(card.locator(".story-media-action")).toHaveCSS(
-        "height",
-        "126px",
-      );
+      await expect
+        .poll(() => grid.evaluate(storyCellProblems, ["dark-story"]))
+        .toEqual([]);
       await expect
         .poll(() =>
           singleton
@@ -2509,11 +2766,11 @@ for (const preference of ["dark", "system"] as const) {
     await expect(readCard).toHaveCSS("background-color", "rgb(16, 17, 19)");
     await expect(readCard.locator(".story-headlines")).toHaveCSS(
       "background-color",
-      "rgb(11, 12, 14)",
+      "rgb(16, 17, 19)",
     );
     await expect(readCard.locator(".story-lead h2")).toHaveCSS(
       "color",
-      "rgb(168, 174, 182)",
+      "rgb(199, 204, 211)",
     );
     await expect(readCard.locator(".story-media")).toHaveCSS(
       "filter",
@@ -2679,9 +2936,14 @@ test.describe("mobile shared grid design", () => {
           "Also covered by The Register · 1d",
         );
         await expect(card.locator(".story-meta")).toContainText("Hacker News");
+        // The strip sits on the raised page surface; the Lead stays media.
         await expect(card.locator(".story-headlines")).toHaveCSS(
           "background-color",
-          theme === "light" ? "rgb(250, 249, 245)" : "rgb(16, 17, 19)",
+          theme === "light" ? "rgb(255, 255, 255)" : "rgb(23, 24, 26)",
+        );
+        await expect(card.locator(".story-related-source")).toHaveCSS(
+          "color",
+          theme === "light" ? "rgb(92, 97, 105)" : "rgb(168, 174, 182)",
         );
         await expect(readCard).toHaveClass(/is-read/);
         await expect(readCard.locator(".story-media")).toHaveCSS(
@@ -2711,25 +2973,6 @@ test.describe("mobile shared grid design", () => {
                       `${card.dataset.itemId}: ${copy.className || copy.tagName}`,
                     );
                 }
-                // Story cells still stack their copy under the image.
-                const img = card.dataset.storyId
-                  ? card.querySelector<HTMLElement>(":scope > img")
-                  : null;
-                const title = card.querySelector(".cell-copy h2");
-                if (
-                  img &&
-                  title &&
-                  img.getBoundingClientRect().bottom >
-                    title.getBoundingClientRect().top
-                )
-                  problems.push("image overlaps title");
-                if (
-                  img &&
-                  !card.classList.contains("size-s") &&
-                  !card.classList.contains("size-m") &&
-                  img.getBoundingClientRect().height < 48
-                )
-                  problems.push("image too short");
               }
               return problems;
             }),
@@ -2738,6 +2981,17 @@ test.describe("mobile shared grid design", () => {
         await expect
           .poll(() => grid.evaluate(singleImageCellProblems))
           .toEqual([]);
+        // Unread only shows no dots; the Story is a 200px Lead plus a strip.
+        await expect
+          .poll(() => grid.evaluate(storyCellProblems, []))
+          .toEqual([]);
+        await expect
+          .poll(() => grid.evaluate(phoneHeadlineStripProblems, []))
+          .toEqual([]);
+        const cardBox = await card.boundingBox();
+        const firstStrip = await card.locator(".story-headline").boundingBox();
+        expect(cardBox?.height).toBeCloseTo(200 + 52 + 44, 0);
+        expect((firstStrip?.y ?? 0) - (cardBox?.y ?? 0)).toBeCloseTo(199, 0);
         await card.getByRole("button", { name: "+1 more" }).tap();
         await expect(card.locator(".story-related-title")).toHaveText(
           "What the new repairability rules mean for consumers and the devices they own",
@@ -2777,8 +3031,16 @@ test.describe("mobile shared grid design", () => {
         );
         await expect(readCard.locator("h2")).toHaveCSS(
           "color",
-          theme === "light" ? "rgb(20, 22, 26)" : "rgb(244, 242, 238)",
+          "rgb(244, 242, 238)",
         );
+        await expect
+          .poll(() => grid.evaluate(storyCellProblems, ["phone-story"]))
+          .toEqual([]);
+        await expect
+          .poll(() =>
+            grid.evaluate(phoneHeadlineStripProblems, ["phone-duplicate"]),
+          )
+          .toEqual([]);
         await expect(single.locator(".cell-corner .unread-dot")).toBeVisible();
         await expect(single.locator(".cell-corner .cell-age")).toHaveText("1d");
         await expect(readCard.locator(".unread-dot")).toHaveCount(0);
@@ -2872,6 +3134,21 @@ test.describe("text-only cells", () => {
       summary: "One line.",
     }),
   ];
+  // An M Story whose Lead has no photo is a text-only cell under its Source count.
+  const story = {
+    story_id: "text-story",
+    source_count: 2,
+    order_key: 0.75,
+    size: "M",
+    items: [
+      textOnly("text-story-lead", "A Story Lead without a photo", 0.75, "M", {
+        story_id: "text-story",
+      }),
+      textOnly("text-story-member", "Another Source on it", 0.74, "S", {
+        story_id: "text-story",
+      }),
+    ],
+  };
 
   for (const theme of ["light", "dark"] as const) {
     for (const width of [320, 393, 430, 1440]) {
@@ -2883,7 +3160,7 @@ test.describe("text-only cells", () => {
           (theme) => localStorage.setItem("sema:theme", theme),
           theme,
         );
-        await stubFrontPage(page, [], items, []);
+        await stubFrontPage(page, [story], items, []);
         await page.goto("/");
         await expect(page.locator(".grid-cell").first()).toBeVisible();
         if (width < 700) {
@@ -2897,7 +3174,7 @@ test.describe("text-only cells", () => {
             .getByRole("switch", { name: "Unread", exact: true })
             .uncheck();
         }
-        await expect(page.locator(".grid-cell")).toHaveCount(items.length);
+        await expect(page.locator(".grid-cell")).toHaveCount(items.length + 1);
         await page.evaluate(() => document.fonts.ready);
 
         const read = page.locator('[data-item-id="text-read"]');
@@ -2944,7 +3221,11 @@ test.describe("text-only cells", () => {
                   r.bottom <= box.bottom + 1 &&
                   r.left >= box.left - 1 &&
                   r.right <= box.right + 1;
-                if (title.top - box.top > 16)
+                const badge = cell
+                  .querySelector('[role="img"][aria-label$=" sources"]')
+                  ?.getBoundingClientRect();
+                const top = badge?.bottom ?? box.top;
+                if (title.top - top > 16 || title.top < top)
                   problems.push(`${id}: title not at top`);
                 if (box.bottom - metaBox.bottom > 16)
                   problems.push(`${id}: bottom line not at bottom`);
