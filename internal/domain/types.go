@@ -369,11 +369,16 @@ type FeedCandidate struct {
 	NewestItemTS string `json:"newest_item_ts,omitempty"`
 }
 
-func UserPK(user string) string       { return "U#" + user }
-func FeedSK(id string) string         { return "F#" + id }
-func SignalSK(id string) string       { return "S#" + id }
-func BehaviourSK(id string) string    { return "B#" + id }
-func ReadSK(id string) string         { return "R#" + id }
+func UserPK(user string) string    { return "U#" + user }
+func FeedSK(id string) string      { return "F#" + id }
+func SignalSK(id string) string    { return "S#" + id }
+func BehaviourSK(id string) string { return "B#" + id }
+func ReadSK(id string) string      { return "R#" + id }
+
+// ItemIdentitySK keys an Item's identity row, which points at the row holding
+// the Item. Its expiry means the Item is live; with no expiry it points a Kept
+// Item at its Archive row. Remembering that an Item was ever ingested is the
+// known marker's job, not this row's (ADR 0008).
 func ItemIdentitySK(id string) string { return "D#" + id }
 
 // ItemKnownSK keys the marker that remembers an Item forever, so a Republish
