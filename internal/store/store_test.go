@@ -2466,3 +2466,27 @@ func TestReplayOverwriteWritesTheLeadImageOriginURL(t *testing.T) {
 		t.Fatalf("update = %s, values %#v", aws.ToString(update.UpdateExpression), update.ExpressionAttributeValues)
 	}
 }
+
+func TestFeedLoadsAreStronglyConsistent(t *testing.T) {
+	db := &fakeDynamoDB{
+		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("FeedVersion read eventually consistent")
+			}
+			return &dynamodb.GetItemOutput{}, nil
+		},
+		query: func(input *dynamodb.QueryInput) (*dynamodb.QueryOutput, error) {
+			if !aws.ToBool(input.ConsistentRead) {
+				t.Fatal("Feeds read eventually consistent")
+			}
+			return &dynamodb.QueryOutput{}, nil
+		},
+	}
+	repository := New(db, nil, "table", "", "")
+	if version, err := repository.FeedVersion(context.Background(), "user"); err != nil || version != 0 {
+		t.Fatalf("missing row: version = %d, err = %v", version, err)
+	}
+	if _, err := repository.Feeds(context.Background(), "user"); err != nil {
+		t.Fatal(err)
+	}
+}

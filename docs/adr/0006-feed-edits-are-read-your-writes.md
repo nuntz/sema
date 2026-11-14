@@ -15,7 +15,7 @@ Only the API's Feed writes bump the version: add, edit, retry, OPML import and d
 ## Consequences
 
 - The API writes Feeds only through store calls that bump the version and return it (`SaveFeeds`, `DeleteFeed`). `PutFeed`, which doesn't bump, is left to the worker and backfills, so a new API handler can't forget the bump.
-- A request bumps once after its Feed writes commit, including an import that failed partway. A bump that fails after the write committed fails the request, and the client's retry is idempotent.
+- A request bumps once after its Feed writes, including an import or delete that failed, because a failed write may have committed (ADR 0007's rule, held for every version in `change` in `internal/store/version.go`). A bump that fails fails the request, and the client's retry is idempotent.
 - `store.Feeds` always reads strongly consistent, so a reload after a bump can't return the old list.
 - Each request that needs Feeds costs one small strongly consistent GetItem, next to the `READ_VERSION` read on paths that need both.
 - While old and new code overlap during a deploy, Feed writes on old instances don't bump the version, so new instances can serve Feeds up to a minute old. This ends once all instances run the new code. A missing row reads as 0, so no backfill is needed.

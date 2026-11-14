@@ -12,7 +12,7 @@ The Story cache key carries three per-user versions: `FEED_VERSION` (ADR 0006), 
 
 Every Story list renders from the request's Read snapshot, whether unread only is on or off. The snapshot comes from the Read marker cache, labelled with the `READ_VERSION` read before its markers, and that version goes into the key. The list items request passes in its own snapshot, so its list and the Story Members it hides agree. Stories never resolve Read state from `R#` rows directly: that read is eventually consistent and could be older than the version in the key.
 
-`FEEDBACK_VERSION` counts Boost, Bury, Keep and Unkeep. `SetSignal` and `SetHeart` bump it once after any call that attempted a write, including one that failed after attempting it, because it may have committed partway. A call rejected or failed before writing doesn't bump. A bump that fails after the write committed fails the request, as in ADR 0005.
+`FEEDBACK_VERSION` counts Boost, Bury, Keep and Unkeep. `SetSignal` and `SetHeart` bump it once after any call that attempted a write, including one that failed after attempting it, because it may have committed partway. A call rejected or failed before writing doesn't bump. A bump that fails fails the request, as in ADR 0005. `change` in `internal/store/version.go` holds this rule for all three versions.
 
 ## Consequences
 

@@ -6,13 +6,13 @@ Each API instance caches a user's `R#` markers for a minute to keep unread pages
 
 ## Decision
 
-A per-user `READ_VERSION` row counts Read changes. `SetRead` bumps it once per call, after its markers commit, and still bumps it when a later chunk fails, because earlier chunks have committed. The bump returns the new version.
+A per-user `READ_VERSION` row counts Read changes. `SetRead` bumps it once per call that attempted a write, after its marker writes. It still bumps when a chunk fails, because a failed write may have committed (the rule ADR 0007 set for feedback, which `change` in `internal/store/version.go` applies to every version). The bump returns the new version.
 
 Before reusing its cache, an instance reads `READ_VERSION` with a strongly consistent read. It reuses the cache only if the version matches the one it loaded at; otherwise it reloads the markers, also strongly consistent. The version is read before the markers, so a cache never carries a version newer than its contents. After its own write, an instance patches its cache forward only when the returned version is exactly one more than its cached version. Any other value means another instance wrote in between, and the cache is dropped.
 
 ## Consequences
 
-- Every writer of `R#` markers bumps `READ_VERSION` after it commits. Today `SetRead` is the only writer.
+- Every writer of `R#` markers bumps `READ_VERSION` through `change`, after its writes. Today `SetRead` is the only writer.
 - Each request that needs markers costs one small strongly consistent GetItem. A reload costs twice the read capacity of the old eventually consistent query.
 - While old and new code overlap during a deploy, writes handled by old instances don't bump the version, so new instances can serve markers up to a minute old. This ends once all instances run the new code; no backfill is needed.
 

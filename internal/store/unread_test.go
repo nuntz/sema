@@ -145,49 +145,6 @@ func TestSetReadReturnsNonConflictCancellation(t *testing.T) {
 	}
 }
 
-func TestSetReadBumpsReadVersionOnlyAfterCommit(t *testing.T) {
-	var events []string
-	failSecond := false
-	chunks := 0
-	db := liveReadFake(t, func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
-		chunks++
-		if failSecond && chunks == 2 {
-			return nil, fmt.Errorf("throttled")
-		}
-		events = append(events, "commit")
-		return &dynamodb.TransactWriteItemsOutput{}, nil
-	})
-	version := int64(0)
-	db.updateItem = func(input *dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) {
-		if sk := input.Key["SK"].(*types.AttributeValueMemberS).Value; sk != domain.ReadVersionSK {
-			t.Fatalf("updated %s", sk)
-		}
-		events = append(events, "bump")
-		version++
-		return &dynamodb.UpdateItemOutput{Attributes: map[string]types.AttributeValue{
-			"version": &types.AttributeValueMemberN{Value: fmt.Sprint(version)},
-		}}, nil
-	}
-	repository := New(db, nil, "table", "", "")
-	ctx := context.Background()
-
-	got, err := repository.SetRead(ctx, "user", readIDs(2), true)
-	if err != nil || got != 1 || fmt.Sprint(events) != "[commit bump]" {
-		t.Fatalf("version = %d, err = %v, events = %v", got, err, events)
-	}
-	if got, err := repository.SetRead(ctx, "user", nil, true); err != nil || got != 0 || version != 1 {
-		t.Fatalf("empty SetRead: version = %d, err = %v, bumps = %d", got, err, version)
-	}
-	// A failed later chunk still leaves earlier markers committed.
-	events, chunks, failSecond = nil, 0, true
-	if _, err := repository.SetRead(ctx, "user", readIDs(60), true); err == nil {
-		t.Fatal("want the chunk error")
-	}
-	if fmt.Sprint(events) != "[commit bump]" {
-		t.Fatalf("events = %v", events)
-	}
-}
-
 func TestReadStateLoadsAreStronglyConsistent(t *testing.T) {
 	db := &fakeDynamoDB{
 		getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {

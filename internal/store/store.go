@@ -229,46 +229,33 @@ const saveFeedsConcurrency = 20
 
 // SaveFeeds writes a user's Feeds, as a user's own edits, and returns their
 // new FeedVersion, or 0 when nothing was written. The version moves once,
-// after the writes, so an instance that sees it also sees them; it moves even
-// when some writes fail, because the others have committed.
-func (s *Store) SaveFeeds(ctx context.Context, userID string, feeds []domain.Feed) (version int64, err error) {
+// after the writes, so an instance that sees it also sees them; failed
+// writes move it too, as change describes.
+func (s *Store) SaveFeeds(ctx context.Context, userID string, feeds []domain.Feed) (int64, error) {
 	pk := domain.UserPK(userID)
 	for _, feed := range feeds {
 		if feed.PK != pk {
 			return 0, fmt.Errorf("feed %s belongs to %s, not %s", feed.FeedID, feed.PK, pk)
 		}
 	}
-	if len(feeds) == 0 {
-		return 0, nil
-	}
-	semaphore := make(chan struct{}, saveFeedsConcurrency)
-	writeErrors := make([]error, len(feeds))
-	var group sync.WaitGroup
-	for index, feed := range feeds {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-			writeErrors[index] = s.PutFeed(ctx, feed)
-		}()
-	}
-	group.Wait()
-	wrote := false
-	for _, writeErr := range writeErrors {
-		wrote = wrote || writeErr == nil
-	}
-	if wrote {
-		version, err = s.bumpVersion(ctx, userID, domain.FeedVersionSK)
-	}
-	if writeErr := errors.Join(writeErrors...); writeErr != nil {
-		return 0, errors.Join(writeErr, err)
-	}
-	return version, err
+	return s.change(ctx, userID, domain.FeedVersionSK, func(s *Store) error {
+		semaphore := make(chan struct{}, saveFeedsConcurrency)
+		writeErrors := make([]error, len(feeds))
+		var group sync.WaitGroup
+		for index, feed := range feeds {
+			group.Go(func() {
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+				writeErrors[index] = s.PutFeed(ctx, feed)
+			})
+		}
+		group.Wait()
+		return errors.Join(writeErrors...)
+	})
 }
 
-// FeedVersion returns how many SaveFeeds and DeleteFeed calls have changed
-// the user's Feeds; 0 before the first. Read it before Feeds: Feeds loaded
+// FeedVersion returns how many SaveFeeds and DeleteFeed calls have attempted
+// to change the user's Feeds; 0 before the first. Read it before Feeds: Feeds loaded
 // after a version can only be newer than it, never older.
 func (s *Store) FeedVersion(ctx context.Context, userID string) (int64, error) {
 	return s.version(ctx, userID, domain.FeedVersionSK)
@@ -389,12 +376,12 @@ func (s *Store) ClaimFeed(ctx context.Context, userID, feedID string, due, next 
 }
 
 // DeleteFeed deletes a user's Feed and returns their new FeedVersion, moved
-// after the delete commits.
+// after the delete, even a failed one, as change describes.
 func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) (int64, error) {
-	if _, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID))}); err != nil {
-		return 0, err
-	}
-	return s.bumpVersion(ctx, userID, domain.FeedVersionSK)
+	return s.change(ctx, userID, domain.FeedVersionSK, func(s *Store) error {
+		_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID))})
+		return err
+	})
 }
 
 // ItemKnown reports whether Sema already knows the Item, so a Republish is
@@ -921,52 +908,18 @@ func (s *Store) LoadReadMarkers(ctx context.Context, userID string) (map[string]
 	return s.readItemIDs(ctx, userID)
 }
 
-// ReadVersion returns how many SetRead calls have changed the user's Read
-// markers; 0 before the first. Read it before LoadReadMarkers: markers loaded
+// ReadVersion returns how many SetRead calls have attempted to change the
+// user's Read markers; 0 before the first. Read it before LoadReadMarkers: markers loaded
 // after a version can only be newer than it, never older.
 func (s *Store) ReadVersion(ctx context.Context, userID string) (int64, error) {
 	return s.version(ctx, userID, domain.ReadVersionSK)
 }
 
-// FeedbackVersion returns how many SetSignal and SetHeart calls have changed
-// the user's feedback; 0 before the first. Read it before the Items it labels:
+// FeedbackVersion returns how many SetSignal and SetHeart calls have
+// attempted to change the user's feedback; 0 before the first. Read it before the Items it labels:
 // Items loaded after a version can only be newer than it, never older.
 func (s *Store) FeedbackVersion(ctx context.Context, userID string) (int64, error) {
 	return s.version(ctx, userID, domain.FeedbackVersionSK)
-}
-
-// version reads a per-user change counter strongly consistent; a missing row
-// reads as 0.
-func (s *Store) version(ctx context.Context, userID, sk string) (int64, error) {
-	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
-		ProjectionExpression: aws.String("version"), ConsistentRead: aws.Bool(true),
-	})
-	if err != nil || response.Item == nil {
-		return 0, err
-	}
-	var row struct {
-		Version int64 `dynamodbav:"version"`
-	}
-	err = attributevalue.UnmarshalMap(response.Item, &row)
-	return row.Version, err
-}
-
-func (s *Store) bumpVersion(ctx context.Context, userID, sk string) (int64, error) {
-	response, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
-		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), sk),
-		UpdateExpression:          aws.String("ADD version :one"),
-		ExpressionAttributeValues: map[string]types.AttributeValue{":one": &types.AttributeValueMemberN{Value: "1"}},
-		ReturnValues:              types.ReturnValueUpdatedNew,
-	})
-	if err != nil {
-		return 0, err
-	}
-	var row struct {
-		Version int64 `dynamodbav:"version"`
-	}
-	err = attributevalue.UnmarshalMap(response.Attributes, &row)
-	return row.Version, err
 }
 
 // readItemIDs loads the compact read-marker keyspace once so an unread request
@@ -1989,20 +1942,21 @@ func (s *Store) archiveItemBySK(ctx context.Context, userID, archiveSK string) (
 
 // SetHeart synchronously copies durable content and atomically changes the
 // archive row, live item pointer, profile count, and implied ranking signal.
-// Like SetSignal, it moves the user's FeedbackVersion once after any call
-// that attempted a write.
+// It moves the user's FeedbackVersion once, as change describes.
 func (s *Store) SetHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error) {
-	var wrote bool
-	archiveSK, count, err := s.setHeart(ctx, userID, itemID, hearted, &wrote)
-	if !wrote {
-		return archiveSK, count, err
-	}
-	return archiveSK, count, s.bumpFeedbackVersion(ctx, userID, err)
+	var archiveSK string
+	var count int
+	_, err := s.change(ctx, userID, domain.FeedbackVersionSK, func(s *Store) error {
+		var err error
+		archiveSK, count, err = s.setHeart(ctx, userID, itemID, hearted)
+		return err
+	})
+	return archiveSK, count, err
 }
 
-func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted bool, wrote *bool) (string, int, error) {
+func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted bool) (string, int, error) {
 	if !hearted {
-		return s.removeHeart(ctx, userID, itemID, wrote)
+		return s.removeHeart(ctx, userID, itemID)
 	}
 	item, err := s.Item(ctx, userID, itemID)
 	if errors.Is(err, ErrNotFound) {
@@ -2128,7 +2082,7 @@ func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted boo
 	}}, types.TransactWriteItem{Put: &types.Put{
 		TableName: aws.String(s.table), Item: heartSignal, ConditionExpression: aws.String("attribute_not_exists(SK)"),
 	}})
-	err = s.feedbackTransact(ctx, wrote, withSignal)
+	err = s.transact(ctx, withSignal)
 	signalChanged := err == nil
 	var oldSignal *domain.Signal
 	for attempt := 0; isTransactionCanceled(err) && attempt < 4; attempt++ {
@@ -2140,7 +2094,7 @@ func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted boo
 			return "", 0, readErr
 		}
 		if len(previous.Item) == 0 {
-			err = s.feedbackTransact(ctx, wrote, withSignal)
+			err = s.transact(ctx, withSignal)
 			signalChanged = err == nil
 			continue
 		}
@@ -2167,7 +2121,7 @@ func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted boo
 				ExpressionAttributeValues: map[string]types.AttributeValue{":zero": &types.AttributeValueMemberN{Value: "0"}},
 			}})
 		}
-		err = s.feedbackTransact(ctx, wrote, retry)
+		err = s.transact(ctx, retry)
 		if err == nil && !plan.Preserve {
 			oldSignal = &old
 			signalChanged = true
@@ -2192,7 +2146,7 @@ func (s *Store) setHeart(ctx context.Context, userID, itemID string, hearted boo
 	return archiveSK, count, err
 }
 
-func (s *Store) removeHeart(ctx context.Context, userID, itemID string, wrote *bool) (string, int, error) {
+func (s *Store) removeHeart(ctx context.Context, userID, itemID string) (string, int, error) {
 	item, itemErr := s.Item(ctx, userID, itemID)
 	if itemErr != nil && !errors.Is(itemErr, ErrNotFound) {
 		return "", 0, itemErr
@@ -2298,14 +2252,14 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string, wrote *b
 			ConditionExpression:      aws.String(strings.Join(conditions, " AND ")),
 			ExpressionAttributeNames: names, ExpressionAttributeValues: values,
 		}})
-		err = s.feedbackTransact(ctx, wrote, writes)
+		err = s.transact(ctx, writes)
 		if isTransactionCanceled(err) {
 			// Only finish without a decrement if the signal was concurrently removed.
-			err = s.feedbackTransact(ctx, wrote, stateWrites)
+			err = s.transact(ctx, stateWrites)
 			signalDeleted = false
 		}
 	} else {
-		err = s.feedbackTransact(ctx, wrote, stateWrites)
+		err = s.transact(ctx, stateWrites)
 	}
 
 	if err != nil {
@@ -2678,32 +2632,16 @@ func (s *Store) signalValues(ctx context.Context, userID string, itemIDs []strin
 }
 
 // SetSignal Boosts, Buries or clears the user's Signal on item, then moves
-// their FeedbackVersion once. A call that fails after attempting its write
-// may have written, so it moves the version too: a spare bump costs other
-// instances one reload, a missing one leaves their Stories showing old
-// feedback. A call rejected before writing doesn't move it.
+// their FeedbackVersion once, as change describes.
 func (s *Store) SetSignal(ctx context.Context, userID string, item domain.Item, value int) error {
 	plan, err := feedback.Apply(feedback.State{Kept: feedback.Kept(item)}, feedback.Signal, value)
 	if err != nil {
 		// Rejected before writing, so other instances have nothing to drop.
 		return err
 	}
-	return s.bumpFeedbackVersion(ctx, userID, s.setSignal(ctx, userID, item, plan))
-}
-
-// feedbackTransact runs a Keep or Unkeep transaction, first noting that the
-// call has attempted a write and so must move the FeedbackVersion.
-func (s *Store) feedbackTransact(ctx context.Context, wrote *bool, writes []types.TransactWriteItem) error {
-	*wrote = true
-	return s.transact(ctx, writes)
-}
-
-// bumpFeedbackVersion moves the user's FeedbackVersion after a feedback
-// write and returns err, or the bump's error when the write succeeded.
-func (s *Store) bumpFeedbackVersion(ctx context.Context, userID string, err error) error {
-	if _, bumpErr := s.bumpVersion(ctx, userID, domain.FeedbackVersionSK); err == nil {
-		err = bumpErr
-	}
+	_, err = s.change(ctx, userID, domain.FeedbackVersionSK, func(s *Store) error {
+		return s.setSignal(ctx, userID, item, plan)
+	})
 	return err
 }
 
@@ -2908,10 +2846,10 @@ func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.I
 }
 
 // SetRead marks ids read or unread and returns the user's new ReadVersion,
-// or 0 when nothing was written. The version moves only after the markers
-// commit, so a reader that sees it also sees them; it moves even when a later
-// chunk fails, because earlier chunks have committed.
-func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read bool) (version int64, err error) {
+// or 0 when nothing was written. The version moves once, after the marker
+// writes, so a reader that sees it also sees them; a failed chunk moves it
+// too, as change describes.
+func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read bool) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -2923,38 +2861,28 @@ func (s *Store) SetRead(ctx context.Context, userID string, ids []string, read b
 			unique = append(unique, id)
 		}
 	}
-	// Resolve only live rows: Read lapses with the Item, including when kept,
-	// and the unread flag lives on the live row.
-	live, _, err := s.resolveLiveItemIDs(ctx, userID, unique, true, s.legacyReadFallback)
-	if err != nil {
-		return 0, err
-	}
-	pending := make([]string, 0, len(unique))
-	for _, id := range unique {
-		if _, ok := live[id]; ok || !read {
-			pending = append(pending, id)
+	return s.change(ctx, userID, domain.ReadVersionSK, func(s *Store) error {
+		// Resolve only live rows: Read lapses with the Item, including when
+		// kept, and the unread flag lives on the live row.
+		live, _, err := s.resolveLiveItemIDs(ctx, userID, unique, true, s.legacyReadFallback)
+		if err != nil {
+			return err
 		}
-	}
-	wrote := false
-	defer func() {
-		if !wrote {
-			return
+		pending := make([]string, 0, len(unique))
+		for _, id := range unique {
+			if _, ok := live[id]; ok || !read {
+				pending = append(pending, id)
+			}
 		}
-		bumped, bumpErr := s.bumpVersion(ctx, userID, domain.ReadVersionSK)
-		if err == nil {
-			version, err = bumped, bumpErr
+		for len(pending) > 0 {
+			count := min(setReadTransactionItems, len(pending))
+			if err := s.setReadChunk(ctx, userID, pending[:count], live, read, time.Now().UTC()); err != nil {
+				return err
+			}
+			pending = pending[count:]
 		}
-	}()
-	for len(pending) > 0 {
-		count := min(setReadTransactionItems, len(pending))
-		chunkWrote, chunkErr := s.setReadChunk(ctx, userID, pending[:count], live, read, time.Now().UTC())
-		wrote = wrote || chunkWrote
-		if chunkErr != nil {
-			return 0, chunkErr
-		}
-		pending = pending[count:]
-	}
-	return 0, nil
+		return nil
+	})
 }
 
 // setReadTransactionItems keeps each chunk's marker and live-row actions within
@@ -2965,7 +2893,7 @@ const setReadTransactionItems = 50
 // transaction, so concurrent read and unread requests cannot leave an unread
 // Item outside the unread index. Items whose live row disappears are dropped
 // from the live-row update and the chunk is retried; conflicts back off.
-func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, live map[string]domain.Item, read bool, now time.Time) (bool, error) {
+func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, live map[string]domain.Item, read bool, now time.Time) error {
 	pk := domain.UserPK(userID)
 	live = maps.Clone(live)
 	const maxConflicts = 5
@@ -2980,7 +2908,7 @@ func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, l
 				}
 				row, err := attributevalue.MarshalMap(domain.Read{PK: pk, SK: domain.ReadSK(id), ReadAt: domain.Timestamp(now), TTL: item.TTL})
 				if err != nil {
-					return false, err
+					return err
 				}
 				writes = append(writes,
 					types.TransactWriteItem{Put: &types.Put{TableName: aws.String(s.table), Item: row}},
@@ -2996,14 +2924,14 @@ func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, l
 			}
 		}
 		if len(writes) == 0 {
-			return false, nil
+			return nil
 		}
 		err := s.transact(ctx, writes)
 		var canceled *types.TransactionCanceledException
 		errors.As(err, &canceled)
 		switch {
 		case err == nil:
-			return true, nil
+			return nil
 		case canceledBecause(err, "ConditionalCheckFailed"):
 			for index, reason := range canceled.CancellationReasons {
 				if index < len(actionIDs) && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
@@ -3014,10 +2942,10 @@ func (s *Store) setReadChunk(ctx context.Context, userID string, ids []string, l
 			backoff := min(50*time.Millisecond<<conflicts, time.Second)
 			conflicts++
 			if sleepErr := s.sleep(ctx, time.Duration(rand.Int64N(int64(backoff)))); sleepErr != nil {
-				return false, sleepErr
+				return sleepErr
 			}
 		default:
-			return false, err
+			return err
 		}
 	}
 }
