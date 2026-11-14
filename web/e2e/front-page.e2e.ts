@@ -2600,9 +2600,15 @@ test("desktop Headline strips show an unread dot at their own heights", async ({
   const card = page.locator('[data-story-id="dot-story"]');
   await expect(card).toBeVisible();
   await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
+  // Showing read Members relays the Story out, and "+N more" may appear only
+  // after that, so expand whenever it shows until every Member is a strip.
   const more = card.getByRole("button", { name: /\+\d+ more$/ });
-  if (await more.count()) await more.click();
-  await expect(card.locator(".story-headline")).toHaveCount(3);
+  await expect
+    .poll(async () => {
+      if (await more.count()) await more.click();
+      return card.locator(".story-headline").count();
+    })
+    .toBe(3);
   const strips = () =>
     card.locator(".story-headline").evaluateAll((elements) =>
       elements.map((strip) => {
