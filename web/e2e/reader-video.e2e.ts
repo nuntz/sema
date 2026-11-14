@@ -271,9 +271,11 @@ test("article video failures retain Open without navigating away", async ({
   );
   await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
   expect(page.context().pages()).toHaveLength(1);
-  await page.route("https://www.youtube.com/watch?v=dQw4w9WgXcQ", (route) =>
-    route.fulfill({ body: "YouTube original" }),
-  );
+  await page
+    .context()
+    .route("https://www.youtube.com/watch?v=dQw4w9WgXcQ", (route) =>
+      route.fulfill({ body: "YouTube original" }),
+    );
   const popup = page.waitForEvent("popup");
   await page
     .locator(".reader-video .video-failure")
