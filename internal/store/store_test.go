@@ -586,8 +586,12 @@ func TestPutItemWritesIdentityVectorAndFeedCountersAtomically(t *testing.T) {
 	calls := 0
 	db := &fakeDynamoDB{transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 		calls++
-		if len(input.TransactItems) != 4 {
+		if len(input.TransactItems) != 5 {
 			t.Fatalf("transaction = %#v", input.TransactItems)
+		}
+		known := input.TransactItems[4].Put
+		if got := known.Item["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemKnownSK("same") || known.Item["ttl"] != nil || aws.ToString(known.ConditionExpression) != "attribute_not_exists(SK)" {
+			t.Fatalf("known marker = %#v", known)
 		}
 		identity := input.TransactItems[0].Put.Item
 		if got := identity["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {
@@ -755,8 +759,11 @@ func TestPutItemFailureWritesExpiringIdentityMarker(t *testing.T) {
 	}
 }
 
-func TestItemExistsReadsStableIdentityMarker(t *testing.T) {
+func TestItemKnownFallsBackToLiveIdentity(t *testing.T) {
 	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.ItemKnownSK("same") {
+			return &dynamodb.GetItemOutput{}, nil
+		}
 		if got := input.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("same") {
 			t.Fatalf("identity key = %q", got)
 		}
@@ -766,13 +773,13 @@ func TestItemExistsReadsStableIdentityMarker(t *testing.T) {
 			"ttl": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)},
 		}}, nil
 	}}
-	exists, err := New(db, nil, "table", "", "").ItemExists(context.Background(), "user", "same")
-	if err != nil || !exists {
-		t.Fatalf("ItemExists = %v, %v", exists, err)
+	known, err := New(db, nil, "table", "", "").ItemKnown(context.Background(), "user", "same")
+	if err != nil || !known {
+		t.Fatalf("ItemKnown = %v, %v", known, err)
 	}
 }
 
-func TestItemExistsTreatsPermanentArchiveIdentityAsDuplicate(t *testing.T) {
+func TestItemKnownTreatsKeptIdentityAsKnown(t *testing.T) {
 	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
 		PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("hearted"),
 		ItemSK: domain.ArchiveSK(time.Now().Add(-2*domain.Retention), "hearted"),
@@ -784,14 +791,17 @@ func TestItemExistsTreatsPermanentArchiveIdentityAsDuplicate(t *testing.T) {
 		t.Fatal("permanent archive identity must have no ttl attribute")
 	}
 	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.ItemKnownSK("hearted") {
+			return &dynamodb.GetItemOutput{}, nil
+		}
 		if got := input.Key["SK"].(*types.AttributeValueMemberS).Value; got != domain.ItemIdentitySK("hearted") {
 			t.Fatalf("identity key = %q", got)
 		}
 		return &dynamodb.GetItemOutput{Item: identity}, nil
 	}}
-	exists, err := New(db, nil, "table", "", "").ItemExists(context.Background(), "user", "hearted")
-	if err != nil || !exists {
-		t.Fatalf("permanently hearted item must remain a duplicate: ItemExists = %v, %v", exists, err)
+	known, err := New(db, nil, "table", "", "").ItemKnown(context.Background(), "user", "hearted")
+	if err != nil || !known {
+		t.Fatalf("a Kept Item must stay known: ItemKnown = %v, %v", known, err)
 	}
 }
 
@@ -2388,7 +2398,7 @@ func TestBodyHistoryRefreshesAfterConcurrentItem(t *testing.T) {
 		transactWrite: func(input *dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
 			calls++
 			if calls == 1 {
-				return nil, transactionCanceled("None", "None", "None", "ConditionalCheckFailed")
+				return nil, transactionCanceled("None", "None", "None", "ConditionalCheckFailed", "None")
 			}
 			update := input.TransactItems[3].Update
 			if update.ExpressionAttributeValues[":outcomes"].(*types.AttributeValueMemberS).Value != "101" {
@@ -2422,7 +2432,7 @@ func TestBodyHistoryRetryDoesNotReuseIdempotencyToken(t *testing.T) {
 			calls++
 			if calls == 1 {
 				input.ClientRequestToken = aws.String(pinned)
-				return nil, transactionCanceled("None", "None", "None", "ConditionalCheckFailed")
+				return nil, transactionCanceled("None", "None", "None", "ConditionalCheckFailed", "None")
 			}
 			if aws.ToString(input.ClientRequestToken) == pinned {
 				return nil, &types.IdempotentParameterMismatchException{Message: aws.String("Specified idempotent token was used with different request parameters within the idempotency window")}

@@ -49,7 +49,7 @@ type shortsDetector interface {
 type feedStore interface {
 	Feed(context.Context, string, string) (domain.Feed, error)
 	PutFeed(context.Context, domain.Feed) error
-	ItemExists(context.Context, string, string) (bool, error)
+	ItemKnown(context.Context, string, string) (bool, error)
 	PutContent(context.Context, string, string, []byte) error
 }
 
@@ -126,11 +126,11 @@ func (h *handler) process(ctx context.Context, body string) error {
 			continue
 		}
 		itemID := domain.ItemID(feed.FeedID, entry.GUID, entry.URL)
-		exists, err := h.store.ItemExists(ctx, message.User, itemID)
+		known, err := h.store.ItemKnown(ctx, message.User, itemID)
 		if err != nil {
 			return err
 		}
-		if exists {
+		if known {
 			continue
 		}
 		if feed.HideShorts && entry.VideoID != "" && h.shorts != nil {

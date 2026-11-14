@@ -621,3 +621,157 @@ func TestReadLegacyItemsAndIdentityBoundaries(t *testing.T) {
 		t.Fatalf("markers after Unread = %v, %v", markers, err)
 	}
 }
+
+func TestRepublishAfterTheLiveWindowIsIgnored(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	putIntegrationFeed(t, ctx, repository, "user", "feed")
+	published := time.Now().Add(-8 * 24 * time.Hour)
+	original := domain.Item{
+		PK: domain.UserPK("user"), SK: domain.ItemSK(published, "redated"), FeedPK: domain.FeedSK("feed"),
+		ItemID: "redated", FeedID: "feed", Title: "Re-dated", PublishedTS: domain.Timestamp(published),
+		TTL: domain.LiveWindowTTL(published),
+	}
+	if written, err := repository.PutItem(ctx, original); err != nil || !written {
+		t.Fatalf("original put = %v, %v", written, err)
+	}
+	redated := time.Now()
+	republished := original
+	republished.SK = domain.ItemSK(redated, "redated")
+	republished.PublishedTS = domain.Timestamp(redated)
+	republished.TTL = domain.LiveWindowTTL(redated)
+	if written, err := repository.PutItem(ctx, republished); err != nil || written {
+		t.Fatalf("republish after the Live Window = %v, %v; want ignored", written, err)
+	}
+}
+
+func TestItemKnownAfterTheLiveWindow(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	putIntegrationFeed(t, ctx, repository, "user", "feed")
+	published := time.Now().Add(-8 * 24 * time.Hour)
+	expired := domain.Item{
+		PK: domain.UserPK("user"), SK: domain.ItemSK(published, "expired"), FeedPK: domain.FeedSK("feed"),
+		ItemID: "expired", FeedID: "feed", Title: "Expired", PublishedTS: domain.Timestamp(published),
+		TTL: domain.LiveWindowTTL(published),
+	}
+	if written, err := repository.PutItem(ctx, expired); err != nil || !written {
+		t.Fatalf("put = %v, %v", written, err)
+	}
+	if known, err := repository.ItemKnown(ctx, "user", "expired"); err != nil || !known {
+		t.Fatalf("ItemKnown after the Live Window = %v, %v; want known", known, err)
+	}
+	if known, err := repository.ItemKnown(ctx, "user", "never"); err != nil || known {
+		t.Fatalf("ItemKnown for an unknown Item = %v, %v", known, err)
+	}
+}
+
+func TestItemKnownRemembersItemsWrittenBeforeKnownMarkers(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	ingested := time.Now()
+	repository.now = func() time.Time { return ingested }
+	// Before ADR 0008 an Item had only its identity row, which expires with it.
+	legacy, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("legacy"),
+		ItemSK: domain.ItemSK(ingested, "legacy"), TTL: domain.LiveWindowTTL(ingested),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(repository.table), Item: legacy}); err != nil {
+		t.Fatal(err)
+	}
+	if known, err := repository.ItemKnown(ctx, "user", "legacy"); err != nil || !known {
+		t.Fatalf("ItemKnown while live = %v, %v", known, err)
+	}
+	repository.now = func() time.Time { return ingested.Add(domain.Retention + time.Hour) }
+	if known, err := repository.ItemKnown(ctx, "user", "legacy"); err != nil || !known {
+		t.Fatalf("ItemKnown after the Live Window = %v, %v; want known", known, err)
+	}
+}
+
+func TestUnkeepAfterTheLiveWindowStillIgnoresRepublish(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	putIntegrationFeed(t, ctx, repository, "keeper", "feed")
+	repository.s3 = &archiveObjectStore{objects: map[string]bool{}}
+	repository.bucket = "content"
+	now := time.Now().UTC()
+	item := domain.Item{
+		PK: domain.UserPK("keeper"), SK: domain.ItemSK(now, "kept"), FeedPK: domain.FeedSK("feed"), ItemID: "kept", FeedID: "feed",
+		URL: "https://example.com/kept", Title: "Kept", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+		Score: 0.2, Size: "S", TTL: domain.LiveWindowTTL(now),
+	}
+	if written, err := repository.PutItem(ctx, item); err != nil || !written {
+		t.Fatalf("put = %v, %v", written, err)
+	}
+	if _, _, err := repository.SetHeart(ctx, "keeper", item.ItemID, true); err != nil {
+		t.Fatal(err)
+	}
+	// The Live Window ends while the Item is Kept.
+	if _, err := repository.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(repository.table), Key: key(item.PK, item.SK),
+		UpdateExpression:          aws.String("SET #ttl = :expired"),
+		ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":expired": &types.AttributeValueMemberN{Value: fmt.Sprint(now.Add(-time.Hour).Unix())}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil {
+		t.Fatal(err)
+	}
+	if known, err := repository.ItemKnown(ctx, "keeper", item.ItemID); err != nil || !known {
+		t.Fatalf("ItemKnown after Unkeep = %v, %v; want known", known, err)
+	}
+	redated := now.Add(time.Minute)
+	republished := item
+	republished.SK = domain.ItemSK(redated, item.ItemID)
+	republished.PublishedTS = domain.Timestamp(redated)
+	republished.TTL = domain.LiveWindowTTL(redated)
+	if written, err := repository.PutItem(ctx, republished); err != nil || written {
+		t.Fatalf("republish after Unkeep = %v, %v; want ignored", written, err)
+	}
+}
+
+func TestUnkeepRemembersKeptItemsWrittenBeforeKnownMarkers(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	if err := repository.EnsureUser(ctx, "keeper", "keeper@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	putIntegrationFeed(t, ctx, repository, "keeper", "feed")
+	repository.s3 = &archiveObjectStore{objects: map[string]bool{}}
+	repository.bucket = "content"
+	now := time.Now().UTC()
+	item := domain.Item{
+		PK: domain.UserPK("keeper"), SK: domain.ItemSK(now, "legacy-kept"), FeedPK: domain.FeedSK("feed"), ItemID: "legacy-kept", FeedID: "feed",
+		URL: "https://example.com/legacy-kept", Title: "Legacy kept", PublishedTS: domain.Timestamp(now), FetchedTS: domain.Timestamp(now),
+		Score: 0.2, Size: "S", TTL: domain.LiveWindowTTL(now),
+	}
+	if written, err := repository.PutItem(ctx, item); err != nil || !written {
+		t.Fatalf("put = %v, %v", written, err)
+	}
+	if _, _, err := repository.SetHeart(ctx, "keeper", item.ItemID, true); err != nil {
+		t.Fatal(err)
+	}
+	// Kept before ADR 0008, so it has no known marker.
+	if _, err := repository.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(repository.table), Key: key(item.PK, domain.ItemKnownSK(item.ItemID)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The Live Window ends while the Item is Kept.
+	if _, err := repository.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(repository.table), Key: key(item.PK, item.SK),
+		UpdateExpression:          aws.String("SET #ttl = :expired"),
+		ExpressionAttributeNames:  map[string]string{"#ttl": "ttl"},
+		ExpressionAttributeValues: map[string]types.AttributeValue{":expired": &types.AttributeValueMemberN{Value: fmt.Sprint(now.Add(-time.Hour).Unix())}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := repository.SetHeart(ctx, "keeper", item.ItemID, false); err != nil {
+		t.Fatal(err)
+	}
+	if known, err := repository.ItemKnown(ctx, "keeper", item.ItemID); err != nil || !known {
+		t.Fatalf("ItemKnown after Unkeep = %v, %v; want known", known, err)
+	}
+}

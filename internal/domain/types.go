@@ -375,8 +375,12 @@ func SignalSK(id string) string       { return "S#" + id }
 func BehaviourSK(id string) string    { return "B#" + id }
 func ReadSK(id string) string         { return "R#" + id }
 func ItemIdentitySK(id string) string { return "D#" + id }
-func ItemVectorSK(id string) string   { return "V#" + id }
-func ClusterSK(id string) string      { return "T#" + id }
+
+// ItemKnownSK keys the marker that remembers an Item forever, so a Republish
+// stays ignored after the Item Expires (ADR 0008).
+func ItemKnownSK(id string) string  { return "KNOWN#" + id }
+func ItemVectorSK(id string) string { return "V#" + id }
+func ClusterSK(id string) string    { return "T#" + id }
 
 func ArchiveSK(hearted time.Time, id string) string {
 	return "A#" + Timestamp(hearted) + "#" + id

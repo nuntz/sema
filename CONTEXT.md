@@ -57,7 +57,7 @@ What happens to an unkept Item at the end of its Live Window: it leaves the grid
 _Avoid_: Purge, clean up, delete (as a user action)
 
 **Republish**:
-A Feed serving an Item that Sema has already seen. A republished Item is ignored while the original is live or kept, so a Kept Item never returns to the grid.
+A Feed serving an Item that Sema already knows. A republished Item is ignored whether the original is live, kept, or has Expired, so an Item gets one Live Window and never returns to the grid.
 _Avoid_: Duplicate, re-ingest, resurface
 
 ### Keeping

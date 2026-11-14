@@ -57,6 +57,7 @@ type Store struct {
 	bucket             string
 	contentURL         string
 	sleep              func(context.Context, time.Duration) error
+	now                func() time.Time
 }
 
 const (
@@ -104,7 +105,7 @@ func newItemProjection(excluded ...string) itemProjection {
 }
 
 func New(db dynamoAPI, objects s3API, table, bucket, contentURL string) *Store {
-	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/"), sleep: sleepWithContext}
+	return &Store{db: db, s3: objects, table: table, bucket: bucket, contentURL: strings.TrimRight(contentURL, "/"), sleep: sleepWithContext, now: time.Now}
 }
 
 func sleepWithContext(ctx context.Context, duration time.Duration) error {
@@ -396,10 +397,23 @@ func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) (int64, e
 	return s.bumpVersion(ctx, userID, domain.FeedVersionSK)
 }
 
-func (s *Store) ItemExists(ctx context.Context, userID, itemID string) (bool, error) {
+// ItemKnown reports whether Sema already knows the Item, so a Republish is
+// ignored (ADR 0008). The identity row still answers for rejected entries and
+// for Items written before known markers existed.
+func (s *Store) ItemKnown(ctx context.Context, userID, itemID string) (bool, error) {
+	marker, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemKnownSK(itemID)),
+		ProjectionExpression: aws.String("PK"),
+	})
+	if err != nil {
+		return false, err
+	}
+	if len(marker.Item) > 0 {
+		return true, nil
+	}
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)),
-		ProjectionExpression: aws.String("PK, #ttl"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+		ProjectionExpression: aws.String("PK, item_sk, #ttl"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 	})
 	if err != nil {
 		return false, err
@@ -411,7 +425,35 @@ func (s *Store) ItemExists(ctx context.Context, userID, itemID string) (bool, er
 	if err := attributevalue.UnmarshalMap(response.Item, &identity); err != nil {
 		return false, err
 	}
-	return identity.TTL == 0 || identity.TTL > time.Now().Unix(), nil
+	if identity.TTL != 0 && identity.TTL <= s.now().Unix() {
+		return false, nil
+	}
+	if identity.ItemSK == "" {
+		return true, nil // a rejected entry, which never became an Item
+	}
+	// An Item written before known markers existed gets one lazily when a fetch
+	// lists it. Temporary: remove 7 days after the deploy (ADR 0008).
+	if _, err := s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: knownMarker(domain.UserPK(userID), itemID)}); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// PutItem's transaction slots, in order: identity, live row, vector, feed
+// counters, known marker.
+const (
+	putItemIdentitySlot = 0
+	putItemCounterSlot  = 3
+	putItemKnownSlot    = 4
+	putItemSlots        = 5
+)
+
+// knownMarker remembers forever that Sema knows the Item (ADR 0008).
+func knownMarker(pk, itemID string) map[string]types.AttributeValue {
+	return map[string]types.AttributeValue{
+		"PK": &types.AttributeValueMemberS{Value: pk},
+		"SK": &types.AttributeValueMemberS{Value: domain.ItemKnownSK(itemID)},
+	}
 }
 
 func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
@@ -438,7 +480,7 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	now := &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)}
+	now := &types.AttributeValueMemberN{Value: strconv.FormatInt(s.now().Unix(), 10)}
 	transaction := &dynamodb.TransactWriteItemsInput{TransactItems: []types.TransactWriteItem{
 		{Put: &types.Put{
 			TableName: aws.String(s.table), Item: identity, ConditionExpression: aws.String("attribute_not_exists(SK) OR #ttl <= :now"),
@@ -453,6 +495,9 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 			ExpressionAttributeNames: map[string]string{"#ttl": "ttl"}, ExpressionAttributeValues: map[string]types.AttributeValue{":now": now},
 		}},
 		{Update: feedCounterUpdate(s.table, item)},
+		{Put: &types.Put{
+			TableName: aws.String(s.table), Item: knownMarker(item.PK, item.ItemID), ConditionExpression: aws.String("attribute_not_exists(SK)"),
+		}},
 	}}
 	const maxAttempts = 5
 	for attempt := range maxAttempts {
@@ -461,7 +506,7 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 			return true, nil
 		}
 		var canceled *types.TransactionCanceledException
-		if item.RecordBodyOutcome && errors.As(err, &canceled) && len(canceled.CancellationReasons) == 4 && aws.ToString(canceled.CancellationReasons[3].Code) == "ConditionalCheckFailed" && aws.ToString(canceled.CancellationReasons[0].Code) != "ConditionalCheckFailed" {
+		if item.RecordBodyOutcome && errors.As(err, &canceled) && len(canceled.CancellationReasons) == putItemSlots && aws.ToString(canceled.CancellationReasons[putItemCounterSlot].Code) == "ConditionalCheckFailed" && aws.ToString(canceled.CancellationReasons[putItemIdentitySlot].Code) != "ConditionalCheckFailed" && aws.ToString(canceled.CancellationReasons[putItemKnownSlot].Code) != "ConditionalCheckFailed" {
 			// Another item advanced the window. Refresh only the outcome snapshot;
 			// the item identity and all counters still commit in one transaction.
 			current, readErr := s.Feed(ctx, strings.TrimPrefix(item.PK, "U#"), item.FeedID)
@@ -475,7 +520,7 @@ func (s *Store) PutItem(ctx context.Context, item domain.Item) (bool, error) {
 				return false, err
 			}
 			item.BodyOutcomesBefore = current.BodyOutcomes
-			transaction.TransactItems[3].Update = feedCounterUpdate(s.table, item)
+			transaction.TransactItems[putItemCounterSlot].Update = feedCounterUpdate(s.table, item)
 			// The SDK pinned an idempotency token on the first attempt; DynamoDB
 			// rejects that token once the request parameters change.
 			transaction.ClientRequestToken = nil
@@ -2212,6 +2257,10 @@ func (s *Store) removeHeart(ctx context.Context, userID, itemID string, wrote *b
 			TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)),
 			ConditionExpression: aws.String(identityCondition + " OR #ttl <= :now"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 			ExpressionAttributeValues: map[string]types.AttributeValue{":archive": identityValues[":archive"], ":now": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Unix(), 10)}},
+		}}, types.TransactWriteItem{Put: &types.Put{
+			// The identity goes, so a Kept Item from before ADR 0008 must not
+			// leave without a known marker.
+			TableName: aws.String(s.table), Item: knownMarker(domain.UserPK(userID), itemID),
 		}})
 	}
 	stateWrites := append(append([]types.TransactWriteItem{}, baseWrites...), types.TransactWriteItem{Update: &types.Update{
@@ -2292,8 +2341,9 @@ func transactionConditionFailed(err error) bool {
 		return false
 	}
 	for index, reason := range canceled.CancellationReasons {
-		// The fourth condition drops items whose feed was deleted during ingestion.
-		if index < 4 && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
+		// In PutItem the counter slot drops items whose feed was deleted during
+		// ingestion, and the known slot drops an Item Sema already knows (ADR 0008).
+		if index < putItemSlots && aws.ToString(reason.Code) == "ConditionalCheckFailed" {
 			return true
 		}
 	}

@@ -24,7 +24,7 @@ type fakeFeedStore struct {
 	feeds    map[string]domain.Feed
 	putErr   error
 	putFeeds []domain.Feed
-	existing map[string]bool
+	known    map[string]bool
 }
 
 func (f *fakeFeedStore) Feed(_ context.Context, _, feedID string) (domain.Feed, error) {
@@ -46,10 +46,10 @@ func (f *fakeFeedStore) PutFeed(_ context.Context, feed domain.Feed) error {
 	return f.putErr
 }
 
-func (f *fakeFeedStore) ItemExists(_ context.Context, _, itemID string) (bool, error) {
+func (f *fakeFeedStore) ItemKnown(_ context.Context, _, itemID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.existing[itemID], nil
+	return f.known[itemID], nil
 }
 
 func (*fakeFeedStore) PutContent(context.Context, string, string, []byte) error {
@@ -253,8 +253,8 @@ func TestRedditFullnameDeduplicatesAcrossScheduledRuns(t *testing.T) {
 		Title: "Same post", Published: time.Now().UTC(),
 	}
 	store := &fakeFeedStore{
-		feed:     domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: domain.ConnectorReddit},
-		existing: map[string]bool{},
+		feed:  domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: domain.ConnectorReddit},
+		known: map[string]bool{},
 	}
 	queue := &fakeItemsQueue{}
 	handler := &handler{
@@ -271,7 +271,7 @@ func TestRedditFullnameDeduplicatesAcrossScheduledRuns(t *testing.T) {
 	if len(queue.messages) != 1 {
 		t.Fatalf("first run messages = %#v", queue.messages)
 	}
-	store.existing[domain.ItemID("feed", "t3_same", entry.URL)] = true
+	store.known[domain.ItemID("feed", "t3_same", entry.URL)] = true
 	if err := handler.process(context.Background(), message); err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +284,7 @@ func TestTerminalFailureMarkerSuppressesReenqueue(t *testing.T) {
 	entry := domain.Entry{GUID: "post", URL: "https://example.com/post", Published: time.Now().UTC()}
 	itemID := domain.ItemID("feed", entry.GUID, entry.URL)
 	store := &fakeFeedStore{
-		feed: domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed"}, existing: map[string]bool{itemID: true},
+		feed: domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed"}, known: map[string]bool{itemID: true},
 	}
 	queue := &fakeItemsQueue{}
 	handler := &handler{
@@ -412,7 +412,7 @@ func TestSuccessfulFetchLearnsCadenceFromEnqueuedItems(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			feed := domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", URL: "https://example.com/feed", Connector: test.connector, FetchIntervalH: test.pin, HistoryStartedAt: domain.Timestamp(now.Add(-test.age)), PublishHistory: map[string]int{now.Format("2006-01-02"): 9}, EffectiveCadenceH: 24}
-			repository := &fakeFeedStore{feed: feed, existing: map[string]bool{domain.ItemID("feed", "old", "https://example.com/old"): true}}
+			repository := &fakeFeedStore{feed: feed, known: map[string]bool{domain.ItemID("feed", "old", "https://example.com/old"): true}}
 			queue := &fakeItemsQueue{}
 			h := &handler{store: repository, queue: queue, connectors: map[string]connector.Connector{test.connector: resultConnector{result: domain.FetchResult{Entries: []domain.Entry{{GUID: "new", URL: "https://example.com/new", Published: now, LinkItem: true}, {GUID: "old", URL: "https://example.com/old", Published: now}}}}}}
 			if err := h.process(context.Background(), `{"user":"user","feed_id":"feed"}`); err != nil {
