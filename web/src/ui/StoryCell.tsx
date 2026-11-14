@@ -25,7 +25,13 @@ import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
 import type { Item, Story } from "../types";
 import { ExpiryPill } from "./ExpiryPill";
-import { CellCopy, relativeTime, UnreadDot } from "./Grid";
+import {
+  CellCopy,
+  FittedSummary,
+  rankBand,
+  relativeTime,
+  UnreadDot,
+} from "./Grid";
 import { PeekPill } from "./PeekPill";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -84,19 +90,26 @@ export function StoryCell(props: StoryCellProps) {
   const editorial = () => props.story.size === "L";
   const [copyMetrics, setCopyMetrics] = createSignal({
     height: 0,
+    mediaFloor: 0,
     summaryLineHeight: 0,
     summaryMargin: 0,
   });
-  // The Lead shows a one-line summary on desktop when it has room for one.
+  // A Lead over its image shows a one-line summary on desktop when one fits
+  // without cutting into the image's floor. A text-only Lead fits its own.
   const summaryLines = () => {
     const metrics = copyMetrics();
     if (props.cell.mobileStoryCard || !metrics.summaryLineHeight) return 0;
-    const available = leadHeight() - metrics.height - metrics.summaryMargin;
+    const available =
+      leadHeight() -
+      metrics.height -
+      metrics.mediaFloor -
+      metrics.summaryMargin;
     return available >= metrics.summaryLineHeight ? 1 : 0;
   };
   const measureTitle = (title: HTMLHeadingElement) => {
     // Keep optional summaries out of the minimum height to avoid a layout loop.
-    // The Lead image fills whatever height the copy leaves.
+    // As before the copy moved over the image, the Lead's minimum is its copy
+    // plus the image's floor: the photo the copy must leave clear.
     const observer = new ResizeObserver(() => {
       const copy = title.parentElement;
       const meta = copy?.querySelector<HTMLElement>(".story-meta");
@@ -111,12 +124,17 @@ export function StoryCell(props: StoryCellProps) {
         Number.parseFloat(getComputedStyle(meta).marginTop);
       const summary = copy.querySelector("p");
       const summaryStyle = summary ? getComputedStyle(summary) : undefined;
+      const media = copy.parentElement?.querySelector(".story-media-action");
+      const mediaFloor = media
+        ? Number.parseFloat(getComputedStyle(media).minHeight) || 0
+        : 0;
       setCopyMetrics({
         height,
+        mediaFloor,
         summaryLineHeight: Number.parseFloat(summaryStyle?.lineHeight ?? "0"),
         summaryMargin: Number.parseFloat(summaryStyle?.marginTop ?? "0"),
       });
-      props.onLeadHeight(props.story.story_id, Math.ceil(height));
+      props.onLeadHeight(props.story.story_id, Math.ceil(height + mediaFloor));
     });
     observer.observe(title);
     onCleanup(() => observer.disconnect());
@@ -204,6 +222,30 @@ export function StoryCell(props: StoryCellProps) {
               unread={!item.read}
             />
           );
+          // The age, or the time-left marker near expiry. Hover swaps the age
+          // for the Story's rank band, as on a single Item.
+          const cornerMeta = () => (
+            <div
+              class="cell-corner-meta"
+              classList={{ "has-expiry": expiring() }}
+            >
+              <Show
+                when={expiring()}
+                fallback={
+                  <span class="cell-age">
+                    {relativeTime(item.published_ts)}
+                  </span>
+                }
+              >
+                {marker()}
+              </Show>
+              <Show when={!props.archive}>
+                <span class="cell-rank">
+                  {rankBand(props.cell.effectiveSize)}
+                </span>
+              </Show>
+            </div>
+          );
           return (
             <Show
               when={editorial()}
@@ -229,25 +271,7 @@ export function StoryCell(props: StoryCellProps) {
                     >
                       <UnreadDot visible={leadReadVisuals().unreadDot} />
                     </Show>
-                    <Show
-                      when={expiring()}
-                      fallback={
-                        <span class="cell-age">
-                          {relativeTime(item.published_ts)}
-                        </span>
-                      }
-                    >
-                      <div class="cell-corner-meta has-expiry">
-                        <span class="cell-rank">
-                          {props.cell.effectiveSize === "L"
-                            ? "top 10%"
-                            : props.cell.effectiveSize === "M"
-                              ? "top 40%"
-                              : "rest"}
-                        </span>
-                        {marker()}
-                      </div>
-                    </Show>
+                    {cornerMeta()}
                   </div>
                   <Show when={item.hearted}>
                     <span class="kept-marker" aria-hidden="true">
@@ -358,25 +382,7 @@ export function StoryCell(props: StoryCellProps) {
                   >
                     <UnreadDot visible={leadReadVisuals().unreadDot} />
                   </Show>
-                  <Show
-                    when={expiring()}
-                    fallback={
-                      <span class="story-age">
-                        {relativeTime(item.published_ts)}
-                      </span>
-                    }
-                  >
-                    <div class="cell-corner-meta has-expiry">
-                      <span class="cell-rank">
-                        {props.cell.effectiveSize === "L"
-                          ? "top 10%"
-                          : props.cell.effectiveSize === "M"
-                            ? "top 40%"
-                            : "rest"}
-                      </span>
-                      {marker()}
-                    </div>
-                  </Show>
+                  {cornerMeta()}
                 </div>
                 <PrimaryAction
                   item={item}
@@ -392,14 +398,19 @@ export function StoryCell(props: StoryCellProps) {
                     {headlineText(item.title)}
                   </h2>
                   <Show when={item.summary}>
-                    <p
-                      style={{ "--story-summary-lines": summaryLines() }}
-                      classList={{
-                        "story-summary-hidden": summaryLines() === 0,
-                      }}
+                    <Show
+                      when={item.media_url}
+                      fallback={<FittedSummary text={item.summary ?? ""} />}
                     >
-                      {item.summary}
-                    </p>
+                      <p
+                        style={{ "--story-summary-lines": summaryLines() }}
+                        classList={{
+                          "story-summary-hidden": summaryLines() === 0,
+                        }}
+                      >
+                        {item.summary}
+                      </p>
+                    </Show>
                   </Show>
                   <div class="story-meta">
                     <Show

@@ -2082,7 +2082,7 @@ export function CellCopy(props: {
   );
 }
 
-function FittedSummary(props: { text: string }) {
+export function FittedSummary(props: { text: string }) {
   let summary!: HTMLParagraphElement;
   onMount(() => onCleanup(fitSummaryLines(summary)));
   return <p ref={summary}>{props.text}</p>;
@@ -2135,7 +2135,7 @@ function publishedDate(value: string): string {
 // corner's age or rank and the Peek, so feedback moves into More.
 const fullActionRowWidth = 260;
 
-function rankBand(size: "S" | "M" | "L"): string {
+export function rankBand(size: "S" | "M" | "L"): string {
   if (size === "L") return "top 10%";
   if (size === "M") return "top 40%";
   return "rest";

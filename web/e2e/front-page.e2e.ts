@@ -1,6 +1,17 @@
 import { expect, type Page, test } from "@playwright/test";
 import { nextPageTop } from "./grid-paging";
 
+declare global {
+  interface Window {
+    /** Whether two rects overlap by more than `slack` pixels on both axes. */
+    rectsOverlap(
+      a: DOMRectReadOnly,
+      b: DOMRectReadOnly,
+      slack?: number,
+    ): boolean;
+  }
+}
+
 const published = "2026-09-04T18:00:00Z";
 const item = (
   itemID: string,
@@ -46,6 +57,14 @@ async function stubFrontPage(
 ) {
   await page.clock.setFixedTime(new Date("2026-09-05T18:00:00Z"));
   await page.addInitScript(() => localStorage.setItem("sema.signed-in", "1"));
+  // The layout checks below run in the page, so their shared helper lives there.
+  await page.addInitScript(() => {
+    window.rectsOverlap = (a, b, slack = 0) =>
+      a.left < b.right - slack &&
+      b.left < a.right - slack &&
+      a.top < b.bottom - slack &&
+      b.top < a.bottom - slack;
+  });
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -202,15 +221,7 @@ function singleImageCellProblems(grid: Element): string[] {
     const t = title?.getBoundingClientRect();
     for (const control of [age, cell.querySelector(".peek-pill > span")]) {
       const r = control?.getBoundingClientRect();
-      if (
-        t &&
-        r &&
-        r.width > 0 &&
-        t.top < r.bottom &&
-        r.top < t.bottom &&
-        t.left < r.right &&
-        r.left < t.right
-      )
+      if (t && r && r.width > 0 && window.rectsOverlap(t, r))
         problems.push(`${id}: title runs into the corner`);
     }
     const unread = /, unread/.test(
@@ -301,26 +312,21 @@ function storyCellProblems(grid: Element, unread: string[]): string[] {
     const c = visible(corner);
     if (!c || c.top - lead.top > 14 || lead.right - c.right > 60)
       problems.push(`${id}: corner is not at the top right`);
-    // A Story has no rank to swap in, so its age stays under the Cursor too.
-    const ageLabel = corner?.querySelector(
-      ".cell-age, .story-age, .expiry-pill",
-    );
-    const age = visible(ageLabel);
-    if (!age || !ageLabel || getComputedStyle(ageLabel).opacity === "0")
-      problems.push(`${id}: corner shows no age`);
+    // Under the Cursor or hover the corner swaps the age for the rank band.
+    const shown = (element: Element | null | undefined) =>
+      element && getComputedStyle(element).opacity !== "0"
+        ? visible(element)
+        : undefined;
+    const age =
+      shown(corner?.querySelector(".cell-age, .expiry-pill")) ??
+      shown(corner?.querySelector(".cell-rank"));
+    if (!age) problems.push(`${id}: corner shows no age`);
     for (const r of [
       age,
       badge,
       visible(cell.querySelector(".peek-pill > span")),
     ])
-      if (
-        t &&
-        r &&
-        t.top < r.bottom &&
-        r.top < t.bottom &&
-        t.left < r.right &&
-        r.left < t.right
-      )
+      if (t && r && window.rectsOverlap(t, r))
         problems.push(`${id}: title runs into the top of the Lead`);
     const headlines = cell.querySelector(".story-headlines");
     const dots = [...cell.querySelectorAll(".unread-dot")].filter(
@@ -477,21 +483,21 @@ test.describe("mobile front-page Size grammar", () => {
         })),
       ],
     };
-    const imageTileStory = {
-      story_id: "mobile-image-tile-story",
+    const imageStory = {
+      story_id: "mobile-image-story",
       source_count: 5,
       order_key: 0.98,
       size: "L",
       items: [
         {
           ...item(
-            "mobile-image-tile",
+            "mobile-image-lead",
             "overworld",
             "Until Dawn 2 Reveals Release Date in New Trailer",
             0.98,
             "L",
           ),
-          story_id: "mobile-image-tile-story",
+          story_id: "mobile-image-story",
         },
         {
           ...item(
@@ -501,7 +507,7 @@ test.describe("mobile front-page Size grammar", () => {
             0.8,
             "S",
           ),
-          story_id: "mobile-image-tile-story",
+          story_id: "mobile-image-story",
         },
         {
           ...item(
@@ -511,7 +517,7 @@ test.describe("mobile front-page Size grammar", () => {
             0.79,
             "S",
           ),
-          story_id: "mobile-image-tile-story",
+          story_id: "mobile-image-story",
         },
         {
           ...item(
@@ -521,25 +527,25 @@ test.describe("mobile front-page Size grammar", () => {
             0.78,
             "S",
           ),
-          story_id: "mobile-image-tile-story",
+          story_id: "mobile-image-story",
         },
       ],
     };
-    const textTileStory = {
-      story_id: "mobile-text-tile-story",
+    const textStory = {
+      story_id: "mobile-text-story",
       source_count: 8,
       order_key: 0.97,
       size: "L",
       items: [
         {
           ...item(
-            "mobile-text-tile",
+            "mobile-text-lead",
             "maps",
             "Apple Maps changes name of Lake Ontario to Lake America",
             0.97,
             "L",
           ),
-          story_id: "mobile-text-tile-story",
+          story_id: "mobile-text-story",
           media_url: undefined,
           media_w: undefined,
           media_h: undefined,
@@ -552,7 +558,7 @@ test.describe("mobile front-page Size grammar", () => {
             0.79,
             "S",
           ),
-          story_id: "mobile-text-tile-story",
+          story_id: "mobile-text-story",
         },
       ],
     };
@@ -560,7 +566,7 @@ test.describe("mobile front-page Size grammar", () => {
     await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
     await stubFrontPage(
       page,
-      [leadStory, imageTileStory, textTileStory],
+      [leadStory, imageStory, textStory],
       [
         item("mobile-large", "large", "A large single Item", 0.9, "L"),
         { ...item("mobile-m0", "m0", "A medium Item", 0.8, "M"), ...photo },
@@ -601,8 +607,8 @@ test.describe("mobile front-page Size grammar", () => {
     // Every L Item or Story takes the full width; M and S sit two-up.
     for (const [storyID, sources] of [
       ["mobile-lead-story", 4],
-      ["mobile-image-tile-story", 5],
-      ["mobile-text-tile-story", 8],
+      ["mobile-image-story", 5],
+      ["mobile-text-story", 8],
     ] as const) {
       const story = page.locator(`[data-story-id="${storyID}"]`);
       await expectCell(`[data-story-id="${storyID}"]`, full);
@@ -625,7 +631,9 @@ test.describe("mobile front-page Size grammar", () => {
 
     await page.screenshot({ path: "/tmp/sema-mobile-initial.png" });
     const leadCard = page.locator('[data-story-id="mobile-lead-story"]');
-    await expect(leadCard.getByText("top 10%")).toBeHidden();
+    await expect(
+      leadCard.getByText("top 10%").filter({ visible: true }),
+    ).toHaveCount(0);
     const collapsedHeadlines = leadCard.locator(".story-headline");
     await expect(collapsedHeadlines).toHaveCount(1);
     expect(
@@ -667,7 +675,7 @@ test.describe("mobile front-page Size grammar", () => {
 
     // A Story's sheet lists every Headline.
     await page
-      .locator('[data-story-id="mobile-image-tile-story"] .story-lead')
+      .locator('[data-story-id="mobile-image-story"] .story-lead')
       .focus();
     await page.keyboard.press("Shift+F10");
     const sheet = page.getByRole("dialog", {
@@ -929,7 +937,7 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
   const storyBadge = storyCell.getByLabel("2 sources");
   await expect(storyBadge).toBeVisible();
   await expect(storyCell.locator(".story-badges")).toHaveCount(0);
-  await expect(storyCell.locator(".cell-rank")).toHaveCount(0);
+  await expect(storyCell.locator(".cell-rank")).toHaveText("top 40%");
   await expect(storyCell.locator(".story-headlines")).toHaveCount(0);
   await expect
     .poll(() => page.locator(".grid-scroll").evaluate(storyCellProblems, []))
@@ -1469,7 +1477,7 @@ test("dark story read visuals follow the grid's All and Unread contexts", async 
   const storyCell = page.locator('[data-story-id="read-story"]');
   const leadTitle = storyCell.locator(".story-lead h2");
   const headlines = storyCell.locator(".story-headline");
-  // The Lead's copy over its photo leaves room for both Headlines.
+  await storyCell.getByRole("button", { name: /\+\d+ more/ }).click();
   await expect(headlines).toHaveCount(2);
   await expect(storyCell).not.toHaveClass(/\bread\b/);
   await expect(leadTitle).not.toHaveClass(/\bread\b/);
@@ -1574,14 +1582,7 @@ test("desktop story titles and summaries fit their cards after resizing and expa
       const boxes = elements.map((element) => element.getBoundingClientRect());
       for (let i = 0; i < boxes.length; i++) {
         for (let j = i + 1; j < boxes.length; j++) {
-          const a = boxes[i];
-          const b = boxes[j];
-          if (
-            a.left < b.right &&
-            b.left < a.right &&
-            a.top < b.bottom &&
-            b.top < a.bottom
-          )
+          if (window.rectsOverlap(boxes[i], boxes[j]))
             errors.push("Story cards overlap");
         }
       }
@@ -2466,6 +2467,223 @@ test("grid and reader both use the decode workaround", async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test("desktop Story Leads keep master's image floor and Headline counts", async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
+  const titles = [
+    "The car industry A/B tested selling a car with and without CarPlay",
+    "Double Fine’s first game since leaving Xbox is a comedy bus-driving sim called Thank You Bus Driver",
+    "A story without an image still needs enough room for its complete headline",
+    "A short story title",
+  ];
+  const relatedCounts = [1, 2, 3, 5];
+  const stories = titles.map((title, index) => {
+    const storyID = `floor-story-${index}`;
+    return {
+      story_id: storyID,
+      source_count: relatedCounts[index] + 1,
+      order_key: 1 - index * 0.05,
+      size: "L",
+      items: [
+        {
+          ...item(`floor-lead-${index}`, "lead", title, 1 - index * 0.05, "L"),
+          story_id: storyID,
+          ...(index === 2 ? { media_url: undefined } : {}),
+        },
+        ...Array.from({ length: relatedCounts[index] }, (_, related) => ({
+          ...item(
+            `floor-related-${index}-${related}`,
+            `related-${related}`,
+            related % 2
+              ? title
+              : "Another source explains what drivers chose and what the industry learned",
+            0.5,
+            "S",
+          ),
+          story_id: storyID,
+        })),
+      ],
+    };
+  });
+  const singles = Array.from({ length: 10 }, (_, index) =>
+    item(
+      `floor-single-${index}`,
+      "single",
+      `Singleton ${index} with an ordinary headline`,
+      0.8 - index * 0.05,
+      (["L", "M", "S"] as const)[index % 3],
+    ),
+  );
+  await stubFrontPage(page, stories, singles, []);
+  // Measured on master, before #48 put the Lead's copy over its image: the
+  // Headlines each collapsed Story shows, and every Story's expanded.
+  const masterCollapsed = [1, 1, 1, 1];
+  const masterExpanded = [1, 2, 3, 5];
+  const cards = page.locator(".story-card");
+  const geometry = () =>
+    cards.evaluateAll((elements) =>
+      elements.map((card) => {
+        const shell = card.querySelector(".story-lead-shell") as HTMLElement;
+        const lead = card.querySelector(".story-lead") as HTMLElement;
+        const media = card.querySelector(".story-media-action");
+        const headlines = card.querySelector(".story-headlines");
+        const shellBox = shell.getBoundingClientRect();
+        return {
+          headlines: card.querySelectorAll(".story-headline").length,
+          // The photo the copy leaves clear, or null for a text-only Lead.
+          clearImage: media
+            ? Math.round(lead.getBoundingClientRect().top - shellBox.top)
+            : null,
+          band: headlines
+            ? Math.round(
+                headlines.getBoundingClientRect().top - shellBox.bottom,
+              )
+            : 0,
+        };
+      }),
+    );
+  const expectLeads = async () => {
+    for (const card of await geometry()) {
+      expect(card.band).toBe(0);
+      if (card.clearImage !== null)
+        expect(card.clearImage).toBeGreaterThanOrEqual(126);
+    }
+  };
+  for (const width of [1500, 1024]) {
+    await page.setViewportSize({ width, height: 2400 });
+    await page.goto("/");
+    await expect(cards).toHaveCount(titles.length);
+    await page.evaluate(() => document.fonts.ready);
+    await expect
+      .poll(async () => (await geometry()).map((card) => card.headlines))
+      .toEqual(masterCollapsed);
+    await expectLeads();
+    for (const [index, count] of relatedCounts.entries()) {
+      if (count < 2) continue;
+      await page
+        .locator(`[data-story-id="floor-story-${index}"]`)
+        .getByRole("button", { name: /\+\d+ more$/ })
+        .click();
+    }
+    await expect
+      .poll(async () => (await geometry()).map((card) => card.headlines))
+      .toEqual(masterExpanded);
+    await expectLeads();
+  }
+});
+
+test("desktop Headline strips show an unread dot at their own heights", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  const title = "A Story about the new trailer and its release date";
+  const member = (index: number, memberTitle: string, read: boolean) => ({
+    ...item(`dot-member-${index}`, `source-${index}`, memberTitle, 0.6, "S"),
+    story_id: "dot-story",
+    read,
+  });
+  const story = {
+    story_id: "dot-story",
+    source_count: 4,
+    order_key: 1,
+    size: "L",
+    items: [
+      { ...item("dot-lead", "lead", title, 1, "L"), story_id: "dot-story" },
+      member(0, "Another angle on what the trailer shows of the game", false),
+      member(1, title, false),
+      member(2, "A read Member about the release date", true),
+    ],
+  };
+  await stubFrontPage(page, [story], [], []);
+  await page.goto("/");
+  const card = page.locator('[data-story-id="dot-story"]');
+  await expect(card).toBeVisible();
+  await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
+  const more = card.getByRole("button", { name: /\+\d+ more$/ });
+  if (await more.count()) await more.click();
+  await expect(card.locator(".story-headline")).toHaveCount(3);
+  const strips = () =>
+    card.locator(".story-headline").evaluateAll((elements) =>
+      elements.map((strip) => {
+        const source = strip.querySelector(".story-related-source");
+        const dot = [...strip.querySelectorAll(".unread-dot")].find(
+          (element) => element.getBoundingClientRect().width > 0,
+        );
+        const middle = (r?: DOMRect) => (r ? (r.top + r.bottom) / 2 : NaN);
+        const d = dot?.getBoundingClientRect();
+        return {
+          id: (strip as HTMLElement).dataset.focusId,
+          height: Math.round(strip.getBoundingClientRect().height),
+          dot: !!dot,
+          // The dot sits on the feed name and age line, inside the strip.
+          dotOnSourceLine:
+            !d ||
+            Math.abs(middle(d) - middle(source?.getBoundingClientRect())) <= 3,
+        };
+      }),
+    );
+  await expect.poll(strips).toEqual([
+    { id: "dot-member-0", height: 72, dot: true, dotOnSourceLine: true },
+    { id: "dot-member-1", height: 44, dot: true, dotOnSourceLine: true },
+    { id: "dot-member-2", height: 72, dot: false, dotOnSourceLine: true },
+  ]);
+});
+
+test("hover swaps a Story's corner age for its rank", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1200 });
+  const story = (storyID: string, size: "L" | "M", score: number) => ({
+    story_id: storyID,
+    source_count: 2,
+    order_key: score,
+    size,
+    items: [
+      {
+        ...item(`${storyID}-lead`, "lead", `${size} Story Lead`, score, "L"),
+        story_id: storyID,
+      },
+      {
+        ...item(`${storyID}-member`, "member", "A Member", score, "S"),
+        story_id: storyID,
+      },
+    ],
+  });
+  const singles = Array.from({ length: 6 }, (_, index) =>
+    item(`rank-single-${index}`, "single", `Singleton ${index}`, 0.5, "S"),
+  );
+  await stubFrontPage(
+    page,
+    [story("rank-l", "L", 1), story("rank-m", "M", 0.7)],
+    singles,
+    [],
+  );
+  await page.goto("/");
+  const corner = (storyID: string) => {
+    const cell = page.locator(`[data-story-id="${storyID}"]`);
+    return {
+      cell,
+      age: cell.locator(".cell-corner .cell-age"),
+      rank: cell.locator(".cell-corner .cell-rank"),
+    };
+  };
+  // Hovering one Story moves the Cursor to it, so the other shows its age.
+  for (const [hovered, rank, other] of [
+    ["rank-m", "top 40%", "rank-l"],
+    ["rank-l", "top 10%", "rank-m"],
+  ]) {
+    const target = corner(hovered);
+    await target.cell
+      .locator(".story-lead h2, .cell-copy h2")
+      .hover({ force: true });
+    await expect(target.rank).toHaveText(rank);
+    await expect(target.rank).toHaveCSS("opacity", "1");
+    await expect(target.age).toHaveCSS("opacity", "0");
+    await expect(corner(other).age).toHaveText("1d");
+    await expect(corner(other).age).toHaveCSS("opacity", "1");
+    await expect(corner(other).rank).toHaveCSS("opacity", "0");
+  }
+});
+
 test("story footers and neighboring singletons share the same bottom edge", async ({
   page,
 }) => {
@@ -2797,7 +3015,7 @@ test.describe("mobile shared grid design", () => {
   test.use({ hasTouch: true, isMobile: true });
   for (const theme of ["light", "dark"] as const) {
     for (const width of [320, 393, 430]) {
-      test(`fits cells and related coverage at ${width}px in ${theme}`, async ({
+      test(`fits cells and Headlines at ${width}px in ${theme}`, async ({
         page,
       }) => {
         await page.setViewportSize({ width, height: 920 });
@@ -3314,6 +3532,132 @@ test.describe("text-only cells", () => {
           .toEqual([]);
         await page.screenshot({
           path: `/tmp/sema-text-cells-${theme}-${width}.png`,
+        });
+      });
+    }
+  }
+
+  // An L Story whose Lead has no photo takes the large text-only anatomy.
+  const largeStory = {
+    story_id: "text-large-story",
+    source_count: 3,
+    order_key: 1.2,
+    size: "L",
+    items: [
+      textOnly(
+        "text-large-story-lead",
+        "A large Story Lead without a photo",
+        1.2,
+        "L",
+        { story_id: "text-large-story" },
+      ),
+      ...[0, 1].map((index) =>
+        textOnly(
+          `text-large-story-member-${index}`,
+          `Another Source on the large Story ${index}`,
+          1.1,
+          "S",
+          { story_id: "text-large-story" },
+        ),
+      ),
+    ],
+  };
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [393, 1440]) {
+      test(`give a text-only L Story Lead the large text anatomy at ${width}px in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 1400 });
+        await page.addInitScript(
+          (theme) => localStorage.setItem("sema:theme", theme),
+          theme,
+        );
+        await stubFrontPage(page, [largeStory], items, []);
+        await page.goto("/");
+        const lead = page.locator('[data-story-id="text-large-story"]');
+        await expect(lead).toBeVisible();
+        // All, not Unread, so the Lead shows its unread dot.
+        if (width < 700) {
+          await page.locator(".filter-button").click();
+          await page
+            .getByRole("switch", { name: "Unread only", exact: true })
+            .uncheck();
+          await page.getByRole("button", { name: "Close filter" }).click();
+        } else {
+          await page
+            .getByRole("switch", { name: "Unread", exact: true })
+            .uncheck();
+        }
+        await expect(lead.locator(".story-meta .unread-dot")).toBeVisible();
+        await page.evaluate(() => document.fonts.ready);
+        const title = lead.locator(".story-lead h2");
+        await expect(title).toHaveCSS(
+          "font-size",
+          width < 700 ? "22px" : "27px",
+        );
+        await expect(title).toHaveCSS("font-weight", "600");
+        await expect(lead.locator(".story-lead p")).toHaveText(longSummary);
+        await expect
+          .poll(() =>
+            lead.evaluate((card) => {
+              const problems: string[] = [];
+              const shell = card.querySelector(".story-lead-shell");
+              const h2 = card.querySelector(".story-lead h2");
+              const summary = card.querySelector<HTMLElement>(".story-lead p");
+              const meta = card.querySelector(".story-meta");
+              const badge = card.querySelector(
+                '[role="img"][aria-label$=" sources"]',
+              );
+              if (!shell || !h2 || !summary || !meta || !badge)
+                return ["missing Lead copy"];
+              const box = shell.getBoundingClientRect();
+              const titleBox = h2.getBoundingClientRect();
+              const metaBox = meta.getBoundingClientRect();
+              const summaryBox = summary.getBoundingClientRect();
+              const top = badge.getBoundingClientRect().bottom;
+              if (titleBox.top < top || titleBox.top - top > 16)
+                problems.push("title not at top");
+              if (
+                box.bottom - metaBox.bottom > 16 ||
+                metaBox.bottom > box.bottom
+              )
+                problems.push("bottom line not at bottom");
+              const parts = [".story-feed", "small", ".unread-dot"]
+                .map((selector) => meta.querySelector(selector))
+                .map((el) => el?.getBoundingClientRect());
+              const middle = (r: DOMRect) => (r.top + r.bottom) / 2;
+              if (
+                parts.some(
+                  (r) =>
+                    !r ||
+                    r.width === 0 ||
+                    Math.abs(middle(r) - middle(metaBox)) > 3,
+                )
+              )
+                problems.push("bottom line not one line");
+              const style = getComputedStyle(summary);
+              const lineHeight = Number.parseFloat(style.lineHeight);
+              const lines = summaryBox.height / lineHeight;
+              if (
+                style.visibility === "hidden" ||
+                lines < 0.95 ||
+                Math.abs(lines - Math.round(lines)) > 0.05
+              )
+                problems.push(`summary shows ${lines} lines`);
+              if (summaryBox.top < titleBox.bottom - 1)
+                problems.push("summary over title");
+              if (summaryBox.bottom > metaBox.top + 1)
+                problems.push("summary over bottom line");
+              if (summary.scrollHeight <= summary.clientHeight)
+                problems.push("long summary not clamped");
+              if (metaBox.top - summaryBox.bottom > lineHeight + 12)
+                problems.push("summary leaves a spare line");
+              return problems;
+            }),
+          )
+          .toEqual([]);
+        await lead.screenshot({
+          path: `/tmp/sema-text-large-story-${theme}-${width}.png`,
         });
       });
     }
@@ -4031,11 +4375,8 @@ function topBandProblems(grid: Element): string[] {
     }
     return true;
   };
-  const overlap = (a: DOMRect, b: DOMRect) =>
-    a.left < b.right - 1 &&
-    b.left < a.right - 1 &&
-    a.top < b.bottom - 1 &&
-    b.top < a.bottom - 1;
+  // Rects that only share an antialiased edge don't count.
+  const overlap = (a: DOMRect, b: DOMRect) => window.rectsOverlap(a, b, 1);
   const name = (el: Element) =>
     `${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}`;
   const problems: string[] = [];

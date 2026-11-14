@@ -55,6 +55,7 @@ export const gridCanvasPadding = 14;
 export const storyHeadlineHeight = 52;
 export const storyMoreHeight = 33;
 export const storyCardBorderHeight = 3;
+/** A phone Headline strip; styles.css draws it as --story-strip-h. */
 export const mobileStoryHeadlineHeight = 52;
 export const mobileStoryMoreHeight = 44;
 /** A phone Story's Lead; its Headline strips and more row sit below it. */
