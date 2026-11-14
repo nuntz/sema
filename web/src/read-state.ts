@@ -3,6 +3,7 @@ import type { AppAPI } from "./api/client";
 import { effectiveGridOrder } from "./grid-scope";
 import type { ItemSession } from "./item-session";
 import { excludeRenderedStoryItems, includeReadForGrid } from "./item-session";
+import { type FetchWindow, inWindow } from "./item-view";
 import type { LayoutRow } from "./layout/justified";
 import {
   gridReadStateContext,
@@ -54,11 +55,23 @@ export function createReadState(
   let disposed = false;
   let revision = 0;
   const [undo, setUndo] = createSignal<Undo>();
-  // Read's optimistic unread adjustment by Feed, for every count that
-  // subtracts it until a settled snapshot is accepted.
-  const [feedReadAdjust, setFeedReadAdjust] = createSignal<
-    Record<string, number>
+  // Read's optimistic unread adjustment by Feed, then by arrival time, for
+  // every count that subtracts it until a settled snapshot is accepted.
+  const [readAdjust, setReadAdjust] = createSignal<
+    Record<string, Record<string, number>>
   >({});
+  /**
+   * Read's optimistic unread adjustment by Feed, counting only Items that
+   * arrived inside `window` when one is given.
+   */
+  const feedReadAdjust = (window?: FetchWindow) => {
+    const byFeed: Record<string, number> = {};
+    for (const [feedID, byFetched] of Object.entries(readAdjust()))
+      for (const [fetched, delta] of Object.entries(byFetched))
+        if (inWindow(window, fetched))
+          byFeed[feedID] = (byFeed[feedID] ?? 0) + delta;
+    return byFeed;
+  };
   let readTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let undoTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   let undoDeadline = 0;
@@ -69,17 +82,27 @@ export function createReadState(
   const pendingRead = new PendingReads();
   const readFlushes = new Set<Promise<void>>();
 
-  // Feed of each Item Read has adjusted, so Undo can reverse it by Feed.
-  const adjustedFeeds = new Map<string, string>();
-  const feedsOf = (ids: Iterable<string>) =>
-    [...ids].flatMap((id) => adjustedFeeds.get(id) ?? []);
+  // The Feed and arrival time a Read is counted under, kept for each Item
+  // Read has adjusted so Undo can reverse it.
+  type ReadKey = Pick<Item, "feed_id" | "fetched_ts">;
+  const readKeys = new Map<string, ReadKey>();
+  const readKeyOf = ({ feed_id, fetched_ts }: ReadKey): ReadKey => ({
+    feed_id,
+    fetched_ts,
+  });
+  const readKeysOf = (ids: Iterable<string>) =>
+    [...ids].flatMap((id) => readKeys.get(id) ?? []);
   // Every Read change bumps revision, even one with no known Feed, so a
   // snapshot requested before it is rejected.
-  const changeFeedAdjust = (feedIDs: Iterable<string>, delta: number) => {
+  const changeReadAdjust = (keys: Iterable<ReadKey>, delta: number) => {
     revision++;
-    setFeedReadAdjust((current) => {
+    setReadAdjust((current) => {
       const next = { ...current };
-      for (const feedID of feedIDs) next[feedID] = (next[feedID] ?? 0) + delta;
+      for (const { feed_id, fetched_ts } of keys) {
+        const byFetched = { ...next[feed_id] };
+        byFetched[fetched_ts] = (byFetched[fetched_ts] ?? 0) + delta;
+        next[feed_id] = byFetched;
+      }
       return next;
     });
   };
@@ -181,8 +204,8 @@ export function createReadState(
     if (unread.length === 0) return;
     for (const item of loaded)
       if (requested.has(item.item_id))
-        adjustedFeeds.set(item.item_id, item.feed_id);
-    changeFeedAdjust(feedsOf(unread), 1);
+        readKeys.set(item.item_id, readKeyOf(item));
+    changeReadAdjust(readKeysOf(unread), 1);
     for (const id of unread) {
       pendingRead.add(id);
       changes.set(id, Symbol());
@@ -242,10 +265,7 @@ export function createReadState(
       pendingRead.delete(item.item_id);
       changes.set(item.item_id, token);
     }
-    changeFeedAdjust(
-      changed.map((item) => item.feed_id),
-      read ? 1 : -1,
-    );
+    changeReadAdjust(changed, read ? 1 : -1);
     patchRead(
       members.map((item) => item.item_id),
       read,
@@ -263,10 +283,7 @@ export function createReadState(
         const rollback = changed.filter(
           (item) => changes.get(item.item_id) === token,
         );
-        changeFeedAdjust(
-          rollback.map((item) => item.feed_id),
-          read ? -1 : 1,
-        );
+        changeReadAdjust(rollback, read ? -1 : 1);
         batch(() => {
           for (const item of rollback)
             replaceItem(item.item_id, { read: item.read });
@@ -374,7 +391,7 @@ export function createReadState(
             : (page.items ?? []);
         const unreadOnPage = pageItems.filter((candidate) => !candidate.read);
         for (const candidate of unreadOnPage)
-          adjustedFeeds.set(candidate.item_id, candidate.feed_id);
+          readKeys.set(candidate.item_id, readKeyOf(candidate));
         ids.push(...unreadOnPage.map((candidate) => candidate.item_id));
         nextCursor = page.next_cursor ?? "";
       }
@@ -389,7 +406,7 @@ export function createReadState(
   function undoLast() {
     const operation = undo();
     if (!operation) return;
-    changeFeedAdjust(feedsOf(operation.ids), -1);
+    changeReadAdjust(readKeysOf(operation.ids), -1);
     clearUndoTimer();
     undoRemaining = 8_000;
     setUndo(undefined);
@@ -454,7 +471,7 @@ export function createReadState(
         if (requested !== revision) return false;
         batch(() => {
           apply(value);
-          setFeedReadAdjust({});
+          setReadAdjust({});
         });
         return true;
       },

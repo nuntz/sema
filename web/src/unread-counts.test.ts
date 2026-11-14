@@ -434,6 +434,98 @@ describe("Unread counts", () => {
     });
   });
 
+  describe("in the Today Window", () => {
+    // Local noon, so today's Window is unambiguous in any timezone.
+    const now = new Date(2026, 10, 13, 12);
+    const today = new Date(2026, 10, 13, 9).toISOString();
+    const lastWeek = new Date(2026, 10, 6, 9).toISOString();
+    // A Window holds the Items that arrived in it, whenever published.
+    const arrived = (
+      id: string,
+      feed: string,
+      fetched: string,
+      published = fetched,
+    ): Item => ({
+      ...item(id, feed),
+      fetched_ts: fetched,
+      published_ts: published,
+    });
+
+    async function todayCounts(feedCounts: FeedItemCounts) {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(now);
+      const harness = setup();
+      harness.session.setItemWindow("today");
+      const first = harness.unread.refresh();
+      await flushMicrotasks();
+      harness.requests[0].reply.resolve(feedCounts);
+      await first;
+      return harness;
+    }
+
+    it("ignores opening an Item that arrived before the Window", async () => {
+      const { reads, unread, cleanup } = await todayCounts({
+        "apple-feed": { unread: 3, all: 4 },
+      });
+      reads.recordOpened(arrived("old", "apple-feed", lastWeek));
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 3, all: 4 });
+      cleanup();
+    });
+
+    it("lowers a Feed's count for a Read that arrived inside the Window", async () => {
+      const { session, reads, unread, cleanup } = await todayCounts({
+        "apple-feed": { unread: 3, all: 4 },
+      });
+      session.setItems([arrived("fresh", "apple-feed", today)]);
+      reads.queueRead(["fresh"]);
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 2, all: 4 });
+      cleanup();
+    });
+
+    it("lowers a Feed's count for an Item published before the Window but fetched in it", async () => {
+      const { session, reads, unread, cleanup } = await todayCounts({
+        "apple-feed": { unread: 3, all: 4 },
+      });
+      const lateNight = new Date(2026, 10, 12, 23, 50).toISOString();
+      session.setItems([arrived("late", "apple-feed", today, lateNight)]);
+      reads.queueRead(["late"]);
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 2, all: 4 });
+      cleanup();
+    });
+
+    it("keeps a Read against the counts it was made for after midnight", async () => {
+      const { session, reads, unread, cleanup } = await todayCounts({
+        "apple-feed": { unread: 3, all: 4 },
+      });
+      session.setItems([arrived("fresh", "apple-feed", today)]);
+      reads.queueRead(["fresh"]);
+      // The counts on hand still describe the 13th until the next refresh.
+      vi.setSystemTime(new Date(2026, 10, 14, 0, 30));
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 2, all: 4 });
+      cleanup();
+    });
+
+    it("keeps the Scope cell when opening an Item that arrived before the Window", async () => {
+      const { reads, unread, cleanup } = await todayCounts({
+        feed: { unread: 3, all: 4 },
+      });
+      reads.recordOpened(arrived("old", "feed", lastWeek));
+      expect(unread.scopeCell()?.count).toBe(3);
+      cleanup();
+    });
+
+    it("never lowers a Feed's count below zero", async () => {
+      // The Item arrived after the counts were taken, so they never counted it.
+      const { session, reads, unread, cleanup } = await todayCounts({
+        "apple-feed": { unread: 0, all: 4 },
+      });
+      session.setItems([arrived("fresh", "apple-feed", today)]);
+      reads.queueRead(["fresh"]);
+      expect(unread.feedCounts()["apple-feed"]).toEqual({ unread: 0, all: 4 });
+      cleanup();
+    });
+  });
+
   describe("Scope cell", () => {
     const feeds = [
       { feed_id: "apple-feed", tags: ["fruit"] },

@@ -95,7 +95,7 @@ The one Tag or Feed the grid is currently restricted to, if any. A user has at m
 _Avoid_: Filter, tag view, feed view, selection
 
 **Window**:
-The publication range the grid shows: Today, Yesterday, or All of the Live Window. The Window is chosen per session and combines with Scope and with showing unread Items only.
+The arrival range the grid shows: Items fetched Today, Yesterday, or at any time in the Live Window (All), whenever they were published. The Window is chosen per session and combines with Scope and with showing unread Items only.
 _Avoid_: Date filter, range, period, Live Window (which is retention, not display)
 
 **Size**:

@@ -23,6 +23,16 @@ export function windowRange(
   return { from: from.toISOString(), before: before.toISOString() };
 }
 
+/**
+ * Whether an Item that arrived at `fetched` belongs to `window`, as the
+ * server's FetchWindow decides; no window holds every Item.
+ */
+export function inWindow(window: FetchWindow | undefined, fetched: string) {
+  if (!window) return true;
+  const at = Date.parse(fetched);
+  return at >= Date.parse(window.from) && at < Date.parse(window.before);
+}
+
 export function scopeSummary(window: ItemWindow, unreadOnly: boolean): string {
   const label =
     ITEM_WINDOWS.find((option) => option.value === window)?.label ?? window;

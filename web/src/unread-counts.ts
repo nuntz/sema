@@ -1,6 +1,11 @@
 import { createMemo, createSignal } from "solid-js";
 import type { AppAPI } from "./api/client";
-import { ITEM_WINDOWS, type ItemWindow, windowRange } from "./item-view";
+import {
+  type FetchWindow,
+  ITEM_WINDOWS,
+  type ItemWindow,
+  windowRange,
+} from "./item-view";
 import type { ReadState } from "./read-state";
 import { scopeCellModel, windowScopeCounts } from "./scope-cell";
 import type { Feed, FeedItemCounts, GridScope } from "./types";
@@ -18,7 +23,8 @@ export interface UnreadCountView {
 /**
  * Owns unread-count loading, caching and freshness for every count display.
  * The active Scope, current Window choice and per-Feed counts (hence Tag
- * chips) subtract Read's optimistic adjustment; the Feeds screen and
+ * chips) subtract Read's optimistic adjustment for Items that arrived in the
+ * Window the counts were fetched for, never below zero; the Feeds screen and
  * alternate-Window counts are server snapshots.
  */
 export function createUnreadCounts(
@@ -30,6 +36,9 @@ export function createUnreadCounts(
   const [counts, setCounts] = createSignal<FeedItemCounts>({});
   // The Window key the counts on hand describe; undefined while unknown.
   const [countsKey, setCountsKey] = createSignal<string>();
+  // The range the counts on hand were fetched for, which Read's adjustment
+  // must match even after the clock moves past it.
+  const [countsWindow, setCountsWindow] = createSignal<FetchWindow>();
   const [windowCounts, setWindowCounts] = createSignal<
     Partial<Record<ItemWindow, FeedItemCounts>>
   >({});
@@ -56,6 +65,7 @@ export function createUnreadCounts(
       if (!snapshot?.value || current !== generation) return;
       snapshot.accept((latest) => {
         setCounts(latest);
+        setCountsWindow(window);
         setWindowCounts((cached) => ({ ...cached, [itemWindow]: latest }));
         setCountsKey(key);
       });
@@ -65,11 +75,16 @@ export function createUnreadCounts(
   };
 
   const optimistic = (snapshot: FeedItemCounts): FeedItemCounts => {
-    const adjust = reads.feedReadAdjust();
+    const adjust = reads.feedReadAdjust(countsWindow());
     const adjusted = { ...snapshot };
     for (const [feedID, read] of Object.entries(adjust)) {
       const count = adjusted[feedID];
-      if (count) adjusted[feedID] = { ...count, unread: count.unread - read };
+      // Floor at zero for an Item that arrived after the counts were taken.
+      if (count)
+        adjusted[feedID] = {
+          ...count,
+          unread: Math.max(0, count.unread - read),
+        };
     }
     return adjusted;
   };
