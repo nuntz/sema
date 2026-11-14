@@ -43,7 +43,6 @@ interface StoryCellProps {
   row: LayoutRow;
   focusedID: string;
   readContext: ReadStateContext;
-  refined?: boolean;
   archive?: boolean;
   pressed: boolean;
   onExpand(storyID: string): void;
@@ -76,9 +75,7 @@ export function StoryCell(props: StoryCellProps) {
   const showHeadlines = () => (props.cell.headlineHeight ?? 0) > 0;
   const cellHeight = () => props.cell.height ?? props.row.height;
   const leadHeight = () =>
-    cellHeight() -
-    (props.cell.headlineHeight ?? 0) -
-    (props.cell.mobileStoryCard && !props.refined ? 0 : storyCardBorderHeight);
+    cellHeight() - (props.cell.headlineHeight ?? 0) - storyCardBorderHeight;
   const editorial = () =>
     props.story.size === "L" && props.cell.mobileTile !== true;
   const [copyMetrics, setCopyMetrics] = createSignal({
@@ -104,7 +101,6 @@ export function StoryCell(props: StoryCellProps) {
   const measureTitle = (title: HTMLHeadingElement) => {
     // Keep optional summaries out of the minimum height to avoid a layout loop.
     const observer = new ResizeObserver(() => {
-      if (props.cell.mobileStoryCard && !props.refined) return;
       const copy = title.parentElement;
       const meta = copy?.querySelector<HTMLElement>(".story-meta");
       if (!copy || !meta) return;
@@ -168,7 +164,7 @@ export function StoryCell(props: StoryCellProps) {
         "story-card": editorial(),
         focused: props.focusedID === focusID(),
         read: cellReadVisuals().dimmed,
-        "is-read": props.refined === true && cellReadVisuals().dimmed,
+        "is-read": cellReadVisuals().dimmed,
         pressed: props.pressed,
         "mobile-story-card": props.cell.mobileStoryCard === true,
         "mobile-tile-cell": props.cell.mobileTile === true,
@@ -308,7 +304,6 @@ export function StoryCell(props: StoryCellProps) {
                   />
                   <CellCopy
                     item={item}
-                    refined={props.refined}
                     unreadDot={leadReadVisuals().unreadDot}
                     archive={props.archive ?? false}
                     effectiveSize="M"
@@ -359,7 +354,7 @@ export function StoryCell(props: StoryCellProps) {
                     </div>
                   </PrimaryAction>
                 </Show>
-                <Show when={props.refined && !cellSignal(item)}>
+                <Show when={!cellSignal(item)}>
                   <span class="ranking-hint">
                     {props.story.source_count} sources
                     <Show when={whyText(item)}> · {whyText(item)}</Show>
@@ -436,39 +431,29 @@ export function StoryCell(props: StoryCellProps) {
                       {item.summary}
                     </p>
                   </Show>
-                  <Show when={!props.cell.mobileStoryCard || props.refined}>
-                    <div class="story-meta">
-                      <Show when={props.refined}>
-                        <Show
-                          when={
-                            !(expiring() && props.cell.effectiveSize === "S")
-                          }
-                        >
-                          <UnreadDot visible={leadReadVisuals().unreadDot} />
-                        </Show>
-                      </Show>
-                      <SourceBadge
-                        connector={item.connector}
-                        imageURL={item.favicon_url}
-                        title={item.feed_title}
-                        size={16}
-                      />
-                      <span>
-                        {props.refined
-                          ? gridSourceName(item)
-                          : item.feed_title || "Feed"}
+                  <div class="story-meta">
+                    <Show
+                      when={!(expiring() && props.cell.effectiveSize === "S")}
+                    >
+                      <UnreadDot visible={leadReadVisuals().unreadDot} />
+                    </Show>
+                    <SourceBadge
+                      connector={item.connector}
+                      imageURL={item.favicon_url}
+                      title={item.feed_title}
+                      size={16}
+                    />
+                    <span>{gridSourceName(item)}</span>
+                    <small>· {relativeTime(item.published_ts)}</small>
+                    <Show when={item.read}>
+                      <span class="refined-read-label">
+                        <Icon name="check" size={13} /> read
                       </span>
-                      <small>· {relativeTime(item.published_ts)}</small>
-                      <Show when={props.refined && item.read}>
-                        <span class="refined-read-label">
-                          <Icon name="check" size={13} /> read
-                        </span>
-                      </Show>
-                      <Show when={!cellSignal(item) && whyText(item)}>
-                        <em title={whyText(item)}>{whyText(item)}</em>
-                      </Show>
-                    </div>
-                  </Show>
+                    </Show>
+                    <Show when={!cellSignal(item) && whyText(item)}>
+                      <em title={whyText(item)}>{whyText(item)}</em>
+                    </Show>
+                  </div>
                 </PrimaryAction>
                 <Show
                   when={cellSignal(item) !== 0 && !cellReadVisuals().dimmed}
@@ -519,12 +504,14 @@ export function StoryCell(props: StoryCellProps) {
                   classList={{
                     focused: props.focusedID === item.item_id,
                     read: readVisuals().dimmed,
-                    "related-also":
-                      props.refined === true &&
-                      repeatsLeadHeadline(lead().title, item.title),
-                    "related-angle":
-                      props.refined === true &&
-                      !repeatsLeadHeadline(lead().title, item.title),
+                    "related-also": repeatsLeadHeadline(
+                      lead().title,
+                      item.title,
+                    ),
+                    "related-angle": !repeatsLeadHeadline(
+                      lead().title,
+                      item.title,
+                    ),
                   }}
                   data-focus-id={item.item_id}
                   onFocus={() => props.onFocus(item.item_id)}
@@ -532,38 +519,11 @@ export function StoryCell(props: StoryCellProps) {
                   onOpen={() => props.onOpen(item)}
                   onExternalOpen={props.onExternalOpen}
                 >
-                  <Show
-                    when={props.refined}
-                    fallback={
-                      <>
-                        <span class="story-headline-dot">
-                          <UnreadDot visible={readVisuals().unreadDot} />
-                        </span>
-                        <SourceBadge
-                          connector={item.connector}
-                          imageURL={item.favicon_url}
-                          title={item.feed_title}
-                          size={props.cell.mobileStoryCard ? 16 : 12}
-                        />
-                        <span class="story-headline-copy">
-                          <span class="story-headline-feed">
-                            {item.feed_title || "Feed"}
-                            {"\u00a0\u00a0"}
-                          </span>
-                          <span class="story-headline-title">
-                            {headlineText(item.title)}
-                          </span>
-                        </span>
-                        <time>{relativeTime(item.published_ts)}</time>
-                      </>
-                    }
-                  >
-                    <RelatedCoverage
-                      lead={lead()}
-                      item={item}
-                      age={relativeTime(item.published_ts)}
-                    />
-                  </Show>
+                  <RelatedCoverage
+                    lead={lead()}
+                    item={item}
+                    age={relativeTime(item.published_ts)}
+                  />
                 </PrimaryAction>
               );
             }}

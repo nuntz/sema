@@ -32,7 +32,6 @@ export interface JustifyOptions {
   storyLeadHeights?: ReadonlyMap<string, number>;
   storyHeadlineHeights?: ReadonlyMap<string, number>;
   storyCardMinHeight?: number;
-  refinedMobile?: boolean;
 }
 
 interface LayoutItem extends Item {
@@ -60,7 +59,10 @@ export const storyCardBorderHeight = 3;
 export const mobileStoryHeadlineHeight = 52;
 export const mobileStoryMoreHeight = 44;
 const storyLeadMinimumHeight = 120;
-const mobileLargeTileHeight = 196;
+const mobileTallHeight = 246;
+const mobileTileHeight = 260;
+const mobileSmallHeight = 200;
+const mobileStandardHeight = 220;
 
 function storyFor(item: Item): Story | undefined {
   return (item as LayoutItem).layoutStory;
@@ -571,13 +573,7 @@ export function justify(
   const finalFeed = !hasMore;
   if (containerWidth < 700)
     return layoutStoryHeadlines(
-      mobileRows(
-        items,
-        containerWidth,
-        finalFeed,
-        paginationOpen,
-        options.refinedMobile,
-      ),
+      mobileRows(items, containerWidth, paginationOpen),
       true,
       options.storyLeadHeights,
       options.storyHeadlineHeights,
@@ -742,10 +738,8 @@ function appendMobileLargeBand(
   items: Item[],
   containerWidth: number,
   kind: "tall" | "tile",
-  refined = false,
 ): void {
-  const height =
-    kind === "tile" ? (refined ? 260 : mobileLargeTileHeight) : 246;
+  const height = kind === "tile" ? mobileTileHeight : mobileTallHeight;
   const cells =
     items.length === 1
       ? cellsWithWidths(items, [containerWidth], 0, 0, height, mobileGap)
@@ -782,17 +776,10 @@ function appendMobileLargeRun(
   rows: LayoutRow[],
   items: Item[],
   containerWidth: number,
-  refined = false,
 ): void {
   let index = 0;
   if (items.length % 2 === 1) {
-    appendMobileLargeBand(
-      rows,
-      items.slice(0, 1),
-      containerWidth,
-      "tall",
-      refined,
-    );
+    appendMobileLargeBand(rows, items.slice(0, 1), containerWidth, "tall");
     index = 1;
   }
   while (index + 1 < items.length) {
@@ -801,104 +788,43 @@ function appendMobileLargeRun(
       items.slice(index, index + 2),
       containerWidth,
       "tile",
-      refined,
     );
     index += 2;
   }
   if (index < items.length)
-    appendMobileLargeBand(
-      rows,
-      items.slice(index),
-      containerWidth,
-      "tall",
-      refined,
-    );
+    appendMobileLargeBand(rows, items.slice(index), containerWidth, "tall");
 }
 
 function mobileRows(
   items: Item[],
   containerWidth: number,
-  finalFeed: boolean,
   paginationOpen: boolean,
-  refined = false,
 ): LayoutRow[] {
   const rows: LayoutRow[] = [];
-  const baseUnit = 120;
   for (let index = 0; index < items.length; ) {
     const item = items[index];
     if (item.size === "L") {
       let runEnd = index + 1;
       while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
       if (paginationOpen && runEnd === items.length) break;
-      appendMobileLargeRun(
-        rows,
-        items.slice(index, runEnd),
-        containerWidth,
-        refined,
-      );
+      appendMobileLargeRun(rows, items.slice(index, runEnd), containerWidth);
       index = runEnd;
       continue;
     }
 
-    const triple = items.slice(index, index + 3);
-    if (
-      !refined &&
-      triple.length === 3 &&
-      triple.every((entry) => entry.size === "S")
-    ) {
-      const height = 112;
-      const final = finalFeed && index + triple.length === items.length;
-      const cells = final
-        ? naturalLineCells(
-            triple,
-            containerWidth,
-            0,
-            0,
-            height,
-            mobileGap,
-            baseUnit,
-          )
-        : justifiedLineCells(
-            triple,
-            containerWidth,
-            0,
-            0,
-            height,
-            mobileGap,
-            baseUnit,
-          );
-      rows.push({
-        cells,
-        height,
-        top: topAfter(rows, mobileGap),
-        gap: mobileGap,
-        kind: "compact",
-      });
-      index += 3;
-      continue;
-    }
-
     const next = items[index + 1];
-    const height = refined
-      ? item.size === "S" && next?.size === "S"
-        ? 200
-        : 220
-      : 152;
     if (next && next.size !== "L") {
-      if (
-        paginationOpen &&
-        index + 2 === items.length &&
-        item.size === "S" &&
-        next.size === "S"
-      )
-        break;
-      const pair = [item, next];
-      const final = finalFeed && index + 2 === items.length;
-      const line = final ? naturalLineCells : justifiedLineCells;
+      const smallPair = item.size === "S" && next.size === "S";
+      if (paginationOpen && index + 2 === items.length && smallPair) break;
+      const height = smallPair ? mobileSmallHeight : mobileStandardHeight;
       rows.push({
-        cells: refined
-          ? weightedLineCells(pair, [1, 1], containerWidth, height, mobileGap)
-          : line(pair, containerWidth, 0, 0, height, mobileGap, baseUnit),
+        cells: weightedLineCells(
+          [item, next],
+          [1, 1],
+          containerWidth,
+          height,
+          mobileGap,
+        ),
         height,
         top: topAfter(rows, mobileGap),
         gap: mobileGap,
@@ -909,27 +835,17 @@ function mobileRows(
     }
 
     if (paginationOpen && !next) break;
-    const singleHeight = refined
-      ? item.size === "S"
-        ? 200
-        : 220
-      : item.size === "S"
-        ? 112
-        : 152;
-    const final = finalFeed && index + 1 === items.length;
-    const line = final ? naturalLineCells : justifiedLineCells;
+    const height = item.size === "S" ? mobileSmallHeight : mobileStandardHeight;
     rows.push({
-      cells: refined
-        ? cellsWithWidths(
-            [item],
-            [(containerWidth - mobileGap) / 2],
-            0,
-            0,
-            singleHeight,
-            mobileGap,
-          )
-        : line([item], containerWidth, 0, 0, singleHeight, mobileGap, baseUnit),
-      height: singleHeight,
+      cells: cellsWithWidths(
+        [item],
+        [(containerWidth - mobileGap) / 2],
+        0,
+        0,
+        height,
+        mobileGap,
+      ),
+      height,
       top: topAfter(rows, mobileGap),
       gap: mobileGap,
       kind: "standard",

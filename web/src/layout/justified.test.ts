@@ -883,7 +883,6 @@ describe("369px mobile story bands", () => {
   it("reserves measured mobile copy plus an actionable related row", () => {
     const story = largeStory("refined", 3);
     const options = {
-      refinedMobile: true,
       storyLeadHeights: new Map([[story.story_id, 270]]),
       storyHeadlineHeights: new Map(
         story.items
@@ -910,7 +909,7 @@ describe("369px mobile story bands", () => {
     expect(expanded.height).toBe(541);
   });
 
-  it("gives refined mobile image pairs room and limits small rows to two cards", () => {
+  it("gives mobile image pairs room and limits small rows to two cards", () => {
     const rows = justify(
       [
         item("l1", "L"),
@@ -922,8 +921,6 @@ describe("369px mobile story bands", () => {
         item("s3", "S"),
       ],
       296,
-      false,
-      { refinedMobile: true },
     );
     expect(rows.map((row) => [row.height, row.cells.length])).toEqual([
       [260, 2],
@@ -938,7 +935,7 @@ describe("369px mobile story bands", () => {
     }
   });
 
-  it("uses one equal 196px tile band for two L stories", () => {
+  it("uses one equal 260px tile band for two L stories", () => {
     const [row] = justify(
       [
         { kind: "story", story: largeStory("left", 3) },
@@ -948,7 +945,7 @@ describe("369px mobile story bands", () => {
     );
 
     expect(row.kind).toBe("tile");
-    expect(row.height).toBe(196);
+    expect(row.height).toBe(260);
     expect(row.cells).toHaveLength(2);
     expect(row.cells.map((cell) => cell.width)).toEqual([180.5, 180.5]);
     for (const cell of row.cells) {
@@ -996,37 +993,10 @@ describe("369px mobile story bands", () => {
     );
     expect((cell.height ?? row.height) - (cell.headlineHeight ?? 0)).toBe(120);
   });
-
-  it("keeps standard and compact M/S rows unchanged", () => {
-    const rows = justify(
-      [
-        item("m0", "M"),
-        item("m1", "M"),
-        item("s0", "S"),
-        item("s1", "S"),
-        item("s2", "S"),
-      ],
-      369,
-    );
-
-    expect(
-      rows.map((row) => [
-        row.kind,
-        row.height,
-        row.cells.map((cell) => cell.item.item_id),
-      ]),
-    ).toEqual([
-      ["standard", 152, ["m0", "m1"]],
-      ["compact", 112, ["s0", "s1", "s2"]],
-    ]);
-    expect(
-      rows.flatMap((row) => row.cells).every((cell) => !cell.mobileTile),
-    ).toBe(true);
-  });
 });
 
 describe("390px mobile bands", () => {
-  it("uses no spans and matches the 246/152/112px treatments", () => {
+  it("uses no spans and matches the 246/220/200px treatments", () => {
     const rows = justify(
       [
         item("large", "L", 0.8),
@@ -1043,9 +1013,10 @@ describe("390px mobile bands", () => {
     expect(rows.map((row) => [row.kind, row.height, row.cells.length])).toEqual(
       [
         ["tall", 246, 1],
-        ["standard", 152, 2],
+        ["standard", 220, 2],
         ["tall", 246, 1],
-        ["compact", 112, 3],
+        ["standard", 200, 2],
+        ["standard", 200, 1],
       ],
     );
     expect(rows.every((row) => row.kind !== "span")).toBe(true);
@@ -1054,7 +1025,7 @@ describe("390px mobile bands", () => {
     expect(rows.every((row) => row.gap === 8)).toBe(true);
   });
 
-  it("packs L-runs as a 246px leader and 196px tile pairs", () => {
+  it("packs L-runs as a 246px leader and 260px tile pairs", () => {
     const rows = justify(
       [
         ...Array.from({ length: 7 }, (_, index) =>
@@ -1071,25 +1042,26 @@ describe("390px mobile bands", () => {
     expect(rows.map((row) => [row.kind, row.height, row.cells.length])).toEqual(
       [
         ["tall", 246, 1],
-        ["tile", 196, 2],
-        ["tile", 196, 2],
-        ["tile", 196, 2],
-        ["standard", 152, 2],
-        ["compact", 112, 3],
+        ["tile", 260, 2],
+        ["tile", 260, 2],
+        ["tile", 260, 2],
+        ["standard", 220, 2],
+        ["standard", 200, 2],
+        ["standard", 200, 1],
       ],
     );
     expect(new Set(rows.map((row) => row.height))).toEqual(
-      new Set([112, 152, 196, 246]),
+      new Set([200, 220, 246, 260]),
     );
   });
 
-  it("uses a 196px equal-width tile band for an adjacent portrait pair", () => {
+  it("uses a 260px equal-width tile band for an adjacent portrait pair", () => {
     const rows = justify(
       [item("portrait-0", "L", 1), item("portrait-1", "L", 1.2)],
       390,
     );
     expect(rows.map((row) => [row.kind, row.height, row.cells.length])).toEqual(
-      [["tile", 196, 2]],
+      [["tile", 260, 2]],
     );
     expect(rows[0].cells[0].width).toBeCloseTo(191, 5);
     expect(rows[0].cells[1].width).toBeCloseTo(191, 5);

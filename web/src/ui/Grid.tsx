@@ -300,7 +300,6 @@ function GridContent(props: GridProps) {
         storyLeadHeights: storyLeadHeights(),
         storyHeadlineHeights: storyHeadlineHeights(),
         storyCardMinHeight: mobile() ? undefined : 310,
-        refinedMobile: true,
       }),
     );
     return { rows, height: totalHeight(rows) };
@@ -1204,7 +1203,6 @@ function GridContent(props: GridProps) {
                         row={row}
                         focusedID={props.layout.focusedID}
                         readContext={readContext()}
-                        refined={true}
                         pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.actions.onExpandStory?.(id)}
                         onLeadHeight={recordStoryLeadHeight}
@@ -1450,7 +1448,6 @@ function GridContent(props: GridProps) {
                             />
                             <CellCopy
                               item={item()}
-                              refined={true}
                               unreadDot={readVisuals().unreadDot}
                               archive={props.model.archive}
                               effectiveSize={cell.effectiveSize}
@@ -1480,7 +1477,6 @@ function GridContent(props: GridProps) {
                           </a>
                           <CellCopy
                             item={item()}
-                            refined={true}
                             unreadDot={readVisuals().unreadDot}
                             archive={props.model.archive}
                             effectiveSize={cell.effectiveSize}
@@ -1987,7 +1983,6 @@ function GridContent(props: GridProps) {
 export function CellCopy(props: {
   item: Item;
   unreadDot: boolean;
-  refined?: boolean;
   archive: boolean;
   effectiveSize: "S" | "M" | "L";
   condensed: boolean;
@@ -2021,7 +2016,7 @@ export function CellCopy(props: {
         <p>{props.item.summary}</p>
       </Show>
       <div class="cell-meta">
-        <Show when={props.refined && !props.archive}>
+        <Show when={!props.archive}>
           <UnreadDot visible={props.unreadDot} />
         </Show>
         <Show
@@ -2041,21 +2036,12 @@ export function CellCopy(props: {
         />
         <Show
           when={!props.archive && props.onApplyFeed}
-          fallback={
-            <span>
-              {props.refined
-                ? gridSourceName(props.item)
-                : props.item.feed_title || "Feed"}
-              <Show when={reddit() && !props.refined}>
-                {` · ${relativeTime(props.item.published_ts)}`}
-              </Show>
-            </span>
-          }
+          fallback={<span>{gridSourceName(props.item)}</span>}
         >
           <button
             type="button"
             class="cell-feed-filter"
-            aria-label={`Filter by feed: ${props.refined ? gridSourceName(props.item) : props.item.feed_title || "Feed"}`}
+            aria-label={`Filter by feed: ${gridSourceName(props.item)}`}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.preventDefault();
@@ -2063,24 +2049,17 @@ export function CellCopy(props: {
               props.onApplyFeed?.();
             }}
           >
-            {props.refined
-              ? gridSourceName(props.item)
-              : props.item.feed_title || "Feed"}
-            <Show when={reddit() && !props.refined}>
-              {` · ${relativeTime(props.item.published_ts)}`}
-            </Show>
+            {gridSourceName(props.item)}
           </button>
         </Show>
-        <Show when={props.refined}>
-          <span class="refined-age">
-            <span class="age-separator">· </span>
-            {relativeTime(props.item.published_ts)}
+        <span class="refined-age">
+          <span class="age-separator">· </span>
+          {relativeTime(props.item.published_ts)}
+        </span>
+        <Show when={props.item.read && !props.archive}>
+          <span class="refined-read-label">
+            <Icon name="check" size={13} /> read
           </span>
-          <Show when={props.item.read && !props.archive}>
-            <span class="refined-read-label">
-              <Icon name="check" size={13} /> read
-            </span>
-          </Show>
         </Show>
       </div>
       <Show
