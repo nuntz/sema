@@ -47,7 +47,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 
 ## API
 
-- Each Lambda instance caches a user's Read markers, Feed lists and Stories, and concurrent requests land on different instances. That caching lives only in the Request snapshot (`cmd/api/internal/requestsnapshot`), which checks each cached kind against its version row (ADRs 0005–0007). New cached per-user state becomes another kind there, with no protocol code of its own. A render the snapshot caches reads the state its versions cover strongly consistent, because an eventual read can return a value older than the version it is cached under; uncached handler reads may be eventual. Test a kind at the module's interface with two Caches over one DynamoDB Local table, aging entries only through the injected clock, as in `cmd/api/internal/requestsnapshot/read_test.go`, and add one two-server handler regression per bug, as in `cmd/api/read_instances_test.go`. A bug DynamoDB Local can't reproduce, such as a stale eventual read, instead gets a store test asserting `ConsistentRead` and a fake-store handler test asserting the render uses that read, as in `TestStoriesRenderFeedbackReadStrongly`.
+- Each Lambda instance caches a user's Read markers, Feed lists and Stories, and concurrent requests land on different instances. That caching lives only in the Request snapshot (`cmd/api/internal/requestsnapshot`), which checks each cached kind against its version row (ADRs 0005–0007). New cached per-user state becomes another kind there, with no protocol code of its own. A store write to state a version guards (Read markers, user Feed edits, Signals, Keep state) runs inside `change` (`internal/store/version.go`), which bumps the version. A render the snapshot caches reads the state its versions cover strongly consistent, because an eventual read can return a value older than the version it is cached under; uncached handler reads may be eventual. Test a kind at the module's interface with two Caches over one DynamoDB Local table, aging entries only through the injected clock, as in `cmd/api/internal/requestsnapshot/read_test.go`, and add one two-server handler regression per bug, as in `cmd/api/read_instances_test.go`. A bug DynamoDB Local can't reproduce, such as a stale eventual read, instead gets a store test asserting `ConsistentRead` and a fake-store handler test asserting the render uses that read, as in `TestStoriesRenderFeedbackReadStrongly`.
 
 ## Flaky tests
 
@@ -58,7 +58,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 
 - `RUNBOOK.md`, `README.md` and ADRs describe what is in the tree. A doc that cites a package, stack or job the diff doesn't contain is ahead of the code: hold it back, or mark the ADR proposed.
 - A `CONTEXT.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
-- A rule that changes in one doc changes everywhere it is stated; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
+- A rule that changes in one doc changes everywhere it is stated, including code comments that restate it; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
 ## Wizards
 
