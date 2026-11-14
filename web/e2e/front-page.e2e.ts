@@ -3737,3 +3737,341 @@ for (const width of [390, 1280]) {
     });
   }
 }
+
+test.describe("cell states", () => {
+  // Signal labels fade in; measure them where they settle.
+  test.beforeEach(({ page }) => page.emulateMedia({ reducedMotion: "reduce" }));
+  const long = "with a title long enough to wrap across more than one line";
+  const noPhoto = {
+    media_url: undefined,
+    media_w: undefined,
+    media_h: undefined,
+  };
+  const story = (
+    id: string,
+    order: number,
+    lead: Record<string, unknown> = {},
+  ) => ({
+    story_id: id,
+    source_count: 2,
+    order_key: order,
+    size: "L",
+    items: [
+      {
+        ...item(`${id}-lead`, "lead", `Story ${id} ${long}`, order, "L"),
+        ...lead,
+      },
+      item(`${id}-member`, "member", `Member of ${id}`, 0.5, "M"),
+    ],
+  });
+
+  for (const width of [320, 1440]) {
+    test(`hold the why-line only while a Signal shows at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 2400 });
+      await stubFrontPage(
+        page,
+        [
+          story("story-plain", 0.99),
+          story("story-boosted", 0.98, { signal: 1 }),
+        ],
+        [
+          item("photo-plain", "a", `Photo ${long}`, 0.97, "L"),
+          {
+            ...item("photo-boosted", "a", `Boosted ${long}`, 0.96, "L"),
+            signal: 1,
+          },
+          { ...item("text-plain", "a", `Text ${long}`, 0.95, "L"), ...noPhoto },
+          {
+            ...item("text-boosted", "a", `Boosted text ${long}`, 0.94, "L"),
+            ...noPhoto,
+            signal: 1,
+          },
+        ],
+        [],
+      );
+      await page.goto("/");
+      await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(6);
+      await page.evaluate(() => document.fonts.ready);
+      await expect
+        .poll(() =>
+          page.locator(".grid-row > .grid-cell").evaluateAll((cells) => {
+            const problems: string[] = [];
+            for (const cell of cells as HTMLElement[]) {
+              const id = cell.dataset.storyId ?? cell.dataset.itemId ?? "";
+              const copy = cell.querySelector(".story-lead, .cell-copy");
+              const meta = cell.querySelector(".story-meta, .cell-meta");
+              if (!copy || !meta) {
+                problems.push(`${id}: missing copy`);
+                continue;
+              }
+              const c = copy.getBoundingClientRect();
+              const m = meta.getBoundingClientRect();
+              const why = [...cell.querySelectorAll(".why-hint")]
+                .map((hint) => hint.getBoundingClientRect())
+                .find((r) => r.height > 0);
+              if (id.includes("boosted")) {
+                if (!why) problems.push(`${id}: no why-line`);
+                else if (why.top < m.bottom - 1 || why.bottom > c.bottom + 1)
+                  problems.push(`${id}: why-line is not under the feed line`);
+              } else {
+                if (why) problems.push(`${id}: why-line without a Signal`);
+                if (c.bottom - m.bottom > 16)
+                  problems.push(
+                    `${id}: ${Math.round(c.bottom - m.bottom)}px under the feed line`,
+                  );
+              }
+            }
+            return problems;
+          }),
+        )
+        .toEqual([]);
+    });
+  }
+
+  // About six days old: the corner shows a time-left marker.
+  const expiring = { published_ts: "2026-08-30T00:00:00Z" };
+  const marked = [
+    { size: "L", state: "boosted", extra: { signal: 1 } },
+    { size: "M", state: "buried", extra: { signal: -1 } },
+    { size: "M", state: "kept", extra: { hearted: true } },
+    { size: "M", state: "kept-boosted", extra: { hearted: true, signal: 1 } },
+    { size: "M", state: "expiring", extra: expiring },
+    // Neutral S cells fill a row, so the marked ones end in a short last
+    // row whose cells keep their narrow natural width on desktop.
+    { size: "S", state: "plain-1", extra: {} },
+    { size: "S", state: "plain-2", extra: {} },
+    { size: "S", state: "plain-3", extra: {} },
+    { size: "S", state: "plain-4", extra: {} },
+    { size: "S", state: "plain-5", extra: {} },
+    { size: "S", state: "plain-6", extra: {} },
+    { size: "S", state: "boosted", extra: { signal: 1 } },
+    { size: "S", state: "kept", extra: { hearted: true } },
+    { size: "S", state: "expiring", extra: expiring },
+  ] as const;
+  const textCells = marked.map(({ size, state, extra }, index) => ({
+    ...item(
+      `text-${size}-${state}`,
+      "a",
+      `Text ${size} ${state} ${long}`,
+      0.9 - index / 100,
+      size,
+    ),
+    ...noPhoto,
+    ...extra,
+  }));
+  // A text M Story always holds its Source count in the band.
+  const textStory = {
+    story_id: "text-story",
+    source_count: 2,
+    order_key: 0.95,
+    size: "M",
+    items: [
+      {
+        ...item("text-story-lead", "a", `Text Story ${long}`, 0.95, "M"),
+        ...noPhoto,
+      },
+      { ...item("text-story-member", "b", "Member", 0.5, "S"), ...noPhoto },
+    ],
+  };
+
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [320, 1440]) {
+      test(`keep text-only titles clear of Signal, Kept and time-left markers at ${width}px in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 2400 });
+        await page.addInitScript(
+          (theme) => localStorage.setItem("sema:theme", theme),
+          theme,
+        );
+        await stubFrontPage(page, [textStory], textCells, []);
+        await page.goto("/");
+        await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+          textCells.length + 1,
+        );
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(() => page.locator(".grid-scroll").evaluate(topBandProblems))
+          .toEqual([]);
+        // Hovered actions stay in the band of a marked cell.
+        for (const cell of width < 700
+          ? []
+          : textCells.filter(({ item_id }) => !item_id.includes("plain"))) {
+          await page.locator(`[data-item-id="${cell.item_id}"]`).hover();
+          await expect
+            .poll(() =>
+              page
+                .locator(".grid-scroll")
+                .evaluate(topBandProblems)
+                .then((problems) =>
+                  problems.filter((p) => p.startsWith(`${cell.item_id}:`)),
+                ),
+            )
+            .toEqual([]);
+        }
+        // The time-left marker replaces the age on the bottom line.
+        for (const size of ["M", "S"]) {
+          const cell = page.locator(`[data-item-id="text-${size}-expiring"]`);
+          await expect(cell.locator(".expiry-pill")).toBeVisible();
+          await expect(cell.locator(".cell-meta .refined-age")).toBeHidden();
+        }
+        const boosted = page.locator('[data-item-id="text-L-boosted"]');
+        await expect(boosted.locator(".cell-meta .refined-age")).toBeVisible();
+        await expect(boosted.locator(".cell-corner .cell-age")).toBeHidden();
+      });
+
+      test(`keep a Story's Source count clear of its Lead's actions at ${width}px in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 2400 });
+        await page.addInitScript(
+          (theme) => localStorage.setItem("sema:theme", theme),
+          theme,
+        );
+        const stories = [
+          story("story-boosted", 0.99, { signal: 1 }),
+          story("story-buried", 0.98, { signal: -1 }),
+          story("story-kept", 0.97, { hearted: true }),
+          story("story-kept-boosted", 0.96, { hearted: true, signal: 1 }),
+          // An M Story's cell is too narrow for a Signal label beside its
+          // pressed action and Source count; that crowding predates these
+          // cells and is left as it is.
+          story("story-text", 0.95, { ...noPhoto, signal: 1 }),
+        ];
+        await stubFrontPage(page, stories, [], []);
+        await page.goto("/");
+        await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+          stories.length,
+        );
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(() => page.locator(".grid-scroll").evaluate(topBandProblems))
+          .toEqual([]);
+        if (width < 700) return;
+        for (const { story_id } of stories) {
+          await page
+            .locator(`.grid-row > .grid-cell[data-story-id="${story_id}"]`)
+            .hover();
+          await expect
+            .poll(() =>
+              page
+                .locator(".grid-scroll")
+                .evaluate(topBandProblems)
+                .then((problems) =>
+                  problems.filter((p) => p.startsWith(`${story_id}:`)),
+                ),
+            )
+            .toEqual([]);
+        }
+      });
+    }
+  }
+
+  for (const width of [320, 1440]) {
+    test(`give Archive cells the Front Page anatomy at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 1600 });
+      const kept = {
+        hearted: true,
+        archived: true,
+        read: true,
+        has_body: true,
+      };
+      await stubFrontPage(page, [], [item("live", "a", "Live", 0.9, "L")], []);
+      await page.route("**/api/archive?*", (route) =>
+        route.fulfill({
+          json: {
+            items: [
+              {
+                ...item("kept-photo", "a", `Kept photo ${long}`, 0.9, "L"),
+                ...kept,
+              },
+              {
+                ...item("kept-text", "a", `Kept text ${long}`, 0.8, "M"),
+                ...noPhoto,
+                ...kept,
+              },
+            ],
+            next_cursor: "",
+          },
+        }),
+      );
+      await page.goto("/");
+      await expect(page.locator('[data-item-id="live"]')).toBeVisible();
+      await page.keyboard.press("Shift+A");
+      await expect(page.locator('[data-item-id="kept-photo"]')).toBeVisible();
+      await page.evaluate(() => document.fonts.ready);
+      const grid = page.locator(".grid-scroll");
+      await expect
+        .poll(() => grid.evaluate(singleImageCellProblems))
+        .toEqual([]);
+      await expect.poll(() => grid.evaluate(topBandProblems)).toEqual([]);
+    });
+  }
+});
+
+// Lists where something in a cell's top band (corner labels, Signal and Kept
+// markers, visible actions, the Source count) covers the cell's copy or
+// another band item, and where copy runs out of its cell.
+function topBandProblems(grid: Element): string[] {
+  const shown = (el: Element) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    for (let e: Element | null = el; e; e = e.parentElement) {
+      const style = getComputedStyle(e);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        Number(style.opacity) < 0.05
+      )
+        return false;
+    }
+    return true;
+  };
+  const overlap = (a: DOMRect, b: DOMRect) =>
+    a.left < b.right - 1 &&
+    b.left < a.right - 1 &&
+    a.top < b.bottom - 1 &&
+    b.top < a.bottom - 1;
+  const name = (el: Element) =>
+    `${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}`;
+  const problems: string[] = [];
+  for (const cell of grid.querySelectorAll<HTMLElement>(
+    ".grid-row > .grid-cell",
+  )) {
+    const id = cell.dataset.storyId ?? cell.dataset.itemId;
+    const band = [
+      ...cell.querySelectorAll(
+        ".cell-corner :is(.cell-signal-label, .unread-dot, .cell-age, .cell-rank, .expiry-pill), .cell-actions button, .signal-mobile-chip, .kept-marker, .story-source-count, .story-stack-badge, .peek-pill > span",
+      ),
+    ].filter(shown);
+    const copy = [
+      ...cell.querySelectorAll(
+        ":is(.cell-copy, .story-lead) :is(h2, p), .cell-meta, .story-meta, .why-hint",
+      ),
+    ].filter(shown);
+    for (const b of band)
+      for (const c of copy)
+        if (overlap(b.getBoundingClientRect(), c.getBoundingClientRect()))
+          problems.push(`${id}: ${name(b)} covers ${name(c)}`);
+    band.forEach((a, index) => {
+      for (const b of band.slice(index + 1))
+        if (
+          !a.contains(b) &&
+          !b.contains(a) &&
+          overlap(a.getBoundingClientRect(), b.getBoundingClientRect())
+        )
+          problems.push(`${id}: ${name(a)} meets ${name(b)}`);
+    });
+    const box = cell.getBoundingClientRect();
+    for (const c of copy) {
+      const r = c.getBoundingClientRect();
+      if (r.bottom > box.bottom + 1 || r.top < box.top - 1)
+        problems.push(`${id}: ${name(c)} runs out of the cell`);
+    }
+  }
+  return problems;
+}

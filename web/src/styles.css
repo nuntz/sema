@@ -2416,6 +2416,22 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-meta > span:not(:is(.unread-dot, .refined-age, .refined-read-label, .source-badge)),
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-feed-filter { flex: 0 1 auto; }
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .age-separator { display: inline; }
+/* While a Signal, Kept or time-left marker sits in a text-only cell's top band,
+   the title starts under the band, as a text Story's does under its Source
+   count. The corner then holds only the Signal label or time-left marker: the
+   age and unread dot stay on the bottom line, and a time-left marker replaces
+   that age. Markers keep to the band's one row, and on a phone the title gives
+   up whole lines so the bottom line stays in the cell. */
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):is([data-signal="1"], [data-signal="-1"], :has(> .kept-marker), :has(> .cell-corner .has-expiry)) .cell-copy { padding-top: var(--cell-badge-clear); }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) > .cell-corner :is(.unread-dot, .cell-age) { display: none; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):has(> .cell-corner .has-expiry) .cell-meta .refined-age { display: none; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card) > .cell-corner { top: 7px; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) > .kept-marker { top: 7px; }
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card)[data-signal="1"] > .kept-marker { top: 14px; left: 42px; }
+.refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card) > .kept-marker { top: 12px; left: 65px; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):where(.story-cell, [data-signal="1"], [data-signal="-1"], :has(> .kept-marker), :has(> .cell-corner .has-expiry)):is(.size-m, .size-s) .cell-copy h2 { -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):where([data-signal="1"], [data-signal="-1"]):is(.size-l, .size-m, .size-s) .cell-copy h2,
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card):where(.story-cell, :has(> .kept-marker), :has(> .cell-corner .has-expiry)) .cell-copy h2 { -webkit-line-clamp: 2; }
 
 .refined-sheet .sheet-headline { height: auto; min-height: 76px; padding: 12px 4px; gap: 9px; }
 .refined-sheet .sheet-headline.related-also { min-height: 56px; align-items: center; }
@@ -2502,6 +2518,16 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 .refined-grid .story-source-count b { font: inherit; }
 .refined-grid .story-source-count .icon { color: currentColor; }
+/* The Source count moves right of a pressed Boost, Bury or Keep, as it moves
+   right of the phone Signal chip, and right of a phone Kept marker. */
+@media (min-width: 620px) {
+  .refined-grid .story-cell:has(.signal-actions .boost[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: 38px; }
+  .refined-grid .story-cell:has(.signal-actions .bury[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: 69px; }
+  .refined-grid .story-cell:has(.signal-actions .heart[aria-pressed="true"]):has(.signal-actions :is(.boost, .bury)[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: 100px; }
+}
+@media (max-width: 619px) {
+  .mobile-refined-grid .story-cell:has(> .kept-marker):not(:has(.signal-mobile-chip)) :is(.story-badges, .story-stack-badge) { left: 28px; }
+}
 .refined-grid .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: var(--cell-badge-clear); }
 .refined-grid .story-headline > .unread-dot { display: none; }
 .mobile-refined-grid .story-card .story-headlines { border-top: 0; }
@@ -2589,11 +2615,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @keyframes signal-label-in { from { opacity: 0; } to { opacity: 1; } }
 .refined-grid .grid-cell[data-signal]:not([data-signal="0"]) .cell-corner { display: flex; }
 .refined-grid .grid-cell .why-hint.has-signal { display: block; opacity: 1; position: absolute; bottom: 2px; left: 14px; right: 14px; z-index: 4; margin: 0; pointer-events: auto; }
-/* Reserve the hint line in every L/M cell, including neutral, so feedback never moves copy.
-   A text-only singleton keeps its bottom line at the foot and reserves the line only while a Signal shows. */
-.refined-grid .grid-row > .grid-cell[data-signal]:not(.size-s):not(.text-cell) .cell-copy,
-.refined-grid .grid-row > .grid-cell.text-cell[data-signal]:not([data-signal="0"]):not(.size-s) .cell-copy,
-.refined-grid .grid-row > .grid-cell[data-signal] .story-lead { padding-bottom: 32px; }
+/* Every cell reserves the why-line under its copy only while a Signal shows it,
+   so a neutral cell has no blank band under its feed line. */
+.refined-grid .grid-row > .grid-cell .cell-copy:has(.why-hint.has-signal),
+.refined-grid .grid-row > .grid-cell:has(.story-signal-why) .story-lead { padding-bottom: 32px; }
 .grid-cell[data-signal="1"] .why-hint.has-signal { color: var(--signal-label-ink); }
 .signal-why button { padding: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
 .signal-why button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
@@ -2688,6 +2713,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .cell-corner:has(.expiry-pill) { display: flex; }
 .refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 36px; }
 .grid-cell:has(.expiry-pill) .signal-actions { top: 36px; }
+/* A text-only cell's title sits just under its band, so its actions stay in it. */
+.refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):has(.expiry-pill) .signal-actions { top: 7px; }
 .refined-grid .story-cell.no-media:has(.expiry-pill) .story-lead { padding-top: 66px; }
 .reader-crumb:has(.reader-life) { display: flex; align-items: center; gap: 8px; }
 .reader-crumb__identity { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
