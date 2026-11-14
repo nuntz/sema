@@ -199,6 +199,20 @@ function singleImageCellProblems(grid: Element): string[] {
     const age = corner?.querySelector(".cell-age, .expiry-pill");
     if (!age || age.getBoundingClientRect().width === 0)
       problems.push(`${id}: corner shows no age`);
+    const t = title?.getBoundingClientRect();
+    for (const control of [age, cell.querySelector(".peek-pill > span")]) {
+      const r = control?.getBoundingClientRect();
+      if (
+        t &&
+        r &&
+        r.width > 0 &&
+        t.top < r.bottom &&
+        r.top < t.bottom &&
+        t.left < r.right &&
+        r.left < t.right
+      )
+        problems.push(`${id}: title runs into the corner`);
+    }
     const unread = /, unread/.test(
       cell.querySelector(".cell-main")?.getAttribute("aria-label") ?? "",
     );
@@ -268,14 +282,14 @@ async function titleContrast(page: Page, cellSelector: string) {
   );
 }
 
-test.describe("mobile front-page tile grammar", () => {
+test.describe("mobile front-page Size grammar", () => {
   test.use({
     viewport: { width: 393, height: 852 },
     hasTouch: true,
     isMobile: true,
   });
 
-  test("renders one two-up grammar and expands the full-width lead card", async ({
+  test("ranks phone rows by Size and expands the full-width lead card", async ({
     page,
   }) => {
     const leadStory = {
@@ -383,74 +397,75 @@ test.describe("mobile front-page tile grammar", () => {
         },
       ],
     };
-    const singleSourceStory = {
-      story_id: "mobile-single-source-story",
-      source_count: 1,
-      order_key: 0.96,
-      size: "L",
-      items: [
-        {
-          ...item(
-            "mobile-single-source",
-            "solo",
-            "A single-source story",
-            0.96,
-            "L",
-          ),
-          story_id: "mobile-single-source-story",
-        },
-      ],
-    };
-    const extraTileStory = {
-      story_id: "mobile-extra-tile-story",
-      source_count: 2,
-      order_key: 0.95,
-      size: "L",
-      items: [
-        {
-          ...item(
-            "mobile-extra-tile",
-            "extra",
-            "Another tile story",
-            0.95,
-            "L",
-          ),
-          story_id: "mobile-extra-tile-story",
-        },
-        {
-          ...item(
-            "mobile-extra-related",
-            "extra-related",
-            "Another related headline",
-            0.77,
-            "S",
-          ),
-          story_id: "mobile-extra-tile-story",
-        },
-      ],
-    };
+    const photo = { media_url: "/sema-mark.svg", media_w: 320, media_h: 180 };
     await page.addInitScript(() => localStorage.setItem("sema:theme", "dark"));
     await stubFrontPage(
       page,
+      [leadStory, imageTileStory, textTileStory],
       [
-        leadStory,
-        imageTileStory,
-        textTileStory,
-        singleSourceStory,
-        extraTileStory,
+        item("mobile-large", "large", "A large single Item", 0.9, "L"),
+        { ...item("mobile-m0", "m0", "A medium Item", 0.8, "M"), ...photo },
+        item("mobile-s0", "s0", "A small Item", 0.7, "S"),
+        {
+          ...item("mobile-s1", "s1", "Another small Item", 0.6, "S"),
+          ...photo,
+        },
+        item("mobile-s2", "s2", "A third small Item", 0.5, "S"),
+        item("mobile-m1", "m1", "A trailing medium Item", 0.4, "M"),
       ],
-      [item("mobile-tail-one", "tail-one", "Tail one", 0.5, "M")],
       [],
     );
 
     await page.goto("/");
 
+    const box = async (selector: string) => {
+      const value = await page.locator(selector).boundingBox();
+      if (!value) throw new Error(`${selector} has no box`);
+      return value;
+    };
+    await expect(page.locator(".grid-cell")).toHaveCount(9);
+    const grid = await box(".grid-row >> nth=0");
+    const full = grid.width;
+    const half = (full - 8) / 2;
+    const expectCell = async (
+      selector: string,
+      width: number,
+      height?: number,
+    ) => {
+      const cell = await box(selector);
+      expect(cell.width, selector).toBeCloseTo(width, 0);
+      if (height !== undefined)
+        expect(cell.height, selector).toBeCloseTo(height, 0);
+      return cell;
+    };
+
+    // Every L Item or Story takes the full width; M and S sit two-up.
+    for (const [storyID, sources] of [
+      ["mobile-lead-story", 4],
+      ["mobile-image-tile-story", 5],
+      ["mobile-text-tile-story", 8],
+    ] as const) {
+      const story = page.locator(`[data-story-id="${storyID}"]`);
+      await expectCell(`[data-story-id="${storyID}"]`, full);
+      await expect(
+        story.getByRole("img", { name: `${sources} sources` }),
+      ).toBeVisible();
+      await expect(story.locator(".story-headline").first()).toBeVisible();
+    }
+    await expectCell('[data-item-id="mobile-large"]', full, 168);
+    const m0 = await expectCell('[data-item-id="mobile-m0"]', half, 150);
+    const s0 = await expectCell('[data-item-id="mobile-s0"]', half, 150);
+    expect(s0.y).toBeCloseTo(m0.y, 0);
+    expect(s0.x - m0.x).toBeCloseTo(half + 8, 0);
+    const s1 = await expectCell('[data-item-id="mobile-s1"]', half, 124);
+    const s2 = await expectCell('[data-item-id="mobile-s2"]', half, 124);
+    expect(s2.y).toBeCloseTo(s1.y, 0);
+    expect(s1.y - (m0.y + m0.height)).toBeCloseTo(8, 0);
+    const last = await expectCell('[data-item-id="mobile-m1"]', half, 150);
+    expect(last.x).toBeCloseTo(grid.x, 0);
+
     await page.screenshot({ path: "/tmp/sema-mobile-initial.png" });
     const leadCard = page.locator('[data-story-id="mobile-lead-story"]');
-    await expect(leadCard).toHaveClass(/story-card/);
-    await expect(
-      leadCard.getByRole("img", { name: "4 sources" }),
-    ).toBeVisible();
     await expect(leadCard.getByText("top 10%")).toBeHidden();
     const collapsedHeadlines = leadCard.locator(".story-headline");
     await expect(collapsedHeadlines).toHaveCount(1);
@@ -459,42 +474,6 @@ test.describe("mobile front-page tile grammar", () => {
         .first()
         .evaluate((element) => element.clientHeight),
     ).toBeGreaterThanOrEqual(44);
-
-    for (const storyID of [
-      "mobile-image-tile-story",
-      "mobile-text-tile-story",
-    ]) {
-      const tile = page.locator(`[data-story-id="${storyID}"]`);
-      await expect(tile).toHaveClass(/mobile-tile-cell/);
-      await expect(tile).toHaveCSS("height", "260px");
-      await expect(tile.locator(".story-stack-badge")).toBeVisible();
-      await expect(tile.locator(".refined-age")).toBeVisible();
-      await expect(tile.locator(".story-headlines")).toHaveCount(0);
-    }
-    const sourcesButton = page.getByRole("button", {
-      name: "5 sources, show headlines",
-    });
-    const sourcesButtonBox = await sourcesButton.boundingBox();
-    expect(sourcesButtonBox?.width).toBeGreaterThanOrEqual(44);
-    expect(sourcesButtonBox?.height).toBeGreaterThanOrEqual(44);
-    const singleSourceTile = page.locator(
-      '[data-story-id="mobile-single-source-story"]',
-    );
-    await expect(
-      singleSourceTile.getByRole("button", {
-        name: "1 sources, show headlines",
-      }),
-    ).toHaveCount(0);
-    expect(
-      await singleSourceTile
-        .locator(".story-stack-badge")
-        .evaluate((element) => element.tagName),
-    ).toBe("SPAN");
-
-    const tileRow = page.locator(".grid-row").filter({
-      has: page.locator('[data-story-id="mobile-image-tile-story"]'),
-    });
-    await tileRow.screenshot({ path: "/tmp/sema-mobile-grid-two-up.png" });
     await leadCard.screenshot({
       path: "/tmp/sema-mobile-lead-collapsed.png",
     });
@@ -527,12 +506,15 @@ test.describe("mobile front-page tile grammar", () => {
       leadCard.getByRole("button", { name: "+2 more" }),
     ).toBeVisible();
 
-    await sourcesButton.click();
-    await expect(page.locator(".reader-scroll")).toHaveCount(0);
+    // A Story's sheet lists every Headline.
+    await page
+      .locator('[data-story-id="mobile-image-tile-story"] .story-lead')
+      .focus();
+    await page.keyboard.press("Shift+F10");
     const sheet = page.getByRole("dialog", {
       name: "Actions for Until Dawn 2 Reveals Release Date in New Trailer",
     });
-    await expect(sheet).toBeVisible();
+    await expect(page.locator(".reader-scroll")).toHaveCount(0);
     await expect(sheet).toContainText("5 sources · Feed overworld · 1d");
     const sheetHeadlines = sheet.locator(".sheet-headline");
     await expect(sheetHeadlines).toHaveCount(3);
@@ -2702,7 +2684,7 @@ test.describe("mobile shared grid design", () => {
           theme === "light" ? "rgb(250, 249, 245)" : "rgb(16, 17, 19)",
         );
         await expect(readCard).toHaveClass(/is-read/);
-        await expect(readCard.locator(":scope > img")).toHaveCSS(
+        await expect(readCard.locator(".story-media")).toHaveCSS(
           "filter",
           "opacity(0.55)",
         );
@@ -2789,7 +2771,7 @@ test.describe("mobile shared grid design", () => {
           .uncheck();
         await page.getByRole("button", { name: "Close filter" }).tap();
         await expect(readCard).not.toHaveClass(/is-read/);
-        await expect(readCard.locator(":scope > img")).toHaveCSS(
+        await expect(readCard.locator(".story-media")).toHaveCSS(
           "filter",
           "none",
         );
@@ -2828,9 +2810,8 @@ test.describe("mobile shared grid design", () => {
         await page.screenshot({
           path: `/tmp/sema-mobile-${theme}-${width}.png`,
         });
-        await readCard
-          .getByRole("button", { name: "2 sources, show headlines" })
-          .tap();
+        await readCard.locator(".story-lead").focus();
+        await page.keyboard.press("Shift+F10");
         const sheet = page.getByRole("dialog", {
           name: `Actions for ${readLead.title}`,
         });
@@ -2941,9 +2922,11 @@ test.describe("text-only cells", () => {
             "rgb(20, 22, 26) 0px 0px 0px 1.5px",
           );
 
+        // Short titles leave room for a summary in every row.
+        const alwaysRoom = ["text-large", "text-read", "text-short"];
         await expect
           .poll(() =>
-            page.locator(".grid-cell").evaluateAll((cells) => {
+            page.locator(".grid-cell").evaluateAll((cells, alwaysRoom) => {
               const problems: string[] = [];
               for (const cell of cells as HTMLElement[]) {
                 const id = cell.dataset.itemId ?? "";
@@ -2999,14 +2982,33 @@ test.describe("text-only cells", () => {
                     problems.push(`${id}: empty summary shown`);
                   continue;
                 }
+                const h2 = cell.querySelector("h2");
+                const titleLines =
+                  title.height /
+                  Number.parseFloat(
+                    h2 ? getComputedStyle(h2).lineHeight : "NaN",
+                  );
+                if (Math.abs(titleLines - Math.round(titleLines)) > 0.05)
+                  problems.push(`${id}: title shows ${titleLines} lines`);
                 const summaryBox = summary?.getBoundingClientRect();
-                if (!summary || !summaryBox || summaryBox.height === 0) {
+                if (!summary || !summaryBox) {
                   problems.push(`${id}: no summary`);
                   continue;
                 }
-                const lineHeight = Number.parseFloat(
-                  getComputedStyle(summary).lineHeight,
-                );
+                const summaryStyle = getComputedStyle(summary);
+                const lineHeight = Number.parseFloat(summaryStyle.lineHeight);
+                // A short phone row whose title takes its full clamp leaves
+                // less than a line; the summary then gives way entirely.
+                if (summaryStyle.visibility === "hidden") {
+                  const room =
+                    metaBox.top -
+                    title.bottom -
+                    Number.parseFloat(summaryStyle.marginTop) -
+                    Number.parseFloat(summaryStyle.marginBottom);
+                  if (alwaysRoom.includes(id) || room >= lineHeight)
+                    problems.push(`${id}: summary hidden with ${room}px room`);
+                  continue;
+                }
                 const lines = summaryBox.height / lineHeight;
                 if (lines < 0.95 || Math.abs(lines - Math.round(lines)) > 0.05)
                   problems.push(`${id}: summary shows ${lines} lines`);
@@ -3026,7 +3028,7 @@ test.describe("text-only cells", () => {
                   problems.push(`${id}: summary leaves a spare line`);
               }
               return problems;
-            }),
+            }, alwaysRoom),
           )
           .toEqual([]);
         await page.screenshot({

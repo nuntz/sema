@@ -36,6 +36,9 @@ const item = (
   media_h: media ? 100 : undefined,
 });
 
+/** Phone content widths: viewport minus the 12px side insets, plus 320. */
+const phoneWidths = [320, 369, 390, 430];
+
 const ids = (rows: ReturnType<typeof justify>) =>
   rows.flatMap((row) => row.cells.map((cell) => cell.item.item_id));
 
@@ -550,7 +553,7 @@ describe("pagination layout invariants", () => {
   };
 
   it("keeps every painted row exact when arbitrary continuations arrive", () => {
-    const widths = [1440, 1024, 768, 390];
+    const widths = [1440, 1024, 768, ...phoneWidths];
     let paintedRows = 0;
     for (let seed = 1; seed <= 240; seed++) {
       const next = random(seed);
@@ -866,7 +869,159 @@ describe("v2 L-run bands", () => {
   });
 });
 
-describe("369px mobile story bands", () => {
+describe("phone rows ranked by Size", () => {
+  const largeStory = (id: string, relatedCount = 1): Story => ({
+    story_id: id,
+    source_count: relatedCount + 1,
+    order_key: 0.9,
+    size: "L",
+    items: [
+      item(`${id}-lead`, "L"),
+      ...Array.from({ length: relatedCount }, (_, index) =>
+        item(`${id}-headline-${index}`, "S"),
+      ),
+    ],
+  });
+  const geometry = (rows: LayoutRow[]) =>
+    rows.map((row) => ({
+      height: row.height,
+      cells: row.cells.map((cell) => [cell.left, cell.width]),
+    }));
+
+  describe.each(phoneWidths)("%ipx content width", (width) => {
+    const half = (width - 8) / 2;
+
+    it("gives every L Item its own full-width 168px row, even in an even run", () => {
+      const rows = justify(
+        [
+          item("portrait", "L", 0.8),
+          item("square", "L", 1),
+          item("wide", "L", 2.1),
+          item("text", "L", 1, false),
+        ],
+        width,
+      );
+
+      expect(geometry(rows)).toEqual(
+        Array.from({ length: 4 }, () => ({ height: 168, cells: [[0, width]] })),
+      );
+    });
+
+    it("sets M and S two-up in equal widths: 150px with any M, 124px for S+S", () => {
+      const rows = justify(
+        [
+          item("m0", "M"),
+          item("m1", "M", 1, false),
+          item("m2", "M"),
+          item("s0", "S"),
+          item("s1", "S", 0.8),
+          item("m3", "M"),
+          item("s2", "S", 1, false),
+          item("s3", "S"),
+        ],
+        width,
+      );
+
+      const pair = [
+        [0, half],
+        [half + 8, half],
+      ];
+      expect(geometry(rows)).toEqual([
+        { height: 150, cells: pair },
+        { height: 150, cells: pair },
+        { height: 150, cells: pair },
+        { height: 124, cells: pair },
+      ]);
+    });
+
+    it("keeps a trailing single M or S at half width", () => {
+      const rows = justify(
+        [item("m", "M"), item("l0", "L"), item("s", "S", 1, false)],
+        width,
+      );
+
+      expect(geometry(rows)).toEqual([
+        { height: 150, cells: [[0, half]] },
+        { height: 168, cells: [[0, width]] },
+        { height: 124, cells: [[0, half]] },
+      ]);
+    });
+
+    it("stacks rows 8px apart", () => {
+      const rows = justify(
+        [
+          item("l", "L"),
+          item("m0", "M"),
+          item("s0", "S"),
+          item("s1", "S"),
+          item("s2", "S"),
+          item("l1", "L", 1, false),
+        ],
+        width,
+      );
+
+      expect(rows.map((row) => row.top)).toEqual([
+        0,
+        168 + 8,
+        168 + 8 + 150 + 8,
+        168 + 8 + 150 + 8 + 124 + 8,
+      ]);
+    });
+
+    it("gives every L Story its own full-width row instead of pairing two-up", () => {
+      const rows = justify(
+        [
+          { kind: "story", story: largeStory("left", 3) },
+          { kind: "story", story: largeStory("right", 4) },
+          item("l", "L"),
+        ],
+        width,
+      );
+
+      expect(rows.map((row) => row.cells.map((cell) => cell.width))).toEqual([
+        [width],
+        [width],
+        [width],
+      ]);
+      for (const cell of rows.slice(0, 2).map((row) => row.cells[0]))
+        expect(cell.headlineItemCount).toBeGreaterThan(0);
+    });
+
+    it("holds back only a trailing single while another page can still pair it", () => {
+      const painted = [
+        item("l0", "L"),
+        item("m0", "M"),
+        item("s0", "S"),
+        item("s1", "S"),
+        item("s2", "S"),
+        item("l1", "L"),
+      ];
+      expect(ids(justify(painted, width, true))).toEqual(
+        painted.map((value) => value.item_id),
+      );
+
+      const lone = [...painted, item("lone", "S")];
+      const before = justify(lone, width, true);
+      expect(ids(before)).toEqual(painted.map((value) => value.item_id));
+      const after = justify([...lone, item("partner", "M")], width, true);
+      expect(after.slice(0, before.length)).toEqual(before);
+      expect(geometry(after.slice(before.length))).toEqual([
+        {
+          height: 150,
+          cells: [
+            [0, half],
+            [half + 8, half],
+          ],
+        },
+      ]);
+      expect(
+        ids(justify(lone, width, true, { completeSegment: true })),
+      ).toEqual(lone.map((value) => value.item_id));
+    });
+  });
+});
+
+describe("phone Story rows", () => {
   const largeStory = (id: string, relatedCount = 1): Story => ({
     story_id: id,
     source_count: relatedCount + 1,
@@ -909,53 +1064,6 @@ describe("369px mobile story bands", () => {
     expect(expanded.height).toBe(541);
   });
 
-  it("gives mobile image pairs room and limits small rows to two cards", () => {
-    const rows = justify(
-      [
-        item("l1", "L"),
-        item("l2", "L"),
-        item("m1", "M"),
-        item("m2", "M"),
-        item("s1", "S"),
-        item("s2", "S"),
-        item("s3", "S"),
-      ],
-      296,
-    );
-    expect(rows.map((row) => [row.height, row.cells.length])).toEqual([
-      [260, 2],
-      [220, 2],
-      [200, 2],
-      [200, 1],
-    ]);
-    expect(rows.at(-1)?.cells[0].width).toBe(rows[0].cells[0].width);
-    for (const row of rows.filter((row) => row.cells.length === 2)) {
-      expect(row.cells[0].width).toBe(row.cells[1].width);
-      expect(row.cells[1].left + row.cells[1].width).toBe(296);
-    }
-  });
-
-  it("uses one equal 260px tile band for two L stories", () => {
-    const [row] = justify(
-      [
-        { kind: "story", story: largeStory("left", 3) },
-        { kind: "story", story: largeStory("right", 4) },
-      ],
-      369,
-    );
-
-    expect(row.kind).toBe("tile");
-    expect(row.height).toBe(260);
-    expect(row.cells).toHaveLength(2);
-    expect(row.cells.map((cell) => cell.width)).toEqual([180.5, 180.5]);
-    for (const cell of row.cells) {
-      expect(cell.mobileTile).toBe(true);
-      expect(cell.headlineHeight).toBe(0);
-      expect(cell.headlineItemCount).toBe(0);
-      expect(cell.headlineRemaining).toBe(0);
-    }
-  });
-
   it("budgets 52px headlines and one 44px more row in a lead card", () => {
     const [row] = justify(
       [{ kind: "story", story: largeStory("lead", 3) }],
@@ -992,79 +1100,6 @@ describe("369px mobile story bands", () => {
       3 * mobileStoryHeadlineHeight + mobileStoryMoreHeight,
     );
     expect((cell.height ?? row.height) - (cell.headlineHeight ?? 0)).toBe(120);
-  });
-});
-
-describe("390px mobile bands", () => {
-  it("uses no spans and matches the 246/220/200px treatments", () => {
-    const rows = justify(
-      [
-        item("large", "L", 0.8),
-        item("m0", "M"),
-        item("m1", "M"),
-        item("text-large", "L", 1, false),
-        item("s0", "S"),
-        item("s1", "S"),
-        item("s2", "S"),
-      ],
-      390,
-    );
-
-    expect(rows.map((row) => [row.kind, row.height, row.cells.length])).toEqual(
-      [
-        ["tall", 246, 1],
-        ["standard", 220, 2],
-        ["tall", 246, 1],
-        ["standard", 200, 2],
-        ["standard", 200, 1],
-      ],
-    );
-    expect(rows.every((row) => row.kind !== "span")).toBe(true);
-    expect(rows[0].cells[0].width).toBe(390);
-    expect(rows[2].cells[0].width).toBe(390);
-    expect(rows.every((row) => row.gap === 8)).toBe(true);
-  });
-
-  it("packs L-runs as a 246px leader and 260px tile pairs", () => {
-    const rows = justify(
-      [
-        ...Array.from({ length: 7 }, (_, index) =>
-          item(`l${index}`, "L", index === 3 ? 1 : 1.5, index !== 3),
-        ),
-        item("m0", "M"),
-        item("m1", "M"),
-        item("s0", "S"),
-        item("s1", "S"),
-        item("s2", "S"),
-      ],
-      390,
-    );
-    expect(rows.map((row) => [row.kind, row.height, row.cells.length])).toEqual(
-      [
-        ["tall", 246, 1],
-        ["tile", 260, 2],
-        ["tile", 260, 2],
-        ["tile", 260, 2],
-        ["standard", 220, 2],
-        ["standard", 200, 2],
-        ["standard", 200, 1],
-      ],
-    );
-    expect(new Set(rows.map((row) => row.height))).toEqual(
-      new Set([200, 220, 246, 260]),
-    );
-  });
-
-  it("uses a 260px equal-width tile band for an adjacent portrait pair", () => {
-    const rows = justify(
-      [item("portrait-0", "L", 1), item("portrait-1", "L", 1.2)],
-      390,
-    );
-    expect(rows.map((row) => [row.kind, row.height, row.cells.length])).toEqual(
-      [["tile", 260, 2]],
-    );
-    expect(rows[0].cells[0].width).toBeCloseTo(191, 5);
-    expect(rows[0].cells[1].width).toBeCloseTo(191, 5);
   });
 });
 

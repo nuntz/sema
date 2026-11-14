@@ -118,12 +118,6 @@ interface GridProps {
   onScrollPosition?(top: number): void;
 }
 
-function shortWhyText(item: Item): string {
-  if (item.why?.title) return `Liked: ${item.why.title}`;
-  if (item.why?.feed_title) return `Often: ${item.why.feed_title}`;
-  return "";
-}
-
 export function Grid(props: GridProps) {
   useClock();
   const imagesEnabled =
@@ -1248,16 +1242,7 @@ function GridContent(props: GridProps) {
                   const cellSignal = () =>
                     props.model.cell(item()).signal ? item().signal : 0;
                   const signalFresh = createSignalFresh(cellSignal);
-                  const condensedLarge = createMemo(
-                    () =>
-                      width() < 700 &&
-                      (row.kind === "hero" ||
-                        row.kind === "pair" ||
-                        row.kind === "tile"),
-                  );
-                  const explanation = createMemo(() =>
-                    condensedLarge() ? shortWhyText(item()) : whyText(item()),
-                  );
+                  const explanation = createMemo(() => whyText(item()));
                   const readVisuals = createMemo(() =>
                     props.model.cell(item()),
                   );
@@ -1287,7 +1272,6 @@ function GridContent(props: GridProps) {
                         "tall-hero": cell.tall === true,
                         "hero-cell": row.kind === "hero",
                         "pair-cell": row.kind === "pair",
-                        "mobile-tile-cell": cell.mobileTile === true,
                         "sub-cell": row.kind === "span" && cell.span !== 2,
                         "compact-cell": row.kind === "compact",
                         [`size-${cell.effectiveSize.toLowerCase()}`]: true,
@@ -1458,7 +1442,6 @@ function GridContent(props: GridProps) {
                               unreadDot={readVisuals().unreadDot}
                               archive={props.model.archive}
                               effectiveSize={cell.effectiveSize}
-                              condensed={condensedLarge()}
                               explanation={explanation()}
                               dimmed={readVisuals().dimmed}
                               onUndo={() => props.actions.onSignal(item(), 0)}
@@ -1487,7 +1470,6 @@ function GridContent(props: GridProps) {
                             unreadDot={readVisuals().unreadDot}
                             archive={props.model.archive}
                             effectiveSize={cell.effectiveSize}
-                            condensed={condensedLarge()}
                             explanation={explanation()}
                             dimmed={readVisuals().dimmed}
                             onUndo={() => props.actions.onSignal(item(), 0)}
@@ -1995,7 +1977,6 @@ export function CellCopy(props: {
   unreadDot: boolean;
   archive: boolean;
   effectiveSize: "S" | "M" | "L";
-  condensed: boolean;
   explanation: string;
   dimmed?: boolean;
   onApplyFeed?(): void;
@@ -2019,7 +2000,7 @@ export function CellCopy(props: {
       </Show>
       <Show
         when={
-          (textOnly() || (props.effectiveSize !== "S" && !props.condensed)) &&
+          (textOnly() || props.effectiveSize !== "S") &&
           props.item.summary &&
           (!reddit() || props.item.post_type === "text")
         }

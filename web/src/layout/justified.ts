@@ -10,7 +10,6 @@ export interface LayoutCell {
   offsetY?: number;
   span?: 2;
   tall?: true;
-  mobileTile?: true;
   mobileStoryCard?: true;
   headlineHeight?: number;
   headlineItemCount?: number;
@@ -23,7 +22,7 @@ export interface LayoutRow {
   height: number;
   top: number;
   gap: number;
-  kind: "span" | "tall" | "hero" | "pair" | "tile" | "standard" | "compact";
+  kind: "span" | "tall" | "hero" | "pair" | "standard" | "compact";
 }
 
 export interface JustifyOptions {
@@ -59,10 +58,10 @@ export const storyCardBorderHeight = 3;
 export const mobileStoryHeadlineHeight = 52;
 export const mobileStoryMoreHeight = 44;
 const storyLeadMinimumHeight = 120;
-const mobileTallHeight = 246;
-const mobileTileHeight = 260;
-const mobileSmallHeight = 200;
-const mobileStandardHeight = 220;
+const mobileLargeHeight = 168;
+const mobileStoryHeight = 246;
+const mobileMediumHeight = 150;
+const mobileSmallHeight = 124;
 
 function storyFor(item: Item): Story | undefined {
   return (item as LayoutItem).layoutStory;
@@ -733,124 +732,64 @@ export function justify(
   );
 }
 
-function appendMobileLargeBand(
-  rows: LayoutRow[],
-  items: Item[],
-  containerWidth: number,
-  kind: "tall" | "tile",
-): void {
-  const height = kind === "tile" ? mobileTileHeight : mobileTallHeight;
-  const cells =
-    items.length === 1
-      ? cellsWithWidths(items, [containerWidth], 0, 0, height, mobileGap)
-      : weightedLineCells(
-          items,
-          items.map(() => 1),
-          containerWidth,
-          height,
-          mobileGap,
-        );
-  if (kind === "tall" && cells[0]) {
-    cells[0].tall = true;
-    cells[0].mobileStoryCard = true;
-  }
-  if (kind === "tile") {
-    for (const cell of cells) {
-      cell.mobileTile = true;
-      if (!cell.story) continue;
-      cell.headlineHeight = 0;
-      cell.headlineItemCount = 0;
-      cell.headlineRemaining = 0;
-    }
-  }
-  rows.push({
-    cells,
-    height,
-    top: topAfter(rows, mobileGap),
-    gap: mobileGap,
-    kind,
-  });
-}
-
-function appendMobileLargeRun(
-  rows: LayoutRow[],
-  items: Item[],
-  containerWidth: number,
-): void {
-  let index = 0;
-  if (items.length % 2 === 1) {
-    appendMobileLargeBand(rows, items.slice(0, 1), containerWidth, "tall");
-    index = 1;
-  }
-  while (index + 1 < items.length) {
-    appendMobileLargeBand(
-      rows,
-      items.slice(index, index + 2),
-      containerWidth,
-      "tile",
-    );
-    index += 2;
-  }
-  if (index < items.length)
-    appendMobileLargeBand(rows, items.slice(index), containerWidth, "tall");
-}
-
+/**
+ * Phone rows rank by Size: an L Item or Story takes a full-width row, and M
+ * and S Items sit two-up in equal widths, shorter when both are S. A lone M
+ * or S keeps half width, and is held back while another page could pair it.
+ */
 function mobileRows(
   items: Item[],
   containerWidth: number,
   paginationOpen: boolean,
 ): LayoutRow[] {
   const rows: LayoutRow[] = [];
+  const push = (cells: LayoutCell[], height: number, kind: LayoutRow["kind"]) =>
+    rows.push({
+      cells,
+      height,
+      top: topAfter(rows, mobileGap),
+      gap: mobileGap,
+      kind,
+    });
   for (let index = 0; index < items.length; ) {
     const item = items[index];
     if (item.size === "L") {
-      let runEnd = index + 1;
-      while (runEnd < items.length && items[runEnd].size === "L") runEnd++;
-      if (paginationOpen && runEnd === items.length) break;
-      appendMobileLargeRun(rows, items.slice(index, runEnd), containerWidth);
-      index = runEnd;
+      const story = storyFor(item);
+      const height = story ? mobileStoryHeight : mobileLargeHeight;
+      const cells = cellsWithWidths(
+        [item],
+        [containerWidth],
+        0,
+        0,
+        height,
+        mobileGap,
+      );
+      cells[0].tall = true;
+      if (story) cells[0].mobileStoryCard = true;
+      push(cells, height, "tall");
+      index++;
       continue;
     }
 
     const next = items[index + 1];
-    if (next && next.size !== "L") {
-      const smallPair = item.size === "S" && next.size === "S";
-      if (paginationOpen && index + 2 === items.length && smallPair) break;
-      const height = smallPair ? mobileSmallHeight : mobileStandardHeight;
-      rows.push({
-        cells: weightedLineCells(
-          [item, next],
-          [1, 1],
-          containerWidth,
-          height,
-          mobileGap,
-        ),
-        height,
-        top: topAfter(rows, mobileGap),
-        gap: mobileGap,
-        kind: "standard",
-      });
-      index += 2;
-      continue;
-    }
-
-    if (paginationOpen && !next) break;
-    const height = item.size === "S" ? mobileSmallHeight : mobileStandardHeight;
-    rows.push({
-      cells: cellsWithWidths(
-        [item],
-        [(containerWidth - mobileGap) / 2],
+    const pair = next && next.size !== "L" ? [item, next] : [item];
+    if (pair.length === 1 && paginationOpen && !next) break;
+    const height = pair.some((cell) => cell.size === "M")
+      ? mobileMediumHeight
+      : mobileSmallHeight;
+    push(
+      cellsWithWidths(
+        pair,
+        pair.map(() => (containerWidth - mobileGap) / 2),
         0,
         0,
         height,
         mobileGap,
       ),
       height,
-      top: topAfter(rows, mobileGap),
-      gap: mobileGap,
-      kind: "standard",
-    });
-    index++;
+      "standard",
+    );
+    index += pair.length;
   }
   return rows;
 }
@@ -874,7 +813,6 @@ function layoutStoryHeadlines(
     for (const cell of cells) {
       const story = cell.story;
       if (!story) continue;
-      if (cell.mobileTile) continue;
       const mode = (cell.item as LayoutItem).layoutHeadlineMode;
       if (!mode) continue;
       const headlineCount = Math.max(0, story.items.length - 1);
@@ -1020,7 +958,6 @@ function sameLayoutCell(left: LayoutCell, right: LayoutCell): boolean {
     left.offsetY === right.offsetY &&
     left.span === right.span &&
     left.tall === right.tall &&
-    left.mobileTile === right.mobileTile &&
     left.mobileStoryCard === right.mobileStoryCard &&
     left.headlineHeight === right.headlineHeight &&
     left.headlineItemCount === right.headlineItemCount &&

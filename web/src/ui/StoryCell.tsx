@@ -76,8 +76,7 @@ export function StoryCell(props: StoryCellProps) {
   const cellHeight = () => props.cell.height ?? props.row.height;
   const leadHeight = () =>
     cellHeight() - (props.cell.headlineHeight ?? 0) - storyCardBorderHeight;
-  const editorial = () =>
-    props.story.size === "L" && props.cell.mobileTile !== true;
+  const editorial = () => props.story.size === "L";
   const [copyMetrics, setCopyMetrics] = createSignal({
     height: 0,
     mediaHeight: 0,
@@ -167,7 +166,6 @@ export function StoryCell(props: StoryCellProps) {
         "is-read": cellReadVisuals().dimmed,
         pressed: props.pressed,
         "mobile-story-card": props.cell.mobileStoryCard === true,
-        "mobile-tile-cell": props.cell.mobileTile === true,
         expanded: props.cell.headlineExpanded === true,
         "all-items-cell": props.readContext === "all-items",
         "no-media": !lead()?.media_url,
@@ -264,37 +262,14 @@ export function StoryCell(props: StoryCellProps) {
                       <Icon name="keep" size={14} filled={true} />
                     </span>
                   </Show>
-                  <Show
-                    when={
-                      props.cell.mobileTile === true &&
-                      props.story.items.length > 1
-                    }
-                    fallback={
-                      <span
-                        class="story-stack-badge"
-                        role="img"
-                        aria-label={`${props.story.source_count} sources`}
-                      >
-                        <Icon name="stack" size={13} />
-                        <b>{props.story.source_count}</b>
-                      </span>
-                    }
+                  <span
+                    class="story-stack-badge"
+                    role="img"
+                    aria-label={`${props.story.source_count} sources`}
                   >
-                    <button
-                      type="button"
-                      class="story-stack-badge"
-                      aria-label={`${props.story.source_count} sources, show headlines`}
-                      aria-haspopup="dialog"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        props.onMore(props.story);
-                      }}
-                    >
-                      <Icon name="stack" size={13} />
-                      <b>{props.story.source_count}</b>
-                    </button>
-                  </Show>
+                    <Icon name="stack" size={13} />
+                    <b>{props.story.source_count}</b>
+                  </span>
                   <PrimaryAction
                     item={item}
                     class="cell-main"
@@ -307,7 +282,6 @@ export function StoryCell(props: StoryCellProps) {
                     unreadDot={leadReadVisuals().unreadDot}
                     archive={props.archive ?? false}
                     effectiveSize="M"
-                    condensed={false}
                     explanation={whyText(item)}
                     story={true}
                     onUndo={() => props.onSignal(item, 0)}
