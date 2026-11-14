@@ -80,6 +80,7 @@ import {
 import { SourceBadge } from "./SourceBadge";
 import { StoryCell } from "./StoryCell";
 import { sheetHeadlineSlice } from "./story-layout";
+import { fitSummaryLines } from "./summary-fit";
 import {
   beginLongPress,
   LONG_PRESS_MS,
@@ -1997,6 +1998,8 @@ export function CellCopy(props: {
     props.item.post_type === "link"
       ? externalHost(props.item.external_url)
       : "";
+  // Text-only single Items give their spare height to the summary.
+  const textOnly = () => !props.item.media_url && !props.story;
   return (
     <div class="cell-copy">
       <h2 classList={{ read: props.dimmed }}>
@@ -2007,13 +2010,14 @@ export function CellCopy(props: {
       </Show>
       <Show
         when={
-          props.effectiveSize !== "S" &&
-          !props.condensed &&
+          (textOnly() || (props.effectiveSize !== "S" && !props.condensed)) &&
           props.item.summary &&
           (!reddit() || props.item.post_type === "text")
         }
       >
-        <p>{props.item.summary}</p>
+        <Show when={textOnly()} fallback={<p>{props.item.summary}</p>}>
+          <FittedSummary text={props.item.summary ?? ""} />
+        </Show>
       </Show>
       <div class="cell-meta">
         <Show when={!props.archive}>
@@ -2087,6 +2091,12 @@ export function CellCopy(props: {
       </Show>
     </div>
   );
+}
+
+function FittedSummary(props: { text: string }) {
+  let summary!: HTMLParagraphElement;
+  onMount(() => onCleanup(fitSummaryLines(summary)));
+  return <p ref={summary}>{props.text}</p>;
 }
 
 export function UnreadDot(props: { visible: boolean }) {
