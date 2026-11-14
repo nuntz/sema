@@ -4,7 +4,6 @@
   --signal-bury-border: rgba(255,255,255,.05);
   --signal-bury-ink: var(--fg-tertiary);
   --signal-bury-meta: var(--fg-quaternary);
-  --signal-bury-label: var(--fg-quaternary);
   --signal-bury-surface: var(--surface-raised);
   --signal-boost-wash: rgba(214,242,75,.07);
   --signal-boost-pulse: rgba(214,242,75,.16);
@@ -104,7 +103,6 @@
   --keep-line: rgba(232, 230, 225, 0.28);
   --error: #ff5f6d;
   --error-wash: rgba(255, 95, 109, 0.15);
-  --error-soft-wash: rgba(255, 95, 109, 0.12);
   --error-line: rgba(255, 95, 109, 0.4);
   --error-banner-fg: #ff9aa4;
   --border-control: #323335;
@@ -129,7 +127,6 @@
   --control-wash-medium: rgba(255, 255, 255, 0.06);
   --control-wash-strong: rgba(255, 255, 255, 0.1);
   --control-wash-hover: rgba(255, 255, 255, 0.14);
-  --control-wash-selected: rgba(255, 255, 255, 0.18);
   --input-bg: rgba(255, 255, 255, 0.035);
   --menu-item-hover: rgba(255, 255, 255, 0.045);
   --accent-wash-08: rgba(214, 242, 75, 0.08);
@@ -140,7 +137,6 @@
   --accent-wash-22: rgba(214, 242, 75, 0.22);
   --accent-wash-28: rgba(214, 242, 75, 0.28);
   --accent-wash-30: rgba(214, 242, 75, 0.3);
-  --accent-wash-40: rgba(214, 242, 75, 0.4);
   --accent-wash-45: rgba(214, 242, 75, 0.45);
   --accent-wash-50: rgba(214, 242, 75, 0.5);
   --accent-wash-55: rgba(214, 242, 75, 0.55);
@@ -214,7 +210,6 @@
   --scrollbar-thumb: #2d3137;
   --signin-glow: #1a1d1c;
   --muted: var(--fg-tertiary);
-  --dim: var(--fg-tertiary);
   --faint: var(--fg-quaternary);
   --accent: var(--fg-accent);
   --prior-positive: var(--fg-prior);
@@ -229,24 +224,19 @@
   --ts-tile-hover: rgba(232, 230, 225, 0.14);
   --media-tint-l: #20242b;
   --media-tint-m: #1c1f25;
-  --media-hatch: rgba(255, 255, 255, 0.05);
 
   /* These sit on photographs and deliberately never invert. */
   --media-fg-primary: #f4f2ee;
   --media-fg-secondary: #c7ccd3;
   --media-action-bg: rgba(12, 14, 17, 0.82);
   --media-action-bg-strong: rgba(12, 14, 17, 0.84);
-  --media-action-bg-soft: rgba(12, 14, 17, 0.72);
   --media-action-bg-kept: rgba(12, 14, 17, 0.78);
   --media-control-hover: rgba(255, 255, 255, 0.14);
-  --media-control-selected: rgba(255, 255, 255, 0.18);
   --media-overlay-hover: rgba(6, 7, 9, 0.34);
   --media-overlay-label: rgba(6, 7, 9, 0.62);
   --media-overlay-provider: rgba(6, 7, 9, 0.72);
   --media-unread-dot: #d6f24b;
-  --media-accent-ink: #12160a;
   --media-accent-wash: rgba(214, 242, 75, 0.18);
-  --media-keep-wash: rgba(232, 230, 225, 0.16);
   --media-unread-dot-ring: rgba(6, 7, 9, 0.55);
   --play-color: #e8e6e1;
   --play-shadow: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
@@ -267,8 +257,6 @@
   --cell-action-fg: var(--play-color);
   --cell-action-hover-bg: var(--media-control-hover);
   --cell-action-hover-fg: var(--media-fg-primary);
-  --cell-action-selected-bg: var(--media-control-selected);
-  --cell-action-selected-fg: var(--fixed-white);
   --cell-action-kept-bg: var(--keep-wash);
   --cell-action-kept-fg: var(--media-fg-primary);
   --cell-action-kept-hover-bg: var(--keep-wash);
@@ -281,7 +269,6 @@
   --expiry-red: #ff5f6d;
   --cell-label-bg: var(--media-overlay-label);
   --cell-label-fg: var(--media-fg-secondary);
-  --kept-marker-bg: var(--media-action-bg-soft);
   --kept-marker-fg: var(--keep);
   --related-action-bg: var(--media-action-bg-strong);
   --related-action-fg: var(--fg-tertiary);
@@ -364,7 +351,6 @@
   --media-radius: 8px;
   --sheet-row: 48px;
   --ptr-ring: 18px;
-  --ptr-inset: 44px;
   --touch-min: 44px;
   --hdr-h: var(--header-h);
   --hdr-h-compact: 52px;
@@ -372,9 +358,6 @@
   --hdr-pad-x-mobile: 14px;
   --search-slot: 232px;
   --drawer-w: 420px;
-  --grid-gap: 10px;
-  --grid-gap-mobile: 8px;
-  --cell-radius: 10px;
   --cell-pad-pair: 16px;
   --cell-pad-l: 14px;
   --cell-pad-compact: 11px;
@@ -398,14 +381,13 @@
   --cell-action-gap: 5px;
 }
 
-/* Light token blocks must stay in sync. */
+/* Light token blocks must stay in sync; styles-tokens.test.ts checks it. */
 :root[data-theme="light"] {
   --signal-bury-media-opacity: 1;
   --signal-bury-saturate: .45;
   --signal-bury-border: rgba(0,0,0,.05);
   --signal-bury-ink: #5c6169;
   --signal-bury-meta: #5c6169;
-  --signal-bury-label: #5f7a0c;
   --signal-bury-surface: #f0ede7;
   --signal-boost-wash: rgba(214,242,75,.14);
   --signal-boost-border: #a9b95c;
@@ -468,7 +450,6 @@
   --keep-line: rgba(74, 67, 57, 0.22);
   --error: #c8323f;
   --error-wash: rgba(200, 50, 63, 0.09);
-  --error-soft-wash: rgba(200, 50, 63, 0.08);
   --error-line: rgba(200, 50, 63, 0.3);
   --error-banner-fg: #c8323f;
   --border-control: #c9c5bc;
@@ -493,7 +474,6 @@
   --control-wash-medium: rgba(0, 0, 0, 0.06);
   --control-wash-strong: rgba(0, 0, 0, 0.1);
   --control-wash-hover: rgba(0, 0, 0, 0.12);
-  --control-wash-selected: rgba(0, 0, 0, 0.16);
   --input-bg: rgba(0, 0, 0, 0.035);
   --menu-item-hover: rgba(0, 0, 0, 0.045);
   --accent-wash-08: rgba(95, 122, 12, 0.08);
@@ -504,7 +484,6 @@
   --accent-wash-22: rgba(95, 122, 12, 0.22);
   --accent-wash-28: rgba(95, 122, 12, 0.28);
   --accent-wash-30: rgba(95, 122, 12, 0.3);
-  --accent-wash-40: rgba(95, 122, 12, 0.4);
   --accent-wash-45: rgba(95, 122, 12, 0.45);
   --accent-wash-50: rgba(95, 122, 12, 0.5);
   --accent-wash-55: rgba(95, 122, 12, 0.55);
@@ -580,13 +559,10 @@
   --ts-tile-hover: rgba(0, 0, 0, 0.12);
   --media-tint-l: #d5d0c7;
   --media-tint-m: #dcd7ce;
-  --media-hatch: rgba(0, 0, 0, 0.05);
   --cell-action-bg: var(--surface-raised-hover);
   --cell-action-fg: var(--fg-secondary);
   --cell-action-hover-bg: var(--surface-selected);
   --cell-action-hover-fg: var(--fg-primary);
-  --cell-action-selected-bg: var(--surface-selected);
-  --cell-action-selected-fg: var(--fg-primary);
   --cell-action-kept-bg: var(--surface-selected);
   --cell-action-kept-fg: var(--keep);
   --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
@@ -599,7 +575,6 @@
   --expiry-red: #ff5f6d;
   --cell-label-bg: var(--surface-raised-hover);
   --cell-label-fg: var(--fg-secondary);
-  --kept-marker-bg: var(--surface-selected);
   --kept-marker-fg: var(--keep);
   --related-action-bg: var(--surface-raised-hover);
   --related-action-fg: var(--fg-secondary);
@@ -637,7 +612,6 @@
   --signal-bury-border: rgba(0,0,0,.05);
   --signal-bury-ink: #5c6169;
   --signal-bury-meta: #5c6169;
-  --signal-bury-label: #5f7a0c;
   --signal-bury-surface: #f0ede7;
   --signal-boost-wash: rgba(214,242,75,.14);
   --signal-boost-border: #a9b95c;
@@ -700,7 +674,6 @@
     --keep-line: rgba(74, 67, 57, 0.22);
     --error: #c8323f;
     --error-wash: rgba(200, 50, 63, 0.09);
-    --error-soft-wash: rgba(200, 50, 63, 0.08);
     --error-line: rgba(200, 50, 63, 0.3);
     --error-banner-fg: #c8323f;
     --border-control: #c9c5bc;
@@ -725,7 +698,6 @@
     --control-wash-medium: rgba(0, 0, 0, 0.06);
     --control-wash-strong: rgba(0, 0, 0, 0.1);
     --control-wash-hover: rgba(0, 0, 0, 0.12);
-    --control-wash-selected: rgba(0, 0, 0, 0.16);
     --input-bg: rgba(0, 0, 0, 0.035);
     --menu-item-hover: rgba(0, 0, 0, 0.045);
     --accent-wash-08: rgba(95, 122, 12, 0.08);
@@ -736,7 +708,6 @@
     --accent-wash-22: rgba(95, 122, 12, 0.22);
     --accent-wash-28: rgba(95, 122, 12, 0.28);
     --accent-wash-30: rgba(95, 122, 12, 0.3);
-    --accent-wash-40: rgba(95, 122, 12, 0.4);
     --accent-wash-45: rgba(95, 122, 12, 0.45);
     --accent-wash-50: rgba(95, 122, 12, 0.5);
     --accent-wash-55: rgba(95, 122, 12, 0.55);
@@ -812,13 +783,10 @@
     --ts-tile-hover: rgba(0, 0, 0, 0.12);
     --media-tint-l: #d5d0c7;
     --media-tint-m: #dcd7ce;
-    --media-hatch: rgba(0, 0, 0, 0.05);
     --cell-action-bg: var(--surface-raised-hover);
     --cell-action-fg: var(--fg-secondary);
     --cell-action-hover-bg: var(--surface-selected);
     --cell-action-hover-fg: var(--fg-primary);
-    --cell-action-selected-bg: var(--surface-selected);
-    --cell-action-selected-fg: var(--fg-primary);
     --cell-action-kept-bg: var(--surface-selected);
     --cell-action-kept-fg: var(--keep);
     --cell-action-kept-hover-bg: var(--cell-action-hover-bg);
@@ -831,7 +799,6 @@
     --expiry-red: #ff5f6d;
     --cell-label-bg: var(--surface-raised-hover);
     --cell-label-fg: var(--fg-secondary);
-    --kept-marker-bg: var(--surface-selected);
     --kept-marker-fg: var(--keep);
     --related-action-bg: var(--surface-raised-hover);
     --related-action-fg: var(--fg-secondary);

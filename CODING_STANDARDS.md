@@ -4,7 +4,7 @@ Rules a reviewer applies to a diff. Mechanical rules live in tooling (`make chec
 
 ## UI contracts
 
-These hold for the grid and reader headers, the phone reader, and the Peek. Rules marked _(e2e)_ are asserted by `web/e2e/header.e2e.ts`; check the rest by reading the diff, and extend that spec when a change touches a rule it doesn't cover.
+These hold for the grid and reader headers, the phone reader, the Peek, and grid cells. Rules marked _(e2e)_ are asserted by `web/e2e/header.e2e.ts` unless their section names another spec; check the rest by reading the diff, and extend that spec when a change touches a rule it doesn't cover.
 
 ### Desktop headers (620px and wider)
 
@@ -31,6 +31,18 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 - The phone reader toolbar sits 12px into the home-indicator inset.
 - The Peek is a media surface: its bars, controls and caption stay dark in both themes and at every width. _(e2e: `lightbox.e2e.ts`)_
 
+### Grid cells
+
+Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heights live in `web/src/layout/justified.ts`; _(e2e)_ here means `web/e2e/front-page.e2e.ts`.
+
+- Phone rows sit 12px from each side with 8px gaps. Every L Item is a full-width 168px row; M and S Items sit two-up in equal widths, 150px when either is M and 124px for two S; a trailing single keeps half width. _(unit)_
+- A phone Story is a full-width 200px Lead plus a 52px strip per shown Headline. `--story-strip-h` and `mobileStoryHeadlineHeight` state the same 52px. _(unit, e2e)_
+- Desktop row geometry belongs to `justified.ts`: a cell change keeps its rows and the Story Lead's 126px image floor, so only measured copy grows a Story row. _(e2e: Story Lead floor)_
+- An image cell is a media surface: the photo covers the cell, the title and feed name sit on the title scrim at the bottom, and the age and unread dot sit top right. Scrim, title and corner use media tokens in both themes. _(e2e)_
+- A text-only cell (no `media_url`) starts its title at the top, fits its summary to whole lines through `web/src/ui/summary-fit.ts`, and ends on one line of feed name, age and unread dot. It uses page surface tokens. _(e2e)_
+- A cell reserves its Signal why-line only while a Signal shows, on every cell type.
+- `?grid-images=off` is a memory experiment, not a reader setting: it keeps every cell's geometry, image boxes included. _(e2e: image-free grid)_
+
 ### Safe areas and the installed iOS app
 
 - Every header adds the top safe-area inset above the heights above. _(e2e)_
@@ -39,6 +51,7 @@ These hold for the grid and reader headers, the phone reader, and the Peek. Rule
 ## Web
 
 - Every unread count shown while Reads are optimistic comes from `createUnreadCounts`' optimistic per-Feed counts; a count display never applies Read's adjustment itself, so the Scope cell, Tag chips and Scope picker can't disagree (#32).
+- A change that must keep grid geometry is proven by a browser test measuring rendered rows, as in "desktop Story Leads keep master's image floor and Headline counts"; `justified.test.ts` injects measured heights, so it can't see a cell that reports a different one (#48).
 - Behaviour that depends on the Window is tested in Today or Yesterday, with an Item fetched on a different day from the one it was published, as in `web/src/unread-counts.test.ts`: All holds every Item, and a same-day Item can't tell `fetched_ts` from `published_ts` (#46).
 
 ## Items

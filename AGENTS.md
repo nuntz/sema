@@ -20,7 +20,7 @@ Send is a public webhook contract: within `version: 1` only add optional fields,
 - `make build` creates arm64 Lambda ZIPs and the production SPA.
 - `cd web && bun run dev` starts Vite and proxies `/api` to `SEMA_API_ORIGIN`, such as a deployed stack's `cloudfrontUrl`. No local API server exists (`cmd/api` runs only as a Lambda), and only `/api` is proxied, so stored bodies and images don't load.
 - `cd web && bun run lint` checks TypeScript with Biome; `bun run format` formats it.
-- `make e2e` is CI's e2e job (Playwright), after `cd web && bunx playwright install chromium`.
+- `make e2e` is CI's e2e job (Playwright), after `cd web && bunx playwright install chromium`; concurrent runs, such as parallel worktrees, each need their own `SEMA_E2E_PORT`.
 - `make preview` previews Pulumi changes. Reserve `make deploy` for intentional AWS deployments.
 - Every green push to `master` deploys production from CI; `RUNBOOK.md` covers CI deploys, confirming one, deploys by hand, and rollback. The deploy role and the Lambda boundary are fenced on purpose: never widen them or bypass the boundary to make a deploy pass; see `docs/adr/0004-ci-deploys-through-github-oidc.md`.
 - The weekly Prod Review of production is the `/prod-review sema` skill; it inspects only.
@@ -31,7 +31,7 @@ Format Go with `gofmt`; use tabs and lowercase package names. Use kebab-case for
 
 ## UI Contracts
 
-Header, reader, grid, and lightbox chrome follow fixed contracts (heights, insets, type, icon roles) in `CODING_STANDARDS.md`; read them before changing that chrome. `web/e2e/header.e2e.ts` asserts the measurable ones.
+Header, reader, grid cell, and lightbox chrome follow fixed contracts (heights, insets, type, icon roles) in `CODING_STANDARDS.md`; read them before changing that chrome. `web/e2e/header.e2e.ts` and `web/e2e/front-page.e2e.ts` assert the measurable ones.
 
 ## Testing Guidelines
 
