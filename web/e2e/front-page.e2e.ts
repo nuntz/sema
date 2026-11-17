@@ -1414,6 +1414,7 @@ test("scroll-reading a story cell uses all of its unread members", async ({
   await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
   await scrollPastStoryRow();
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  // biome-ignore lint/plugin: predates the no-sleep check; proves a request was not sent.
   await page.waitForTimeout(100);
   expect(readBatches).toEqual([]);
 
@@ -3962,6 +3963,7 @@ test("withheld stories do not drain pages and the reader pauses grid pagination"
   );
   release();
   await expect(page.locator(".page-loader")).toHaveCount(0);
+  // biome-ignore lint/plugin: predates the no-sleep check; proves a request was not sent.
   await page.waitForTimeout(300);
   expect(pages).toBe(1);
   await page.locator('[data-story-id="lead"] .story-lead').click();
@@ -3970,6 +3972,7 @@ test("withheld stories do not drain pages and the reader pauses grid pagination"
   await grid.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
+  // biome-ignore lint/plugin: predates the no-sleep check; proves a request was not sent.
   await page.waitForTimeout(300);
   expect(pages).toBe(1);
   await page.keyboard.press("Escape");

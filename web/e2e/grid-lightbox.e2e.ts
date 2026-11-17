@@ -322,6 +322,7 @@ test.describe("touch Peek pill", () => {
       type: "touchStart",
       touchPoints: [{ x: box.x + 2, y: box.y + 2 }],
     });
+    // biome-ignore lint/plugin: the hold length is the input, past the long-press threshold.
     await page.waitForTimeout(650);
     await expect(other).not.toHaveClass(/pressed/);
     await expect(page.locator(".action-sheet-layer")).toHaveCount(0);
@@ -672,6 +673,7 @@ test.describe("touch video Play", () => {
             { x: box.x + box.width / 2, y: box.y + box.height / 2 },
           ],
         });
+        // biome-ignore lint/plugin: the hold length is the input, past the long-press threshold.
         await page.waitForTimeout(650);
         await expect(cell).not.toHaveClass(/pressed/);
         await expect(page.locator(".action-sheet-layer")).toHaveCount(0);

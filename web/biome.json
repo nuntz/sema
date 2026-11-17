@@ -1,9 +1,21 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
-  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2 },
-  "linter": { "enabled": true, "rules": { "preset": "recommended" } },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
   "javascript": {
-    "formatter": { "quoteStyle": "double", "trailingCommas": "all" }
+    "formatter": {
+      "quoteStyle": "double",
+      "trailingCommas": "all"
+    }
   },
   "files": {
     "includes": [
@@ -13,5 +25,6 @@
       "vite.config.ts",
       "playwright.config.ts"
     ]
-  }
+  },
+  "plugins": ["./biome-plugins/no-fixed-sleep.grit"]
 }

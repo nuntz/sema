@@ -12,6 +12,25 @@ import { pushOverlay } from "../ui/overlay-history";
 import { Reader } from "../ui/Reader";
 import "../styles.css";
 
+/*
+ * The page behind `/e2e/header-fixture.html`, for header and reader specs.
+ *
+ * Query parameters:
+ * - `view=reader` renders the Reader; otherwise the grid header.
+ * - `media=video` makes the reader Item a YouTube Video Item; any other value an image Item.
+ * - `reddit=link|image` makes it a Reddit post; with `media=video`, one linking to YouTube.
+ * - `lightbox` opens the reader as an Overlay and adds a 2000px image variant.
+ * - `font=loaded` stands a local font in for IBM Plex Mono.
+ * Every Item loads its body from `/e2e/reader-body.html`; route that URL to swap the body.
+ *
+ * Counters on `<body>` appear with their first event, so assert a missing one, not "0":
+ * - `data-plays` counts `onOriginal`: each Play, and each Open original.
+ * - `data-dwell` holds the last dwell report, in ms.
+ *
+ * The content is short: the video reader scrolls about 515px at 1280×500, so a spec that pages
+ * past the lead appends its own spacer. Reader chrome differs by width; the first "More actions"
+ * button is hidden at 1280px.
+ */
 const parameters = new URLSearchParams(window.location.search);
 if (parameters.get("font") === "loaded") {
   const font = document.createElement("style");

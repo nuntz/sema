@@ -1,0 +1,8 @@
+language js
+
+`$page.waitForTimeout($ms)` where {
+  register_diagnostic(
+    span = $page,
+    message = "A fixed sleep proves nothing happened only by luck. Follow the action with one whose visible result differs had it happened, or wait for a condition."
+  )
+}
