@@ -48,6 +48,10 @@ _Avoid_: Aggregator, no-body feed, link aggregator
 One post from one Feed. The same article arriving through two Feeds is two Items, which then form a Story.
 _Avoid_: Entry, article, post, card
 
+**Lead Image**:
+The one image that stands for an Item: shown in its cell, at the top of its reader, and first in a Send. A Video Item's Lead Image is the frame YouTube publishes for it, which its Poster shows; ranking weighs every other Item's Lead Image.
+_Avoid_: Lead (alone, which is a Story's), hero, cover, featured image, main image, thumbnail
+
 **Live Window**:
 The seven days after publication during which an Item stays in the grid. An Item fetched late gets only what is left, and one published more than seven days ago never enters. Anything not kept by the end of the Live Window is gone.
 _Avoid_: Retention period, queue, TTL

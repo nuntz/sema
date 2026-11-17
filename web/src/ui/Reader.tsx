@@ -148,11 +148,11 @@ export function Reader(props: ReaderProps) {
       setPlayback(initial);
     }
   });
-  let leadCard: HTMLDivElement | undefined;
+  let videoCard: HTMLDivElement | undefined;
   const videoMedia = () => (
     <VideoMediaCard
       cardRef={(element) => {
-        leadCard = element;
+        videoCard = element;
       }}
       item={props.item}
       onOriginal={props.onOriginal}
@@ -741,15 +741,15 @@ export function Reader(props: ReaderProps) {
           : viewport.bottom,
     };
   };
-  /** Space pauses or resumes a Played lead while at least half of it shows. */
-  const toggleLead = () => {
-    const embed = leadCard?.querySelector(".video-embed");
+  /** Space pauses or resumes the reader's player while at least half of it shows. */
+  const toggleReaderPlayer = () => {
+    const embed = videoCard?.querySelector(".video-embed");
     if (!player || !playbackForItem() || !embed) return false;
-    const lead = embed.getBoundingClientRect();
+    const box = embed.getBoundingClientRect();
     const visible = visibleBounds();
     const shown =
-      Math.min(lead.bottom, visible.bottom) - Math.max(lead.top, visible.top);
-    return lead.height > 0 && shown >= lead.height / 2 && player.toggle();
+      Math.min(box.bottom, visible.bottom) - Math.max(box.top, visible.top);
+    return box.height > 0 && shown >= box.height / 2 && player.toggle();
   };
   const onKey = (event: KeyboardEvent) => {
     if (
@@ -777,7 +777,7 @@ export function Reader(props: ReaderProps) {
       isFocusedControl(event.target)
     )
       return;
-    if (isVideoToggleKey(event) && toggleLead()) {
+    if (isVideoToggleKey(event) && toggleReaderPlayer()) {
       event.preventDefault();
       return;
     }

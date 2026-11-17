@@ -2,7 +2,7 @@
 
 The YouTube player is a cross-origin iframe, and browsers reload an iframe that is moved to a new parent. So a video only keeps playing across a surface change if a single fixed host stays put in the DOM and is positioned over whichever slot currently shows the video. Sema cannot reparent the player.
 
-The Dock and the Peek are both fixed frames, so a hand-off between them just moves the host, and playback continues without a break. The reader lead scrolls inside the article. Keeping the host on it would mean tracking the slot every frame, so hand-offs between the reader and the Dock reload the player with a seek instead, as Flip does.
+The Dock and the Peek are both fixed frames, so a hand-off between them just moves the host, and playback continues without a break. The reader's player scrolls inside the article. Keeping the host on it would mean tracking the slot every frame, so hand-offs between the reader and the Dock reload the player with a seek instead, as Flip does.
 
 ## Dock behaviour
 

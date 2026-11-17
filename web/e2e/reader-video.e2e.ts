@@ -287,7 +287,7 @@ test("article video failures retain Open without navigating away", async ({
   await expect(page.locator("body")).toHaveAttribute("data-plays", "2");
 });
 
-test("Space toggles a Played lead in view instead of paging", async ({
+test("Space toggles the reader's player in view instead of paging", async ({
   page,
 }) => {
   await stubYouTube(page);
@@ -304,7 +304,7 @@ test("Space toggles a Played lead in view instead of paging", async ({
   await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
 });
 
-test("Space pages past a Poster, a scrolled-away lead, and leaves focused buttons alone", async ({
+test("Space pages past a Poster and a scrolled-away player, and leaves focused buttons alone", async ({
   page,
 }) => {
   await stubYouTube(page);
@@ -324,12 +324,12 @@ test("Space pages past a Poster, a scrolled-away lead, and leaves focused button
   const player = page.locator(".video-embed iframe");
   await expect(player).toHaveAttribute("data-state", "1");
   await scroll.evaluate((element) => {
-    // Leave room to page once the lead has scrolled away.
+    // Leave room to page once the player has scrolled away.
     const spacer = document.createElement("div");
     spacer.style.height = "2000px";
     element.append(spacer);
     const embed = element.querySelector(".video-embed");
-    if (!embed) throw new Error("no lead player");
+    if (!embed) throw new Error("no reader player");
     element.scrollTop +=
       embed.getBoundingClientRect().bottom -
       element.getBoundingClientRect().top;

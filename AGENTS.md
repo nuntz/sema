@@ -10,7 +10,7 @@ Change an `R#` marker and its `unread_pk` in one transaction conditioned on the 
 
 Per-user caching and its version rows live in the Request snapshot (`cmd/api/internal/requestsnapshot`); see ADRs 0005–0007.
 
-Video playback keeps one fixed iframe host positioned over its slot, because moving the iframe reloads it; read `docs/adr/0003-video-dock-fixed-iframe-host.md` before changing the Peek, reader lead, or Dock.
+Video playback keeps one fixed iframe host positioned over its slot, because moving the iframe reloads it; read `docs/adr/0003-video-dock-fixed-iframe-host.md` before changing the Peek, the reader's player, or the Dock.
 
 Send is a public webhook contract: within `version: 1` only add optional fields, never name a specific Destination in code or docs, and never sign stored keys for a receiver; see `docs/adr/0001-send-public-webhook-contract.md`.
 

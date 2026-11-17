@@ -28,7 +28,7 @@ import "../styles.css";
  * - `data-dwell` holds the last dwell report, in ms.
  *
  * The content is short: the video reader scrolls about 515px at 1280×500, so a spec that pages
- * past the lead appends its own spacer. Reader chrome differs by width; the first "More actions"
+ * past the player appends its own spacer. Reader chrome differs by width; the first "More actions"
  * button is hidden at 1280px.
  */
 const parameters = new URLSearchParams(window.location.search);
