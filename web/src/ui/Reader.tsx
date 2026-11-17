@@ -127,17 +127,19 @@ export function Reader(props: ReaderProps) {
     PlaybackState | "loading" | "failed"
   >();
   let playbackArchive = false;
+  /** Only a start from the Poster is a Play; on a Played video this resumes or seeks. */
   const play = (seconds?: number) => {
     if (!isVideoItem(props.item)) return;
+    if (playbackForItem()) {
+      player?.play(seconds);
+      return;
+    }
     props.onPlay?.();
     props.onOriginal();
     playbackArchive = props.archive;
-    if (playbackForItem()) player?.play(seconds);
-    else {
-      playbackState = "loading";
-      syncDwell();
-      setPlayback({ itemID: props.item.item_id, seconds: seconds ?? 0 });
-    }
+    playbackState = "loading";
+    syncDwell();
+    setPlayback({ itemID: props.item.item_id, seconds: seconds ?? 0 });
   };
   createEffect(() => {
     const initial = props.initialPlayback;

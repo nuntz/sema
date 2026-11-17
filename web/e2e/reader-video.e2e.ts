@@ -353,3 +353,21 @@ test("Space pages past a Poster and a scrolled-away player, and leaves focused b
   await expect(player).toHaveAttribute("data-state", "2");
   expect(await top()).toBe(0);
 });
+
+test("i and chapter seeks on a Played video record no further Play", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  await page.goto("/e2e/header-fixture.html?view=reader&media=video");
+  await page.keyboard.press("i");
+  const player = page.locator(".video-embed iframe");
+  await expect(player).toHaveAttribute("data-state", "1");
+  await page.keyboard.press("i");
+  await page.keyboard.press(" ");
+  await expect(player).toHaveAttribute("data-state", "2");
+  await page.keyboard.press("i");
+  await expect(player).toHaveAttribute("data-state", "1");
+  await page.getByRole("link", { name: "1:30", exact: true }).click();
+  await expect(player).toHaveAttribute("data-seconds", "90");
+  await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
+});
