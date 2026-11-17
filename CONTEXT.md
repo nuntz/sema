@@ -177,7 +177,7 @@ The thumbnail card that stands in for a Video Item's player until the user Plays
 _Avoid_: Facade, placeholder, thumbnail, preview
 
 **Play**:
-The user action that starts a Video Item's video inside Sema in place of its Poster. Playing is Behaviour, counted like a click-through.
+The user action that starts a Video Item's video inside Sema in place of its Poster. Playing is Behaviour, counted like a click-through. Pausing and resuming a Played video are not Plays and are never Behaviour.
 _Avoid_: Watch, embed, autoplay, open
 
 **Dock**:

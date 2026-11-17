@@ -42,7 +42,12 @@ import {
 } from "../youtube-player";
 import { ExpiryPill } from "./ExpiryPill";
 import { relativeTime, relativeTimeAgo } from "./Grid";
-import { isEditingTarget, readerCommand } from "./keyboard";
+import {
+  isEditingTarget,
+  isFocusedControl,
+  isVideoToggleKey,
+  readerCommand,
+} from "./keyboard";
 import { Lightbox } from "./Lightbox";
 import { buildLightboxSet, type LightboxImage } from "./lightbox-set";
 import { closeOverlay, pushOverlay } from "./overlay-history";
@@ -143,8 +148,12 @@ export function Reader(props: ReaderProps) {
       setPlayback(initial);
     }
   });
+  let leadCard: HTMLDivElement | undefined;
   const videoMedia = () => (
     <VideoMediaCard
+      cardRef={(element) => {
+        leadCard = element;
+      }}
       item={props.item}
       onOriginal={props.onOriginal}
       onPlay={() => play()}
@@ -717,6 +726,31 @@ export function Reader(props: ReaderProps) {
     });
   });
 
+  /** The article area left between the header and the toolbar. */
+  const visibleBounds = () => {
+    const viewport = article.getBoundingClientRect();
+    const header = article.parentElement
+      ?.querySelector(".app-header")
+      ?.getBoundingClientRect();
+    const toolbarRect = toolbar.getBoundingClientRect();
+    return {
+      top: Math.max(viewport.top, header?.bottom ?? viewport.top),
+      bottom:
+        toolbarRect.height > 0
+          ? Math.min(viewport.bottom, toolbarRect.top)
+          : viewport.bottom,
+    };
+  };
+  /** Space pauses or resumes a Played lead while at least half of it shows. */
+  const toggleLead = () => {
+    const embed = leadCard?.querySelector(".video-embed");
+    if (!player || !playbackForItem() || !embed) return false;
+    const lead = embed.getBoundingClientRect();
+    const visible = visibleBounds();
+    const shown =
+      Math.min(lead.bottom, visible.bottom) - Math.max(lead.top, visible.top);
+    return lead.height > 0 && shown >= lead.height / 2 && player.toggle();
+  };
   const onKey = (event: KeyboardEvent) => {
     if (
       event.defaultPrevented ||
@@ -737,15 +771,16 @@ export function Reader(props: ReaderProps) {
       return;
     }
     stopPageScroll();
-    const target = event.target;
     if (
       command === "page-down" &&
       event.key === " " &&
-      target instanceof HTMLElement &&
-      (target.isContentEditable ||
-        target.matches("button, input, select, textarea, summary"))
+      isFocusedControl(event.target)
     )
       return;
+    if (isVideoToggleKey(event) && toggleLead()) {
+      event.preventDefault();
+      return;
+    }
     switch (command) {
       case "close":
         props.onClose();
@@ -759,19 +794,7 @@ export function Reader(props: ReaderProps) {
       case "page-down":
       case "page-up": {
         const direction = command === "page-up" || event.shiftKey ? -1 : 1;
-        const viewport = article.getBoundingClientRect();
-        const header = article.parentElement
-          ?.querySelector(".app-header")
-          ?.getBoundingClientRect();
-        const toolbarRect = toolbar.getBoundingClientRect();
-        const visibleTop = Math.max(
-          viewport.top,
-          header?.bottom ?? viewport.top,
-        );
-        const visibleBottom =
-          toolbarRect.height > 0
-            ? Math.min(viewport.bottom, toolbarRect.top)
-            : viewport.bottom;
+        const { top: visibleTop, bottom: visibleBottom } = visibleBounds();
         const text = article.querySelector(
           ".article-body, .article-fallback > p, .video-description",
         );
@@ -1881,6 +1904,7 @@ function RedditSourceLine(props: { item: Item }) {
 }
 
 function VideoMediaCard(props: {
+  cardRef(element: HTMLDivElement): void;
   item: Item;
   onOriginal(): void;
   onPlay(): void;
@@ -1892,7 +1916,7 @@ function VideoMediaCard(props: {
       .replace(/^https?:\/\//, "")
       .replace(/\/$/, "");
   return (
-    <div class="video-media-card">
+    <div ref={props.cardRef} class="video-media-card">
       <Show
         when={props.playing}
         fallback={

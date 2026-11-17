@@ -286,3 +286,70 @@ test("article video failures retain Open without navigating away", async ({
   );
   await expect(page.locator("body")).toHaveAttribute("data-plays", "2");
 });
+
+test("Space toggles a Played lead in view instead of paging", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  await page.goto("/e2e/header-fixture.html?view=reader&media=video");
+  await page.keyboard.press("i");
+  const player = page.locator(".video-embed iframe");
+  await expect(player).toHaveAttribute("data-state", "1");
+  const scroll = page.locator(".reader-scroll");
+  await page.keyboard.press(" ");
+  await expect(player).toHaveAttribute("data-state", "2");
+  await page.keyboard.press(" ");
+  await expect(player).toHaveAttribute("data-state", "1");
+  expect(await scroll.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
+});
+
+test("Space pages past a Poster, a scrolled-away lead, and leaves focused buttons alone", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  await page.setViewportSize({ width: 1280, height: 500 });
+  await page.goto("/e2e/header-fixture.html?view=reader&media=video");
+  const scroll = page.locator(".reader-scroll");
+  const top = () => scroll.evaluate((element) => element.scrollTop);
+  await page.keyboard.press(" ");
+  await expect.poll(top).toBeGreaterThan(0);
+  await expect(page.locator(".video-embed iframe")).toHaveCount(0);
+  await expect(page.locator("body")).not.toHaveAttribute("data-plays");
+
+  await scroll.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.keyboard.press("i");
+  const player = page.locator(".video-embed iframe");
+  await expect(player).toHaveAttribute("data-state", "1");
+  await scroll.evaluate((element) => {
+    // Leave room to page once the lead has scrolled away.
+    const spacer = document.createElement("div");
+    spacer.style.height = "2000px";
+    element.append(spacer);
+    const embed = element.querySelector(".video-embed");
+    if (!embed) throw new Error("no lead player");
+    element.scrollTop +=
+      embed.getBoundingClientRect().bottom -
+      element.getBoundingClientRect().top;
+  });
+  const before = await top();
+  await page.keyboard.press(" ");
+  await expect.poll(top).toBeGreaterThan(before);
+  await expect(player).toHaveAttribute("data-state", "1");
+
+  await scroll.evaluate((element) => {
+    element.scrollTop = 0;
+    const button = document.createElement("button");
+    button.textContent = "Focused control";
+    element.prepend(button);
+    button.focus();
+  });
+  await page.keyboard.press(" ");
+  // Had the button's Space toggled, this next one would resume, not pause.
+  await page.getByRole("button", { name: "Focused control" }).blur();
+  await page.keyboard.press(" ");
+  await expect(player).toHaveAttribute("data-state", "2");
+  expect(await top()).toBe(0);
+});

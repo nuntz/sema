@@ -464,3 +464,35 @@ test("Expand from Settings & Feeds Peeks over the grid, and Flip opens the reade
   );
   await expect(stage(page)).toHaveCount(0);
 });
+
+test("Space pauses and resumes a Peek without another Play", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  const events = behaviour(page);
+  await openGrid(page, "youtube");
+  await page.keyboard.press("i");
+  await expect(player(page)).toHaveAttribute("data-state", "1");
+  await page.keyboard.press(" ");
+  await expect(player(page)).toHaveAttribute("data-state", "2");
+  await expect(stage(page)).toHaveAttribute("data-mode", "peek");
+  await page.keyboard.press(" ");
+  await expect(player(page)).toHaveAttribute("data-state", "1");
+  await expect
+    .poll(() => events.join(" "), { timeout: 10_000 })
+    .toContain('"clicked_through":true');
+  expect(events.join(" ").match(/clicked_through/g)).toHaveLength(1);
+});
+
+test("Space beside the Dock leaves its video playing", async ({ page }) => {
+  await stubYouTube(page);
+  await openGrid(page, "youtube");
+  await dockFromPeek(page);
+  await page.keyboard.press(" ");
+  await expect(docked(page)).toBeVisible();
+  // Had the Dock paused, Space in its Peek would resume rather than pause.
+  await page.getByRole("button", { name: "Expand video" }).click();
+  await expect(page.locator(".video-peek")).toBeFocused();
+  await page.keyboard.press(" ");
+  await expect(player(page)).toHaveAttribute("data-state", "2");
+});

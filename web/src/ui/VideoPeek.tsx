@@ -1,5 +1,6 @@
 import { createEffect, on, onCleanup, onMount } from "solid-js";
 import type { Item } from "../types";
+import { isVideoToggleKey } from "./keyboard";
 import { closeOverlay, keyOwnership, pushOverlay } from "./overlay-history";
 
 /**
@@ -14,6 +15,8 @@ export function VideoPeek(props: {
   state(): string;
   onDismiss(): void;
   onFlip(): void;
+  /** Pause or resume the player, as Space does on YouTube. */
+  onToggle(): void;
 }) {
   let dialog!: HTMLElement;
   let closing = false;
@@ -89,6 +92,11 @@ export function VideoPeek(props: {
         event.preventDefault();
         event.stopImmediatePropagation();
         close(event.key === "o");
+      }
+      if (isVideoToggleKey(event)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!event.repeat) props.onToggle();
       }
       if (event.key === "Tab") {
         const controls = [

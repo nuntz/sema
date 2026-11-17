@@ -11,6 +11,7 @@ import { Icon } from "../components/Icon";
 import type { Item } from "../types";
 import type { StageState, VideoDock } from "../video-dock";
 import { videoItemID } from "../video-item";
+import type { VideoPlayer as VideoPlayerHandle } from "../youtube-player";
 import { VideoPeek } from "./VideoPeek";
 import { VideoPlayer } from "./VideoPlayer";
 
@@ -59,6 +60,7 @@ function Stage(props: {
 }) {
   let layer!: HTMLDivElement;
   let stage!: HTMLDivElement;
+  let player: VideoPlayerHandle | undefined;
   const [state, setState] = createSignal<StageState>("loading");
   const mode = () => props.dock.mode();
   const docked = () => mode() === "dock";
@@ -155,6 +157,7 @@ function Stage(props: {
             state={state}
             onDismiss={() => props.dock.dismissPeek()}
             onFlip={props.onFlip}
+            onToggle={() => player?.toggle()}
           />
         </Show>
         <div
@@ -194,8 +197,9 @@ function Stage(props: {
               <VideoPlayer
                 videoID={videoItemID(props.item) || ""}
                 start={props.start}
-                onReady={(player) => {
-                  props.dock.attach(() => player.position());
+                onReady={(ready) => {
+                  player = ready;
+                  props.dock.attach(() => ready.position());
                   syncTabbable();
                 }}
                 onState={(next) => {

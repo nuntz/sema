@@ -169,3 +169,52 @@ it.each(["timeout", "offline"])(
     player.destroy();
   },
 );
+
+describe("toggle", () => {
+  const ready = (playerState: number) => {
+    const harness = setup();
+    harness.loads.get("load")?.();
+    harness.message({ event: "onReady" });
+    harness.message({
+      event: "infoDelivery",
+      info: { currentTime: 87, playerState },
+    });
+    harness.frame.contentWindow.postMessage.mockClear();
+    return harness;
+  };
+
+  it("pauses a playing or buffering video", () => {
+    for (const playerState of [1, 3]) {
+      vi.unstubAllGlobals();
+      const { player, sent } = ready(playerState);
+      expect(player.toggle()).toBe(true);
+      expect(sent()).toMatchObject([{ func: "pauseVideo", args: [] }]);
+    }
+  });
+
+  it("resumes a paused video", () => {
+    const { player, sent } = ready(2);
+    expect(player.toggle()).toBe(true);
+    expect(sent()).toMatchObject([{ func: "playVideo", args: [] }]);
+  });
+
+  it("replays an ended video from the start", () => {
+    const { player, sent } = ready(0);
+    expect(player.toggle()).toBe(true);
+    expect(sent()).toMatchObject([
+      { func: "seekTo", args: [0, true] },
+      { func: "playVideo", args: [] },
+    ]);
+  });
+
+  it("does nothing before the player is ready or after it fails", () => {
+    const { player, sent, loads, message } = setup();
+    expect(player.toggle()).toBe(false);
+    loads.get("load")?.();
+    message({ event: "onReady" });
+    message({ event: "infoDelivery", info: { playerState: 1 } });
+    message({ event: "onError" });
+    expect(player.toggle()).toBe(false);
+    expect(sent().map((message) => message.func)).not.toContain("pauseVideo");
+  });
+});

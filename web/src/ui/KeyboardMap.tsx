@@ -48,6 +48,7 @@ const groups = [
       ["s", "Send (set up in Feeds & settings)"],
       ["v", "Open original"],
       ["i", "Toggle Peek in grid · Play in reader"],
+      ["Space", "Pause / resume video in Peek · in reader while it's in view"],
       ["r", "Show related coverage"],
     ],
   },

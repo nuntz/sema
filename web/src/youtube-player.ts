@@ -1,6 +1,8 @@
 /** The only boundary to YouTube: callers own the host and destroy on unmount. */
 export interface VideoPlayer {
   play(seconds?: number): void;
+  /** Pause or resume as YouTube's own Space does; false when not yet playable. */
+  toggle(): boolean;
   position(): number;
   destroy(): void;
 }
@@ -26,6 +28,7 @@ export function createVideoPlayer(
   let failed = false;
   let ready = false;
   let listening = false;
+  let state: PlaybackState | undefined;
   let position = Math.max(0, options.start);
   let pendingSeek: number | undefined = position > 0 ? position : undefined;
   const send = (message: object) =>
@@ -88,7 +91,7 @@ export function createVideoPlayer(
         position = info.currentTime;
         iframe.dataset.seconds = String(position);
       }
-      const state = (
+      const next = (
         {
           0: "ended",
           1: "playing",
@@ -97,9 +100,10 @@ export function createVideoPlayer(
           5: "paused",
         } as const
       )[info?.playerState as 0 | 1 | 2 | 3 | 5];
-      if (typeof info?.playerState === "number" && state) {
+      if (typeof info?.playerState === "number" && next) {
         iframe.dataset.state = String(info.playerState);
-        options.onState(state);
+        state = next;
+        options.onState(next);
       }
     }
     if (!ready) {
@@ -135,6 +139,16 @@ export function createVideoPlayer(
         pendingSeek = undefined;
         command("playVideo");
       }
+    },
+    toggle() {
+      if (disposed || failed || !ready || !state) return false;
+      if (state === "ended") command("seekTo", [0, true]);
+      command(
+        state === "playing" || state === "buffering"
+          ? "pauseVideo"
+          : "playVideo",
+      );
+      return true;
     },
     position: () => position,
     destroy() {

@@ -131,6 +131,26 @@ export const goCommand = (key: string): GoCommand | undefined =>
     }) as Record<string, GoCommand>
   )[key];
 
+/** A focused control that keeps Space and Enter for itself. */
+export const isFocusedControl = (target: EventTarget | null): boolean =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable ||
+    target.matches("button, input, select, textarea, summary"));
+
+/** Plain Space aimed at the page rather than a focused control, as YouTube's own. */
+export const isVideoToggleKey = (
+  event: Pick<
+    KeyboardEvent,
+    "key" | "shiftKey" | "ctrlKey" | "metaKey" | "altKey" | "target"
+  >,
+): boolean =>
+  event.key === " " &&
+  !event.shiftKey &&
+  !event.ctrlKey &&
+  !event.metaKey &&
+  !event.altKey &&
+  !isFocusedControl(event.target);
+
 export function isEditingTarget(target: EventTarget | null): boolean {
   return (
     target instanceof HTMLElement &&
