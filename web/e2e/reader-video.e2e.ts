@@ -293,18 +293,28 @@ test("Space toggles the reader's player in view instead of paging", async ({
   page,
 }) => {
   await stubYouTube(page);
+  // With reduced motion a page moves scrollTop inside the keydown, before the
+  // player's reply to that Space lands, so once data-state changes a
+  // scrollTop of 0 is final.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/e2e/header-fixture.html?view=reader&media=video");
   await page.keyboard.press("i");
   const player = page.locator(".video-embed iframe");
   await expect(player).toHaveAttribute("data-state", "1");
   const scroll = page.locator(".reader-scroll");
+  const top = () => scroll.evaluate((element) => element.scrollTop);
+  await scroll.evaluate((element) => {
+    // Leave room to page, so a Space that paged would move scrollTop.
+    const spacer = document.createElement("div");
+    spacer.style.height = "2000px";
+    element.append(spacer);
+  });
   await page.keyboard.press(" ");
   await expect(player).toHaveAttribute("data-state", "2");
+  await expect.poll(top).toBe(0);
   await page.keyboard.press(" ");
   await expect(player).toHaveAttribute("data-state", "1");
-  await expect
-    .poll(() => scroll.evaluate((element) => element.scrollTop))
-    .toBe(0);
+  await expect.poll(top).toBe(0);
   await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
 });
 
@@ -350,15 +360,29 @@ test("Space pages past a Poster and a scrolled-away player, and leaves focused b
     element.scrollTop = 0;
     const button = document.createElement("button");
     button.textContent = "Focused control";
+    button.addEventListener("click", () => {
+      button.dataset.clicks = String(Number(button.dataset.clicks ?? 0) + 1);
+    });
     element.prepend(button);
     button.focus();
   });
+  // Log every state the player reports from here on, in order.
+  await player.evaluate((iframe: HTMLIFrameElement) => {
+    new MutationObserver(() => {
+      const log = iframe.dataset.stateLog;
+      iframe.dataset.stateLog = `${log ? `${log},` : ""}${iframe.dataset.state}`;
+    }).observe(iframe, { attributeFilter: ["data-state"] });
+  });
   await page.keyboard.press(" ");
-  // Had the button's Space toggled, this next one would resume, not pause.
-  await page.getByRole("button", { name: "Focused control" }).blur();
-  await page.keyboard.press(" ");
-  await expect(player).toHaveAttribute("data-state", "2");
-  expect(await top()).toBe(0);
+  await expect(
+    page.getByRole("button", { name: "Focused control" }),
+  ).toHaveAttribute("data-clicks", "1");
+  await expect.poll(top).toBe(0);
+  // data-state lags a command, so it can't show yet whether that Space sent
+  // one. Replies come in order, so a Space that reached the player would log
+  // a state before the seek's buffering (3).
+  await page.getByRole("link", { name: "1:30", exact: true }).click();
+  await expect(player).toHaveAttribute("data-state-log", /^3(,|$)/);
 });
 
 test("i and chapter seeks on a Played video record no further Play", async ({
