@@ -396,6 +396,24 @@ function phoneHeadlineStripProblems(grid: Element, unread: string[]): string[] {
   return problems;
 }
 
+// Resizes the page and waits until the grid has laid out for its new width.
+// The grid relays out from a ResizeObserver a frame or more after the resize,
+// replacing its cells, so a read before then sees cells about to be detached.
+async function resizeGrid(page: Page, width: number, height: number) {
+  await page.setViewportSize({ width, height });
+  await expect
+    .poll(() =>
+      page
+        .locator(".grid-scroll")
+        .evaluate((grid: HTMLElement) =>
+          grid.dataset.layoutWidth === String(grid.clientWidth)
+            ? "laid out"
+            : `laid out for ${grid.dataset.layoutWidth}px, now ${grid.clientWidth}px`,
+        ),
+    )
+    .toBe("laid out");
+}
+
 // Contrast between a cell's title colour and the brightest scrim pixel beside
 // its first line, measured from a screenshot of the painted cell.
 async function titleContrast(page: Page, cellSelector: string) {
@@ -1958,7 +1976,7 @@ for (const theme of ["light", "dark"] as const) {
     const expiring = page.locator('[data-item-id="photo-space-5"]');
     await page.evaluate(() => document.fonts.ready);
     for (const width of [1440, 1024, 768]) {
-      await page.setViewportSize({ width, height: 1071 });
+      await resizeGrid(page, width, 1071);
       await expect
         .poll(() => grid.evaluate(singleImageCellProblems))
         .toEqual([]);
@@ -1966,28 +1984,40 @@ for (const theme of ["light", "dark"] as const) {
         const cell = page.locator(`[data-item-id="photo-space-${id}"]`);
         const summary = cell.locator(".cell-copy p");
         await expect(summary).toBeVisible();
-        expect(
-          await summary.evaluate((p) => {
-            const r = p.getBoundingClientRect();
-            const title = p.parentElement
-              ?.querySelector("h2")
-              ?.getBoundingClientRect();
-            const meta = p.parentElement
-              ?.querySelector(".cell-meta")
-              ?.getBoundingClientRect();
-            return (
-              r.height <=
-                Number.parseFloat(getComputedStyle(p).lineHeight) + 1 &&
-              !!title &&
-              !!meta &&
-              title.bottom <= r.top &&
-              r.bottom <= meta.top
-            );
-          }),
-        ).toBe(true);
+        // One line of summary between the title and the feed line; each poll
+        // reads one layout and reports it.
+        await expect
+          .poll(() =>
+            summary.evaluate((p) => {
+              const r = p.getBoundingClientRect();
+              const line = Number.parseFloat(getComputedStyle(p).lineHeight);
+              const title = p.parentElement
+                ?.querySelector("h2")
+                ?.getBoundingClientRect();
+              const meta = p.parentElement
+                ?.querySelector(".cell-meta")
+                ?.getBoundingClientRect();
+              if (!p.isConnected) return "summary is detached";
+              if (!title || !meta) return "no title or feed line";
+              const problems = [];
+              if (r.height === 0) problems.push("summary has no height");
+              if (r.height > line + 1)
+                problems.push(`summary ${r.height}px for a ${line}px line`);
+              if (title.bottom > r.top)
+                problems.push(
+                  `title ends at ${title.bottom}, summary starts at ${r.top}`,
+                );
+              if (r.bottom > meta.top)
+                problems.push(
+                  `summary ends at ${r.bottom}, feed line starts at ${meta.top}`,
+                );
+              return problems.join("; ");
+            }),
+          )
+          .toBe("");
       }
     }
-    await page.setViewportSize({ width: 1440, height: 1071 });
+    await resizeGrid(page, 1440, 1071);
     await page.mouse.move(1, 1);
     // Media surfaces never invert, so these read the same in both themes.
     await expect(first.locator("h2")).toHaveCSS("color", "rgb(244, 242, 238)");

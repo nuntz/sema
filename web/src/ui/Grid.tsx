@@ -1075,6 +1075,7 @@ function GridContent(props: GridProps) {
     <div
       class="grid-scroll"
       data-grid-images={imagesEnabled ? "on" : "off"}
+      data-layout-width={width()}
       onPointerMove={() => setKeyboardFocus(false)}
       onPointerDown={() => {
         setKeyboardFocus(false);
