@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "./test";
-import { stubYouTube } from "./youtube-stub";
+import { logPlayerStates, stubYouTube } from "./youtube-stub";
 
 for (const width of [390, 1280]) {
   test(`reader Play and chapters seek in place at ${width}px`, async ({
@@ -366,21 +366,13 @@ test("Space pages past a Poster and a scrolled-away player, and leaves focused b
     element.prepend(button);
     button.focus();
   });
-  // Log every state the player reports from here on, in order.
-  await player.evaluate((iframe: HTMLIFrameElement) => {
-    new MutationObserver(() => {
-      const log = iframe.dataset.stateLog;
-      iframe.dataset.stateLog = `${log ? `${log},` : ""}${iframe.dataset.state}`;
-    }).observe(iframe, { attributeFilter: ["data-state"] });
-  });
+  await logPlayerStates(player);
   await page.keyboard.press(" ");
   await expect(
     page.getByRole("button", { name: "Focused control" }),
   ).toHaveAttribute("data-clicks", "1");
   await expect.poll(top).toBe(0);
-  // data-state lags a command, so it can't show yet whether that Space sent
-  // one. Replies come in order, so a Space that reached the player would log
-  // a state before the seek's buffering (3).
+  // A Space that reached the player logs a state before the seek's buffering.
   await page.getByRole("link", { name: "1:30", exact: true }).click();
   await expect(player).toHaveAttribute("data-state-log", /^3(,|$)/);
 });

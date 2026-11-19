@@ -4,7 +4,7 @@
 # is always reverted, even on Ctrl-C. Paste its output into the PR.
 # Usage: scripts/expect-red.sh <patch|-> <spec> [playwright args, such as -g "title"]
 #   <patch> is a `git diff` from the repo root ("-" reads it from stdin); <spec> is relative to
-#   web/ or the repo root. Make one by editing the app, `git diff > bug.patch`, then reverting.
+#   web/ or the repo root. Make one by editing the app, `git diff -- web/src > bug.patch`, then reverting.
 # Exit codes: 0 red as expected, 1 still green, 2 for a usage error, a patch that doesn't apply,
 # no test run, or an interrupt.
 set -euo pipefail

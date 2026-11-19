@@ -1,4 +1,19 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
+
+/**
+ * Append every state the player reports from now on to its `data-state-log`,
+ * in order. `data-state` lags the command that changes it, so right after a
+ * key it can't show whether the key sent one; replies come in order, so a
+ * command the key sent logs its state before a later command's.
+ */
+export async function logPlayerStates(player: Locator) {
+  await player.evaluate((iframe: HTMLIFrameElement) => {
+    new MutationObserver(() => {
+      const log = iframe.dataset.stateLog;
+      iframe.dataset.stateLog = `${log ? `${log},` : ""}${iframe.dataset.state}`;
+    }).observe(iframe, { attributeFilter: ["data-state"] });
+  });
+}
 
 /** Serve the player protocol from its real cross-origin iframe boundary. */
 export async function stubYouTube(
