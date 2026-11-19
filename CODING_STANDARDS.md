@@ -64,7 +64,7 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 
 ## Flaky tests
 
-- A change to how a test measures (garbage collection, waits, retries, settle loops, sampling) or to its bounds needs evidence in the PR that a deliberately injected bug still fails the test.
+- A change to how a test measures (garbage collection, waits, retries, settle loops, sampling) or to its bounds needs evidence in the PR that a deliberately injected bug still fails the test: the output of `scripts/expect-red.sh`, which fails unless the test ran and went red (#58).
 - A loop that waits for a value to settle fails with the readings it saw once it hits its cap.
 - A test that resizes a rendered grid waits with `resizeGrid` (`web/e2e/grid-resize.ts`) before reading it, and a layout predicate fails on a detached or zero-size element, whose all-zero rects satisfy every `<=` (#57).
 - An e2e step proving something did not happen is followed by a step whose visible result would differ had it happened, such as a second Space that must pause; an assertion made straight after the action passes before the effect lands. Fixed sleeps fail `bun run lint` (`web/biome-plugins/no-fixed-sleep.grit`).

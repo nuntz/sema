@@ -12,7 +12,7 @@ requests run the tests and the workflow and shell-script lint (`scripts/lint-ci-
 runnable locally with podman or docker) but never deploy.
 
 A push is not a deploy until its run finishes: after pushing `master`, run
-`bash scripts/watch-deploy.sh`, which fails unless test, e2e and deploy all succeed for `HEAD`.
+`bash scripts/watch-deploy.sh`, which fails unless test, e2e, e2e-stress and deploy all succeed for `HEAD`.
 GitHub can leave a push's run queued with no jobs for hours, and it can't be cancelled or re-run;
 the script fails on a run queued over ten minutes, and `gh workflow run ci.yml --ref master` starts
 a fresh one.

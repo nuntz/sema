@@ -50,10 +50,19 @@ jobs:
       # reproducible Lambda ZIPs.
       - run: make check
 
-  # The browser tests run beside the test job and gate the deploy as well (make e2e).
+  # The browser tests run beside the test job and gate the deploy as well (make e2e). The stress
+  # leg delays every ResizeObserver callback (SEMA_E2E_STRESS, web/e2e/test.ts), which is the only
+  # run that fails if the #58 fixes for detached-cell measurements and the clear's scroll snapshot regress.
   e2e:
+    name: e2e${{ matrix.stress && '-stress' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stress: ["", resize]
     # Playwright 1.60 can't install Chromium on Ubuntu 26.04; move the jobs to 26.04 once it can.
     runs-on: ubuntu-24.04
+    env:
+      SEMA_E2E_STRESS: ${{ matrix.stress }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -71,7 +80,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results
+          name: playwright-results${{ matrix.stress && '-stress' || '' }}
           path: /tmp/sema-playwright-results
           retention-days: 30
 

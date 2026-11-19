@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# After pushing master: waits for the CI run of a commit and fails unless test, e2e and deploy all
-# succeeded, so "pushed" is never mistaken for "deployed". A run still queued after QUEUE_LIMIT
-# seconds fails too: GitHub can leave a push's run queued with no jobs, uncancellable, for hours.
+# After pushing master: waits for the CI run of a commit and fails unless test, e2e, e2e-stress
+# and deploy all succeeded, so "pushed" is never mistaken for "deployed". A run still queued after
+# QUEUE_LIMIT seconds fails too: GitHub can leave a push's run queued with no jobs, uncancellable,
+# for hours.
 # Usage: scripts/watch-deploy.sh [sha]; without a sha it watches HEAD.
 # QUEUE_LIMIT (default 600) and TIMEOUT (default 1800) are in seconds.
 set -euo pipefail
@@ -49,7 +50,7 @@ for _ in 1 2 3 4 5; do
 done
 echo "ci run $id for ${SHA:0:7}: $conclusion"
 echo "$jobs"
-for job in test e2e deploy; do
+for job in test e2e e2e-stress deploy; do
   if ! grep -qx "$job success" <<<"$jobs"; then
     echo "$job did not succeed, so ${SHA:0:7} is not deployed" >&2
     exit 1
