@@ -804,6 +804,19 @@ function horizontalOverlap(left: LayoutCell, right: LayoutCell): boolean {
   );
 }
 
+/**
+ * A Story's measured height, or undefined when none was taken. A cell
+ * measured after it detached reads NaN; treat it as never taken, since one
+ * NaN row height hides every row (#58).
+ */
+export function measuredHeight(
+  heights: ReadonlyMap<string, number> | undefined,
+  id: string,
+): number | undefined {
+  const height = heights?.get(id);
+  return height !== undefined && Number.isFinite(height) ? height : undefined;
+}
+
 function layoutStoryHeadlines(
   rows: LayoutRow[],
   mobile = false,
@@ -837,7 +850,9 @@ function layoutStoryHeadlines(
       const heights = story.items
         .slice(1)
         .map(
-          (item) => headlineHeights?.get(item.item_id) ?? storyHeadlineHeight,
+          (item) =>
+            measuredHeight(headlineHeights, item.item_id) ??
+            storyHeadlineHeight,
         );
       const allHeadlineHeight = heights.reduce(
         (sum, height) => sum + height,
@@ -846,7 +861,7 @@ function layoutStoryHeadlines(
       const baseHeight = cell.height ?? row.height;
       const leadMinimumHeight = Math.max(
         storyLeadMinimumHeight,
-        leadHeights?.get(story.story_id) ?? 0,
+        measuredHeight(leadHeights, story.story_id) ?? 0,
       );
       if (mode === "collapsed") {
         // Taller related-coverage rows must retain at least one actionable

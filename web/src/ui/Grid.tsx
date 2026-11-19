@@ -26,6 +26,7 @@ import {
   gridCanvasPadding,
   justify,
   type LayoutRow,
+  measuredHeight,
   reuseLayoutRows,
   totalHeight,
   visibleRows,
@@ -840,6 +841,9 @@ function GridContent(props: GridProps) {
   };
 
   const finishAndClear = () => {
+    // Undo restores the position the clear snapshots. Record it now: a scroll
+    // event's position reaches the session only on the next frame (#58).
+    props.onScrollPosition?.(scroller.scrollTop);
     props.onFinishAndClear();
     requestAnimationFrame(() => scroller.focus({ preventScroll: true }));
   };
@@ -1076,6 +1080,7 @@ function GridContent(props: GridProps) {
       class="grid-scroll"
       data-grid-images={imagesEnabled ? "on" : "off"}
       data-layout-width={width()}
+      data-layout-height={viewportHeight()}
       onPointerMove={() => setKeyboardFocus(false)}
       onPointerDown={() => {
         setKeyboardFocus(false);
@@ -1200,6 +1205,10 @@ function GridContent(props: GridProps) {
                         readContext={readContext()}
                         pressed={pressedID() === `story:${storyID}`}
                         onExpand={(id) => props.actions.onExpandStory?.(id)}
+                        leadMeasured={
+                          measuredHeight(storyLeadHeights(), storyID) !==
+                          undefined
+                        }
                         onLeadHeight={recordStoryLeadHeight}
                         onFocus={(id) => {
                           if (!pageFocus) props.actions.onFocus(id);

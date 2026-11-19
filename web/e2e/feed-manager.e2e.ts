@@ -213,14 +213,16 @@ for (const width of [1280, 400]) {
     await expect(first.locator(".feed-unread")).toHaveText("0");
     await expect(first.locator(".feed-unread")).toHaveClass(/zero/);
     const chips = page.locator(".feed-filters");
-    expect(
-      await chips.evaluate((el) =>
-        [...el.querySelectorAll("button")].every(
-          (button) =>
-            button.offsetTop === el.querySelector("button")?.offsetTop,
+    await expect
+      .poll(() =>
+        chips.evaluate((el) =>
+          [...el.querySelectorAll("button")].every(
+            (button) =>
+              button.offsetTop === el.querySelector("button")?.offsetTop,
+          ),
         ),
-      ),
-    ).toBe(true);
+      )
+      .toBe(true);
     await expect(first.locator("time")).toHaveText("broken 8d");
     await expect(first.locator("time")).toHaveAttribute("title", /HTTP 503/);
     await expect(first.locator(".feed-status")).toHaveAttribute(
@@ -236,33 +238,39 @@ for (const width of [1280, 400]) {
       .filter({ hasText: "Journal 006" });
     await expect(underThreshold.locator(".feed-status")).toHaveText("broken");
     await expect(underThreshold.locator("time")).toHaveText("broken 6h");
-    expect(
-      await page
-        .locator(".feeds-view")
-        .evaluate((el) => el.scrollWidth <= el.clientWidth),
-    ).toBe(true);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
-    expect(
-      await first.locator(".feed-unread").evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        return r.left >= 16 && r.right <= innerWidth - 16;
-      }),
-    ).toBe(true);
-    expect(
-      await first.evaluate((el) => {
-        const copy = el
-          .querySelector(".feed-row-copy")
-          ?.getBoundingClientRect();
-        const time = el.querySelector("time")?.getBoundingClientRect();
-        return (
-          copy && time && time.top >= copy.top && time.bottom <= copy.bottom
-        );
-      }),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        page
+          .locator(".feeds-view")
+          .evaluate((el) => el.scrollWidth <= el.clientWidth),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        first.locator(".feed-unread").evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return r.left >= 16 && r.right <= innerWidth - 16;
+        }),
+      )
+      .toBe(true);
+    await expect
+      .poll(() =>
+        first.evaluate((el) => {
+          const copy = el
+            .querySelector(".feed-row-copy")
+            ?.getBoundingClientRect();
+          const time = el.querySelector("time")?.getBoundingClientRect();
+          return (
+            copy && time && time.top >= copy.top && time.bottom <= copy.bottom
+          );
+        }),
+      )
+      .toBe(true);
     const attention = page.getByRole("button", {
       name: "Needs attention 5",
       exact: true,

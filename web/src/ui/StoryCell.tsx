@@ -53,6 +53,8 @@ interface StoryCellProps {
   archive?: boolean;
   pressed: boolean;
   onExpand(storyID: string): void;
+  /** The layout has a measured Lead height for this Story; a later re-measure, as after a width change, can still resize its row. */
+  leadMeasured: boolean;
   onLeadHeight(storyID: string, height: number): void;
   onFocus(id: string): void;
   onOpenLead(story: Story): void;
@@ -113,7 +115,9 @@ export function StoryCell(props: StoryCellProps) {
     const observer = new ResizeObserver(() => {
       const copy = title.parentElement;
       const meta = copy?.querySelector<HTMLElement>(".story-meta");
-      if (!copy || !meta) return;
+      // A relayout can replace the cell before a queued callback runs; a
+      // detached copy has no computed style to measure (#58).
+      if (!copy || !meta || !title.isConnected) return;
       observer.observe(meta);
       const style = getComputedStyle(copy);
       const height =
@@ -201,6 +205,7 @@ export function StoryCell(props: StoryCellProps) {
       data-item-id={focusID()}
       data-focus-id={focusID()}
       data-story-id={props.story.story_id}
+      data-lead-measured={props.leadMeasured ? "" : undefined}
       onFocus={(event) => focusLeadUnlessHeadline(event.target)}
       onMouseOver={(event) => focusLeadUnlessHeadline(event.target)}
       onPointerDown={pointerDown}

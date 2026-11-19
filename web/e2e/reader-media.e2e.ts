@@ -106,40 +106,58 @@ for (const { outcome, width } of [
             ((finalBounds?.width ?? 0) * 480) / 640,
             0,
           );
-          expect(
-            await page.locator(".article-body img").evaluate((image) =>
-              (
-                window as typeof window & {
-                  decodedImages: HTMLImageElement[];
-                }
-              ).decodedImages.includes(image as HTMLImageElement),
-            ),
-          ).toBe(true);
-          expect(
-            await page.evaluate(
-              () =>
-                (window as typeof window & { temporaryLeads: number })
-                  .temporaryLeads,
-            ),
-          ).toBe(0);
+          await expect
+            .poll(() =>
+              page.locator(".article-body img").evaluate((image) =>
+                (
+                  window as typeof window & {
+                    decodedImages: HTMLImageElement[];
+                  }
+                ).decodedImages.includes(image as HTMLImageElement),
+              ),
+            )
+            .toBe(true);
+          await expect
+            .poll(() =>
+              page.evaluate(
+                () =>
+                  (window as typeof window & { temporaryLeads: number })
+                    .temporaryLeads,
+              ),
+            )
+            .toBe(0);
           await page.screenshot({
             path: testInfo.outputPath("reader-handoff.png"),
           });
-          expect(
-            await page
-              .locator(".article-body img")
-              .evaluate(
-                (element: HTMLImageElement) =>
-                  element.complete && element.naturalWidth > 0,
+          await expect
+            .poll(() =>
+              page
+                .locator(".article-body img")
+                .evaluate(
+                  (element: HTMLImageElement) =>
+                    element.complete && element.naturalWidth > 0,
+                ),
+            )
+            .toBe(true);
+          // Fire load once, outside the poll, so a retry can't re-fire it
+          // and pass on a second wrapper (#58).
+          const body = page.locator(".article-body img");
+          await body.evaluate((image) => {
+            (
+              image as HTMLImageElement & { wrapperBefore?: Node | null }
+            ).wrapperBefore = image.parentElement;
+            image.dispatchEvent(new Event("load"));
+          });
+          await expect
+            .poll(() =>
+              body.evaluate(
+                (image) =>
+                  image.parentElement ===
+                  (image as HTMLImageElement & { wrapperBefore?: Node | null })
+                    .wrapperBefore,
               ),
-          ).toBe(true);
-          expect(
-            await page.locator(".article-body img").evaluate((image) => {
-              const wrapper = image.parentElement;
-              image.dispatchEvent(new Event("load"));
-              return image.parentElement === wrapper;
-            }),
-          ).toBe(true);
+            )
+            .toBe(true);
         }
       }
     } finally {
@@ -226,32 +244,34 @@ for (const { media, width } of [
       await expect(
         reader.locator(".chrome-group--judge button").first(),
       ).toHaveAttribute("aria-pressed", "true");
-      expect(
-        await image.evaluate(
-          (element, previous) => element === previous,
-          previousImage,
-        ),
-      ).toBe(true);
+      await expect
+        .poll(() =>
+          image.evaluate(
+            (element, previous) => element === previous,
+            previousImage,
+          ),
+        )
+        .toBe(true);
 
       await page.keyboard.press("n");
       await expect(reader.locator("h1")).toHaveText("Reader media item 1");
       await expect(reader.locator(".article-summary")).toContainText(
         "Summary for reader media item 1.",
       );
-      expect(
-        await previousImage.evaluate((element) => element.isConnected),
-      ).toBe(false);
+      await expect
+        .poll(() => previousImage.evaluate((element) => element.isConnected))
+        .toBe(false);
       expect(await previousImage.getAttribute("src")).toBeNull();
       expect(await previousImage.getAttribute("srcset")).toBeNull();
       await expect(image).toHaveAttribute(
         "src",
         "/media/e2e/reader-media/1.svg",
       );
-      expect(
-        await image.evaluate(
-          (element: HTMLImageElement) => element.naturalWidth,
-        ),
-      ).toBe(0);
+      await expect
+        .poll(() =>
+          image.evaluate((element: HTMLImageElement) => element.naturalWidth),
+        )
+        .toBe(0);
       const bounds = await image.boundingBox();
       expect(bounds?.width).toBeGreaterThan(0);
       expect(bounds?.height).toBeGreaterThan(0);
@@ -269,9 +289,11 @@ for (const { media, width } of [
           ),
         )
         .toBe(true);
-      expect(
-        await image.evaluate((element: HTMLImageElement) => element.currentSrc),
-      ).toContain("/media/e2e/reader-media/1-");
+      await expect
+        .poll(() =>
+          image.evaluate((element: HTMLImageElement) => element.currentSrc),
+        )
+        .toContain("/media/e2e/reader-media/1-");
     } finally {
       releaseImage();
     }

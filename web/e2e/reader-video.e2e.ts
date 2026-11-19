@@ -204,12 +204,14 @@ for (const width of [390, 1280]) {
     expect(page.context().pages()).toHaveLength(1);
     const originalPlayer = await player.elementHandle();
     await page.keyboard.press(".");
-    expect(
-      await player.evaluate(
-        (element, previous) => element === previous,
-        originalPlayer,
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        player.evaluate(
+          (element, previous) => element === previous,
+          originalPlayer,
+        ),
+      )
+      .toBe(true);
     await page.screenshot({ path: `/tmp/sema-inline-video-${width}.png` });
     await page.keyboard.press("n");
     await expect(page.locator("iframe")).toHaveCount(0);
@@ -300,7 +302,9 @@ test("Space toggles the reader's player in view instead of paging", async ({
   await expect(player).toHaveAttribute("data-state", "2");
   await page.keyboard.press(" ");
   await expect(player).toHaveAttribute("data-state", "1");
-  expect(await scroll.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect
+    .poll(() => scroll.evaluate((element) => element.scrollTop))
+    .toBe(0);
   await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
 });
 
@@ -308,6 +312,9 @@ test("Space pages past a Poster and a scrolled-away player, and leaves focused b
   page,
 }) => {
   await stubYouTube(page);
+  // Page at once: an animated page keeps writing scrollTop after it first
+  // moves, and would undo the test's own scrolls (#58).
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 500 });
   await page.goto("/e2e/header-fixture.html?view=reader&media=video");
   const scroll = page.locator(".reader-scroll");

@@ -1,7 +1,29 @@
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
-import { expect, test } from "./test";
+import { expect, type Locator, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
+
+// The Play button sits at half its Lead Image's height, which a ResizeObserver
+// measures after the image lays out, so wait for it to rest there (#58).
+async function expectPlayButtonCentred(cell: Locator, play: Locator) {
+  const image = cell.locator(":scope > img");
+  await expect
+    .poll(async () => {
+      const bounds = await play.boundingBox();
+      const media = await image.boundingBox();
+      if (!bounds || !media) return "missing Play button or image bounds";
+      return JSON.stringify({
+        size: [bounds.width, bounds.height],
+        x: Math.round(
+          bounds.x + bounds.width / 2 - (media.x + media.width / 2),
+        ),
+        y: Math.round(
+          bounds.y + bounds.height / 2 - (media.y + media.height / 2),
+        ),
+      });
+    })
+    .toBe(JSON.stringify({ size: [48, 48], x: 0, y: 0 }));
+}
 
 test("grid peek grows, navigates, and restores focus without marking read", async ({
   page,
@@ -469,12 +491,11 @@ for (const key of ["Escape", "i"]) {
     await page.keyboard.press(key);
     await expect(page.locator(".video-peek")).toHaveCount(0);
     await expect(page.locator('.video-stage[data-mode="dock"]')).toBeVisible();
-    expect(
-      await player.evaluate(
-        (element, previous) => element === previous,
-        original,
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        player.evaluate((element, previous) => element === previous, original),
+      )
+      .toBe(true);
     await expect(cell.locator(".cell-main")).toBeFocused();
     await expect(cell).not.toHaveClass(/is-read/);
   });
@@ -587,19 +608,7 @@ for (const width of [1280, 390]) {
     await page.mouse.move(1, 1);
     await expect(play).toBeVisible();
     await expect(play).toHaveCSS("opacity", "0.65");
-    const bounds = await play.boundingBox();
-    const media = await cell.locator(":scope > img").boundingBox();
-    expect(bounds?.width).toBe(48);
-    expect(bounds?.height).toBe(48);
-    if (!bounds || !media) throw new Error("Missing media bounds");
-    expect(bounds.x + bounds.width / 2).toBeCloseTo(
-      media.x + media.width / 2,
-      0,
-    );
-    expect(bounds.y + bounds.height / 2).toBeCloseTo(
-      media.y + media.height / 2,
-      0,
-    );
+    await expectPlayButtonCentred(cell, play);
     await cell.hover();
     await expect(play).toHaveCSS("opacity", "1");
     await expect(cell.locator(".peek-pill")).toHaveCount(0);
@@ -662,6 +671,8 @@ test.describe("touch video Play", () => {
       await expect(play).toBeVisible();
       await expect(play).toHaveCSS("opacity", "1");
       await expect(cell.locator(".peek-pill")).toHaveCount(0);
+      // Touch the Play button where it rests, not where it sat before.
+      await expectPlayButtonCentred(cell, play);
       if (gesture === "tap") await play.tap();
       else {
         const box = await play.boundingBox();

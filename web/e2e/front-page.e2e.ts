@@ -402,20 +402,30 @@ function phoneHeadlineStripProblems(grid: Element, unread: string[]): string[] {
 async function titleContrast(page: Page, cellSelector: string) {
   const cell = page.locator(cellSelector);
   const title = cell.locator(".cell-copy h2");
-  await title.scrollIntoViewIfNeeded();
-  const geometry = await title.evaluate((h2) => {
-    const r = h2.getBoundingClientRect();
-    const style = getComputedStyle(h2);
-    return {
-      x: r.left,
-      y: r.top,
-      line: Number.parseFloat(style.lineHeight),
-      color: style.color,
-    };
-  });
-  const png = await page.screenshot({
-    clip: { x: geometry.x - 9, y: geometry.y, width: 7, height: geometry.line },
-  });
+  const measure = () =>
+    title.evaluate((h2) => {
+      const r = h2.getBoundingClientRect();
+      const style = getComputedStyle(h2);
+      return {
+        x: r.left,
+        y: r.top,
+        line: Number.parseFloat(style.lineHeight),
+        color: style.color,
+      };
+    });
+  // The clip is only the title's backdrop if the title held still while the
+  // screenshot was taken; a relayout can move or replace it (#58).
+  let geometry = await measure();
+  let png = Buffer.alloc(0);
+  await expect(async () => {
+    await title.scrollIntoViewIfNeeded();
+    const before = await measure();
+    png = await page.screenshot({
+      clip: { x: before.x - 9, y: before.y, width: 7, height: before.line },
+    });
+    geometry = await measure();
+    expect(geometry, "title moved during its screenshot").toEqual(before);
+  }).toPass();
   return page.evaluate(
     async ({ data, color }) => {
       const luminance = (r: number, g: number, b: number) => {
@@ -637,22 +647,24 @@ test.describe("mobile front-page Size grammar", () => {
     ).toHaveCount(0);
     const collapsedHeadlines = leadCard.locator(".story-headline");
     await expect(collapsedHeadlines).toHaveCount(1);
-    expect(
-      await collapsedHeadlines
-        .first()
-        .evaluate((element) => element.getBoundingClientRect().height),
-    ).toBe(52);
+    await expect
+      .poll(() =>
+        collapsedHeadlines
+          .first()
+          .evaluate((element) => element.getBoundingClientRect().height),
+      )
+      .toBe(52);
     await leadCard.screenshot({
       path: "/tmp/sema-mobile-lead-collapsed.png",
     });
 
     await leadCard.dispatchEvent("mouseover");
     await expect(leadCard).toHaveClass(/focused/);
-    expect(
-      await leadCard.evaluate(
-        (element) => getComputedStyle(element).outlineStyle,
-      ),
-    ).toBe("none");
+    await expect
+      .poll(() =>
+        leadCard.evaluate((element) => getComputedStyle(element).outlineStyle),
+      )
+      .toBe("none");
 
     await leadCard.getByRole("button", { name: "+2 more" }).click();
     await expect(leadCard.locator(".story-headline")).toHaveCount(3);
@@ -1292,14 +1304,14 @@ test("stories earn their position in the interest grid", async ({ page }) => {
   await expect(storyCell).toBeVisible();
 
   for (const width of [1440, 1024, 768, 390]) {
-    await page.setViewportSize({ width, height: 900 });
+    await resizeGrid(page, width, 900);
     await expect(storyCell).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBeLessThanOrEqual(width);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(width);
     await page.screenshot({ path: `/tmp/sema-front-merged-${width}.png` });
   }
-  await page.setViewportSize({ width: 768, height: 900 });
+  await resizeGrid(page, 768, 900);
   await expect(storyCell.locator(".story-lead")).toBeVisible();
 
   await page.evaluate(() => {
@@ -1387,29 +1399,33 @@ test("scroll-reading a story cell uses all of its unread members", async ({
   const storyCell = page.locator('[data-story-id="story-0"]');
   const scrollPastStoryRow = async () => {
     const scroller = page.locator(".grid-scroll");
+    const rowBelowTop = () =>
+      scroller.evaluate((scroll) => {
+        const row = scroll
+          .querySelector('[data-story-id="story-0"]')
+          ?.closest<HTMLElement>(".grid-row");
+        if (!row) return 0;
+        return Math.ceil(
+          row.getBoundingClientRect().bottom -
+            scroll.getBoundingClientRect().top +
+            1,
+        );
+      });
+    const scrollTop = () => scroller.evaluate((element) => element.scrollTop);
+    // Changing Read mode reloads the grid; measure the attached replacement
+    // row once its Lead's measured height has grown it. A row that grows
+    // after the scroll is never passed (#58).
+    await expect(storyCell).toHaveAttribute("data-lead-measured");
     let delta = 0;
-    // Changing Read mode reloads the grid; measure the attached replacement row.
     await expect
       .poll(async () => {
-        delta = await scroller.evaluate((scroll) => {
-          const row = scroll
-            .querySelector('[data-story-id="story-0"]')
-            ?.closest<HTMLElement>(".grid-row");
-          if (!row) return 0;
-          return Math.ceil(
-            row.getBoundingClientRect().bottom -
-              scroll.getBoundingClientRect().top +
-              1,
-          );
-        });
+        delta = await rowBelowTop();
         return delta;
       })
       .toBeGreaterThan(0);
     await scroller.hover();
     await page.mouse.wheel(0, delta);
-    await expect
-      .poll(() => scroller.evaluate((element) => element.scrollTop))
-      .toBeGreaterThanOrEqual(delta);
+    await expect.poll(scrollTop).toBeGreaterThanOrEqual(delta);
   };
 
   await page.getByRole("switch", { name: "Unread", exact: true }).uncheck();
@@ -1781,11 +1797,11 @@ test("Direction A keeps light stories readable and related coverage actionable",
   await expect(page.locator(".reader")).toBeVisible();
   await page.keyboard.press("Escape");
   for (const width of [1024, 768, 720, 390]) {
-    await page.setViewportSize({ width, height: 900 });
+    await resizeGrid(page, width, 900);
     await expect(first).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBeLessThanOrEqual(width);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(width);
     if (width >= 768) {
       await expect
         .poll(() => grid.evaluate(storyCellProblems, unreadLeads))
@@ -2107,9 +2123,9 @@ test("delayed singleton photos fill their cards after resizing and scrolling", a
     await page.goto("/", { waitUntil: "domcontentloaded" });
     const photo = page.locator('[data-item-id="delayed-0"] > img');
     await expect(photo).toBeAttached();
-    expect(await photo.evaluate((img: HTMLImageElement) => img.complete)).toBe(
-      false,
-    );
+    await expect
+      .poll(() => photo.evaluate((img: HTMLImageElement) => img.complete))
+      .toBe(false);
     await page.setViewportSize({ width: 1024, height: 833 });
     releaseImages();
     const checkPhoto = async () => {

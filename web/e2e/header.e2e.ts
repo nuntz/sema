@@ -55,11 +55,13 @@ test("grid and reader share brand chrome and a 2px bottom band", async ({
   expect(readerBrand).toEqual(gridBrand);
   // A will-change: transform layer loses LCD text antialiasing, so a resting reader that kept it
   // would render its text unlike the grid wherever LCD text is on (CI's Ubuntu, not every desktop).
-  expect(
-    await page
-      .locator(".reader")
-      .evaluate((reader) => getComputedStyle(reader).willChange),
-  ).toBe("auto");
+  await expect
+    .poll(() =>
+      page
+        .locator(".reader")
+        .evaluate((reader) => getComputedStyle(reader).willChange),
+    )
+    .toBe("auto");
   expect(gridBandHeight).toBe(2);
   expect(readerBandHeight).toBe(gridBandHeight);
 });
@@ -448,12 +450,14 @@ test("headers clear the status bar and tint it in standalone", async ({
   const chrome = await page
     .locator(".app-header")
     .evaluate((header) => getComputedStyle(header).backgroundColor);
-  expect(
-    await page.evaluate(() => [
-      getComputedStyle(document.documentElement).backgroundColor,
-      getComputedStyle(document.body).backgroundColor,
-    ]),
-  ).toEqual([chrome, chrome]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => [
+        getComputedStyle(document.documentElement).backgroundColor,
+        getComputedStyle(document.body).backgroundColor,
+      ]),
+    )
+    .toEqual([chrome, chrome]);
 
   await simulateStatusBar(page, 0);
   await expect.poll(() => headerHeight(page)).toBe(44);
@@ -482,12 +486,14 @@ test("headers clear the status bar and tint it in standalone", async ({
   const material = await page
     .locator(".reader")
     .evaluate((reader) => getComputedStyle(reader).backgroundColor);
-  expect(
-    await page.evaluate(() => [
-      getComputedStyle(document.documentElement).backgroundColor,
-      getComputedStyle(document.body).backgroundColor,
-    ]),
-  ).toEqual([material, material]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => [
+        getComputedStyle(document.documentElement).backgroundColor,
+        getComputedStyle(document.body).backgroundColor,
+      ]),
+    )
+    .toEqual([material, material]);
 
   // The bar clears the strongest part of the iOS edge blur too.
   await expect.poll(() => headerHeight(page)).toBe(44 + 47 + 16);
@@ -750,7 +756,9 @@ for (const width of [1280, 390]) {
       "data-scroll-requests",
       downRequests as string,
     );
-    expect(await scroll.evaluate((element) => element.scrollTop)).toBe(maxTop);
+    await expect
+      .poll(() => scroll.evaluate((element) => element.scrollTop))
+      .toBe(maxTop);
     await expect(page.locator("#reader-last-line")).toBeInViewport();
     await expect(scroll).toHaveCSS("overscroll-behavior-y", "none");
 
@@ -832,9 +840,9 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   ] as const) {
     await page.setViewportSize({ width, height: 780 });
     await openFixture(page, view);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBeLessThanOrEqual(width);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBeLessThanOrEqual(width);
     expect(await page.locator(".app-header [hidden]").count()).toBe(0);
     expect(await page.locator('.app-header [role="tab"]').count()).toBe(0);
     expect(await page.locator('.app-header [role="tablist"]').count()).toBe(0);

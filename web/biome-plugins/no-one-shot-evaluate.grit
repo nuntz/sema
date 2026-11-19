@@ -1,0 +1,8 @@
+language js
+
+`expect(await $locator.evaluate($...))` where {
+  register_diagnostic(
+    span = $locator,
+    message = "A one-shot read passes or fails on whatever the page shows at that instant. Poll it: expect.poll(() => locator.evaluate(…))."
+  )
+}

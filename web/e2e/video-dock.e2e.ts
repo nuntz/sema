@@ -35,9 +35,11 @@ for (const width of [390, 1280]) {
     await page.locator(".lb-scrim").click({ position: { x: 4, y: 4 } });
     await expect(docked(page)).toBeVisible();
     await expect(page.locator(".video-peek")).toHaveCount(0);
-    expect(
-      await player(page).evaluate((el, previous) => el === previous, original),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        player(page).evaluate((el, previous) => el === previous, original),
+      )
+      .toBe(true);
     await expect(
       page.getByRole("region", { name: "Docked video: Image article" }),
     ).toBeVisible();
@@ -108,9 +110,11 @@ test("Peeking or Expanding the Docked Item reuses its player without another Pla
   await expect(docked(page)).toBeVisible();
   await page.keyboard.press("i");
   await expect(stage(page)).toHaveAttribute("data-mode", "peek");
-  expect(
-    await player(page).evaluate((el, previous) => el === previous, original),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      player(page).evaluate((el, previous) => el === previous, original),
+    )
+    .toBe(true);
   await expect
     .poll(() => events.join(" "), { timeout: 10_000 })
     .toContain('"clicked_through":true');
@@ -304,9 +308,9 @@ test("other Overlays cover the Dock, leaving it dimmed and inert", async ({
   await page.keyboard.press("Shift+F10");
   await expect(page.locator(".action-sheet-layer")).toBeVisible();
   await expect(docked(page)).toHaveClass(/is-covered/);
-  expect(await docked(page).evaluate((el) => (el as HTMLElement).inert)).toBe(
-    true,
-  );
+  await expect
+    .poll(() => docked(page).evaluate((el) => (el as HTMLElement).inert))
+    .toBe(true);
   await page.keyboard.press("Escape");
   await expect(docked(page)).not.toHaveClass(/is-covered/);
 });
@@ -400,17 +404,21 @@ test("the Dock keeps playing, uncovered, through Settings & Feeds", async ({
   await expect(page.getByRole("button", { name: "sign out" })).toBeVisible();
   await expect(docked(page)).toBeVisible();
   await expect(docked(page)).not.toHaveClass(/is-covered/);
-  expect(await docked(page).evaluate((el) => (el as HTMLElement).inert)).toBe(
-    false,
-  );
-  expect(
-    await player(page).evaluate((el, previous) => el === previous, original),
-  ).toBe(true);
+  await expect
+    .poll(() => docked(page).evaluate((el) => (el as HTMLElement).inert))
+    .toBe(false);
+  await expect
+    .poll(() =>
+      player(page).evaluate((el, previous) => el === previous, original),
+    )
+    .toBe(true);
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-item-id="peek"]')).toBeVisible();
-  expect(
-    await player(page).evaluate((el, previous) => el === previous, original),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      player(page).evaluate((el, previous) => el === previous, original),
+    )
+    .toBe(true);
   await expect(player(page)).toHaveAttribute("data-state", "1");
 });
 
@@ -454,9 +462,11 @@ test("Expand from Settings & Feeds Peeks over the grid, and Flip opens the reade
   await page.getByRole("button", { name: "Expand video" }).click();
   await expect(page.locator(".video-peek")).toBeFocused();
   await expect(page.getByRole("button", { name: "sign out" })).toHaveCount(0);
-  expect(
-    await player(page).evaluate((el, previous) => el === previous, original),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      player(page).evaluate((el, previous) => el === previous, original),
+    )
+    .toBe(true);
   await page.keyboard.press("o");
   await expect(page.locator(".reader iframe")).toHaveAttribute(
     "data-seconds",

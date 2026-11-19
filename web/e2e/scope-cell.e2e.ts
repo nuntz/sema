@@ -278,7 +278,9 @@ for (const width of [1280, 768, 390])
       const meta = page.locator(
         width < 860 ? ".filter-button .scope-count" : ".scope-cell__meta",
       );
-      expect(await meta.evaluate((el) => el.scrollHeight)).toBeLessThan(25);
+      await expect
+        .poll(() => meta.evaluate((el) => el.scrollHeight))
+        .toBeLessThan(25);
       await page.screenshot({
         path: `/tmp/sema-scope-cell-${width}-${theme}.png`,
       });
@@ -465,9 +467,11 @@ for (const [width, height, theme] of [
     expect(rect.y - cell.y - cell.height).toBe(width < 860 ? 16 : 26);
     const copy = await section.locator(":scope > div").boundingBox();
     expect(copy?.x).toBe(width < 620 ? 12 : 16);
-    expect(
-      await section.evaluate((el) => getComputedStyle(el, "::before").content),
-    ).toBe("none");
+    await expect
+      .poll(() =>
+        section.evaluate((el) => getComputedStyle(el, "::before").content),
+      )
+      .toBe("none");
     await page.screenshot({
       path: `/tmp/sema-closed-section-${width}-${theme}.png`,
       animations: "disabled",
@@ -565,9 +569,9 @@ test("scoped header fits at 360 with the longest summary", async ({ page }) => {
   expect(menu.x + menu.width).toBeLessThanOrEqual(360);
   expect(search.x).toBeGreaterThanOrEqual(chip.x + chip.width);
   await expect(page.locator(".active-tag-chip .tag-chip-close")).toBeVisible();
-  expect(
-    await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBeLessThanOrEqual(360);
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(360);
 });
 
 test("the Archive keeps a scope trigger on phones", async ({ page }) => {

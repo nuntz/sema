@@ -1197,6 +1197,35 @@ describe("related coverage row sizing", () => {
     expect(expanded[0].cells[0].height).toBe(280 + 72 + 44 + 72 + 3);
     expect(expanded[1].top).toBe(expanded[0].height + expanded[0].gap);
   });
+
+  // A cell measured after it detached reads NaN; one bad height once blanked
+  // the whole grid, because no row with a NaN height is ever visible (#58).
+  it("ignores a measured height that is not a finite number", () => {
+    const story: Story = {
+      story_id: "detached",
+      source_count: 2,
+      order_key: 0.9,
+      size: "L",
+      items: [item("lead", "L"), item("angle", "S")],
+    };
+    const entries = [
+      { kind: "story" as const, story },
+      ...Array.from({ length: 6 }, (_, index) => item(index, "M")),
+    ];
+    const unmeasured = justify(entries, 1248, false, {
+      storyCardMinHeight: 310,
+    });
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const rows = justify(entries, 1248, false, {
+        storyLeadHeights: new Map([[story.story_id, bad]]),
+        storyHeadlineHeights: new Map([["angle", bad]]),
+        storyCardMinHeight: 310,
+      });
+      expect(rows.map((row) => [row.top, row.height])).toEqual(
+        unmeasured.map((row) => [row.top, row.height]),
+      );
+    }
+  });
 });
 
 describe("story and singleton row alignment", () => {

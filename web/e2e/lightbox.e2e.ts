@@ -53,11 +53,11 @@ for (const width of [1280, 390]) {
       ).toHaveAttribute("aria-disabled", "true");
     await page.keyboard.press("Home");
     await page.keyboard.press("Tab");
-    expect(
-      await page.evaluate(
-        () => !!document.activeElement?.closest(".lb-overlay"),
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => !!document.activeElement?.closest(".lb-overlay")),
+      )
+      .toBe(true);
     await lightbox.evaluate(async (element) => {
       await Promise.allSettled(
         element

@@ -171,9 +171,9 @@ for (const width of [320, 390, 620, 860, 1440]) {
         }),
       )
       .toBe(true);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(width);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBe(width);
   });
 }
 

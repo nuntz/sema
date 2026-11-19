@@ -146,9 +146,9 @@ for (const width of [1440, 860, 620, 393, 320]) {
     if (!bounds) throw new Error("Items shown control is missing");
     expect(bounds.x).toBeGreaterThanOrEqual(0);
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(width);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBe(width);
     await group.getByRole("radio", { name: "Today", exact: true }).click();
     await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
     if (width === 1440 || width === 393) {

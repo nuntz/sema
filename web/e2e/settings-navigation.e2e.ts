@@ -1,4 +1,5 @@
 import { nextPageTop, pageUpLanding } from "./grid-paging";
+import { resizeGrid } from "./grid-resize";
 import { expect, type Page, test } from "./test";
 
 type AppState = { itemRequests: number; readBatchRequests: number };
@@ -164,9 +165,9 @@ for (const archive of [false, true]) {
     await page.locator(".grid-cell").first().hover();
     await page.keyboard.press("c");
     await expect(page.getByText("Link copied", { exact: true })).toBeVisible();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      redditItem.url,
-    );
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe(redditItem.url);
     expect(context.pages()).toHaveLength(1);
   });
 }
@@ -262,9 +263,9 @@ test("desktop-width touch profiles do not force grid actions visible", async ({
 
   try {
     await openApp(page, { archiveItems });
-    expect(
-      await page.evaluate(() => matchMedia("(pointer: coarse)").matches),
-    ).toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => matchMedia("(pointer: coarse)").matches))
+      .toBe(true);
     const actions = page
       .locator(".grid-cell")
       .first()
@@ -653,7 +654,9 @@ test("grid loads images within its bounded prefetch margin", async ({
   // The prefetch margin is mounted; the rest of the feed stays virtualized.
   const mounted = await grid.locator(".grid-cell").count();
   expect(mounted).toBeLessThan(64);
-  expect(await grid.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(0);
   const lastRowBottom = await grid
     .locator(".grid-row")
     .last()
@@ -832,13 +835,7 @@ for (const width of [1280, 390]) {
     page,
   }) => {
     await openApp(page);
-    await page.setViewportSize({ width, height: 420 });
-    await page.evaluate(
-      () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-        ),
-    );
+    await resizeGrid(page, width, 420);
     const grid = page.locator(".grid-scroll");
     const maxTop = await grid.evaluate((element) => {
       const maxTop = element.scrollHeight - element.clientHeight;
@@ -879,7 +876,9 @@ for (const width of [1280, 390]) {
       "data-scroll-requests",
       downRequests as string,
     );
-    expect(await grid.evaluate((element) => element.scrollTop)).toBe(maxTop);
+    await expect
+      .poll(() => grid.evaluate((element) => element.scrollTop))
+      .toBe(maxTop);
     await expect(page.locator(".end-of-feed")).toBeInViewport();
     await expect(grid).toHaveCSS("overscroll-behavior-y", "none");
 
@@ -946,9 +945,19 @@ test("finish and clear focuses the empty grid and u restores it", async ({
   await page.keyboard.press("Shift+G");
 
   const action = page.getByRole("button", { name: /Mark \d+ read & clear/ });
-  const scrollBeforeClear = await page
-    .locator(".grid-scroll")
-    .evaluate((element) => element.scrollTop);
+  const scroller = page.locator(".grid-scroll");
+  // Shift+G lands at the end once the grid stops growing; snapshot it there.
+  await expect
+    .poll(() =>
+      scroller.evaluate(
+        (element) =>
+          element.scrollHeight - element.clientHeight - element.scrollTop,
+      ),
+    )
+    .toBeLessThan(1);
+  const scrollBeforeClear = await scroller.evaluate(
+    (element) => element.scrollTop,
+  );
   await action.click();
 
   await expect(page.locator(".grid-cell")).toHaveCount(0);
