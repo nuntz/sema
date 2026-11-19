@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 
 test("grid image explicitly decodes after its deferred source loads", async ({
   page,

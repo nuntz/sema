@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./test";
 
 async function touch(page: Page, type: string, x: number) {
   return page.locator(".reader-scroll").evaluate(

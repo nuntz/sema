@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
 
 for (const width of [390, 1280]) {

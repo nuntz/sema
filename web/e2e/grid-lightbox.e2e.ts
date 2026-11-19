@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
+import { expect, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
 
 test("grid peek grows, navigates, and restores focus without marking read", async ({

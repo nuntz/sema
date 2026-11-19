@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
 
 for (const kind of ["video", "article"]) {

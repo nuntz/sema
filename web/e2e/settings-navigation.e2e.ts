@@ -1,5 +1,5 @@
-import { expect, type Page, test } from "@playwright/test";
 import { nextPageTop, pageUpLanding } from "./grid-paging";
+import { expect, type Page, test } from "./test";
 
 type AppState = { itemRequests: number; readBatchRequests: number };
 

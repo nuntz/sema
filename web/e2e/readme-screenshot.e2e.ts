@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
-import { expect, test } from "@playwright/test";
 import { openShowcase } from "./showcase-fixture";
+import { expect, test } from "./test";
 
 // Regenerates docs/screenshot.png for the README: `make screenshot`. It writes into the
 // repository, so ordinary e2e runs skip it.

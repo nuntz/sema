@@ -1,5 +1,5 @@
-import { expect, type Page, test } from "@playwright/test";
 import type { Feed } from "../src/types";
+import { expect, type Page, test } from "./test";
 
 test.use({ timezoneId: "UTC" });
 

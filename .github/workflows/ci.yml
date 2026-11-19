@@ -73,7 +73,7 @@ jobs:
         with:
           name: playwright-results
           path: /tmp/sema-playwright-results
-          retention-days: 7
+          retention-days: 30
 
   # The deploy role trusts only this repository's `production` environment, which GitHub limits to
   # master (RUNBOOK.md → CI deploys, docs/adr/0004-ci-deploys-through-github-oidc.md). Until the

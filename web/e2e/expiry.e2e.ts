@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "./test";
 
 const now = new Date("2026-09-08T02:00:00Z");
 const makeItem = (id: string, hours: number, size = "M") => ({

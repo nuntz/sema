@@ -1,5 +1,5 @@
-import { expect, type Page, test } from "@playwright/test";
 import { clickCellTitle, openGrid } from "./grid-fixture";
+import { expect, type Page, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
 
 const stage = (page: Page) => page.locator(".video-stage");

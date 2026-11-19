@@ -1,5 +1,5 @@
-import { expect, type Page, test } from "@playwright/test";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
+import { expect, type Page, test } from "./test";
 
 for (const width of [1280, 390]) {
   test(`reader lightbox navigation, history and focus at ${width}px`, async ({

@@ -1,5 +1,6 @@
-import { expect, type Page, test } from "@playwright/test";
 import { nextPageTop } from "./grid-paging";
+import { resizeGrid } from "./grid-resize";
+import { expect, type Page, test } from "./test";
 
 declare global {
   interface Window {
@@ -394,24 +395,6 @@ function phoneHeadlineStripProblems(grid: Element, unread: string[]): string[] {
       );
   }
   return problems;
-}
-
-// Resizes the page and waits until the grid has laid out for its new width.
-// The grid relays out from a ResizeObserver a frame or more after the resize,
-// replacing its cells, so a read before then sees cells about to be detached.
-async function resizeGrid(page: Page, width: number, height: number) {
-  await page.setViewportSize({ width, height });
-  await expect
-    .poll(() =>
-      page
-        .locator(".grid-scroll")
-        .evaluate((grid: HTMLElement) =>
-          grid.dataset.layoutWidth === String(grid.clientWidth)
-            ? "laid out"
-            : `laid out for ${grid.dataset.layoutWidth}px, now ${grid.clientWidth}px`,
-        ),
-    )
-    .toBe("laid out");
 }
 
 // Contrast between a cell's title colour and the brightest scrim pixel beside

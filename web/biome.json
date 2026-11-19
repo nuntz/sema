@@ -26,5 +26,24 @@
       "playwright.config.ts"
     ]
   },
-  "plugins": ["./biome-plugins/no-fixed-sleep.grit"]
+  "plugins": ["./biome-plugins/no-fixed-sleep.grit"],
+  "overrides": [
+    {
+      "includes": ["e2e/**/*.e2e.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@playwright/test": "Import from \"./test\", which carries SEMA_E2E_STRESS to every page."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

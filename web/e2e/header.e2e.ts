@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
-import { expect, type Page, test } from "@playwright/test";
 import { activateStandalone, simulateStatusBar } from "./standalone";
+import { expect, type Page, test } from "./test";
 
 async function openFixture(
   page: Page,
