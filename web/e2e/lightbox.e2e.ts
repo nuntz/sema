@@ -1,3 +1,4 @@
+import { animationsFinished } from "./animations";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { expect, type Page, test } from "./test";
 
@@ -58,17 +59,7 @@ for (const width of [1280, 390]) {
         page.evaluate(() => !!document.activeElement?.closest(".lb-overlay")),
       )
       .toBe(true);
-    await lightbox.evaluate(async (element) => {
-      await Promise.allSettled(
-        element
-          .getAnimations({ subtree: true })
-          .filter(
-            (animation) =>
-              animation.effect?.getTiming().iterations !== Infinity,
-          )
-          .map((animation) => animation.finished),
-      );
-    });
+    await animationsFinished(lightbox, { subtree: true });
     await page.screenshot({ path: `/tmp/sema-lightbox-${width}.png` });
     await page.keyboard.press("Escape");
     await expect(lightbox).toHaveCount(0);
@@ -153,11 +144,7 @@ test("phone swipe handoff keeps the incoming image centred in both directions", 
   await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
   await page.locator(".lb-openable").first().click();
   const frame = page.locator(".lb-frame");
-  await frame.evaluate(async (element) => {
-    await Promise.all(
-      element.getAnimations().map((animation) => animation.finished),
-    );
-  });
+  await animationsFinished(frame);
   for (const [start, end, image] of [
     [310, 60, "2.svg"],
     [60, 310, "1.svg"],

@@ -1,0 +1,8 @@
+language js
+
+`$element.getAnimations($...)` where {
+  register_diagnostic(
+    span = $element,
+    message = "Wait with animationsFinished (e2e/animations.ts). It polls, so an animation that starts after the call still counts, and it skips infinite and paused ones."
+  )
+}

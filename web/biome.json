@@ -29,7 +29,8 @@
   "plugins": [
     "./biome-plugins/no-fixed-sleep.grit",
     "./biome-plugins/no-one-shot-evaluate.grit",
-    "./biome-plugins/no-exact-state-log.grit"
+    "./biome-plugins/no-exact-state-log.grit",
+    "./biome-plugins/no-raw-get-animations.grit"
   ],
   "overrides": [
     {

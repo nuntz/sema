@@ -1,3 +1,4 @@
+import { animationsFinished } from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { expect, type Page, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
@@ -48,9 +49,7 @@ for (const width of [390, 1280]) {
     // tell: at 1280px the right gap closes 20px while the width closes 960px,
     // so the gaps round to their final values while the width is still
     // shrinking (#62). Wait for the FLIP to finish before reading the box.
-    await expect
-      .poll(() => docked(page).evaluate((el) => el.getAnimations().length))
-      .toBe(0);
+    await animationsFinished(docked(page));
     const gap = width >= 620 ? 20 : 12;
     await expect
       .poll(async () => {
@@ -257,11 +256,7 @@ test("on a phone the Dock's buttons take a 44px touch and leave the video its ta
   await openGrid(page, "youtube", false, "M");
   await dockFromPeek(page);
   // Measure the settled Dock, not the Peek shrinking into it.
-  await page.evaluate(() =>
-    Promise.all(
-      document.getAnimations().map((animation) => animation.finished),
-    ),
-  );
+  await animationsFinished(page.locator("html"), { subtree: true });
 
   const hits = await page.evaluate(() => {
     const owner = (x: number, y: number) => {

@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { animationsFinished } from "./animations";
 import { activateStandalone, simulateStatusBar } from "./standalone";
 import { expect, type Page, test } from "./test";
 
@@ -10,12 +11,7 @@ async function openFixture(
   await page.goto(`/e2e/header-fixture.html?view=${view}&font=${font}`);
   await page.locator(".app-header").waitFor();
   await page.evaluate(() => document.fonts.ready);
-  if (view === "reader")
-    await page.locator(".reader").evaluate(async (reader) => {
-      await Promise.all(
-        reader.getAnimations().map((animation) => animation.finished),
-      );
-    });
+  if (view === "reader") await animationsFinished(page.locator(".reader"));
 }
 
 async function scrollReaderPastHeadline(page: Page) {
