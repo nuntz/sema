@@ -318,6 +318,43 @@ test("Space toggles the reader's player in view instead of paging", async ({
   await expect(page.locator("body")).toHaveAttribute("data-plays", "1");
 });
 
+test("holding Space toggles the reader's player once and doesn't page", async ({
+  page,
+}) => {
+  await stubYouTube(page);
+  // With reduced motion a page moves scrollTop inside the keydown, before the
+  // fresh Space's reply lands.
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/e2e/header-fixture.html?view=reader&media=video");
+  await page.keyboard.press("i");
+  const player = page.locator(".video-embed iframe");
+  await expect(player).toHaveAttribute("data-state", "1");
+  const scroll = page.locator(".reader-scroll");
+  await scroll.evaluate((element) => {
+    // Leave room to page, so a Space that paged would move scrollTop.
+    const spacer = document.createElement("div");
+    spacer.style.height = "2000px";
+    element.append(spacer);
+  });
+  await logPlayerStates(player);
+  await page.keyboard.down(" ");
+  await expect(player).toHaveAttribute("data-state", "2");
+  // A second down without an up is a key repeat.
+  await page.keyboard.down(" ");
+  await page.keyboard.down(" ");
+  await page.keyboard.up(" ");
+  await page.keyboard.press(" ");
+  await expect(player).toHaveAttribute("data-state", "1");
+  // A repeat that paged moved scrollTop inside its keydown, so it shows now.
+  await expect
+    .poll(() => scroll.evaluate((element) => element.scrollTop))
+    .toBe(0);
+  // Replies come in order, so a repeat that toggled logs its states before
+  // the seek's buffering.
+  await page.getByRole("link", { name: "1:30", exact: true }).click();
+  await expect(player).toHaveAttribute("data-state-log", /^2,1,3(,|$)/);
+});
+
 test("Space pages past a Poster and a scrolled-away player, and leaves focused buttons alone", async ({
   page,
 }) => {

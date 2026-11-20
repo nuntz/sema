@@ -207,6 +207,80 @@ describe("toggle", () => {
     ]);
   });
 
+  it("follows its own last request when toggled again before the reply", () => {
+    const { player, sent } = ready(1);
+    expect(player.toggle()).toBe(true);
+    expect(player.toggle()).toBe(true);
+    expect(player.toggle()).toBe(true);
+    expect(sent().map((message) => message.func)).toEqual([
+      "pauseVideo",
+      "playVideo",
+      "pauseVideo",
+    ]);
+  });
+
+  it("decides from the reported state again once a request goes unanswered", () => {
+    // YouTube ignores the pause and never reports one.
+    const { player, sent } = ready(1);
+    player.toggle();
+    vi.advanceTimersByTime(900);
+    player.toggle();
+    player.toggle();
+    vi.advanceTimersByTime(1_100);
+    player.toggle();
+    expect(sent().map((message) => message.func)).toEqual([
+      "pauseVideo",
+      "playVideo",
+      "pauseVideo",
+      "pauseVideo",
+    ]);
+  });
+
+  it("follows reported states again once one agrees with its request", () => {
+    const { player, sent, message } = ready(1);
+    player.toggle();
+    message({ event: "infoDelivery", info: { playerState: 2 } });
+    // YouTube's own controls resume it before the request would expire.
+    message({ event: "infoDelivery", info: { playerState: 1 } });
+    player.toggle();
+    player.toggle();
+    // A play is confirmed by buffering as well as playing.
+    message({ event: "infoDelivery", info: { playerState: 3 } });
+    message({ event: "infoDelivery", info: { playerState: 2 } });
+    player.toggle();
+    expect(sent().map((message) => message.func)).toEqual([
+      "pauseVideo",
+      "pauseVideo",
+      "playVideo",
+      "playVideo",
+    ]);
+  });
+
+  it("counts a play as a request to play", () => {
+    const { player, sent } = ready(2);
+    player.play(30);
+    player.toggle();
+    expect(sent().at(-1)).toMatchObject({ func: "pauseVideo" });
+  });
+
+  it("counts a replay from the end as a request to play", () => {
+    const { player, sent } = ready(0);
+    player.toggle();
+    player.toggle();
+    expect(sent().at(-1)).toMatchObject({ func: "pauseVideo" });
+  });
+
+  it("reports only the states the player reports, never a request", () => {
+    const { player, message, onState } = ready(2);
+    onState.mockClear();
+    player.play(30);
+    player.toggle();
+    player.toggle();
+    expect(onState).not.toHaveBeenCalled();
+    message({ event: "infoDelivery", info: { playerState: 3 } });
+    expect(onState.mock.calls).toEqual([["buffering"]]);
+  });
+
   it("does nothing before the player is ready or after it fails", () => {
     const { player, sent, loads, message } = setup();
     expect(player.toggle()).toBe(false);

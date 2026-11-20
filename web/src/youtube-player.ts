@@ -1,12 +1,17 @@
 /** The only boundary to YouTube: callers own the host and destroy on unmount. */
 export interface VideoPlayer {
   play(seconds?: number): void;
-  /** Pause or resume as YouTube's own Space does; false when not yet playable. */
+  /**
+   * Pause or resume as YouTube's own Space does; false when not yet playable.
+   * Decides from its own last pause or play until YouTube reports agreement.
+   */
   toggle(): boolean;
   position(): number;
   destroy(): void;
 }
 export type PlaybackState = "playing" | "paused" | "ended" | "buffering";
+/** What a pause or play asks for, before YouTube reports it. */
+type RequestedState = Extract<PlaybackState, "playing" | "paused">;
 export interface PlayerOptions {
   videoID: string;
   start: number;
@@ -16,6 +21,8 @@ export interface PlayerOptions {
   onFailure(): void;
 }
 const EMBED_ORIGIN = "https://www.youtube-nocookie.com";
+/** How long a pause or play YouTube hasn't confirmed outranks its reported state. */
+const REQUEST_EXPIRY_MS = 1_000;
 let nextPlayerID = 0;
 
 export function createVideoPlayer(
@@ -29,6 +36,7 @@ export function createVideoPlayer(
   let ready = false;
   let listening = false;
   let state: PlaybackState | undefined;
+  let requested: { state: RequestedState; at: number } | undefined;
   let position = Math.max(0, options.start);
   let pendingSeek: number | undefined = position > 0 ? position : undefined;
   const send = (message: object) =>
@@ -38,6 +46,11 @@ export function createVideoPlayer(
     );
   const command = (func: string, args: unknown[] = []) =>
     send({ event: "command", func, args });
+  /** Ask for a state the next toggle() assumes until YouTube agrees or it expires. */
+  const request = (next: RequestedState) => {
+    requested = { state: next, at: Date.now() };
+    command(next === "paused" ? "pauseVideo" : "playVideo");
+  };
   const cleanup = () => {
     clearTimeout(timeout);
     window.removeEventListener("offline", fail);
@@ -103,6 +116,8 @@ export function createVideoPlayer(
       if (typeof info?.playerState === "number" && next) {
         iframe.dataset.state = String(info.playerState);
         state = next;
+        if (requested?.state === (next === "buffering" ? "playing" : next))
+          requested = undefined;
         options.onState(next);
       }
     }
@@ -137,16 +152,18 @@ export function createVideoPlayer(
       if (ready) {
         if (pendingSeek !== undefined) command("seekTo", [pendingSeek, true]);
         pendingSeek = undefined;
-        command("playVideo");
+        request("playing");
       }
     },
     toggle() {
       if (disposed || failed || !ready || !state) return false;
-      if (state === "ended") command("seekTo", [0, true]);
-      command(
-        state === "playing" || state === "buffering"
-          ? "pauseVideo"
-          : "playVideo",
+      const assumed =
+        requested && Date.now() - requested.at < REQUEST_EXPIRY_MS
+          ? requested.state
+          : state;
+      if (assumed === "ended") command("seekTo", [0, true]);
+      request(
+        assumed === "playing" || assumed === "buffering" ? "paused" : "playing",
       );
       return true;
     },
