@@ -1,0 +1,9 @@
+language js
+
+`$locator.toHaveAttribute("data-state-log", $log)` where {
+  $log <: string(),
+  register_diagnostic(
+    span = $log,
+    message = "data-state-log only grows, and the player can report again after the state awaited, so an exact log matches only until the next reply. Match an anchored prefix: /^2,1,3(,|$)/."
+  )
+}

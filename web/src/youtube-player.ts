@@ -126,6 +126,7 @@ export function createVideoPlayer(
       clearTimeout(timeout);
       if (pendingSeek !== undefined) command("seekTo", [pendingSeek, true]);
       pendingSeek = undefined;
+      // Autoplay is no request: if YouTube blocks it, the first Space must play.
       command("playVideo");
     }
   };
