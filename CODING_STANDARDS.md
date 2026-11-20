@@ -64,7 +64,7 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 
 ## Flaky tests
 
-- A change to how a test measures (garbage collection, waits, retries, settle loops, sampling) or to its bounds needs evidence in the PR that a deliberately injected bug still fails the test: the output of `scripts/expect-red.sh`, which fails unless the test ran and went red (#58).
+- A change to how a test measures (garbage collection, waits, retries, settle loops, sampling) or to its bounds needs evidence in the PR that a deliberately injected bug still fails the test: the output of `scripts/expect-red.sh`, which fails unless the test ran and went red (#58). A change to when a script-driven animation's frames land, such as `animatePageScroll`'s clock, also needs the output of `scripts/load-compare.sh` against the code it replaces, because frame timing that passes one run at a time can fail on a busy machine (#63).
 - A loop that waits for a value to settle fails with the readings it saw once it hits its cap.
 - A test that resizes a rendered grid waits with `resizeGrid` (`web/e2e/grid-resize.ts`) before reading it, and a layout predicate fails on a detached or zero-size element, whose all-zero rects satisfy every `<=` (#57).
 - An e2e step proving something did not happen is followed by a step whose visible result would differ had it happened, including from every state the bug passes through; an assertion made straight after the action passes before the effect lands. For a video player, log its states with `logPlayerStates` (`web/e2e/youtube-stub.ts`, which says why) and check that none came before a later command's, such as a seek's buffering (3) (#59). Fixed sleeps fail `bun run lint` (`web/biome-plugins/no-fixed-sleep.grit`).

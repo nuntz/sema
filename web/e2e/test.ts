@@ -8,10 +8,10 @@ export * from "@playwright/test";
 // e2e-stress-resize.
 // SEMA_E2E_STRESS=animation plays every animation at a tenth of its speed, so
 // a test that measures before one finishes fails on demand (#62); wait with
-// animationsFinished (./animations). It slows the document timeline, so
-// requestAnimationFrame timestamps fall behind performance.now(); time a
-// script-driven animation on performance.now() alone, as page-scroll.ts does
-// (#63). CI runs it as e2e-stress-animation.
+// animationsFinished (./animations). It slows the document timeline, and with
+// it requestAnimationFrame timestamps, which bun run lint keeps app code from
+// reading (biome-plugins/no-frame-timestamp.grit, #63). CI runs it as
+// e2e-stress-animation.
 const stress = process.env.SEMA_E2E_STRESS;
 if (stress && stress !== "resize" && stress !== "animation")
   throw new Error(

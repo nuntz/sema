@@ -1,0 +1,30 @@
+language js
+
+or {
+  or {
+    `requestAnimationFrame($callback)`,
+    `$_.requestAnimationFrame($callback)`
+  } where {
+    $callback <: or {
+      `($param, $...) => $_`,
+      `function ($param, $...) { $... }`
+    }
+  },
+  `const $name = ($param, $...) => $body` where {
+    $body <: contains or {
+      `requestAnimationFrame($name)`,
+      `$_.requestAnimationFrame($name)`
+    }
+  },
+  `function $name($param, $...) { $body }` where {
+    $body <: contains or {
+      `requestAnimationFrame($name)`,
+      `$_.requestAnimationFrame($name)`
+    }
+  }
+} where {
+  register_diagnostic(
+    span = $param,
+    message = "A requestAnimationFrame timestamp is the frame's start on document.timeline's clock, which can trail performance.now() by seconds when animations are slowed (#63). Take no parameter and read performance.now() inside the callback."
+  )
+}
