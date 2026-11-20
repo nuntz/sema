@@ -44,7 +44,13 @@ for (const width of [390, 1280]) {
       page.getByRole("region", { name: "Docked video: Image article" }),
     ).toBeVisible();
     await expect(cell).not.toHaveClass(/is-read/);
-    // Measured once the Peek-to-Dock transition settles.
+    // Measured once the Peek-to-Dock transition settles. The gaps alone can't
+    // tell: at 1280px the right gap closes 20px while the width closes 960px,
+    // so the gaps round to their final values while the width is still
+    // shrinking (#62). Wait for the FLIP to finish before reading the box.
+    await expect
+      .poll(() => docked(page).evaluate((el) => el.getAnimations().length))
+      .toBe(0);
     const gap = width >= 620 ? 20 : 12;
     await expect
       .poll(async () => {
