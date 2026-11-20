@@ -4,10 +4,14 @@ export * from "@playwright/test";
 
 // SEMA_E2E_STRESS=resize delays every ResizeObserver callback, in order, so a
 // test that reads layout before the app has reacted to a resize fails on
-// demand rather than on one CI run in thirty (#57). CI runs it as e2e-stress.
+// demand rather than on one CI run in thirty (#57). CI runs it as
+// e2e-stress-resize.
 // SEMA_E2E_STRESS=animation plays every animation at a tenth of its speed, so
 // a test that measures before one finishes fails on demand (#62); wait with
-// animationsFinished (./animations). CI doesn't run it yet (#63).
+// animationsFinished (./animations). It slows the document timeline, so
+// requestAnimationFrame timestamps fall behind performance.now(); time a
+// script-driven animation on performance.now() alone, as page-scroll.ts does
+// (#63). CI runs it as e2e-stress-animation.
 const stress = process.env.SEMA_E2E_STRESS;
 if (stress && stress !== "resize" && stress !== "animation")
   throw new Error(
@@ -50,6 +54,10 @@ export const test = base.extend<{ stressMode: undefined }>({
       if (stress === "resize")
         await context.addInitScript(delayResizeObservers, 100);
       if (stress === "animation") {
+        // Waiting out animations at a tenth of their speed takes a test that
+        // opens the reader six times past 20s of its 30s here; a slower CI
+        // runner needs the headroom (#63).
+        testInfo.setTimeout(testInfo.timeout * 3);
         await Promise.all(context.pages().map(slowAnimations));
         context.on("page", (page) => void slowAnimations(page));
       }

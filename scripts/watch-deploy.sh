@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# After pushing master: waits for the CI run of a commit and fails unless test, e2e, e2e-stress
-# and deploy all succeeded, so "pushed" is never mistaken for "deployed". A run still queued after
-# QUEUE_LIMIT seconds fails too: GitHub can leave a push's run queued with no jobs, uncancellable,
-# for hours.
+# After pushing master: waits for the CI run of a commit and fails unless test, e2e, every
+# e2e-stress-* leg and deploy all succeeded, so "pushed" is never mistaken for "deployed". A run
+# still queued after QUEUE_LIMIT seconds fails too: GitHub can leave a push's run queued with no
+# jobs, uncancellable, for hours.
 # Usage: scripts/watch-deploy.sh [sha]; without a sha it watches HEAD.
 # QUEUE_LIMIT (default 600) and TIMEOUT (default 1800) are in seconds.
 set -euo pipefail
@@ -50,10 +50,21 @@ for _ in 1 2 3 4 5; do
 done
 echo "ci run $id for ${SHA:0:7}: $conclusion"
 echo "$jobs"
-for job in test e2e e2e-stress deploy; do
-  if ! grep -qx "$job success" <<<"$jobs"; then
-    echo "$job did not succeed, so ${SHA:0:7} is not deployed" >&2
+succeeded() {
+  if ! grep -qx "$1 success" <<<"$jobs"; then
+    echo "$1 did not succeed, so ${SHA:0:7} is not deployed" >&2
     exit 1
   fi
-done
+}
+succeeded test
+succeeded e2e
+# One e2e-stress-<mode> job per SEMA_E2E_STRESS matrix leg, matched by name rather than listed. A
+# run with none fails too. They come before deploy, which CI skips when one fails.
+stress="$(grep -oE '^e2e-stress-[^ ]+' <<<"$jobs" || true)"
+if [[ -z "$stress" ]]; then
+  echo "no e2e-stress leg ran, so ${SHA:0:7} is not deployed" >&2
+  exit 1
+fi
+while read -r job; do succeeded "$job"; done <<<"$stress"
+succeeded deploy
 echo "${SHA:0:7} is deployed."

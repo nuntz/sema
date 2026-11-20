@@ -51,14 +51,16 @@ jobs:
       - run: make check
 
   # The browser tests run beside the test job and gate the deploy as well (make e2e). The stress
-  # leg delays every ResizeObserver callback (SEMA_E2E_STRESS, web/e2e/test.ts), which is the only
-  # run that fails if the #58 fixes for detached-cell measurements and the clear's scroll snapshot regress.
+  # legs (SEMA_E2E_STRESS, web/e2e/test.ts) run the same specs harder: resize delays every
+  # ResizeObserver callback, the only run that fails if the #58 fixes for detached-cell measurements
+  # and the clear's scroll snapshot regress; animation plays every animation at a tenth of its speed,
+  # the only run that fails if a test measures before an animation finishes (#62).
   e2e:
-    name: e2e${{ matrix.stress && '-stress' || '' }}
+    name: e2e${{ matrix.stress && format('-stress-{0}', matrix.stress) || '' }}
     strategy:
       fail-fast: false
       matrix:
-        stress: ["", resize]
+        stress: ["", resize, animation]
     # Playwright 1.60 can't install Chromium on Ubuntu 26.04; move the jobs to 26.04 once it can.
     runs-on: ubuntu-24.04
     env:
@@ -80,7 +82,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results${{ matrix.stress && '-stress' || '' }}
+          name: playwright-results${{ matrix.stress && format('-stress-{0}', matrix.stress) || '' }}
           path: /tmp/sema-playwright-results
           retention-days: 30
 
