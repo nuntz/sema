@@ -237,12 +237,11 @@ func (s *server) patchFeed(ctx context.Context, user *requestsnapshot.Snapshot, 
 		AlwaysGenerate *bool           `json:"always_generate"`
 		HideShorts     *bool           `json:"hide_shorts"`
 		FetchInterval  json.RawMessage `json:"fetch_interval_h"`
-		URL            *string         `json:"url"`
 	}
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
 	}
-	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.HideShorts == nil && input.FetchInterval == nil && input.URL == nil {
+	if input.CustomTitle == nil && input.Tags == nil && input.Muted == nil && input.AlwaysGenerate == nil && input.HideShorts == nil && input.FetchInterval == nil {
 		return badRequest(errors.New("at least one feed field is required"))
 	}
 	feed, err := s.store.Feed(ctx, userID, feedID)
@@ -253,28 +252,6 @@ func (s *server) patchFeed(ctx context.Context, user *requestsnapshot.Snapshot, 
 		return s.failure("get feed", err)
 	}
 	wasMuted := feed.Muted
-	sortChanged := false
-	if input.URL != nil {
-		if domain.FeedConnector(feed) != domain.ConnectorReddit {
-			return badRequest(errors.New("url changes are only available for Reddit feeds"))
-		}
-		parsed, parseErr := reddit.ParseInput(*input.URL)
-		if parseErr != nil {
-			return badRequest(errors.New("url must be a supported subreddit feed URL"))
-		}
-		current, currentErr := reddit.ParseInput(feed.URL)
-		if currentErr != nil || current.Subreddit != parsed.Subreddit {
-			return badRequest(errors.New("url must keep the existing subreddit"))
-		}
-		canonical := reddit.CanonicalURL(parsed.Subreddit, parsed.Sort)
-		if canonical != feed.URL {
-			feed.URL = canonical
-			feed.FetchIntervalH = reddit.IntervalHours(parsed.Sort)
-			feed.ETag, feed.LastModified = "", ""
-			feed.ErrorCount, feed.LastError = 0, ""
-			sortChanged = true
-		}
-	}
 	if input.CustomTitle != nil {
 		value, titleErr := normalizeTitle(*input.CustomTitle)
 		if titleErr != nil {
@@ -297,18 +274,13 @@ func (s *server) patchFeed(ctx context.Context, user *requestsnapshot.Snapshot, 
 		if pin != nil && *pin != 1 && *pin != 3 && *pin != 6 && *pin != 24 {
 			return badRequest(errors.New("fetch_interval_h must be null, 1, 3, 6, or 24"))
 		}
-		if domain.FeedConnector(feed) == domain.ConnectorReddit && pin != nil {
-			return badRequest(errors.New("Reddit Cadence is controlled by Collect"))
+		feed.FetchIntervalH = 0
+		if pin != nil {
+			feed.FetchIntervalH = *pin
 		}
-		if domain.FeedConnector(feed) != domain.ConnectorReddit {
-			feed.FetchIntervalH = 0
-			if pin != nil {
-				feed.FetchIntervalH = *pin
-			}
-			domain.UpdateCadence(&feed, time.Now().UTC(), 0)
-			if feed.ErrorCount == 0 && feed.RefusedSince == "" {
-				feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(feed), time.Now().UTC(), domain.FeedIntervalHours(feed)))
-			}
+		domain.UpdateCadence(&feed, time.Now().UTC(), 0)
+		if feed.ErrorCount == 0 && feed.RefusedSince == "" {
+			feed.NextFetchAt = domain.Timestamp(domain.NextFeedFetch(feedstatus.ScheduleKey(feed), time.Now().UTC(), domain.FeedIntervalHours(feed)))
 		}
 	}
 	if input.Muted != nil {
@@ -328,15 +300,10 @@ func (s *server) patchFeed(ctx context.Context, user *requestsnapshot.Snapshot, 
 		feed.HideShorts = *input.HideShorts
 	}
 	unmuted := wasMuted && !feed.Muted
-	queueNow := unmuted || (sortChanged && !feed.Muted)
-	if sortChanged && !feed.Muted && !unmuted {
-		feed.NextFetchAt = domain.Timestamp(time.Now().UTC())
-		feed.LastStatus = "queued"
-	}
 	if err := user.SaveFeeds(ctx, feed); err != nil {
 		return s.failure("update feed", err)
 	}
-	if queueNow {
+	if unmuted {
 		if err := s.enqueueFeeds(ctx, []domain.FeedMessage{{User: userID, FeedID: feedID}}); err != nil {
 			return s.failure("enqueue unmuted feed", err)
 		}

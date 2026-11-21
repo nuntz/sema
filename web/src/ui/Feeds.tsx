@@ -23,12 +23,6 @@ import {
   filterFeeds,
 } from "../feed-manager";
 import { formatPrior } from "../ranking-display";
-import {
-  type RedditCollection,
-  redditCanonicalURL,
-  redditCollectionFromURL,
-  redditCollectionLabel,
-} from "../reddit-feed";
 import type { Feed, FeedCandidate, FeedItemCounts } from "../types";
 import { DestinationSettings } from "./DestinationSettings";
 import {
@@ -186,7 +180,6 @@ export function Feeds(props: {
           connector: feed.connector,
           title: feed.title,
           site_url: feed.site_url,
-          badge_url: feed.connector === "reddit" ? feed.favicon_url : undefined,
           avatar_url:
             feed.connector === "youtube" ? feed.favicon_url : undefined,
         });
@@ -194,15 +187,14 @@ export function Feeds(props: {
           feed.muted ||
           feed.hide_shorts ||
           feed.always_generate ||
-          (feed.connector !== "reddit" && cadencePin(feed) !== null)
+          cadencePin(feed) !== null
         ) {
           await props.api.patchFeed(restored.feed.feed_id, {
             muted: feed.muted,
             hide_shorts:
               feed.connector === "youtube" ? feed.hide_shorts : undefined,
             always_generate: feed.always_generate,
-            fetch_interval_h:
-              feed.connector === "reddit" ? undefined : cadencePin(feed),
+            fetch_interval_h: cadencePin(feed),
           });
         }
       }),
@@ -872,86 +864,59 @@ function FeedDrawer(props: {
           />
         </div>
 
-        <Show
-          when={props.feed.connector === "reddit"}
-          fallback={
-            <>
-              <fieldset
-                class="drawer-field interval-field"
-                disabled={props.feed.muted || working()}
-              >
-                <legend>CADENCE</legend>
-                <div>
-                  <For each={[null, 1, 3, 6, 24] as const}>
-                    {(interval) => (
-                      <button
-                        type="button"
-                        classList={{
-                          active: cadencePin(props.feed) === interval,
-                        }}
-                        onClick={() =>
-                          void patch({ fetch_interval_h: interval })
-                        }
-                      >
-                        {interval === null ? "Auto" : `${interval}h`}
-                      </button>
-                    )}
-                  </For>
-                </div>
-                <small>{cadenceLabel(props.feed)}</small>
-              </fieldset>
-              <section class="drawer-content">
-                <h3>CONTENT</h3>
-                <div class="content-row extraction-row">
-                  <span>
-                    <strong>Extraction</strong>
-                    <small>All ingested Items · excludes Link Items</small>
-                  </span>
-                  <ExtractionQuality feed={props.feed} />
-                </div>
-                <label class="content-row generate-row">
-                  <span>
-                    <strong>Always generate summaries</strong>
-                    <small>
-                      {props.feed.always_generate
-                        ? "On for this feed · adds ~2s to first open"
-                        : "Even when the body extracts cleanly"}
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={props.feed.always_generate}
-                    disabled={working()}
-                    onChange={(event) =>
-                      void patch({
-                        always_generate: event.currentTarget.checked,
-                      })
-                    }
-                  />
-                  <i />
-                </label>
-              </section>
-            </>
-          }
+        <fieldset
+          class="drawer-field interval-field"
+          disabled={props.feed.muted || working()}
         >
-          <fieldset
-            class="reddit-collect drawer-reddit-collect"
-            disabled={props.feed.muted || working()}
-          >
-            <legend>
-              <strong>Collect</strong>
-              <small>Which listing Sema fetches</small>
-            </legend>
-            <RedditCollectionControl
-              value={redditCollectionFromURL(props.feed.url)}
-              onChange={(collection) =>
+          <legend>CADENCE</legend>
+          <div>
+            <For each={[null, 1, 3, 6, 24] as const}>
+              {(interval) => (
+                <button
+                  type="button"
+                  classList={{
+                    active: cadencePin(props.feed) === interval,
+                  }}
+                  onClick={() => void patch({ fetch_interval_h: interval })}
+                >
+                  {interval === null ? "Auto" : `${interval}h`}
+                </button>
+              )}
+            </For>
+          </div>
+          <small>{cadenceLabel(props.feed)}</small>
+        </fieldset>
+        <section class="drawer-content">
+          <h3>CONTENT</h3>
+          <div class="content-row extraction-row">
+            <span>
+              <strong>Extraction</strong>
+              <small>All ingested Items · excludes Link Items</small>
+            </span>
+            <ExtractionQuality feed={props.feed} />
+          </div>
+          <label class="content-row generate-row">
+            <span>
+              <strong>Always generate summaries</strong>
+              <small>
+                {props.feed.always_generate
+                  ? "On for this feed · adds ~2s to first open"
+                  : "Even when the body extracts cleanly"}
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              checked={props.feed.always_generate}
+              disabled={working()}
+              onChange={(event) =>
                 void patch({
-                  url: redditCanonicalURL(props.feed.url, collection),
+                  always_generate: event.currentTarget.checked,
                 })
               }
             />
-          </fieldset>
-        </Show>
+            <i />
+          </label>
+        </section>
         <MuteControl
           feed={props.feed}
           working={working()}
@@ -987,11 +952,7 @@ function FeedDrawer(props: {
             when={!confirming()}
             fallback={
               <div class="remove-confirm">
-                <strong>
-                  {props.feed.connector === "reddit"
-                    ? "Unsubscribe from subreddit?"
-                    : "Remove feed?"}
-                </strong>
+                <strong>Remove feed?</strong>
                 <p>
                   Recent items from this feed will disappear. Kept items stay in
                   the archive.
@@ -1007,9 +968,7 @@ function FeedDrawer(props: {
                     onClick={() => void props.onRemove()}
                   >
                     <Icon name="remove-feed" />
-                    {props.feed.connector === "reddit"
-                      ? "Unsubscribe"
-                      : "Remove"}
+                    Remove
                   </button>
                 </div>
               </div>
@@ -1036,9 +995,7 @@ function FeedDrawer(props: {
               onClick={() => setConfirming(true)}
             >
               <Icon name="remove-feed" />
-              {props.feed.connector === "reddit"
-                ? "Unsubscribe"
-                : "Remove feed"}
+              Remove feed
             </button>
           </Show>
         </div>
@@ -1088,7 +1045,6 @@ function AddFeedDialog(props: {
   const [tags, setTags] = createSignal<string[]>([]);
   const [error, setError] = createSignal("");
   const [errorKind, setErrorKind] = createSignal("");
-  const [collection, setCollection] = createSignal<RedditCollection>("top-day");
   const [direct, setDirect] = createSignal(false);
   const [adding, setAdding] = createSignal(false);
   let timer: number | undefined;
@@ -1113,8 +1069,6 @@ function AddFeedDialog(props: {
       const result = await props.api.discoverFeed(value);
       setCandidates(result);
       setSelected(0);
-      if (result[0]?.connector === "reddit")
-        setCollection(redditCollectionFromURL(result[0].feed_url));
       setState(discoveredCandidateState(result));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Discovery failed.");
@@ -1140,11 +1094,7 @@ function AddFeedDialog(props: {
 
   const add = async () => {
     const candidate = candidates()[selected()];
-    const feedURL = direct()
-      ? absoluteAddress(address())
-      : candidate?.connector === "reddit"
-        ? redditCanonicalURL(candidate.feed_url, collection())
-        : candidate?.feed_url;
+    const feedURL = direct() ? absoluteAddress(address()) : candidate?.feed_url;
     if (!feedURL) return;
     setAdding(true);
     try {
@@ -1228,11 +1178,7 @@ function AddFeedDialog(props: {
         </label>
 
         <Show when={state() === "single"}>
-          <CandidateCard
-            candidate={candidates()[0]}
-            collection={collection()}
-            onCollection={setCollection}
-          />
+          <CandidateCard candidate={candidates()[0]} />
         </Show>
         <Show when={state() === "multiple"}>
           <fieldset class="candidate-list">
@@ -1322,20 +1268,9 @@ function AddFeedDialog(props: {
   );
 }
 
-function CandidateCard(props: {
-  candidate: FeedCandidate;
-  compact?: boolean;
-  collection?: RedditCollection;
-  onCollection?(collection: RedditCollection): void;
-}) {
+function CandidateCard(props: { candidate: FeedCandidate; compact?: boolean }) {
   return (
-    <div
-      class="candidate-card"
-      classList={{
-        compact: props.compact,
-        reddit: props.candidate.connector === "reddit",
-      }}
-    >
+    <div class="candidate-card" classList={{ compact: props.compact }}>
       <SourceBadge
         connector={props.candidate.connector}
         imageURL={props.candidate.badge_url ?? props.candidate.avatar_url}
@@ -1346,44 +1281,6 @@ function CandidateCard(props: {
         <strong>{props.candidate.title}</strong>
         <small>{candidateDescriptor(props.candidate)}</small>
       </span>
-      <Show
-        when={
-          props.candidate.connector === "reddit" &&
-          props.collection &&
-          props.onCollection
-        }
-      >
-        <fieldset class="reddit-collect candidate-collect">
-          <legend>COLLECT</legend>
-          <RedditCollectionControl
-            value={props.collection ?? "top-day"}
-            onChange={(value) => props.onCollection?.(value)}
-          />
-          <small>{redditCollectionDescription(props.collection)}</small>
-        </fieldset>
-      </Show>
-    </div>
-  );
-}
-
-function RedditCollectionControl(props: {
-  value: RedditCollection;
-  onChange(collection: RedditCollection): void;
-}) {
-  return (
-    <div class="reddit-collect-options">
-      <For each={redditCollections}>
-        {(collection) => (
-          <button
-            type="button"
-            classList={{ active: props.value === collection }}
-            aria-pressed={props.value === collection}
-            onClick={() => props.onChange(collection)}
-          >
-            {redditCollectionLabel(collection)}
-          </button>
-        )}
-      </For>
     </div>
   );
 }
@@ -1592,8 +1489,6 @@ function PriorBadge(props: { feed: Feed }) {
 
 function candidateDescriptor(candidate: FeedCandidate): string {
   if (candidate.connector === "youtube") return "YouTube · uploads";
-  if (candidate.connector === "reddit")
-    return `reddit.com · ${formatCount(candidate.item_count)} items in this listing`;
   const timing = candidate.cadence
     ? ` · ${candidate.cadence}`
     : ` · ${formatCount(candidate.item_count)} items`;
@@ -1601,17 +1496,6 @@ function candidateDescriptor(candidate: FeedCandidate): string {
     ? ` · newest ${relativeTimeAgo(candidate.newest_item_ts)}`
     : "";
   return `${candidate.type.toUpperCase()}${timing}${newest}`;
-}
-
-function redditCollectionDescription(collection?: RedditCollection): string {
-  switch (collection) {
-    case "hot":
-      return "Hot: checked every 3 hours.";
-    case "new":
-      return "New: checked hourly.";
-    default:
-      return "Top · day is the default: one pass a day, the community’s own filter, about 25 items.";
-  }
 }
 
 function absoluteAddress(raw: string): string {
@@ -1625,9 +1509,3 @@ function formatCount(value: number): string {
 
 const focusSelector =
   "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
-
-const redditCollections: readonly RedditCollection[] = [
-  "hot",
-  "top-day",
-  "new",
-];

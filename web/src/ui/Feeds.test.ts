@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { archiveSize } from "../archive";
+import { cadenceLabel } from "../feed-manager";
 import { formatPrior, whyText } from "../ranking-display";
 import type { Feed, FeedCandidate, Item } from "../types";
 import {
   discoveredCandidateState,
   discoveryErrorMessage,
 } from "./feed-discovery";
-import { drawerDescriptor, feedFetchLabel, upsertFeed } from "./feed-list";
+import {
+  drawerDescriptor,
+  feedDescriptor,
+  feedFetchLabel,
+  upsertFeed,
+} from "./feed-list";
 
 describe("archive storage estimate", () => {
   it("uses the specified 300 KB per kept item estimate", () => {
@@ -92,14 +98,33 @@ describe("feed fetch status", () => {
   });
 });
 
-describe("feed drawer descriptor", () => {
-  it("names a Reddit feed's cadence", () => {
-    const reddit = {
-      feed_id: "reddit",
-      connector: "reddit",
-      url: "https://www.reddit.com/r/programming/top/?t=day",
-      fetch_interval_h: 24,
-    } as Feed;
-    expect(drawerDescriptor(reddit)).toMatch(/ · Daily · not checked yet$/);
+describe("a Reddit Feed's settings", () => {
+  // Reddit ended its public feeds (ADR 0009). A Reddit Feed still present until
+  // the removal backfill names no sort listing and has the Cadence every other
+  // Feed has.
+  const reddit = {
+    feed_id: "reddit",
+    connector: "reddit",
+    url: "https://www.reddit.com/r/programming/top.rss?t=day",
+    cadence_pin_h: null,
+    fetch_interval_h: 6,
+    effective_cadence_h: 6,
+  } as Feed;
+
+  it("names no sort listing", () => {
+    expect(feedDescriptor(reddit)).toBe("reddit.com/r/programming/top.rss");
+    expect(drawerDescriptor(reddit)).toBe("not fetched yet");
+  });
+
+  it("labels an Auto Cadence the way RSS does", () => {
+    expect(cadenceLabel(reddit)).toBe("Auto · every 6h");
+    expect(
+      cadenceLabel({
+        ...reddit,
+        cadence_pin_h: 24,
+        fetch_interval_h: 24,
+        effective_cadence_h: 24,
+      }),
+    ).toBe("Daily");
   });
 });

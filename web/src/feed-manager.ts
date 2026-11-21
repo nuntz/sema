@@ -161,7 +161,7 @@ export function cadenceLabel(feed: Feed): string {
   const hours = feed.effective_cadence_h ?? feed.fetch_interval_h;
   const cadence =
     hours === 1 ? "Hourly" : hours === 24 ? "Daily" : `Every ${hours}h`;
-  return feed.connector !== "reddit" && cadencePin(feed) === null
+  return cadencePin(feed) === null
     ? `Auto · ${cadence.toLowerCase()}`
     : cadence;
 }

@@ -639,27 +639,28 @@ func TestAddRedditFeedAlreadyFollowedIsRefused(t *testing.T) {
 	}
 }
 
-func TestPatchRedditCollectionKeepsIdentityAndQueuesFetch(t *testing.T) {
-	feed := domain.Feed{
-		PK: domain.UserPK("user"), SK: domain.FeedSK("legacy-id"), FeedID: "legacy-id",
-		Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/castles/top.rss?t=day",
-		Title: "r/castles", SiteURL: "https://www.reddit.com/r/castles/", FetchIntervalH: 24,
-		ETag: `"top"`, LastModified: "yesterday", ErrorCount: 3, LastError: "forbidden",
-	}
-	var saved domain.Feed
-	db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }}
-	state := &fakeSnapshotStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
-	queue := &apiQueue{}
-	server := &server{store: db, snapshotStore: state, queue: queue}
-	got := server.patchFeed(context.Background(), server.requestSnapshot("user"), "legacy-id", `{"url":"https://www.reddit.com/r/castles/.rss"}`)
-	if got.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
-	}
-	if saved.FeedID != "legacy-id" || saved.URL != "https://www.reddit.com/r/castles/.rss" || saved.FetchIntervalH != 3 || saved.ETag != "" || saved.LastModified != "" || saved.ErrorCount != 0 || saved.LastError != "" || saved.LastStatus != "queued" {
-		t.Fatalf("saved feed = %#v", saved)
-	}
-	if queue.input == nil || len(queue.input.Entries) != 1 {
-		t.Fatalf("queue input = %#v", queue.input)
+// No Feed can change its URL: only Reddit Feeds could, and Reddit ended its
+// public feeds (ADR 0009).
+func TestPatchFeedURLIsRefused(t *testing.T) {
+	for _, feed := range []domain.Feed{
+		{FeedID: "rss", Connector: domain.ConnectorRSS, URL: "https://example.com/feed.xml"},
+		{FeedID: "youtube", Connector: domain.ConnectorYouTube, URL: "https://www.youtube.com/feeds/videos.xml?channel_id=UC123"},
+		{FeedID: "reddit", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/castles/top.rss?t=day", FetchIntervalH: 24},
+	} {
+		t.Run(feed.Connector, func(t *testing.T) {
+			saved := false
+			db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }}
+			state := &fakeSnapshotStore{putFeed: func(context.Context, domain.Feed) error { saved = true; return nil }}
+			queue := &apiQueue{}
+			server := &server{store: db, snapshotStore: state, queue: queue}
+			got := server.patchFeed(context.Background(), server.requestSnapshot("user"), feed.FeedID, `{"url":"https://www.reddit.com/r/castles/.rss"}`)
+			if got.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+			}
+			if saved || queue.input != nil {
+				t.Fatalf("saved = %v, queue input = %#v", saved, queue.input)
+			}
+		})
 	}
 }
 

@@ -46,9 +46,18 @@ async function openManager(
     failRetry?: boolean;
     emptyCounts?: boolean;
     failCounts?: boolean;
+    redditFeed?: boolean;
   } = {},
 ) {
-  let feeds = fixtures.map((feed) => ({ ...feed }));
+  let feeds = fixtures.map((feed) =>
+    options.redditFeed && feed.feed_id === "feed-8"
+      ? {
+          ...feed,
+          connector: "reddit" as const,
+          url: "https://www.reddit.com/r/castles/top.rss?t=day",
+        }
+      : { ...feed },
+  );
   const state = {
     counts: [] as string[],
     retries: [] as string[],
@@ -412,6 +421,35 @@ test("single-feed removal uses the same undo restoration", async ({ page }) => {
   expect(state.patches).toEqual([
     { muted: false, always_generate: true, fetch_interval_h: 24 },
   ]);
+});
+
+// Reddit ended its public feeds (ADR 0009): a Reddit Feed still present until
+// the removal backfill has the drawer every other Feed has, with no sort
+// picker or Collect.
+test("a Reddit Feed's drawer has Cadence and no sort picker", async ({
+  page,
+}) => {
+  const state = await openManager(page, { redditFeed: true });
+  await page
+    .locator(".feed-manage-row")
+    .filter({ hasText: "Journal 008" })
+    .click();
+  const drawer = page.getByRole("dialog");
+  const cadence = drawer.getByRole("group", { name: "CADENCE" });
+  await expect(cadence).toBeVisible();
+  await expect(drawer.getByText("Collect", { exact: true })).toHaveCount(0);
+  for (const sort of ["Hot", "Top · day", "New"])
+    await expect(
+      drawer.getByRole("button", { name: sort, exact: true }),
+    ).toHaveCount(0);
+  await expect(
+    drawer.getByRole("button", { name: "Remove feed", exact: true }),
+  ).toBeVisible();
+  await cadence.getByRole("button", { name: "3h", exact: true }).click();
+  await expect(
+    cadence.getByRole("button", { name: "3h", exact: true }),
+  ).toHaveClass(/active/);
+  expect(state.patches).toEqual([{ fetch_interval_h: 3 }]);
 });
 
 test("switching from Today requests all-time counts and restores window counts on return", async ({
