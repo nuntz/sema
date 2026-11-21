@@ -78,6 +78,14 @@ jobs:
         run: bunx playwright install --with-deps chromium
         working-directory: web
       - run: make e2e
+      # The JSON report, from every run and attempt, for scripts/ci-e2e-report.sh: failures and
+      # each test's share of its timeout (#65).
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report${{ matrix.stress && format('-stress-{0}', matrix.stress) || '' }}-attempt-${{ github.run_attempt }}
+          path: /tmp/sema-playwright-report.json
+          retention-days: 30
       # Playwright's per-test output (error context, captured images) for reading a CI-only failure.
       - if: failure()
         uses: actions/upload-artifact@v4

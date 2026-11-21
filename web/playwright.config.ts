@@ -11,7 +11,17 @@ export default defineConfig({
   testMatch: "*.e2e.ts",
   outputDir: `/tmp/sema-playwright-results${portOverride ? `-${port}` : ""}`,
   fullyParallel: true,
-  reporter: "line",
+  // CI uploads the JSON report from every e2e leg, and
+  // scripts/ci-e2e-report.sh reads a run's failures and slowest tests from it.
+  reporter: [
+    ["line"],
+    [
+      "json",
+      {
+        outputFile: `/tmp/sema-playwright-report${portOverride ? `-${port}` : ""}.json`,
+      },
+    ],
+  ],
   use: {
     baseURL: origin,
     ...devices["Desktop Chrome"],
