@@ -330,8 +330,6 @@ type Entry struct {
 	LinkItem     bool
 	GUID         string
 	URL          string
-	ExternalURL  string
-	PostType     string
 	Title        string
 	SummaryRaw   string
 	ContentRaw   string

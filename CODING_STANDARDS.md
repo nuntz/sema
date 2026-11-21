@@ -78,6 +78,10 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 - A `CONTEXT.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
 - A rule that changes in one doc changes everywhere it is stated, including code comments that restate it; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
+## Deletions
+
+- A deletion also removes the struct fields, flags and branches that only the deleted code wrote: trace each field the deleted code set to its remaining writers, and delete the field, with whatever forwards it, when none is left. `deadcode` in `make check` finds unreachable functions, not fields that are still read but never written; #79 left `domain.Entry.PostType` and `ExternalURL` forwarded empty by the feed worker after the Reddit Connector went.
+
 ## Backfills
 
 - A backfill that deletes or rewrites rows names every reader of those rows and has a test per reader showing its output is the same after the run as before. For a Feed, that means the API's overlay (`domain.PresentWithFeed`), Send (`feedFields` in `internal/send/payload.go`), Search and ranking. Send's test is `TestItemPayloadOfAKeptItemIsUnchangedOnceItsFeedIsRemoved`. The #78 removal nearly dropped Send's `feed.url` and `tags`, which only the Feed row held (#75).

@@ -139,7 +139,7 @@ func (h *handler) process(ctx context.Context, body string) error {
 			}
 		}
 		messages = append(messages, domain.ItemMessage{
-			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, ExternalURL: entry.ExternalURL, LinkItem: entry.LinkItem, PostType: entry.PostType, Title: entry.Title,
+			User: message.User, FeedID: message.FeedID, ItemID: itemID, URL: entry.URL, LinkItem: entry.LinkItem, Title: entry.Title,
 			SummaryRaw: truncateBytes(entry.SummaryRaw, 20<<10), ContentRaw: truncateBytes(entry.ContentRaw, 200<<10),
 			Author: entry.Author, PublishedTS: domain.Timestamp(entry.Published), DisplayDate: entry.DisplayDate, EnclosureURLs: entry.Enclosures,
 			MediaType: videoMediaType(entry.VideoID), VideoID: entry.VideoID, IsShort: entry.IsShort,
