@@ -78,6 +78,10 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 - A `CONTEXT.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
 - A rule that changes in one doc changes everywhere it is stated, including code comments that restate it; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
+## Backfills
+
+- A backfill that deletes or rewrites rows names every reader of those rows and has a test per reader showing its output is the same after the run as before. For a Feed, that means the API's overlay (`domain.PresentWithFeed`), Send (`feedFields` in `internal/send/payload.go`), Search and ranking. Send's test is `TestItemPayloadOfAKeptItemIsUnchangedOnceItsFeedIsRemoved`. The #78 removal nearly dropped Send's `feed.url` and `tags`, which only the Feed row held (#75).
+
 ## Wizards
 
 - In a `/wizard` script such as `scripts/setup-deploy.sh`, everything above the STAGES marker is the shared library: stages change, the library doesn't.

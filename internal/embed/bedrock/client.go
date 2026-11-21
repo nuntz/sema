@@ -20,8 +20,6 @@ type Client struct {
 	modelID string
 }
 
-func New(runtime runtimeAPI) *Client { return NewWithModel(runtime, ModelID) }
-
 func NewWithModel(runtime runtimeAPI, modelID string) *Client {
 	if modelID == "" {
 		modelID = ModelID
