@@ -148,7 +148,7 @@ func postFeedURL(raw string) (string, error) {
 
 func redditHost(host string) bool {
 	switch strings.ToLower(strings.TrimSuffix(host, ".")) {
-	case "reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com":
+	case "reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com", "np.reddit.com", "m.reddit.com":
 		return true
 	default:
 		return false

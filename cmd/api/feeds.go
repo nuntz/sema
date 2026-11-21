@@ -63,16 +63,11 @@ func (s *server) discoverFeeds(ctx context.Context, body string) events.APIGatew
 	discoveryContext, cancel := context.WithTimeout(ctx, 14*time.Second)
 	defer cancel()
 	candidates, err := s.discover.Discover(discoveryContext, input.URL)
+	if errors.Is(err, reddit.ErrEnded) {
+		return redditEnded()
+	}
 	if err != nil {
-		payload := map[string]any{"error": err.Error()}
-		var redditErr *reddit.DiscoveryError
-		if errors.As(err, &redditErr) {
-			payload["kind"] = redditErr.Kind
-			if redditErr.StatusCode != 0 {
-				payload["upstream_status"] = redditErr.StatusCode
-			}
-		}
-		return response(http.StatusUnprocessableEntity, payload)
+		return response(http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 	}
 	if candidates == nil {
 		candidates = []domain.FeedCandidate{}
@@ -92,7 +87,7 @@ func (s *server) discoverFeeds(ctx context.Context, body string) events.APIGatew
 		if avatarErr != nil {
 			continue
 		}
-		key := store.FaviconKey(candidateFeedID(*candidate))
+		key := store.FaviconKey(domain.FeedID(candidate.FeedURL))
 		if putErr := s.store.PutContent(discoveryContext, key, avatar.ContentType, avatar.Bytes); putErr == nil {
 			candidate.BadgeURL = s.store.ContentURL(key)
 			if candidate.Connector == domain.ConnectorYouTube {
@@ -119,6 +114,9 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 	if err := decodeJSON(body, &input); err != nil {
 		return badRequest(err)
 	}
+	if strings.TrimSpace(input.Connector) == domain.ConnectorReddit || reddit.Matches(input.FeedURL) {
+		return redditEnded()
+	}
 	feedURL, err := normalizeFeedURL(input.FeedURL)
 	if err != nil {
 		return badRequest(err)
@@ -137,12 +135,10 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 		connectorName = domain.ConnectorRSS
 		if youtube.IsFeedURL(feedURL) {
 			connectorName = domain.ConnectorYouTube
-		} else if parsed, redditErr := reddit.ParseInput(feedURL); redditErr == nil && reddit.CanonicalURL(parsed.Subreddit, parsed.Sort) == feedURL {
-			connectorName = domain.ConnectorReddit
 		}
 	}
-	if connectorName != domain.ConnectorRSS && connectorName != domain.ConnectorReddit && connectorName != domain.ConnectorYouTube {
-		return badRequest(errors.New("connector must be rss, reddit, or youtube"))
+	if connectorName != domain.ConnectorRSS && connectorName != domain.ConnectorYouTube {
+		return badRequest(errors.New("connector must be rss or youtube"))
 	}
 	if connectorName == domain.ConnectorYouTube && !youtube.IsFeedURL(feedURL) {
 		return badRequest(errors.New("youtube connector requires a channel uploads URL"))
@@ -153,21 +149,8 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 		if interval != 1 && interval != 3 && interval != 6 && interval != 24 {
 			return badRequest(errors.New("fetch_interval_h must be null, 1, 3, 6, or 24"))
 		}
-		if connectorName == domain.ConnectorReddit {
-			return badRequest(errors.New("Reddit Cadence is controlled by Collect"))
-		}
 	}
 	feedID := domain.FeedID(feedURL)
-	var redditInput reddit.Input
-	if connectorName == domain.ConnectorReddit {
-		redditInput, err = reddit.ParseInput(feedURL)
-		if err != nil {
-			return badRequest(errors.New("reddit connector requires a supported subreddit feed URL"))
-		}
-		feedURL = reddit.CanonicalURL(redditInput.Subreddit, redditInput.Sort)
-		feedID = domain.FeedID(reddit.SiteURL(redditInput.Subreddit))
-		interval = reddit.IntervalHours(redditInput.Sort)
-	}
 	discoveredTitle := strings.TrimSpace(input.Title)
 	if utf8.RuneCountInString(discoveredTitle) > 200 {
 		return badRequest(errors.New("title must be at most 200 characters"))
@@ -178,12 +161,8 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 			return badRequest(errors.New("site_url must be an absolute HTTP URL"))
 		}
 	}
-	if connectorName == domain.ConnectorReddit {
-		discoveredTitle = reddit.Title(redditInput.Subreddit)
-		siteURL = reddit.SiteURL(redditInput.Subreddit)
-	}
 	iconKey := ""
-	if connectorName == domain.ConnectorYouTube || connectorName == domain.ConnectorReddit {
+	if connectorName == domain.ConnectorYouTube {
 		candidateKey := store.FaviconKey(feedID)
 		badgeURL := input.BadgeURL
 		if badgeURL == "" {
@@ -198,29 +177,6 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 		existingFeed = &existing
 	} else if !errors.Is(getErr, store.ErrNotFound) {
 		return s.failure("find feed", getErr)
-	}
-	if existingFeed == nil && connectorName == domain.ConnectorReddit {
-		rows, _, listErr := user.Feeds(ctx)
-		if listErr != nil {
-			return s.failure("find Reddit feed", listErr)
-		}
-		for index := range rows {
-			parsed, parseErr := reddit.ParseInput(rows[index].URL)
-			if parseErr != nil || parsed.Subreddit != redditInput.Subreddit {
-				continue
-			}
-			// The list can be up to a minute behind the feed worker, and the
-			// merged Feed is written back whole, so merge into the live row.
-			existing, getErr := s.store.Feed(ctx, userID, rows[index].FeedID)
-			if getErr != nil && !errors.Is(getErr, store.ErrNotFound) {
-				return s.failure("find Reddit feed", getErr)
-			}
-			if getErr == nil {
-				existingFeed = &existing
-				feedID = existing.FeedID
-			}
-			break
-		}
 	}
 	feed := domain.Feed{
 		PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: feedURL,
@@ -240,14 +196,8 @@ func (s *server) addFeed(ctx context.Context, user *requestsnapshot.Snapshot, bo
 		if customTitle != "" {
 			feed.CustomTitle = customTitle
 		}
-		if connectorName == domain.ConnectorYouTube || connectorName == domain.ConnectorReddit {
+		if connectorName == domain.ConnectorYouTube {
 			feed.Connector = connectorName
-			if connectorName == domain.ConnectorReddit && feed.URL != feedURL {
-				feed.URL = feedURL
-				feed.FetchIntervalH = interval
-				feed.ETag, feed.LastModified = "", ""
-				feed.ErrorCount, feed.LastError = 0, ""
-			}
 			if discoveredTitle != "" {
 				feed.Title = discoveredTitle
 			}
@@ -524,15 +474,6 @@ func normalizeFeedURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func candidateFeedID(candidate domain.FeedCandidate) string {
-	if candidate.Connector == domain.ConnectorReddit {
-		if parsed, err := reddit.ParseInput(candidate.FeedURL); err == nil {
-			return domain.FeedID(reddit.SiteURL(parsed.Subreddit))
-		}
-	}
-	return domain.FeedID(candidate.FeedURL)
-}
-
 func normalizeTitle(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
 	if utf8.RuneCountInString(value) > 200 {
@@ -628,4 +569,10 @@ func decorateExtraction(feeds []domain.Feed) {
 			feeds[i].AverageQuality = &average
 		}
 	}
+}
+
+// redditEnded refuses a Reddit address wherever a Feed could be added from
+// one, with a stable kind the web app keys its explanation on (ADR 0009).
+func redditEnded() events.APIGatewayV2HTTPResponse {
+	return response(http.StatusUnprocessableEntity, map[string]string{"error": reddit.EndedExplanation, "kind": "reddit_ended"})
 }

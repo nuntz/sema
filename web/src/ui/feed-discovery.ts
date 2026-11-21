@@ -16,3 +16,12 @@ export function discoveredCandidateState(
   if (candidates.length === 0) return "none";
   return candidates.length === 1 ? "single" : "multiple";
 }
+
+const redditEnded =
+  "Reddit ended its public feeds, so Sema can’t follow subreddits.";
+
+// The error Add feed shows when discovery fails. Reddit's refusal is keyed on
+// its stable kind so the explanation doesn't depend on the server's wording.
+export function discoveryErrorMessage(kind: string, message: string): string {
+  return kind === "reddit_ended" ? redditEnded : message;
+}
