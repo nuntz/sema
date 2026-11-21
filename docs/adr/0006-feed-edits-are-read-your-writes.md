@@ -10,7 +10,7 @@ After a user adds, edits, Mutes, retries, imports or deletes a Feed, the client 
 
 A per-user `FEED_VERSION` row counts user-initiated Feed changes. Following ADR 0005, every instance reads it with a strongly consistent read before reusing the Feed list, the detailed Feed list or a cached Story list (the version is part of the Story cache key). If the version has moved, it reloads the Feeds strongly consistent. The writing instance drops its own caches rather than patching them forward: Feed writes are rare, and a reload is one Query.
 
-Only the API's Feed writes bump the version: add, edit, retry, OPML import and delete. `cmd/feed-worker` writes every Feed after each fetch, and bumping there would empty every instance's cache constantly. So changes the worker or a backfill makes (Feed Status, fetched title, favicon, cadence) reach other instances only when the one-minute TTL expires. Nobody is waiting to read those back.
+Only the API's Feed writes bump the version: add, edit, retry, OPML import and delete. `cmd/feed-worker` writes every Feed after each fetch, and bumping there would empty every instance's cache constantly. So changes the worker or a backfill makes (Feed Status, fetched title, favicon, cadence) reach other instances only when the one-minute TTL expires. Nobody is waiting to read those back. One backfill is the exception: `backfill-remove-reddit-feeds` removes Feeds through `DeleteFeed`, so it bumps the version like a user's Remove (ADR 0009).
 
 ## Consequences
 
