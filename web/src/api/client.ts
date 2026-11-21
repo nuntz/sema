@@ -28,7 +28,6 @@ export class APIError extends Error {
     message: string,
     readonly status: number,
     readonly kind?: string,
-    readonly upstreamStatus?: number,
   ) {
     super(message);
     this.name = "APIError";
@@ -84,7 +83,6 @@ export class APIClient {
         payload.error ?? `Request failed (${response.status})`,
         response.status,
         payload.kind,
-        payload.upstream_status,
       );
     }
     if (response.status === 204) return undefined as T;

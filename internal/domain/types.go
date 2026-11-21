@@ -100,6 +100,25 @@ func FeedConnector(feed Feed) string {
 	return feed.Connector
 }
 
+// PresentWithFeed returns item as it is served while its Feed exists: it
+// borrows the Feed's connector, its displayed title (custom title first) and
+// its favicon, keeping the Item's own title and favicon where the Feed has
+// none. The API applies it to every Item it serves, and
+// backfill-remove-reddit-feeds writes it onto Kept Items before removing
+// their Feed (ADR 0009).
+func PresentWithFeed(item Item, feed Feed) Item {
+	if title := feed.CustomTitle; title != "" {
+		item.FeedTitle = title
+	} else if feed.Title != "" {
+		item.FeedTitle = feed.Title
+	}
+	if feed.FaviconKey != "" {
+		item.FaviconKey = feed.FaviconKey
+	}
+	item.Connector = FeedConnector(feed)
+	return item
+}
+
 const (
 	SummarySourceFeed      = "feed"
 	SummarySourceBody      = "body"

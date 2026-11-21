@@ -52,13 +52,13 @@ func removeUserFeeds(ctx context.Context, repository feedStore, user string, app
 	if err != nil {
 		return removal{}, err
 	}
-	reddit := []domain.Feed{}
+	redditFeeds := []domain.Feed{}
 	for _, feed := range feeds {
 		if domain.FeedConnector(feed) == domain.ConnectorReddit {
-			reddit = append(reddit, feed)
+			redditFeeds = append(redditFeeds, feed)
 		}
 	}
-	if len(reddit) == 0 {
+	if len(redditFeeds) == 0 {
 		return removal{}, nil
 	}
 	kept, err := repository.ArchiveItems(ctx, user)
@@ -66,7 +66,7 @@ func removeUserFeeds(ctx context.Context, repository feedStore, user string, app
 		return removal{}, err
 	}
 	var counts removal
-	for _, feed := range reddit {
+	for _, feed := range redditFeeds {
 		for _, item := range kept {
 			if item.FeedID != feed.FeedID {
 				continue
@@ -95,19 +95,9 @@ func removeUserFeeds(ctx context.Context, repository feedStore, user string, app
 }
 
 // freeze writes onto a Kept Item what the API serves while its Feed exists,
-// mirroring the API's Feed presentation: the connector, the displayed title
-// (custom title first) and the favicon, each only when the Feed has one.
+// so it looks the same once the Feed is gone.
 func freeze(item domain.Item, feed domain.Feed) (domain.Item, bool) {
-	frozen := item
-	frozen.Connector = domain.FeedConnector(feed)
-	if title := feed.CustomTitle; title != "" {
-		frozen.FeedTitle = title
-	} else if feed.Title != "" {
-		frozen.FeedTitle = feed.Title
-	}
-	if feed.FaviconKey != "" {
-		frozen.FaviconKey = feed.FaviconKey
-	}
+	frozen := domain.PresentWithFeed(item, feed)
 	changed := frozen.Connector != item.Connector || frozen.FeedTitle != item.FeedTitle || frozen.FaviconKey != item.FaviconKey
 	return frozen, changed
 }

@@ -408,24 +408,13 @@ func (s *server) applyFeedPresentation(ctx context.Context, user *requestsnapsho
 	if err != nil {
 		return err
 	}
-	type presentation struct{ title, favicon, connector string }
-	presentations := make(map[string]presentation, len(feeds))
+	byID := make(map[string]domain.Feed, len(feeds))
 	for _, feed := range feeds {
-		title := feed.Title
-		if feed.CustomTitle != "" {
-			title = feed.CustomTitle
-		}
-		presentations[feed.FeedID] = presentation{title: title, favicon: feed.FaviconKey, connector: domain.FeedConnector(feed)}
+		byID[feed.FeedID] = feed
 	}
 	for i := range items {
-		if value, ok := presentations[items[i].FeedID]; ok {
-			if value.title != "" {
-				items[i].FeedTitle = value.title
-			}
-			if value.favicon != "" {
-				items[i].FaviconKey = value.favicon
-			}
-			items[i].Connector = value.connector
+		if feed, ok := byID[items[i].FeedID]; ok {
+			items[i] = domain.PresentWithFeed(items[i], feed)
 		}
 	}
 	return nil
@@ -541,5 +530,5 @@ func decorateExtraction(feeds []domain.Feed) {
 // redditEnded refuses a Reddit address wherever a Feed could be added from
 // one, with a stable kind the web app keys its explanation on (ADR 0009).
 func redditEnded() events.APIGatewayV2HTTPResponse {
-	return response(http.StatusUnprocessableEntity, map[string]string{"error": reddit.EndedExplanation, "kind": "reddit_ended"})
+	return response(http.StatusUnprocessableEntity, map[string]string{"error": reddit.EndedExplanation, "kind": reddit.EndedKind})
 }
