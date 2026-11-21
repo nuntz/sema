@@ -1,7 +1,7 @@
 import { animationsFinished } from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { expect, type Page, test } from "./test";
-import { stubYouTube } from "./youtube-stub";
+import { logPlayerStates, seekPlayer, stubYouTube } from "./youtube-stub";
 
 const stage = (page: Page) => page.locator(".video-stage");
 const docked = (page: Page) => page.locator('.video-stage[data-mode="dock"]');
@@ -499,9 +499,17 @@ test("Space beside the Dock leaves its video playing", async ({ page }) => {
   await stubYouTube(page);
   await openGrid(page, "youtube");
   await dockFromPeek(page);
+  await logPlayerStates(player(page));
   await page.keyboard.press(" ");
   await expect(docked(page)).toBeVisible();
-  // Had the Dock paused, Space in its Peek would resume rather than pause.
+  // A Space that reached the docked player logs its pause (2) before the
+  // seek's buffering. Only the late reply to the autoplay may come first.
+  await seekPlayer(player(page), 30);
+  await expect(player(page)).toHaveAttribute(
+    "data-state-log",
+    /^(1,)?3,1(,|$)/,
+  );
+  // Settled after the seek, the same player still pauses from its Peek.
   await page.getByRole("button", { name: "Expand video" }).click();
   await expect(page.locator(".video-peek")).toBeFocused();
   await page.keyboard.press(" ");

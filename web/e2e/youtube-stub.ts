@@ -15,6 +15,24 @@ export async function logPlayerStates(player: Locator) {
   });
 }
 
+/**
+ * Post the player a seek from the page's window, the one the app posts its
+ * commands from. One window's messages reach the frame in order, so the seek's
+ * buffering (3) logs after the reply to every command the app sent before it.
+ */
+export async function seekPlayer(player: Locator, seconds: number) {
+  await player.evaluate((iframe: HTMLIFrameElement, seconds) => {
+    iframe.contentWindow?.postMessage(
+      JSON.stringify({
+        event: "command",
+        func: "seekTo",
+        args: [seconds, true],
+      }),
+      new URL(iframe.src).origin,
+    );
+  }, seconds);
+}
+
 /** Serve the player protocol from its real cross-origin iframe boundary. */
 export async function stubYouTube(
   page: Page,
