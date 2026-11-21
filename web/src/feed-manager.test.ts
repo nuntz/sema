@@ -240,7 +240,4 @@ it("keeps Auto distinct from its effective Cadence", () => {
   expect(cadencePin(automatic)).toBeNull();
   expect(cadenceLabel(automatic)).toBe("Auto · every 6h");
   expect(cadencePin(feed("pin", { cadence_pin_h: 1 }))).toBe(1);
-  expect(
-    cadenceLabel(feed("reddit", { connector: "reddit", fetch_interval_h: 24 })),
-  ).toBe("Daily");
 });

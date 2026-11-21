@@ -134,7 +134,7 @@ func parseFeed(body []byte) (domain.FetchResult, error) {
 
 type Discoverer struct{ client fetcher }
 
-func NewDiscoverer(client *httpx.Client) *Discoverer { return &Discoverer{client: client} }
+func NewDiscoverer(client fetcher) *Discoverer { return &Discoverer{client: client} }
 
 func IsYouTubeInput(raw string) bool {
 	raw = strings.TrimSpace(raw)

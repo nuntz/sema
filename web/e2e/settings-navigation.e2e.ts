@@ -1090,6 +1090,39 @@ test("Settings inputs consume Escape and suppress g s while typing", async ({
   await expect(page.locator(".grid-scroll")).toBeVisible();
 });
 
+test("Add feed explains that Sema can't follow subreddits", async ({
+  page,
+}) => {
+  await openApp(page);
+  const discovered: string[] = [];
+  await page.route("**/api/feeds/discover", async (route) => {
+    discovered.push(route.request().postDataJSON().url);
+    await route.fulfill({
+      status: 422,
+      json: {
+        error:
+          "Reddit ended its public feeds, so Sema can’t follow subreddits.",
+        kind: "reddit_ended",
+      },
+    });
+  });
+  await page.keyboard.press("g");
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "Add feed" }).click();
+  const address = page.getByPlaceholder("example.com");
+  await address.fill("r/castles");
+  await address.press("Enter");
+
+  const error = page.getByRole("alert");
+  await expect(error).toContainText(
+    "Reddit ended its public feeds, so Sema can’t follow subreddits.",
+  );
+  await expect(
+    error.getByRole("button", { name: "Edit address" }),
+  ).toBeFocused();
+  expect(discovered).toEqual(["r/castles"]);
+});
+
 test("g s toggles Settings back to the cached grid", async ({ page }) => {
   const state = await openApp(page);
   const scrollTop = await setMidScroll(page);

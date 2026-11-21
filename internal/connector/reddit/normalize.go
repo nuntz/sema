@@ -116,17 +116,6 @@ func IntervalHours(sort Sort) int {
 	}
 }
 
-func SortLabel(sort Sort) string {
-	switch sort {
-	case SortHot:
-		return "Hot"
-	case SortNew:
-		return "New"
-	default:
-		return "Top · day"
-	}
-}
-
 func postFeedURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.Port() != "" || !redditHost(parsed.Hostname()) {
@@ -148,7 +137,7 @@ func postFeedURL(raw string) (string, error) {
 
 func redditHost(host string) bool {
 	switch strings.ToLower(strings.TrimSuffix(host, ".")) {
-	case "reddit.com", "www.reddit.com", "old.reddit.com", "np.reddit.com", "m.reddit.com":
+	case "reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com", "np.reddit.com", "m.reddit.com":
 		return true
 	default:
 		return false

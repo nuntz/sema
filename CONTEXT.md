@@ -11,7 +11,7 @@ One user's subscription to a source, together with their settings for it: tags, 
 _Avoid_: Subscription, source, channel, subreddit
 
 **Connector**:
-The kind of source a Feed reads: RSS (covering Atom and JSON Feed), YouTube, or Reddit.
+The kind of source a Feed reads: RSS (covering Atom and JSON Feed) or YouTube. Sema read Reddit until November 2026; Items Kept from Reddit stay in the Archive.
 _Avoid_: Transport, provider, adapter, type
 
 **Tag**:
@@ -35,7 +35,7 @@ How often Sema checks a Feed for new Items: hourly, every three or six hours, or
 _Avoid_: Interval, poll rate, frequency, schedule
 
 **Link Item**:
-An Item that points at something Sema is not meant to extract, so having no body is normal and not a failure. A Reddit or Bluesky post without an external link is a Link Item, and so is every Item of a Link Feed.
+An Item that points at something Sema is not meant to extract, so having no body is normal and not a failure. A Bluesky post without an external link is a Link Item, and so is every Item of a Link Feed.
 _Avoid_: Pointer, stub, headline-only item
 
 **Link Feed**:

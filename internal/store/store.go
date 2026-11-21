@@ -1164,6 +1164,57 @@ func (s *Store) UpdateSearchText(ctx context.Context, item domain.Item) error {
 	return err
 }
 
+// UpdateItemPresentation rewrites only the connector, Feed title, favicon,
+// Feed URL and Feed Tags an Item carries, so a backfill can freeze what its
+// Feed lent it before the Feed is removed (ADR 0009) without touching read,
+// Keep or rank state.
+func (s *Store) UpdateItemPresentation(ctx context.Context, item domain.Item) error {
+	names := map[string]string{}
+	values := map[string]types.AttributeValue{":item": &types.AttributeValueMemberS{Value: item.ItemID}}
+	sets, removes := []string{}, []string{}
+	text := func(value string) types.AttributeValue {
+		if value == "" {
+			return nil
+		}
+		return &types.AttributeValueMemberS{Value: value}
+	}
+	var tags types.AttributeValue
+	if len(item.FeedTags) > 0 {
+		tags = &types.AttributeValueMemberSS{Value: item.FeedTags}
+	}
+	for index, field := range []struct {
+		name  string
+		value types.AttributeValue
+	}{
+		{"connector", text(item.Connector)}, {"feed_title", text(item.FeedTitle)}, {"favicon_key", text(item.FaviconKey)},
+		{"feed_url", text(item.FeedURL)}, {"feed_tags", tags},
+	} {
+		alias := fmt.Sprintf("#presentation%d", index)
+		names[alias] = field.name
+		if field.value == nil {
+			removes = append(removes, alias)
+			continue
+		}
+		placeholder := fmt.Sprintf(":presentation%d", index)
+		values[placeholder] = field.value
+		sets = append(sets, alias+" = "+placeholder)
+	}
+	expression := ""
+	if len(sets) > 0 {
+		expression = "SET " + strings.Join(sets, ", ")
+	}
+	if len(removes) > 0 {
+		expression += " REMOVE " + strings.Join(removes, ", ")
+	}
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+		UpdateExpression:         aws.String(strings.TrimSpace(expression)),
+		ConditionExpression:      aws.String("attribute_exists(PK) AND item_id = :item"),
+		ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+	})
+	return err
+}
+
 // UpdateMediaVariants changes only the media dimensions and responsive asset
 // manifest so a backfill cannot overwrite mutable read, heart, or rank state.
 func (s *Store) UpdateMediaVariants(ctx context.Context, item domain.Item, variants []domain.MediaVariant, width, height int) error {

@@ -193,33 +193,3 @@ func TestParseInputAndCanonicalURLs(t *testing.T) {
 		}
 	}
 }
-
-func TestDiscoveryUsesCanonicalSortFixedUAAndLogo(t *testing.T) {
-	base, _ := url.Parse("https://www.reddit.com/r/example/new.rss")
-	body := `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>newest submissions : example</title><logo>https://styles.redditmedia.com/logo.png</logo><entry><id>t3_one</id><title>One</title><link href="https://www.reddit.com/r/example/comments/one/title/"/><published>2026-08-26T14:00:00Z</published></entry></feed>`
-	discoverer := &Discoverer{client: fakeFetcher{
-		response: httpx.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: []byte(body), FinalURL: base},
-		check: func(rawURL string, headers http.Header) {
-			if rawURL != base.String() || headers.Get("User-Agent") != UserAgent {
-				t.Fatalf("request = %q, %#v", rawURL, headers)
-			}
-		},
-	}}
-	candidates, err := discoverer.Discover(context.Background(), "https://m.reddit.com/r/Example/new.rss")
-	if err != nil || len(candidates) != 1 {
-		t.Fatalf("candidates = %#v, %v", candidates, err)
-	}
-	got := candidates[0]
-	if got.FeedURL != base.String() || got.Title != "r/example" || got.SiteURL != "https://www.reddit.com/r/example/" || got.BadgeURL != "https://styles.redditmedia.com/logo.png" || got.Cadence != "New" || got.ItemCount != 1 {
-		t.Fatalf("candidate = %#v", got)
-	}
-}
-
-func TestDiscoveryReturnsStructuredHTTPError(t *testing.T) {
-	discoverer := &Discoverer{client: fakeFetcher{response: httpx.Response{StatusCode: http.StatusForbidden, Header: make(http.Header)}}}
-	_, err := discoverer.Discover(context.Background(), "r/example")
-	status, ok := err.(*DiscoveryError)
-	if !ok || status.Kind != "unavailable" || status.StatusCode != http.StatusForbidden || !strings.Contains(status.Error(), "no Reddit login") {
-		t.Fatalf("error = %#v", err)
-	}
-}

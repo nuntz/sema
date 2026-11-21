@@ -100,6 +100,25 @@ func FeedConnector(feed Feed) string {
 	return feed.Connector
 }
 
+// PresentWithFeed returns item as it is served while its Feed exists: it
+// borrows the Feed's connector, its displayed title (custom title first) and
+// its favicon, keeping the Item's own title and favicon where the Feed has
+// none. The API applies it to every Item it serves, and
+// backfill-remove-reddit-feeds writes it onto Kept Items before removing
+// their Feed (ADR 0009).
+func PresentWithFeed(item Item, feed Feed) Item {
+	if title := feed.CustomTitle; title != "" {
+		item.FeedTitle = title
+	} else if feed.Title != "" {
+		item.FeedTitle = feed.Title
+	}
+	if feed.FaviconKey != "" {
+		item.FaviconKey = feed.FaviconKey
+	}
+	item.Connector = FeedConnector(feed)
+	return item
+}
+
 const (
 	SummarySourceFeed      = "feed"
 	SummarySourceBody      = "body"
@@ -123,15 +142,21 @@ type Item struct {
 	RecordBodyOutcome  bool   `dynamodbav:"-" json:"-"`
 	BodyOutcomesBefore string `dynamodbav:"-" json:"-"`
 
-	PK                string         `dynamodbav:"PK" json:"-"`
-	SK                string         `dynamodbav:"SK" json:"-"`
-	FeedPK            string         `dynamodbav:"feed_pk" json:"-"`
-	ItemID            string         `dynamodbav:"item_id" json:"item_id"`
-	StoryID           string         `dynamodbav:"story_id,omitempty" json:"story_id,omitempty"`
-	FeedID            string         `dynamodbav:"feed_id" json:"feed_id"`
-	FeedTitle         string         `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
-	Connector         string         `dynamodbav:"connector,omitempty" json:"connector"`
-	FaviconKey        string         `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	PK         string `dynamodbav:"PK" json:"-"`
+	SK         string `dynamodbav:"SK" json:"-"`
+	FeedPK     string `dynamodbav:"feed_pk" json:"-"`
+	ItemID     string `dynamodbav:"item_id" json:"item_id"`
+	StoryID    string `dynamodbav:"story_id,omitempty" json:"story_id,omitempty"`
+	FeedID     string `dynamodbav:"feed_id" json:"feed_id"`
+	FeedTitle  string `dynamodbav:"feed_title,omitempty" json:"feed_title,omitempty"`
+	Connector  string `dynamodbav:"connector,omitempty" json:"connector"`
+	FaviconKey string `dynamodbav:"favicon_key,omitempty" json:"favicon_url,omitempty"`
+	// FeedURL and FeedTags are the removed Feed's URL and Tags, frozen onto a
+	// Kept Item by backfill-remove-reddit-feeds so Send can still fill them
+	// (ADR 0009). Nothing else writes them, and Send reads them only when the
+	// Feed is gone.
+	FeedURL           string         `dynamodbav:"feed_url,omitempty" json:"-"`
+	FeedTags          []string       `dynamodbav:"feed_tags,stringset,omitempty" json:"-"`
 	URL               string         `dynamodbav:"url" json:"url"`
 	ExternalURL       string         `dynamodbav:"external_url,omitempty" json:"external_url,omitempty"`
 	PostType          string         `dynamodbav:"post_type,omitempty" json:"post_type,omitempty"`

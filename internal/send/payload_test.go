@@ -60,6 +60,45 @@ func TestItemPayloadRedditLinkPostSendsTheExternalLinkAndTheThread(t *testing.T)
 	}
 }
 
+func TestItemPayloadOfAKeptItemIsUnchangedOnceItsFeedIsRemoved(t *testing.T) {
+	feed := domain.Feed{FeedID: "feed-1", Connector: "reddit", URL: "https://www.reddit.com/r/maps/.rss", SiteURL: "https://www.reddit.com/r/maps/", Title: "r/maps", CustomTitle: "Maps", Tags: []string{"maps", "geo"}}
+	// What backfill-remove-reddit-feeds froze onto the Kept Item before removing its Feed.
+	item := domain.Item{
+		ItemID: "item-1", FeedID: "feed-1", URL: "https://www.reddit.com/r/maps/comments/abc/", Title: "A map", ArchiveSK: "A#item-1",
+		Connector: "reddit", FeedTitle: "Maps", FeedURL: "https://www.reddit.com/r/maps/", FeedTags: []string{"maps", "geo"},
+	}
+
+	withFeed, err := ItemPayload(item, feed, "receiver-user", sentAt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feedGone, err := ItemPayload(item, domain.Feed{}, "receiver-user", sentAt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := compactJSON(t, `{
+		"version": 1, "event": "item.send", "sent_at": "2026-09-26T18:04:11Z", "user_id": "receiver-user",
+		"item": {
+			"id": "item-1", "url": "https://www.reddit.com/r/maps/comments/abc/", "title": "A map",
+			"feed": {"connector": "reddit", "title": "Maps", "url": "https://www.reddit.com/r/maps/"},
+			"images": [], "kept": true, "tags": ["geo", "maps"]
+		}
+	}`)
+	if string(withFeed) != want || string(feedGone) != want {
+		t.Fatalf("with feed =\n%s\nfeed gone =\n%s\nwant\n%s", withFeed, feedGone, want)
+	}
+
+	// While the Feed exists, its current URL and Tags win over frozen ones.
+	feed.SiteURL, feed.Tags = "https://www.reddit.com/r/cartography/", []string{"cartography"}
+	current, err := ItemPayload(item, feed, "receiver-user", sentAt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(current), `"url":"https://www.reddit.com/r/cartography/"`) || !strings.Contains(string(current), `"tags":["cartography"]`) {
+		t.Fatalf("payload with a live Feed used frozen fields:\n%s", current)
+	}
+}
+
 func TestItemPayloadOmitsAbsentOptionalFields(t *testing.T) {
 	item := domain.Item{ItemID: "item-2", FeedID: "feed-2", Connector: "rss", URL: "https://example.com/post", Title: "Post", PublishedTS: "not a time", MediaSourceURL: "/relative.jpg"}
 	feed := domain.Feed{FeedID: "feed-2", URL: "https://example.com/feed.xml"}

@@ -512,6 +512,34 @@ make backfill-reddit-connector STACK=prod BACKFILL_ARGS=--apply
 
 The idempotent backfill recognizes only supported subreddit feed URLs. It keeps each existing feed ID, tags, mute state, items, archive pointers, ranking history, and read state while changing the connector to `reddit`, canonicalizing the selected Hot/Top-Day/New URL, setting its cadence, and clearing URL-specific HTTP validators when required. Unsupported Reddit listing types are left unchanged.
 
+### Reddit Feed removal
+
+Reddit ended its public feeds, so existing Reddit Feeds are removed while their Kept Items stay in the Archive (ADR 0009). Run this only after the refusal of new Reddit Feeds (#76) is deployed to production; otherwise a user can re-add a Feed it removed. Deleting Reddit ingestion (#79) waits for this removal to be applied and confirmed in production, because the feed worker fails on a Feed whose Connector is no longer registered.
+
+Preview the changes (no writes), then apply the reviewed plan:
+
+```sh
+make backfill-remove-reddit-feeds STACK=prod
+make backfill-remove-reddit-feeds STACK=prod BACKFILL_ARGS=--apply
+```
+
+Both runs log, for each user with a Reddit Feed, how many Reddit Feeds are removed and how many Kept Items are frozen, then the totals. For every Kept Item of a Reddit Feed, the backfill first writes connector `reddit`, the Feed's displayed title (custom title first), its favicon key, and the Feed URL and Tags a Send carries (`feed_url`, `feed_tags`) onto the Kept Item's row where they differ, because those come from the Feed while it exists. It then removes the Feed the way a user's Remove does, which bumps the Feed version so cached Feed lists refresh (ADR 0006). Favicon objects stay in content storage, because Kept Items reference them. Live Items of a removed Feed vanish, as with any Remove. Rerunning is safe: freezes go before each removal, and a run with no Reddit Feed left changes nothing.
+
+Confirm it in production:
+
+1. Rerun the dry run. It reports `reddit_feeds_removed=0 kept_items_frozen=0`.
+2. Check that no Feed row resolves to Reddit (rows without a connector resolve to RSS). `Count` must be 0:
+
+   ```sh
+   aws dynamodb scan --region us-east-1 --table-name sema-prod --select COUNT \
+     --filter-expression 'begins_with(SK, :feed) AND connector = :reddit' \
+     --expression-attribute-values '{":feed":{"S":"F#"},":reddit":{"S":"reddit"}}'
+   ```
+
+3. Open the Archive and check a sample of Kept Reddit Items, including any from a Feed that had a custom title: each still shows its r/ badge and the Feed title it showed before.
+
+Record the confirmation on #79 before starting it.
+
 ### Send rollout
 
 Send adds the `deliveries` queue with its dead-letter queue and alarm, the `delivery-worker` Lambda, and the `DELIVERIES_QUEUE_URL` variable on the API. `make deploy` creates all of them; no configuration is required. Items start recording the origin URL of their lead image on ingest or replay, and there is no backfill; every Item with a stored lead image also sends a one-hour signed URL to a per-Send copy of Sema's image under `send/`, which a lifecycle rule deletes after a day. That copy needs the `sema:domain` custom domain, which becomes the API's `PUBLIC_ORIGIN`; without one, Items ingested before the rollout send an empty `images` list.
