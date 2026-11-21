@@ -236,16 +236,15 @@ describe("feed management client", () => {
     );
   });
 
-  it("preserves structured Reddit discovery errors", async () => {
+  it("preserves the kind of a discovery error", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(
         async () =>
           new Response(
             JSON.stringify({
-              error: "Reddit is rate-limiting us.",
-              kind: "rate_limited",
-              upstream_status: 429,
+              error: "Reddit ended its public feeds.",
+              kind: "reddit_ended",
             }),
             {
               status: 422,
@@ -261,10 +260,9 @@ describe("feed management client", () => {
 
     expect(failure).toBeInstanceOf(APIError);
     expect(failure).toMatchObject({
-      message: "Reddit is rate-limiting us.",
+      message: "Reddit ended its public feeds.",
       status: 422,
-      kind: "rate_limited",
-      upstreamStatus: 429,
+      kind: "reddit_ended",
     });
   });
 });
