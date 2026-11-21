@@ -51,6 +51,7 @@ async function slowAnimations(page: Page) {
 export const test = base.extend<{ stressMode: undefined }>({
   stressMode: [
     async ({ context }, use, testInfo) => {
+      const started = performance.now();
       if (stress === "resize")
         await context.addInitScript(delayResizeObservers, 100);
       if (stress === "animation") {
@@ -68,6 +69,12 @@ export const test = base.extend<{ stressMode: undefined }>({
           ),
         );
       await use(undefined);
+      // Measurement for #65: each passing test's share of its timeout.
+      const elapsed = performance.now() - started;
+      if (testInfo.status === "passed" && testInfo.timeout > 0)
+        console.log(
+          `[headroom] ${((100 * elapsed) / testInfo.timeout).toFixed(1)}% ${(elapsed / 1000).toFixed(1)}s/${(testInfo.timeout / 1000).toFixed(0)}s ${stress || "plain"} ${testInfo.titlePath.join(" › ")}`,
+        );
     },
     { auto: true },
   ],
