@@ -87,3 +87,37 @@ func TestArchiveFiltersAcrossPages(t *testing.T) {
 		})
 	}
 }
+
+// A Kept Item outlives its Feed: once the Feed is removed, as the Reddit
+// removal backfill does (ADR 0009), the Archive serves what the Item stored.
+func TestArchiveServesStoredPresentationWhenTheFeedIsGone(t *testing.T) {
+	db := &fakeAPIStore{archives: func(context.Context, string, string, int) ([]domain.Item, string, error) {
+		return []domain.Item{{
+			SK: "A#kept", ItemID: "kept", FeedID: "removed", Archived: true,
+			Connector: domain.ConnectorReddit, FeedTitle: "Go threads", FaviconKey: "favicons/removed.png",
+		}}, "", nil
+	}}
+	s := &server{store: db, snapshotStore: withFeeds([]domain.Feed{
+		{FeedID: "other", Title: "Other", Connector: domain.ConnectorRSS, FaviconKey: "favicons/other.png"},
+	})}
+	response := s.getArchive(context.Background(), s.requestSnapshot("user"), map[string]string{})
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("response = %d %s", response.StatusCode, response.Body)
+	}
+	var body struct {
+		Items []struct {
+			Connector string `json:"connector"`
+			FeedTitle string `json:"feed_title"`
+			Favicon   string `json:"favicon_url"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(response.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 {
+		t.Fatalf("items = %+v", body.Items)
+	}
+	if got := body.Items[0]; got.Connector != "reddit" || got.FeedTitle != "Go threads" || got.Favicon != "favicons/removed.png" {
+		t.Fatalf("item = %+v", got)
+	}
+}
