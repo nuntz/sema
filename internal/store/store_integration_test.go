@@ -664,7 +664,7 @@ func TestItemKnownAfterTheLiveWindow(t *testing.T) {
 	}
 }
 
-func TestItemKnownRemembersItemsWrittenBeforeKnownMarkers(t *testing.T) {
+func TestItemKnownAnswersFromALiveIdentityWithoutWritingAMarker(t *testing.T) {
 	ctx, repository := newIntegrationStore(t)
 	ingested := time.Now()
 	repository.now = func() time.Time { return ingested }
@@ -682,9 +682,19 @@ func TestItemKnownRemembersItemsWrittenBeforeKnownMarkers(t *testing.T) {
 	if known, err := repository.ItemKnown(ctx, "user", "legacy"); err != nil || !known {
 		t.Fatalf("ItemKnown while live = %v, %v", known, err)
 	}
+	marker, err := repository.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(repository.table), Key: key(domain.UserPK("user"), domain.ItemKnownSK("legacy")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(marker.Item) > 0 {
+		t.Fatalf("ItemKnown wrote a known marker: %v", marker.Item)
+	}
+	// With no marker, the Item is forgotten once its identity Expires (ADR 0008).
 	repository.now = func() time.Time { return ingested.Add(domain.Retention + time.Hour) }
-	if known, err := repository.ItemKnown(ctx, "user", "legacy"); err != nil || !known {
-		t.Fatalf("ItemKnown after the Live Window = %v, %v; want known", known, err)
+	if known, err := repository.ItemKnown(ctx, "user", "legacy"); err != nil || known {
+		t.Fatalf("ItemKnown after the Live Window = %v, %v; want unknown", known, err)
 	}
 }
 

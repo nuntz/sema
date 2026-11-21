@@ -385,8 +385,9 @@ func (s *Store) DeleteFeed(ctx context.Context, userID, feedID string) (int64, e
 }
 
 // ItemKnown reports whether Sema already knows the Item, so a Republish is
-// ignored (ADR 0008). The identity row still answers for rejected entries and
-// for Items written before known markers existed.
+// ignored (ADR 0008). It never writes. A live identity row still answers for
+// rejected entries, and for Kept Items written before known markers existed
+// until Unkeep gives them one.
 func (s *Store) ItemKnown(ctx context.Context, userID, itemID string) (bool, error) {
 	marker, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemKnownSK(itemID)),
@@ -400,7 +401,7 @@ func (s *Store) ItemKnown(ctx context.Context, userID, itemID string) (bool, err
 	}
 	response, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.ItemIdentitySK(itemID)),
-		ProjectionExpression: aws.String("PK, item_sk, #ttl"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
+		ProjectionExpression: aws.String("PK, #ttl"), ExpressionAttributeNames: map[string]string{"#ttl": "ttl"},
 	})
 	if err != nil {
 		return false, err
@@ -414,14 +415,6 @@ func (s *Store) ItemKnown(ctx context.Context, userID, itemID string) (bool, err
 	}
 	if identity.TTL != 0 && identity.TTL <= s.now().Unix() {
 		return false, nil
-	}
-	if identity.ItemSK == "" {
-		return true, nil // a rejected entry, which never became an Item
-	}
-	// An Item written before known markers existed gets one lazily when a fetch
-	// lists it. Temporary: remove 7 days after the deploy (ADR 0008).
-	if _, err := s.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(s.table), Item: knownMarker(domain.UserPK(userID), itemID)}); err != nil {
-		return false, err
 	}
 	return true, nil
 }

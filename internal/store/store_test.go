@@ -87,6 +87,23 @@ func (f *fakeDynamoDB) TransactWriteItems(_ context.Context, input *dynamodb.Tra
 	return &dynamodb.TransactWriteItemsOutput{}, nil
 }
 
+// readOnlyDynamoDB answers GetItem with getItem and fails the test on any write.
+func readOnlyDynamoDB(t *testing.T, getItem func(*dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error)) *fakeDynamoDB {
+	t.Helper()
+	write := func() { t.Helper(); t.Fatal("unexpected write") }
+	return &fakeDynamoDB{
+		getItem:    getItem,
+		batchWrite: func(*dynamodb.BatchWriteItemInput) (*dynamodb.BatchWriteItemOutput, error) { write(); return nil, nil },
+		deleteItem: func(*dynamodb.DeleteItemInput) (*dynamodb.DeleteItemOutput, error) { write(); return nil, nil },
+		putItem:    func(*dynamodb.PutItemInput) (*dynamodb.PutItemOutput, error) { write(); return nil, nil },
+		updateItem: func(*dynamodb.UpdateItemInput) (*dynamodb.UpdateItemOutput, error) { write(); return nil, nil },
+		transactWrite: func(*dynamodb.TransactWriteItemsInput) (*dynamodb.TransactWriteItemsOutput, error) {
+			write()
+			return nil, nil
+		},
+	}
+}
+
 func TestListItemProjectionReflectsAllStoredFieldsExceptLargeSearchFields(t *testing.T) {
 	projected := make(map[string]bool, len(listItemProjection.names))
 	for alias, name := range listItemProjection.names {
@@ -760,7 +777,7 @@ func TestPutItemFailureWritesExpiringIdentityMarker(t *testing.T) {
 }
 
 func TestItemKnownFallsBackToLiveIdentity(t *testing.T) {
-	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+	db := readOnlyDynamoDB(t, func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 		if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.ItemKnownSK("same") {
 			return &dynamodb.GetItemOutput{}, nil
 		}
@@ -772,10 +789,31 @@ func TestItemKnownFallsBackToLiveIdentity(t *testing.T) {
 			"SK":  &types.AttributeValueMemberS{Value: domain.ItemIdentitySK("same")},
 			"ttl": &types.AttributeValueMemberN{Value: strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)},
 		}}, nil
-	}}
+	})
 	known, err := New(db, nil, "table", "", "").ItemKnown(context.Background(), "user", "same")
 	if err != nil || !known {
 		t.Fatalf("ItemKnown = %v, %v", known, err)
+	}
+}
+
+func TestItemKnownMakesNoWrites(t *testing.T) {
+	now := time.Now()
+	identity, err := attributevalue.MarshalMap(domain.ItemIdentity{
+		PK: domain.UserPK("user"), SK: domain.ItemIdentitySK("live"),
+		ItemSK: domain.ItemSK(now, "live"), TTL: domain.LiveWindowTTL(now),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := readOnlyDynamoDB(t, func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+		if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.ItemKnownSK("live") {
+			return &dynamodb.GetItemOutput{}, nil
+		}
+		return &dynamodb.GetItemOutput{Item: identity}, nil
+	})
+	known, err := New(db, nil, "table", "", "").ItemKnown(context.Background(), "user", "live")
+	if err != nil || !known {
+		t.Fatalf("a live Item without a known marker must stay known: ItemKnown = %v, %v", known, err)
 	}
 }
 
@@ -790,7 +828,7 @@ func TestItemKnownTreatsKeptIdentityAsKnown(t *testing.T) {
 	if _, ok := identity["ttl"]; ok {
 		t.Fatal("permanent archive identity must have no ttl attribute")
 	}
-	db := &fakeDynamoDB{getItem: func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
+	db := readOnlyDynamoDB(t, func(input *dynamodb.GetItemInput) (*dynamodb.GetItemOutput, error) {
 		if input.Key["SK"].(*types.AttributeValueMemberS).Value == domain.ItemKnownSK("hearted") {
 			return &dynamodb.GetItemOutput{}, nil
 		}
@@ -798,7 +836,7 @@ func TestItemKnownTreatsKeptIdentityAsKnown(t *testing.T) {
 			t.Fatalf("identity key = %q", got)
 		}
 		return &dynamodb.GetItemOutput{Item: identity}, nil
-	}}
+	})
 	known, err := New(db, nil, "table", "", "").ItemKnown(context.Background(), "user", "hearted")
 	if err != nil || !known {
 		t.Fatalf("a Kept Item must stay known: ItemKnown = %v, %v", known, err)
