@@ -523,7 +523,7 @@ make backfill-remove-reddit-feeds STACK=prod
 make backfill-remove-reddit-feeds STACK=prod BACKFILL_ARGS=--apply
 ```
 
-Both runs log, for each user with a Reddit Feed, how many Reddit Feeds are removed and how many Kept Items are frozen, then the totals. For every Kept Item of a Reddit Feed, the backfill first writes connector `reddit`, the Feed's displayed title (custom title first) and its favicon key onto the Kept Item's row where they differ, because those come from the Feed while it exists. It then removes the Feed the way a user's Remove does, which bumps the Feed version so cached Feed lists refresh (ADR 0006). Favicon objects stay in content storage, because Kept Items reference them. Live Items of a removed Feed vanish, as with any Remove. Rerunning is safe: freezes go before each removal, and a run with no Reddit Feed left changes nothing.
+Both runs log, for each user with a Reddit Feed, how many Reddit Feeds are removed and how many Kept Items are frozen, then the totals. For every Kept Item of a Reddit Feed, the backfill first writes connector `reddit`, the Feed's displayed title (custom title first), its favicon key, and the Feed URL and Tags a Send carries (`feed_url`, `feed_tags`) onto the Kept Item's row where they differ, because those come from the Feed while it exists. It then removes the Feed the way a user's Remove does, which bumps the Feed version so cached Feed lists refresh (ADR 0006). Favicon objects stay in content storage, because Kept Items reference them. Live Items of a removed Feed vanish, as with any Remove. Rerunning is safe: freezes go before each removal, and a run with no Reddit Feed left changes nothing.
 
 Confirm it in production:
 

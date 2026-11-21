@@ -83,7 +83,7 @@ func ItemPayload(item domain.Item, feed domain.Feed, receiverUserID string, sent
 		Feed:          feedFields(item, feed),
 		Images:        images(item, copyImage),
 		Kept:          item.Hearted || item.ArchiveSK != "" || domain.IsArchive(item),
-		Tags:          sortedTags(feed.Tags),
+		Tags:          sortedTags(feedTags(item, feed)),
 	}
 	message := envelope{Version: Version, Event: EventItemSend, SentAt: sentAt.UTC().Format(time.RFC3339), UserID: receiverUserID, Item: &body}
 	// Shorten text first, then drop optional fields one at a time; an Item
@@ -135,13 +135,31 @@ func originalLinks(item domain.Item) (string, string) {
 	return item.URL, ""
 }
 
+// feedFields describes the Item's Feed. Once the Feed is gone, it uses what
+// the Item stored about it, including what a backfill froze onto a Kept Item
+// before removing its Feed (ADR 0009).
 func feedFields(item domain.Item, feed domain.Feed) feedPayload {
 	title := firstNonEmpty(feed.CustomTitle, feed.Title, item.FeedTitle)
-	connector := domain.FeedConnector(feed)
-	if feed.FeedID == "" && item.Connector != "" {
-		connector = item.Connector
+	if feed.FeedID == "" {
+		connector := item.Connector
+		if connector == "" {
+			connector = domain.FeedConnector(feed)
+		}
+		return feedPayload{Connector: connector, Title: title, URL: item.FeedURL}
 	}
-	return feedPayload{Connector: connector, Title: title, URL: firstNonEmpty(feed.SiteURL, feed.URL)}
+	return feedPayload{Connector: domain.FeedConnector(feed), Title: title, URL: FeedURL(feed)}
+}
+
+// FeedURL is the Feed's `feed.url` in a Send: its site, else its feed URL.
+func FeedURL(feed domain.Feed) string {
+	return firstNonEmpty(feed.SiteURL, feed.URL)
+}
+
+func feedTags(item domain.Item, feed domain.Feed) []string {
+	if feed.FeedID == "" {
+		return item.FeedTags
+	}
+	return feed.Tags
 }
 
 func images(item domain.Item, copyImage *CopyImage) []imagePayload {

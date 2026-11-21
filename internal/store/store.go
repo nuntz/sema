@@ -1164,24 +1164,39 @@ func (s *Store) UpdateSearchText(ctx context.Context, item domain.Item) error {
 	return err
 }
 
-// UpdateItemPresentation rewrites only the connector, Feed title and favicon an
-// Item shows, so a backfill can freeze what its Feed lent it before the Feed
-// is removed (ADR 0009) without touching read, Keep or rank state.
+// UpdateItemPresentation rewrites only the connector, Feed title, favicon,
+// Feed URL and Feed Tags an Item carries, so a backfill can freeze what its
+// Feed lent it before the Feed is removed (ADR 0009) without touching read,
+// Keep or rank state.
 func (s *Store) UpdateItemPresentation(ctx context.Context, item domain.Item) error {
 	names := map[string]string{}
 	values := map[string]types.AttributeValue{":item": &types.AttributeValueMemberS{Value: item.ItemID}}
 	sets, removes := []string{}, []string{}
-	for index, field := range []struct{ name, value string }{
-		{"connector", item.Connector}, {"feed_title", item.FeedTitle}, {"favicon_key", item.FaviconKey},
+	text := func(value string) types.AttributeValue {
+		if value == "" {
+			return nil
+		}
+		return &types.AttributeValueMemberS{Value: value}
+	}
+	var tags types.AttributeValue
+	if len(item.FeedTags) > 0 {
+		tags = &types.AttributeValueMemberSS{Value: item.FeedTags}
+	}
+	for index, field := range []struct {
+		name  string
+		value types.AttributeValue
+	}{
+		{"connector", text(item.Connector)}, {"feed_title", text(item.FeedTitle)}, {"favicon_key", text(item.FaviconKey)},
+		{"feed_url", text(item.FeedURL)}, {"feed_tags", tags},
 	} {
 		alias := fmt.Sprintf("#presentation%d", index)
 		names[alias] = field.name
-		if field.value == "" {
+		if field.value == nil {
 			removes = append(removes, alias)
 			continue
 		}
 		placeholder := fmt.Sprintf(":presentation%d", index)
-		values[placeholder] = &types.AttributeValueMemberS{Value: field.value}
+		values[placeholder] = field.value
 		sets = append(sets, alias+" = "+placeholder)
 	}
 	expression := ""
