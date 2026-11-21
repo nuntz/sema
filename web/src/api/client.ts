@@ -325,12 +325,7 @@ export class APIClient {
     patch: Partial<
       Pick<
         Feed,
-        | "custom_title"
-        | "tags"
-        | "muted"
-        | "hide_shorts"
-        | "always_generate"
-        | "url"
+        "custom_title" | "tags" | "muted" | "hide_shorts" | "always_generate"
       >
     > & { fetch_interval_h?: Feed["fetch_interval_h"] | null },
   ): Promise<Feed> {
