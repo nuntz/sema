@@ -15,7 +15,9 @@ A push is not a deploy until its run finishes: after pushing `master`, run
 `bash scripts/watch-deploy.sh`, which fails unless test, e2e, every e2e-stress-* leg and deploy all succeed for `HEAD`.
 GitHub can leave a push's run queued with no jobs for hours, and it can't be cancelled or re-run;
 the script fails on a run queued over ten minutes, and `gh workflow run ci.yml --ref master` starts
-a fresh one.
+a fresh one. When an e2e leg fails on a test the push didn't touch, `bash scripts/ci-e2e-report.sh
+<run-id>` prints its error. If it's a flaky test, file it as an issue with its error and a command
+that reproduces it, then `gh run rerun <run-id> --failed` and run `watch-deploy.sh` again.
 
 A stack of PRs, each based on the one below, lands one PR at a time from the bottom:
 `bash scripts/land-stacked-pr.sh <pr> --apply` merges it, retargets and rebases the PRs above it,
