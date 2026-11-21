@@ -28,13 +28,13 @@ import {
   redditCanonicalURL,
   redditCollectionFromURL,
   redditCollectionLabel,
-  redditSubreddit,
 } from "../reddit-feed";
 import type { Feed, FeedCandidate, FeedItemCounts } from "../types";
 import { DestinationSettings } from "./DestinationSettings";
 import {
   type DiscoveryState,
   discoveredCandidateState,
+  discoveryErrorMessage,
 } from "./feed-discovery";
 import {
   domainName,
@@ -1185,7 +1185,7 @@ function AddFeedDialog(props: {
         <header>
           <div>
             <h2 id="add-feed-title">Add feed</h2>
-            <p>A homepage, a feed URL, a channel, or r/subreddit.</p>
+            <p>A homepage, a feed URL, or a channel.</p>
           </div>
           <button
             type="button"
@@ -1275,42 +1275,12 @@ function AddFeedDialog(props: {
             role="alert"
             aria-live="polite"
           >
-            <strong>{error()}</strong>
+            <strong>{discoveryErrorMessage(errorKind(), error())}</strong>
             <code>{address()}</code>
             <div>
-              <Show when={errorKind() === "not_found"}>
-                <a
-                  href={`https://www.reddit.com/search/?q=${encodeURIComponent(redditSearchTerm(address()))}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Search Reddit for “{redditSearchTerm(address())}”
-                </a>
-              </Show>
-              <Show when={errorKind() === "rate_limited"}>
-                <button type="button" onClick={resolve}>
-                  <Icon name="retry" />
-                  Try again
-                </button>
-                <button type="button" onClick={props.onClose}>
-                  Cancel
-                </button>
-              </Show>
-              <Show
-                when={
-                  errorKind() !== "rate_limited" &&
-                  errorKind() !== "unavailable"
-                }
-              >
-                <button type="button" onClick={edit}>
-                  Edit {errorKind() === "not_found" ? "name" : "address"}
-                </button>
-              </Show>
-              <Show when={errorKind() === "unavailable"}>
-                <button type="button" onClick={edit}>
-                  Try another name
-                </button>
-              </Show>
+              <button type="button" onClick={edit}>
+                Edit address
+              </button>
             </div>
           </div>
         </Show>
@@ -1642,17 +1612,6 @@ function redditCollectionDescription(collection?: RedditCollection): string {
     default:
       return "Top · day is the default: one pass a day, the community’s own filter, about 25 items.";
   }
-}
-
-function redditSearchTerm(raw: string): string {
-  const fromURL = redditSubreddit(
-    raw.includes("://") ? raw : `https://${raw.replace(/^\/?/, "")}`,
-  );
-  if (fromURL) return fromURL;
-  return raw
-    .trim()
-    .replace(/^\/?r\//i, "")
-    .split(/[/?#]/)[0];
 }
 
 function absoluteAddress(raw: string): string {

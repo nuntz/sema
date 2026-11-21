@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { archiveSize } from "../archive";
 import { formatPrior, whyText } from "../ranking-display";
 import type { Feed, FeedCandidate, Item } from "../types";
-import { discoveredCandidateState } from "./feed-discovery";
+import {
+  discoveredCandidateState,
+  discoveryErrorMessage,
+} from "./feed-discovery";
 import { drawerDescriptor, feedFetchLabel, upsertFeed } from "./feed-list";
 
 describe("archive storage estimate", () => {
@@ -42,6 +45,15 @@ describe("add-feed discovery picker", () => {
     expect(discoveredCandidateState([candidate, candidate])).toBe("multiple");
     expect(discoveredCandidateState([])).toBe("none");
     expect(discoveredCandidateState([], true)).toBe("error");
+  });
+
+  it("explains that Reddit ended its public feeds for reddit_ended", () => {
+    expect(discoveryErrorMessage("reddit_ended", "")).toBe(
+      "Reddit ended its public feeds, so Sema can’t follow subreddits.",
+    );
+    expect(discoveryErrorMessage("", "No feed at that address.")).toBe(
+      "No feed at that address.",
+    );
   });
 });
 
