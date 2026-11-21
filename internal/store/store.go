@@ -1164,6 +1164,42 @@ func (s *Store) UpdateSearchText(ctx context.Context, item domain.Item) error {
 	return err
 }
 
+// UpdateItemPresentation rewrites only the connector, Feed title and favicon an
+// Item shows, so a backfill can freeze what its Feed lent it before the Feed
+// is removed (ADR 0009) without touching read, Keep or rank state.
+func (s *Store) UpdateItemPresentation(ctx context.Context, item domain.Item) error {
+	names := map[string]string{}
+	values := map[string]types.AttributeValue{":item": &types.AttributeValueMemberS{Value: item.ItemID}}
+	sets, removes := []string{}, []string{}
+	for index, field := range []struct{ name, value string }{
+		{"connector", item.Connector}, {"feed_title", item.FeedTitle}, {"favicon_key", item.FaviconKey},
+	} {
+		alias := fmt.Sprintf("#presentation%d", index)
+		names[alias] = field.name
+		if field.value == "" {
+			removes = append(removes, alias)
+			continue
+		}
+		placeholder := fmt.Sprintf(":presentation%d", index)
+		values[placeholder] = &types.AttributeValueMemberS{Value: field.value}
+		sets = append(sets, alias+" = "+placeholder)
+	}
+	expression := ""
+	if len(sets) > 0 {
+		expression = "SET " + strings.Join(sets, ", ")
+	}
+	if len(removes) > 0 {
+		expression += " REMOVE " + strings.Join(removes, ", ")
+	}
+	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.table), Key: key(item.PK, item.SK),
+		UpdateExpression:         aws.String(strings.TrimSpace(expression)),
+		ConditionExpression:      aws.String("attribute_exists(PK) AND item_id = :item"),
+		ExpressionAttributeNames: names, ExpressionAttributeValues: values,
+	})
+	return err
+}
+
 // UpdateMediaVariants changes only the media dimensions and responsive asset
 // manifest so a backfill cannot overwrite mutable read, heart, or rank state.
 func (s *Store) UpdateMediaVariants(ctx context.Context, item domain.Item, variants []domain.MediaVariant, width, height int) error {
