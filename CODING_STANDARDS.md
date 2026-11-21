@@ -80,7 +80,7 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 
 ## Deletions
 
-- A deletion also removes the struct fields, flags and branches that only the deleted code wrote: trace each field the deleted code set to its remaining writers, and delete the field, with whatever forwards it, when none is left. `deadcode` in `make check` finds unreachable functions, not fields that are still read but never written; #79 left `domain.Entry.PostType` and `ExternalURL` forwarded empty by the feed worker after the Reddit Connector went.
+- A deletion also removes the struct fields, flags and branches that only the deleted code wrote: trace each field the deleted code set to its remaining writers, and delete the field, with whatever forwards it, when none is left. `deadcode` in `make check` finds unreachable functions, not fields that are still read but never written; #79 left `domain.Entry.PostType` and `ExternalURL` forwarded empty by the feed worker after the Reddit Connector went. The same goes for reads: an attribute in a `ProjectionExpression` that only the deleted code read goes too, since nothing checks the string; #47 left `item_sk` in `ItemKnown`'s identity projection.
 
 ## Backfills
 
