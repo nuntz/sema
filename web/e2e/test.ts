@@ -46,17 +46,34 @@ async function slowAnimations(page: Page) {
   }
 }
 
+// A test that passes after using more than this share of its timeout fails,
+// so a test creeping toward its timeout fails in every run, with its
+// duration, rather than as a timeout on a busy machine (#65). In two CI runs
+// of every leg, no test used more than 25% of its timeout, so a test fails
+// here only once it runs twice as long as the slowest does today. It reads
+// testInfo.duration, the span the timeout covers: fixture setup, beforeEach
+// hooks and the test, not afterEach hooks or teardown.
+const maxTimeoutShare = 0.5;
+
+function formatSeconds(ms: number) {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 // Specs import `test` from here, so every page, popups included, runs under
-// the stress mode and console forwarding when they are set.
+// the stress mode and console forwarding when they are set, and fails past
+// maxTimeoutShare.
 export const test = base.extend<{ stressMode: undefined }>({
   stressMode: [
     async ({ context }, use, testInfo) => {
       if (stress === "resize")
         await context.addInitScript(delayResizeObservers, 100);
       if (stress === "animation") {
-        // Waiting out animations at a tenth of their speed takes a test that
-        // opens the reader six times past 20s of its 30s here; a slower CI
-        // runner needs the headroom (#63).
+        // Waiting out animations at a tenth of their speed takes the test that
+        // opens the reader six times to 22s in CI, three quarters of a 30s
+        // timeout, and the next slowest to 14s (#63, #65). Tripled, no test
+        // here uses more than a quarter of its timeout, as in the other legs,
+        // and maxTimeoutShare still fails one that creeps past 45s. A test
+        // that sets its own timeout replaces the tripled one.
         testInfo.setTimeout(testInfo.timeout * 3);
         await Promise.all(context.pages().map(slowAnimations));
         context.on("page", (page) => void slowAnimations(page));
@@ -68,6 +85,14 @@ export const test = base.extend<{ stressMode: undefined }>({
           ),
         );
       await use(undefined);
+      if (
+        testInfo.status === "passed" &&
+        testInfo.timeout > 0 &&
+        testInfo.duration > testInfo.timeout * maxTimeoutShare
+      )
+        throw new Error(
+          `${testInfo.titlePath.join(" › ")} took ${formatSeconds(testInfo.duration)} of its ${formatSeconds(testInfo.timeout)} timeout${stress ? ` under SEMA_E2E_STRESS=${stress}` : ""}, more than ${100 * maxTimeoutShare}%; see CODING_STANDARDS.md → Flaky tests.`,
+        );
     },
     { auto: true },
   ],
