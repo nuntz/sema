@@ -503,12 +503,9 @@ test("Space beside the Dock leaves its video playing", async ({ page }) => {
   await page.keyboard.press(" ");
   await expect(docked(page)).toBeVisible();
   // A Space that reached the docked player logs its pause (2) before the
-  // seek's buffering. Only the late reply to the autoplay may come first.
+  // seek's buffering.
   await seekPlayer(player(page), 30);
-  await expect(player(page)).toHaveAttribute(
-    "data-state-log",
-    /^(1,)?3,1(,|$)/,
-  );
+  await expect(player(page)).toHaveAttribute("data-state-log", /^3,1(,|$)/);
   // Settled after the seek, the same player still pauses from its Peek.
   await page.getByRole("button", { name: "Expand video" }).click();
   await expect(page.locator(".video-peek")).toBeFocused();

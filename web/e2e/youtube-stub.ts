@@ -4,7 +4,9 @@ import type { Locator, Page } from "@playwright/test";
  * Append every state the player reports from now on to its `data-state-log`,
  * in order. `data-state` lags the command that changes it, so right after a
  * key it can't show whether the key sent one; replies come in order, so a
- * command the key sent logs its state before a later command's.
+ * command the key sent logs its state before a later command's. The stub
+ * reports unstarted (-1, no data-state) until the app's autoplay, so once
+ * data-state first reads "1" no startup reply is still on its way.
  */
 export async function logPlayerStates(player: Locator) {
   await player.evaluate((iframe: HTMLIFrameElement) => {
@@ -54,7 +56,7 @@ export async function stubYouTube(
         let message; try { message = JSON.parse(event.data); } catch { return; }
         if (message.event === 'listening') {
           if (${failure}) send({event:'onError', info:150});
-          else { send({event:'onReady'}); state(1); }
+          else { send({event:'onReady'}); state(-1); }
         } else if (message.event === 'command') {
           if (message.func === 'playVideo') state(1);
           if (message.func === 'pauseVideo') state(2);
