@@ -10,38 +10,41 @@ import (
 	"time"
 )
 
+// A Reddit Feed still present until the removal backfill pins its Cadence
+// exactly as an RSS Feed does (ADR 0009).
 func TestPatchCadencePinsAndAuto(t *testing.T) {
-	for _, test := range []struct {
-		body, connector     string
-		wantStatus, wantPin int
-	}{
-		{`{"fetch_interval_h":null}`, domain.ConnectorRSS, 200, 0},
-		{`{"fetch_interval_h":3}`, domain.ConnectorRSS, 200, 3},
-		{`{"fetch_interval_h":1}`, domain.ConnectorRSS, 200, 1},
-		{`{"fetch_interval_h":5}`, domain.ConnectorRSS, 400, 24},
-		{`{"fetch_interval_h":0}`, domain.ConnectorRSS, 400, 24},
-		{`{"fetch_interval_h":1}`, domain.ConnectorReddit, 400, 24},
-		{`{"custom_title":"Retain my pin"}`, domain.ConnectorRSS, 200, 24},
-	} {
-		t.Run(test.body+test.connector, func(t *testing.T) {
-			feed := domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: test.connector, FetchIntervalH: 24, HistoryStartedAt: domain.Timestamp(time.Now().Add(-8 * 24 * time.Hour))}
-			db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }}
-			state := &fakeSnapshotStore{putFeed: func(_ context.Context, updated domain.Feed) error { feed = updated; return nil }}
-			s := &server{store: db, snapshotStore: state}
-			got := s.patchFeed(context.Background(), s.requestSnapshot("user"), "feed", test.body)
-			if got.StatusCode != test.wantStatus || feed.FetchIntervalH != test.wantPin {
-				t.Fatalf("response=%+v feed=%+v", got, feed)
-			}
-			if got.StatusCode == http.StatusOK {
-				var public domain.Feed
-				if err := json.Unmarshal([]byte(got.Body), &public); err != nil {
-					t.Fatal(err)
+	for _, connector := range []string{domain.ConnectorRSS, domain.ConnectorReddit} {
+		for _, test := range []struct {
+			body                string
+			wantStatus, wantPin int
+		}{
+			{`{"fetch_interval_h":null}`, 200, 0},
+			{`{"fetch_interval_h":3}`, 200, 3},
+			{`{"fetch_interval_h":1}`, 200, 1},
+			{`{"fetch_interval_h":5}`, 400, 24},
+			{`{"fetch_interval_h":0}`, 400, 24},
+			{`{"custom_title":"Retain my pin"}`, 200, 24},
+		} {
+			t.Run(connector+test.body, func(t *testing.T) {
+				feed := domain.Feed{PK: "U#user", SK: "F#feed", FeedID: "feed", Connector: connector, FetchIntervalH: 24, HistoryStartedAt: domain.Timestamp(time.Now().Add(-8 * 24 * time.Hour))}
+				db := &fakeAPIStore{feed: func(context.Context, string, string) (domain.Feed, error) { return feed, nil }}
+				state := &fakeSnapshotStore{putFeed: func(_ context.Context, updated domain.Feed) error { feed = updated; return nil }}
+				s := &server{store: db, snapshotStore: state}
+				got := s.patchFeed(context.Background(), s.requestSnapshot("user"), "feed", test.body)
+				if got.StatusCode != test.wantStatus || feed.FetchIntervalH != test.wantPin {
+					t.Fatalf("response=%+v feed=%+v", got, feed)
 				}
-				if (public.CadencePin == nil) != (test.wantPin == 0) || public.EffectiveCadenceH != domain.FeedIntervalHours(feed) {
-					t.Fatalf("public=%+v", public)
+				if got.StatusCode == http.StatusOK {
+					var public domain.Feed
+					if err := json.Unmarshal([]byte(got.Body), &public); err != nil {
+						t.Fatal(err)
+					}
+					if (public.CadencePin == nil) != (test.wantPin == 0) || public.EffectiveCadenceH != domain.FeedIntervalHours(feed) {
+						t.Fatalf("public=%+v", public)
+					}
 				}
-			}
-		})
+			})
+		}
 	}
 }
 
