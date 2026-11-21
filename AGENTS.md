@@ -35,7 +35,7 @@ Header, reader, grid cell, and lightbox chrome follow fixed contracts (heights, 
 
 ## Testing Guidelines
 
-Go tests use the standard `testing` package; frontend units use Vitest with `*.test.ts`/`*.test.tsx`, and Playwright specs use `*.e2e.ts`. Add focused regression tests beside changed code. There is no fixed coverage threshold, but CI must remain green. Tests on DynamoDB Local skip without `DYNAMODB_ENDPOINT`; `make check` starts it, and `scripts/with-dynamodb-local.sh go test ./cmd/api/...` runs one package against it.
+Go tests use the standard `testing` package; frontend units use Vitest with `*.test.ts`/`*.test.tsx`, and Playwright specs use `*.e2e.ts`. Vitest runs without a DOM, so what a component renders is asserted in Playwright. Add focused regression tests beside changed code. There is no fixed coverage threshold, but CI must remain green. Tests on DynamoDB Local skip without `DYNAMODB_ENDPOINT`; `make check` starts it, and `scripts/with-dynamodb-local.sh go test ./cmd/api/...` runs one package against it.
 
 ## Commit & Pull Request Guidelines
 

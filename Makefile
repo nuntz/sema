@@ -31,6 +31,8 @@ check:
 	@unformatted="$$(gofmt -l .)"; if [ -n "$$unformatted" ]; then echo "gofmt needed: $$unformatted" >&2; exit 1; fi
 	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go vet ./...
 	cd infra && GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go vet ./...
+	@# deadcode prints, but doesn't fail on, functions no main or test reaches; go vet misses exported ones.
+	@dead="$$(GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go run golang.org/x/tools/cmd/deadcode@v0.53.0 -test ./...)" || exit 1; if [ -n "$$dead" ]; then echo "unreachable Go code (delete it):" >&2; echo "$$dead" >&2; exit 1; fi
 	cd web && bun install --frozen-lockfile
 	cd web && bun run lint
 	bash scripts/with-dynamodb-local.sh $(MAKE) test

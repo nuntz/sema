@@ -34,5 +34,3 @@ func NormalizeURL(raw string) string {
 	u.Host = strings.ToLower(u.Host)
 	return u.String()
 }
-
-func normalizeURL(raw string) string { return NormalizeURL(raw) }
