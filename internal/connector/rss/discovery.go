@@ -26,7 +26,7 @@ type Discoverer struct {
 	parser *gofeed.Parser
 }
 
-func NewDiscoverer(client *httpx.Client) *Discoverer {
+func NewDiscoverer(client fetcher) *Discoverer {
 	return &Discoverer{client: client, parser: gofeed.NewParser()}
 }
 

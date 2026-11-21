@@ -1393,10 +1393,8 @@ func (s *server) importFeeds(ctx context.Context, user *requestsnapshot.Snapshot
 	unsupported := make([]unsupportedFeed, 0)
 	for _, subscription := range subscriptions {
 		if reddit.Matches(subscription.URL) {
-			if _, redditErr := reddit.ParseInput(subscription.URL); redditErr != nil {
-				unsupported = append(unsupported, unsupportedFeed{Title: subscription.Title, URL: subscription.URL, Reason: redditErr.Error()})
-				continue
-			}
+			unsupported = append(unsupported, unsupportedFeed{Title: subscription.Title, URL: subscription.URL, Reason: reddit.EndedExplanation})
+			continue
 		}
 		if reason := rss.UnsupportedReason(subscription.URL); reason != "" {
 			unsupported = append(unsupported, unsupportedFeed{Title: subscription.Title, URL: subscription.URL, Reason: reason})
@@ -1412,13 +1410,6 @@ func (s *server) importFeeds(ctx context.Context, user *requestsnapshot.Snapshot
 		feedURL, normalizeErr := normalizeFeedURL(subscriptions[index].URL)
 		if normalizeErr != nil {
 			return badRequest(fmt.Errorf("invalid OPML feed URL %q", subscriptions[index].URL))
-		}
-		if parsed, redditErr := reddit.ParseInput(feedURL); redditErr == nil {
-			feedURL = reddit.CanonicalURL(parsed.Subreddit, parsed.Sort)
-			subscriptions[index].IntervalH = reddit.IntervalHours(parsed.Sort)
-			if strings.TrimSpace(subscriptions[index].Title) == "" {
-				subscriptions[index].Title = reddit.Title(parsed.Subreddit)
-			}
 		}
 		tags, tagsErr := normalizeTags(subscriptions[index].Tags)
 		if tagsErr != nil {
@@ -1447,19 +1438,12 @@ func (s *server) importFeeds(ctx context.Context, user *requestsnapshot.Snapshot
 			defer func() { <-semaphore }()
 			feedID := domain.FeedID(subscription.URL)
 			connectorName := domain.ConnectorRSS
-			siteURL := ""
-			title := ""
 			if youtube.IsFeedURL(subscription.URL) {
 				connectorName = domain.ConnectorYouTube
-			} else if parsed, redditErr := reddit.ParseInput(subscription.URL); redditErr == nil {
-				connectorName = domain.ConnectorReddit
-				feedID = domain.FeedID(reddit.SiteURL(parsed.Subreddit))
-				siteURL = reddit.SiteURL(parsed.Subreddit)
-				title = reddit.Title(parsed.Subreddit)
 			}
 			feed := domain.Feed{
 				PK: domain.UserPK(userID), SK: domain.FeedSK(feedID), FeedID: feedID, Connector: connectorName, URL: subscription.URL,
-				Title: title, SiteURL: siteURL, CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
+				CustomTitle: subscription.Title, Tags: subscription.Tags, Muted: subscription.Muted,
 				HistoryStartedAt: domain.Timestamp(now), FetchIntervalH: subscription.IntervalH, NextFetchAt: domain.Timestamp(now), LastStatus: "queued",
 			}
 			if existing, getErr := s.store.Feed(ctx, userID, feedID); getErr == nil {

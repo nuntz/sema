@@ -594,51 +594,48 @@ func TestNormalizeTagsAndFeedStatus(t *testing.T) {
 	}
 }
 
-func TestAddRedditFeedUsesCanonicalSortAndStableIdentity(t *testing.T) {
-	var saved domain.Feed
-	state := &fakeSnapshotStore{putFeed: func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }}
-	queue := &apiQueue{}
-	server := &server{store: &fakeAPIStore{}, snapshotStore: state, queue: queue}
-	got := server.addFeed(context.Background(), server.requestSnapshot("user"), `{
-		"feed_url":"https://old.reddit.com/r/Castles/new.rss",
-		"connector":"reddit",
-		"title":"untrusted listing title",
-		"site_url":"https://example.com/"
-	}`)
-	if got.StatusCode != http.StatusAccepted {
-		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
+func TestAddRedditFeedIsRefused(t *testing.T) {
+	bodies := []string{
+		`{"feed_url":"https://old.reddit.com/r/Castles/new.rss","connector":"reddit","title":"untrusted listing title","site_url":"https://example.com/"}`,
+		`{"feed_url":"https://example.com/feed.xml","connector":"reddit"}`,
 	}
-	wantID := domain.FeedID("https://www.reddit.com/r/castles/")
-	if saved.FeedID != wantID || saved.Connector != domain.ConnectorReddit || saved.URL != "https://www.reddit.com/r/castles/new.rss" || saved.SiteURL != "https://www.reddit.com/r/castles/" || saved.Title != "r/castles" || saved.FetchIntervalH != 1 {
-		t.Fatalf("saved feed = %#v", saved)
+	for _, input := range redditInputs {
+		body, _ := json.Marshal(map[string]string{"feed_url": input})
+		bodies = append(bodies, string(body))
 	}
-	if queue.input == nil || len(queue.input.Entries) != 1 {
-		t.Fatalf("queue input = %#v", queue.input)
+	for _, body := range bodies {
+		t.Run(body, func(t *testing.T) {
+			saved := false
+			state := &fakeSnapshotStore{putFeed: func(context.Context, domain.Feed) error { saved = true; return nil }}
+			queue := &apiQueue{}
+			server := &server{store: &fakeAPIStore{}, snapshotStore: state, queue: queue}
+			got := server.addFeed(context.Background(), server.requestSnapshot("user"), body)
+			assertRedditEnded(t, got.StatusCode, got.Body)
+			if saved || queue.input != nil {
+				t.Fatalf("saved = %v, queue input = %#v", saved, queue.input)
+			}
+		})
 	}
 }
 
-// Adding a subreddit already followed under another sort merges into the
-// live Feed row, not the Feed list, which can trail the feed worker.
-func TestAddRedditFeedMergesIntoTheLiveRow(t *testing.T) {
-	var saved domain.Feed
+// Re-adding a subreddit that is still followed is refused like any other
+// Reddit address, and leaves the existing Feed row alone.
+func TestAddRedditFeedAlreadyFollowedIsRefused(t *testing.T) {
+	saved := false
 	listed := domain.Feed{FeedID: "legacy", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/castles/.rss"}
-	live := listed
-	live.ItemCount = 7
 	db := &fakeAPIStore{feed: func(_ context.Context, _, feedID string) (domain.Feed, error) {
 		if feedID != "legacy" {
 			return domain.Feed{}, store.ErrNotFound
 		}
-		return live, nil
+		return listed, nil
 	}}
 	state := withFeeds([]domain.Feed{listed})
-	state.putFeed = func(_ context.Context, feed domain.Feed) error { saved = feed; return nil }
+	state.putFeed = func(context.Context, domain.Feed) error { saved = true; return nil }
 	server := &server{store: db, snapshotStore: state, queue: &apiQueue{}}
 	got := server.addFeed(context.Background(), server.requestSnapshot("user"), `{"feed_url":"https://www.reddit.com/r/castles/new.rss","connector":"reddit"}`)
-	if got.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", got.StatusCode, got.Body)
-	}
-	if saved.FeedID != "legacy" || saved.ItemCount != 7 || saved.URL != "https://www.reddit.com/r/castles/new.rss" {
-		t.Fatalf("saved feed = %#v", saved)
+	assertRedditEnded(t, got.StatusCode, got.Body)
+	if saved {
+		t.Fatal("refused add saved a Feed")
 	}
 }
 
