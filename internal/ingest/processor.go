@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	redditconnector "github.com/nuntz/sema/internal/connector/reddit"
 	"github.com/nuntz/sema/internal/domain"
 	"github.com/nuntz/sema/internal/embed"
 	"github.com/nuntz/sema/internal/extract"
@@ -359,11 +358,7 @@ func (h *Processor) process(ctx context.Context, body string) (*processedVectors
 			feedURL = pageURL
 		}
 		feedHTML := []byte(message.ContentRaw + "\n" + message.SummaryRaw)
-		enclosures, recoveryErr := h.mediaEnclosures(ctx, message, feed)
-		if recoveryErr != nil {
-			slog.Warn("Reddit gallery media recovery failed", "user", message.User, "feed_id", message.FeedID, "item_id", message.ItemID, "error", recoveryErr)
-		}
-		candidates := media.Candidates(enclosures, pageHTML, []byte(article.HTML), feedHTML, article.LeadImage, pageURL, feedURL)
+		candidates := media.Candidates(message.EnclosureURLs, pageHTML, []byte(article.HTML), feedHTML, article.LeadImage, pageURL, feedURL)
 		if isVideo {
 			candidates = append([]string{"https://i.ytimg.com/vi/" + url.PathEscape(message.VideoID) + "/maxresdefault.jpg"}, candidates...)
 		}
@@ -866,28 +861,11 @@ func itemContentURLs(message domain.ItemMessage) (contentURL, fetchURL string) {
 		return contentURL, fetchURL
 	}
 	// Reddit thread pages are not scraped. Link posts extract the external
-	// article; text and media posts use the cleaned Atom body and enclosures.
+	// article; text and media posts use the stored body and enclosures.
 	if message.PostType == "link" && message.ExternalURL != "" {
 		return message.ExternalURL, message.ExternalURL
 	}
 	return contentURL, ""
-}
-
-func (h *Processor) mediaEnclosures(ctx context.Context, message domain.ItemMessage, feed domain.Feed) ([]domain.Enclosure, error) {
-	if len(message.EnclosureURLs) > 0 || domain.FeedConnector(feed) != domain.ConnectorReddit || message.PostType != "gallery" {
-		return message.EnclosureURLs, nil
-	}
-	if h.HTTP == nil {
-		return nil, fmt.Errorf("HTTP client is unavailable")
-	}
-	entry, err := redditconnector.New(h.HTTP).FetchPost(ctx, message.URL)
-	if err != nil {
-		return nil, err
-	}
-	if entry.PostType != "gallery" {
-		return nil, fmt.Errorf("recovered Reddit post type is %q", entry.PostType)
-	}
-	return entry.Enclosures, nil
 }
 
 func forceSummaryGeneration(alwaysGenerate bool, existingSource string) bool {

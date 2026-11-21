@@ -73,9 +73,6 @@ func AutoCadence(feed Feed, now time.Time) int {
 	if feed.FetchIntervalH != 0 {
 		return FeedIntervalHours(feed)
 	}
-	if FeedConnector(feed) == ConnectorReddit {
-		return FeedIntervalHours(feed)
-	}
 	start, err := time.Parse(time.RFC3339Nano, feed.HistoryStartedAt)
 	if err != nil || now.Sub(start) < 7*24*time.Hour {
 		return 1

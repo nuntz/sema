@@ -6,7 +6,7 @@ Sema is a cloud feed reader built for triage first. A fast, keyboard-driven grid
 
 ## Highlights
 
-- Read RSS, Atom, JSON Feed, YouTube, and Reddit through one Connector interface.
+- Read RSS, Atom, JSON Feed, and YouTube through one Connector interface.
 - Import and export subscriptions as OPML.
 - Triage from the keyboard on a justified grid where each cell's Size follows its predicted interest.
 - Rank Items with Signals (Boost, Bury, Keep), Behaviour, and Bedrock text and image embeddings.
@@ -34,7 +34,7 @@ Sema is a cloud feed reader built for triage first. A fast, keyboard-driven grid
          v
   +-------------+
   | feed-worker |  fetch through the Feed's Connector:
-  |             |    RSS / Atom / JSON Feed, YouTube, Reddit
+  |             |    RSS / Atom / JSON Feed, YouTube
   |             |  drop seen and out-of-window Items
   |             |  update Cadence, Feed Status -----> DynamoDB
   |             |  cache favicon -------------------> S3 content
@@ -108,29 +108,15 @@ Sema counts the new Items each Feed brought over the last seven UTC days, today 
 | 3 to 9 | every six hours |
 | fewer than 3 | daily |
 
-New Feeds start hourly for their first week. A quiet Feed that gets busy speeds up on the first fetch that takes its count past a threshold. The user can pin any Feed to a fixed Cadence, and Reddit Feeds keep the Cadence their collection implies. The trade-off is deliberate: a Feed that publishes rarely may be seen up to a day late.
+New Feeds start hourly for their first week. A quiet Feed that gets busy speeds up on the first fetch that takes its count past a threshold. The user can pin any Feed to a fixed Cadence. The trade-off is deliberate: a Feed that publishes rarely may be seen up to a day late.
 
 A Refused fetch is not a Feed error. Examples are a 429 from any source, and the 404s and 500s YouTube returns when it throttles feed readers. A refusal never slows or breaks the Feed. Sema retries at the time the source's `Retry-After` header gives. Without that header, it retries after one Cadence period or six hours, whichever is shorter, plus up to five minutes of jitter, so the retry lands outside the source's burst window. Only a Feed refused continuously for a day is shown as broken, and Sema keeps retrying it on the same schedule.
 
 ## Connectors
 
-Each Connector implements the shared `internal/connector.Connector` interface and is registered by name in the feed worker. RSS, Atom, and JSON Feed share the generic parser. YouTube and Reddit add their own discovery and Item metadata, and every other path is shared: scheduling, deduplication, ranking, retries, retention, and the Archive.
+Each Connector implements the shared `internal/connector.Connector` interface and is registered by name in the feed worker. RSS, Atom, and JSON Feed share the generic parser. YouTube adds its own discovery and Item metadata, and every other path is shared: scheduling, deduplication, ranking, retries, retention, and the Archive.
 
-The Reddit Connector uses only Reddit's public Atom feeds. There is no Reddit API, OAuth, login, credential, or third-party service. Discovery accepts `r/name`, full subreddit URLs, and supported subreddit feed URLs, and stores the chosen collection as a canonical Feed URL:
-
-- Hot: `/r/<subreddit>/.rss`, fetched every three hours.
-- Top · day: `/r/<subreddit>/top.rss?t=day`, fetched daily.
-- New: `/r/<subreddit>/new.rss`, fetched hourly.
-
-Scheduled and discovery requests send the fixed `User-Agent: linux:sema:rss`. Each Feed keeps a stable offset within its Cadence and its own exponential backoff after errors, so a Reddit failure affects only that Feed.
-
-Reddit Items keep the thread permalink separate from any external article or media link:
-
-- **Link posts** go through the normal article extraction and open in the reader.
-- **Text posts** render the sanitized selftext the Atom feed already carries.
-- **Image and gallery posts** render in the reader with a cached lead image.
-
-For Reddit's own preview thumbnails, Sema prefers the full-size `i.redd.it` image and keeps the signed Atom thumbnail as a fallback. For galleries, it recovers missing image details from the post's own public Atom feed. Reddit-hosted video stays external, because `v.redd.it` serves it as separate audio and video streams. The message-square action on every Reddit cell opens the comment thread externally. Titles and cleaned excerpts are embedded and ranked like any other Item.
+Sema read Reddit until November 2026, when Reddit ended its public feeds (ADR 0009). Adding or importing a Reddit address now gets a plain explanation instead of a Feed. Items Kept from Reddit stay in the Archive as they were: the thread permalink stays separate from any external link, galleries keep their stored images, and the cell keeps its r/ badge and the message-square action that opens the thread externally.
 
 ## Send
 

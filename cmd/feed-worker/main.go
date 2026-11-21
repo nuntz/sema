@@ -18,7 +18,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/connector"
-	redditconnector "github.com/nuntz/sema/internal/connector/reddit"
 	rssconnector "github.com/nuntz/sema/internal/connector/rss"
 	youtubeconnector "github.com/nuntz/sema/internal/connector/youtube"
 	"github.com/nuntz/sema/internal/domain"
@@ -166,10 +165,8 @@ func (h *handler) process(ctx context.Context, body string) error {
 		var iconErr error
 		if feed.AvatarURL != "" {
 			icon, iconErr = h.media.Avatar(ctx, feed.AvatarURL)
-		} else if feed.SiteURL != "" && domain.FeedConnector(feed) != domain.ConnectorReddit {
+		} else if feed.SiteURL != "" {
 			icon, iconErr = h.media.Favicon(ctx, feed.SiteURL)
-		} else if domain.FeedConnector(feed) == domain.ConnectorReddit {
-			iconErr = errors.New("Reddit feed has no cached badge")
 		} else {
 			iconErr = errors.New("feed has no icon source")
 		}
@@ -269,6 +266,15 @@ func truncateBytes(value string, maxBytes int) string {
 	return value
 }
 
+// registeredConnectors are the Connectors the worker can fetch. A Feed whose
+// Connector is missing here fails, so a Connector leaves only after its Feeds
+// are gone.
+func registeredConnectors(client *httpx.Client) map[string]connector.Connector {
+	return map[string]connector.Connector{
+		domain.ConnectorRSS: rssconnector.New(client), domain.ConnectorYouTube: youtubeconnector.New(client),
+	}
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	repository, config, err := store.FromEnv(context.Background())
@@ -282,10 +288,7 @@ func main() {
 	feedHTTP := httpx.New(15*time.Second, 5<<20)
 	mediaHTTP := httpx.New(15*time.Second, media.MaxDownloadBytes)
 	h := &handler{
-		store: repository,
-		connectors: map[string]connector.Connector{
-			domain.ConnectorRSS: rssconnector.New(feedHTTP), domain.ConnectorReddit: redditconnector.New(feedHTTP), domain.ConnectorYouTube: youtubeconnector.New(feedHTTP),
-		},
+		store: repository, connectors: registeredConnectors(feedHTTP),
 		shorts: youtubeconnector.NewShortsDetector(feedHTTP), media: media.New(mediaHTTP),
 		queue: sqs.NewFromConfig(config), itemsURL: itemsURL,
 	}

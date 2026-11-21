@@ -500,21 +500,9 @@ make deploy
 
 The migration preserves feed and item identities, so history, archive pointers, signals, and read state remain connected. YouTube exposes only the latest 15 uploads through its public feed; older uploads cannot be recovered during import.
 
-### Reddit connector rollout
-
-Deploy the connector writers before migrating subreddit feeds that were previously stored as generic RSS sources:
-
-```sh
-make deploy
-make backfill-reddit-connector STACK=prod
-make backfill-reddit-connector STACK=prod BACKFILL_ARGS=--apply
-```
-
-The idempotent backfill recognizes only supported subreddit feed URLs. It keeps each existing feed ID, tags, mute state, items, archive pointers, ranking history, and read state while changing the connector to `reddit`, canonicalizing the selected Hot/Top-Day/New URL, setting its cadence, and clearing URL-specific HTTP validators when required. Unsupported Reddit listing types are left unchanged.
-
 ### Reddit Feed removal
 
-Reddit ended its public feeds, so existing Reddit Feeds are removed while their Kept Items stay in the Archive (ADR 0009). Run this only after the refusal of new Reddit Feeds (#76) is deployed to production; otherwise a user can re-add a Feed it removed. Deleting Reddit ingestion (#79) waits for this removal to be applied and confirmed in production, because the feed worker fails on a Feed whose Connector is no longer registered.
+Reddit ended its public feeds, so existing Reddit Feeds are removed while their Kept Items stay in the Archive (ADR 0009). Run this only after the refusal of new Reddit Feeds (#76) is deployed to production; otherwise a user can re-add a Feed it removed. It was applied and confirmed in production on 2026-11-21, and Reddit ingestion has since been deleted, so the feed worker would fail on any Reddit Feed row that reappeared.
 
 Preview the changes (no writes), then apply the reviewed plan:
 
@@ -537,8 +525,6 @@ Confirm it in production:
    ```
 
 3. Open the Archive and check a sample of Kept Reddit Items, including any from a Feed that had a custom title: each still shows its r/ badge and the Feed title it showed before.
-
-Record the confirmation on #79 before starting it.
 
 ### Send rollout
 

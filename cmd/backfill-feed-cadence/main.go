@@ -35,7 +35,7 @@ func run(ctx context.Context, repository feedStore, apply bool, now time.Time, o
 				continue
 			}
 			feed.HistoryStartedAt = domain.Timestamp(now)
-			if domain.FeedConnector(feed) != domain.ConnectorReddit && feed.FetchIntervalH == 1 {
+			if feed.FetchIntervalH == 1 {
 				feed.FetchIntervalH = 0
 			}
 			changed++

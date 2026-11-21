@@ -47,7 +47,7 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 	baseURL := response.FinalURL
 	result := domain.FetchResult{
 		Title:    parsed.Title,
-		SiteURL:  ResolveURL(baseURL, parsed.Link),
+		SiteURL:  resolveURL(baseURL, parsed.Link),
 		ETag:     response.Header.Get("ETag"),
 		Modified: response.Header.Get("Last-Modified"),
 		Entries:  make([]domain.Entry, 0, len(parsed.Items)),
@@ -68,7 +68,7 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 			author = item.Author.Name
 		}
 		entry := domain.Entry{
-			GUID: item.GUID, URL: ResolveURL(baseURL, item.Link), Title: EntryTitle(item.Title, item.Description, item.Content),
+			GUID: item.GUID, URL: resolveURL(baseURL, item.Link), Title: EntryTitle(item.Title, item.Description, item.Content),
 			SummaryRaw: item.Description, ContentRaw: item.Content, Author: author,
 			Published: published, DisplayDate: displayDate,
 		}
@@ -77,11 +77,11 @@ func ParseFeedResponse(response httpx.Response, feed domain.Feed) (domain.FetchR
 			continue
 		}
 		for _, enclosure := range item.Enclosures {
-			if !validHTTPURL(ResolveURL(baseURL, enclosure.URL)) {
+			if !validHTTPURL(resolveURL(baseURL, enclosure.URL)) {
 				continue
 			}
 			entry.Enclosures = append(entry.Enclosures, domain.Enclosure{
-				URL: ResolveURL(baseURL, enclosure.URL), Type: enclosure.Type, Length: enclosure.Length,
+				URL: resolveURL(baseURL, enclosure.URL), Type: enclosure.Type, Length: enclosure.Length,
 			})
 		}
 		entry.Enclosures = append(entry.Enclosures, mediaRSSEnclosures(item, baseURL)...)
@@ -120,7 +120,7 @@ func mediaRSSEnclosures(item *gofeed.Item, base *url.URL) []domain.Enclosure {
 	walk = func(elements map[string][]ext.Extension) {
 		for _, kind := range []string{"thumbnail", "content"} {
 			for _, extension := range extensionsNamed(elements, kind) {
-				imageURL := ResolveURL(base, extensionAttr(extension.Attrs, "url"))
+				imageURL := resolveURL(base, extensionAttr(extension.Attrs, "url"))
 				if !validHTTPURL(imageURL) || seen[imageURL] {
 					continue
 				}
@@ -168,7 +168,7 @@ func extensionAttr(attributes map[string]string, name string) string {
 	return ""
 }
 
-func ResolveURL(base *url.URL, raw string) string {
+func resolveURL(base *url.URL, raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""

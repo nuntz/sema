@@ -14,7 +14,7 @@ Apply the reviewed plan:
 make backfill-feed-cadence STACK=prod BACKFILL_ARGS=--apply
 ```
 
-Hourly non-Reddit feeds become Auto. Three-, six-, and twenty-four-hour pins and Reddit collection Cadence remain intact. Each feed missing `history_started_at` receives the same migration timestamp. Feeds with that timestamp are skipped, including feeds pinned hourly after migration, so rerunning is safe.
+Hourly feeds become Auto. Three-, six-, and twenty-four-hour pins remain intact. Each feed missing `history_started_at` receives the same migration timestamp. Feeds with that timestamp are skipped, including feeds pinned hourly after migration, so rerunning is safe.
 
 The API keeps `fetch_interval_h` numeric for existing clients. `cadence_pin_h` is null for Auto, and `effective_cadence_h` reports the current Cadence. PATCH `fetch_interval_h: null` clears a pin; omitting the field preserves it when editing other settings.
 

@@ -41,15 +41,15 @@ func TestNextFeedFetchRespectsConfiguredInterval(t *testing.T) {
 	}
 }
 
-func TestNextFeedFetchSupportsRedditHotCadence(t *testing.T) {
+func TestNextFeedFetchKeepsThreeHourPhase(t *testing.T) {
 	started := time.Date(2026, 8, 23, 14, 20, 0, 0, time.UTC)
-	first := NextFeedFetch("reddit-hot", started, 3)
-	second := NextFeedFetch("reddit-hot", first.Add(time.Minute), 3)
+	first := NextFeedFetch("three-hour", started, 3)
+	second := NextFeedFetch("three-hour", first.Add(time.Minute), 3)
 	if second.Sub(first) != 3*time.Hour {
 		t.Fatalf("three-hour phase moved: first %s, second %s", first, second)
 	}
 	if got := FeedIntervalHours(Feed{FetchIntervalH: 3}); got != 3 {
-		t.Fatalf("Reddit hot interval = %d, want 3", got)
+		t.Fatalf("three-hour interval = %d, want 3", got)
 	}
 }
 
