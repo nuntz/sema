@@ -12,16 +12,16 @@ import (
 // ExtractedMetrics lists the metric names CloudWatch extracts from log events.
 // Every extracted name becomes a billed custom metric, and the free tier covers
 // ten of them, so the list is capped at MaxExtractedMetrics. Alarms depend on
-// FeedsEnqueued, SummariesGenerated and StoryAssignmentFailed; the remaining
-// entries chart pipeline health on the dashboard. Every other metric name, and
-// every dimension value, still lands in the log line as a plain field for Logs
-// Insights queries.
+// FeedsEnqueued, SummariesGenerated, StoryAssignmentFailed and ConnectorsFailing;
+// the remaining entries chart pipeline health on the dashboard. Every other
+// metric name, and every dimension value, still lands in the log line as a
+// plain field for Logs Insights queries.
 var ExtractedMetrics = map[string]bool{
 	"FeedsEnqueued":         true,
 	"SummariesGenerated":    true,
 	"StoryAssignmentFailed": true,
 	"ItemsWritten":          true,
-	"FeedsFailed":           true,
+	"ConnectorsFailing":     true,
 	"ExtractionFailed":      true,
 	"MediaFailed":           true,
 	"ItemWorkerDurationMs":  true,

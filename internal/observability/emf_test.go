@@ -11,10 +11,14 @@ func TestExtractedMetricsStayWithinFreeTier(t *testing.T) {
 	if len(ExtractedMetrics) > MaxExtractedMetrics {
 		t.Fatalf("ExtractedMetrics has %d entries, want at most %d (CloudWatch free tier)", len(ExtractedMetrics), MaxExtractedMetrics)
 	}
-	for _, name := range []string{"FeedsEnqueued", "SummariesGenerated", "StoryAssignmentFailed"} {
+	for _, name := range []string{"FeedsEnqueued", "SummariesGenerated", "StoryAssignmentFailed", "ConnectorsFailing"} {
 		if !ExtractedMetrics[name] {
 			t.Errorf("ExtractedMetrics is missing %s, which an alarm depends on", name)
 		}
+	}
+	// ConnectorsFailing took FeedsFailed's slot; Logs Insights still counts it.
+	if ExtractedMetrics["FeedsFailed"] {
+		t.Error("ExtractedMetrics still extracts FeedsFailed")
 	}
 }
 

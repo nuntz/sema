@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -783,5 +784,52 @@ func TestUnkeepRemembersKeptItemsWrittenBeforeKnownMarkers(t *testing.T) {
 	}
 	if known, err := repository.ItemKnown(ctx, "keeper", item.ItemID); err != nil || !known {
 		t.Fatalf("ItemKnown after Unkeep = %v, %v; want known", known, err)
+	}
+}
+
+func TestFeedStatusesReadsEveryScheduledFeedsState(t *testing.T) {
+	ctx, repository := newIntegrationStore(t)
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	refused := domain.Timestamp(now.Add(-7 * time.Hour))
+	for _, feed := range []domain.Feed{
+		{PK: domain.UserPK("one"), SK: domain.FeedSK("failing"), FeedID: "failing", Connector: domain.ConnectorYouTube, URL: "https://example.com/a", ErrorCount: 3, NextFetchAt: domain.Timestamp(now.Add(20 * time.Hour))},
+		{PK: domain.UserPK("two"), SK: domain.FeedSK("refused"), FeedID: "refused", Connector: domain.ConnectorYouTube, URL: "https://example.com/b", RefusedSince: refused, NextFetchAt: domain.Timestamp(now.Add(-time.Minute))},
+		{PK: domain.UserPK("one"), SK: domain.FeedSK("muted"), FeedID: "muted", URL: "https://example.com/c", Muted: true, ErrorCount: 9, NextFetchAt: domain.Timestamp(now)},
+	} {
+		if err := repository.PutFeed(ctx, feed); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A Feed written before the connector attribute existed, and a profile
+	// still carrying the index marker it had before the USER marker shipped.
+	for _, row := range []map[string]types.AttributeValue{
+		{"PK": &types.AttributeValueMemberS{Value: domain.UserPK("two")}, "SK": &types.AttributeValueMemberS{Value: domain.FeedSK("legacy")}, "feed_id": &types.AttributeValueMemberS{Value: "legacy"}, "gsi1pk": &types.AttributeValueMemberS{Value: feedIndexPK}, "next_fetch_at": &types.AttributeValueMemberS{Value: domain.Timestamp(now)}, "error_count": &types.AttributeValueMemberN{Value: "1"}},
+		{"PK": &types.AttributeValueMemberS{Value: domain.UserPK("three")}, "SK": &types.AttributeValueMemberS{Value: "PROFILE"}, "gsi1pk": &types.AttributeValueMemberS{Value: feedIndexPK}, "next_fetch_at": &types.AttributeValueMemberS{Value: domain.Timestamp(now)}},
+	} {
+		if _, err := repository.db.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(repository.table), Item: row}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	feeds, err := repository.FeedStatuses(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]domain.Feed{}
+	for _, feed := range feeds {
+		got[feed.PK+" "+feed.FeedID] = feed
+	}
+	want := map[string]domain.Feed{
+		"U#one failing": {PK: domain.UserPK("one"), SK: domain.FeedSK("failing"), FeedID: "failing", Connector: domain.ConnectorYouTube, ErrorCount: 3},
+		"U#two refused": {PK: domain.UserPK("two"), SK: domain.FeedSK("refused"), FeedID: "refused", Connector: domain.ConnectorYouTube, RefusedSince: refused},
+		"U#two legacy":  {PK: domain.UserPK("two"), SK: domain.FeedSK("legacy"), FeedID: "legacy", Connector: domain.ConnectorRSS, ErrorCount: 1},
+	}
+	if len(got) != len(want) || len(feeds) != len(want) {
+		t.Fatalf("FeedStatuses = %#v, want %#v", feeds, want)
+	}
+	for name, feed := range want {
+		if !reflect.DeepEqual(got[name], feed) {
+			t.Errorf("FeedStatuses[%s] = %#v, want %#v", name, got[name], feed)
+		}
 	}
 }

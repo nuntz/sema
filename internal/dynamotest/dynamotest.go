@@ -67,6 +67,7 @@ func NewTable(t testing.TB) (*dynamodb.Client, string) {
 		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
 			{IndexName: aws.String("by-score"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("PK"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("score"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll}},
 			{IndexName: aws.String("by-next-fetch"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("gsi1pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("next_fetch_at"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeKeysOnly}},
+			{IndexName: aws.String("feed-status"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("gsi1pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("next_fetch_at"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeInclude, NonKeyAttributes: []string{"connector", "muted", "error_count", "refused_since"}}},
 			{IndexName: aws.String("unread-by-score"), KeySchema: []types.KeySchemaElement{{AttributeName: aws.String("unread_pk"), KeyType: types.KeyTypeHash}, {AttributeName: aws.String("score"), KeyType: types.KeyTypeRange}}, Projection: &types.Projection{ProjectionType: types.ProjectionTypeAll}},
 		},
 	})

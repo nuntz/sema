@@ -150,6 +150,12 @@ func program(ctx *pulumi.Context, assets programAssets) error {
 				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
 				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
 			}, ProjectionType: pulumi.String("KEYS_ONLY")},
+			// by-next-fetch's keys with the state the scheduler reads to find failing
+			// Connectors; a separate index because a projection cannot change in place.
+			&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("feed-status"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
+				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
+			}, ProjectionType: pulumi.String("INCLUDE"), NonKeyAttributes: pulumi.StringArray{pulumi.String("connector"), pulumi.String("muted"), pulumi.String("error_count"), pulumi.String("refused_since")}},
 			// Sparse: only unread live items carry unread_pk.
 			&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("unread-by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
 				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("unread_pk"), KeyType: pulumi.String("HASH")},
@@ -544,13 +550,17 @@ func program(ctx *pulumi.Context, assets programAssets) error {
 	if err != nil {
 		return err
 	}
+	connectorsFailingAlarm, err := cloudwatch.NewMetricAlarm(ctx, "connectors-failing", connectorsFailingAlarmArgs(alarmActions))
+	if err != nil {
+		return err
+	}
 
 	dashboardName := fmt.Sprintf("sema-%s", stack)
 	dashboardBodyOutput := pulumi.All(
 		scheduler.Name, feedWorker.Name, itemWorker.Name, apiLambda.Name, rescoreLambda.Name, cleanupLambda.Name, deliveryWorker.Name,
 		feedsQueue.Name, feedsDLQ.Name, itemsQueue.Name, itemsDLQ.Name, deliveriesQueue.Name, deliveriesDLQ.Name, table.Name,
 		httpAPI.ID().ToStringOutput(), distribution.ID().ToStringOutput(),
-		pulumi.StringArray{dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, dlqAlarms["deliveries"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn, rescoreErrorsAlarm.Arn},
+		pulumi.StringArray{dlqAlarms["feeds"].Arn, dlqAlarms["items"].Arn, dlqAlarms["deliveries"].Arn, schedulerMissedAlarm.Arn, schedulerSilentAlarm.Arn, itemWorkerErrorsAlarm.Arn, summariesAlarm.Arn, storyAssignmentFailedAlarm.Arn, rescoreErrorsAlarm.Arn, connectorsFailingAlarm.Arn},
 	).ApplyT(func(values []any) (string, error) {
 		return dashboardBody(dashboardResources{
 			stack:  stack,
@@ -668,6 +678,27 @@ func storyAssignmentFailedAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.
 		TreatMissingData:   pulumi.String("notBreaching"),
 		AlarmActions:       alarmActions,
 		AlarmDescription:   pulumi.String("story assignment failures exceeded 20 items in 15 minutes"),
+	}
+}
+
+// connectorsFailingAlarmArgs fires while any Connector has every Feed failing.
+// The scheduler judges this from stored Feed state each run, so the alarm stays
+// in alarm while Feeds back off to daily fetches. A scheduler that stops
+// emitting is the scheduler-silent alarm's job, so missing data is not breaching.
+func connectorsFailingAlarmArgs(alarmActions pulumi.ArrayInput) *cloudwatch.MetricAlarmArgs {
+	return &cloudwatch.MetricAlarmArgs{
+		Namespace:          pulumi.String("Sema"),
+		MetricName:         pulumi.String("ConnectorsFailing"),
+		Statistic:          pulumi.String("Maximum"),
+		Period:             pulumi.Int(3600),
+		EvaluationPeriods:  pulumi.Int(1),
+		ComparisonOperator: pulumi.String("GreaterThanOrEqualToThreshold"),
+		Threshold:          pulumi.Float64(1),
+		TreatMissingData:   pulumi.String("notBreaching"),
+		AlarmActions:       alarmActions,
+		OkActions:          alarmActions,
+		AlarmDescription: pulumi.String("every Feed of a Connector is failing; the scheduler log field FailingConnectors names it " +
+			"(Logs Insights on the scheduler: filter ConnectorsFailing > 0 | stats latest(FailingConnectors))"),
 	}
 }
 
@@ -1095,7 +1126,8 @@ func dashboardBody(resources dashboardResources) (string, error) {
 	grid.row(6,
 		timeSeries(region, "Pipeline", "Sum", 300,
 			dashboardMetric("Sema", "FeedsEnqueued"),
-			dashboardMetric("Sema", "FeedsFailed"),
+			// Emitted every minute as a count, so a 5-minute Sum would overstate it.
+			dashboardMetric("Sema", "ConnectorsFailing", map[string]any{"stat": "Maximum"}),
 			dashboardMetric("Sema", "ItemsWritten"),
 		),
 		failures,

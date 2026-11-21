@@ -342,6 +342,44 @@ func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]domain.Feed, err
 	}
 }
 
+// FeedStatuses returns every scheduled Feed with only the state that says whether
+// it is failing: its connector, mute state, error count and refusal time. It
+// reads the feed-status index, which shares by-next-fetch's keys but projects
+// those attributes, so the scheduler pays for a few bytes per Feed each minute.
+func (s *Store) FeedStatuses(ctx context.Context) ([]domain.Feed, error) {
+	result := []domain.Feed{}
+	var start map[string]types.AttributeValue
+	for {
+		response, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(s.table), IndexName: aws.String("feed-status"),
+			KeyConditionExpression:    aws.String("gsi1pk = :feed"),
+			ExpressionAttributeValues: map[string]types.AttributeValue{":feed": &types.AttributeValueMemberS{Value: feedIndexPK}},
+			ExclusiveStartKey:         start,
+		})
+		if err != nil {
+			return nil, err
+		}
+		var page []domain.Feed
+		if err := attributevalue.UnmarshalListOfMaps(response.Items, &page); err != nil {
+			return nil, err
+		}
+		for _, feed := range page {
+			// Profiles written before the USER marker still carry FEED.
+			if !strings.HasPrefix(feed.SK, "F#") {
+				continue
+			}
+			result = append(result, domain.Feed{
+				PK: feed.PK, SK: feed.SK, FeedID: strings.TrimPrefix(feed.SK, "F#"), Connector: domain.FeedConnector(feed),
+				Muted: feed.Muted, ErrorCount: feed.ErrorCount, RefusedSince: feed.RefusedSince,
+			})
+		}
+		start = response.LastEvaluatedKey
+		if len(start) == 0 {
+			return result, nil
+		}
+	}
+}
+
 func (s *Store) ScheduleFeed(ctx context.Context, userID, feedID string, next time.Time) error {
 	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.table), Key: key(domain.UserPK(userID), domain.FeedSK(feedID)),

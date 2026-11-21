@@ -78,6 +78,34 @@ func TestStoryAssignmentFailedAlarmMetric(t *testing.T) {
 	}
 }
 
+func TestConnectorsFailingAlarmMetric(t *testing.T) {
+	actions := pulumi.Array{pulumi.String("arn:aws:sns:us-east-1:123456789012:alerts")}
+	args := connectorsFailingAlarmArgs(actions)
+
+	assertPulumiString(t, "namespace", args.Namespace, "Sema")
+	assertPulumiString(t, "metric name", args.MetricName, "ConnectorsFailing")
+	assertPulumiString(t, "statistic", args.Statistic, "Maximum")
+	assertPulumiString(t, "comparison operator", args.ComparisonOperator, "GreaterThanOrEqualToThreshold")
+	assertPulumiString(t, "missing data", args.TreatMissingData, "notBreaching")
+	assertPulumiInt(t, "period", args.Period, 3600)
+	assertPulumiInt(t, "evaluation periods", args.EvaluationPeriods, 1)
+	if threshold, ok := args.Threshold.(pulumi.Float64); !ok || float64(threshold) != 1 {
+		t.Fatalf("threshold = %#v, want 1", args.Threshold)
+	}
+	if args.Dimensions != nil {
+		t.Fatalf("dimensions = %#v, want none", args.Dimensions)
+	}
+	if description, ok := args.AlarmDescription.(pulumi.String); !ok || !strings.Contains(string(description), "FailingConnectors") {
+		t.Fatalf("alarm description = %#v, want it to name the FailingConnectors log field", args.AlarmDescription)
+	}
+	if got, ok := args.AlarmActions.(pulumi.Array); !ok || len(got) != 1 || got[0] != actions[0] {
+		t.Fatalf("alarm actions = %#v, want %#v", args.AlarmActions, actions)
+	}
+	if got, ok := args.OkActions.(pulumi.Array); !ok || len(got) != 1 || got[0] != actions[0] {
+		t.Fatalf("ok actions = %#v, want %#v", args.OkActions, actions)
+	}
+}
+
 func TestWebCacheControl(t *testing.T) {
 	tests := map[string]string{
 		"index.html":           "no-cache",
@@ -160,7 +188,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		feedsQueue: "feeds-queue", feedsDLQ: "feeds-dlq", itemsQueue: "items-queue", itemsDLQ: "items-dlq",
 		deliveriesQueue: "deliveries-queue", deliveriesDLQ: "deliveries-dlq",
 		table: "sema-dev", apiID: "abc123", distributionID: "E123456789",
-		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7", "arn:8", "arn:rescore-errors"},
+		alarmArns: []string{"arn:1", "arn:2", "arn:3", "arn:4", "arn:5", "arn:6", "arn:7", "arn:8", "arn:rescore-errors", "arn:connectors-failing"},
 	})
 	if err != nil {
 		t.Fatalf("dashboardBody: %v", err)
@@ -187,7 +215,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 	// Mirrors observability.ExtractedMetrics: the only Sema metric names that exist
 	// as custom metrics. Anything else on the dashboard would chart an empty series.
 	extracted := map[string]bool{
-		"FeedsEnqueued": true, "SummariesGenerated": true, "StoryAssignmentFailed": true, "ItemsWritten": true, "FeedsFailed": true,
+		"FeedsEnqueued": true, "SummariesGenerated": true, "StoryAssignmentFailed": true, "ItemsWritten": true, "ConnectorsFailing": true,
 		"ExtractionFailed": true, "MediaFailed": true, "ItemWorkerDurationMs": true, "BedrockLatencyMs": true, "StoryCreated": true,
 	}
 	metrics := 0
@@ -198,7 +226,7 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 		if title == "" {
 			t.Errorf("widget %d has no title", index)
 		}
-		if title == "Alarms" && (len(widget.Properties.Alarms) != 9 || widget.Properties.Alarms[8] != "arn:rescore-errors") {
+		if title == "Alarms" && (len(widget.Properties.Alarms) != 10 || widget.Properties.Alarms[9] != "arn:connectors-failing") {
 			t.Errorf("dashboard alarm set = %v", widget.Properties.Alarms)
 		}
 		metrics += len(widget.Properties.Metrics)
@@ -232,6 +260,10 @@ func TestDashboardBodyStaysWithinMetricBudget(t *testing.T) {
 	assertCharts(t, metricsByTitle, "Queue depth", "AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "deliveries-queue")
 	assertCharts(t, metricsByTitle, "Oldest message age", "AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", "deliveries-queue")
 	assertCharts(t, metricsByTitle, "Dead letters", "AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "deliveries-dlq")
+	pipeline := metricsByTitle["Pipeline"]
+	if len(pipeline) != 3 || pipeline[1][1] != "ConnectorsFailing" {
+		t.Fatalf("Pipeline metrics = %#v, want ConnectorsFailing in FeedsFailed's place", pipeline)
+	}
 	storyMetrics := metricsByTitle["Story assignment"]
 	if len(storyMetrics) != 2 || storyMetrics[0][1] != "StoryCreated" || storyMetrics[1][1] != "StoryAssignmentFailed" {
 		t.Fatalf("Story assignment metrics = %#v, want StoryCreated and StoryAssignmentFailed", storyMetrics)

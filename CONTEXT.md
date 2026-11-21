@@ -30,6 +30,10 @@ _Avoid_: Health, state
 A fetch the source turned away because of who is asking or how often, not because the Feed is gone. A Refused fetch never slows a Feed and is simply tried again; only a Feed refused continuously for a day becomes broken.
 _Avoid_: Rate limited, throttled, blocked, error
 
+**Failing Connector**:
+A Connector whose every non-muted Feed has failed its last two fetches or been Refused for six hours, which alerts the operator. It trips well before its Feeds turn broken, because one source going dark for everyone should be caught within hours, and it stays failing while those Feeds back off to a daily fetch.
+_Avoid_: Dead connector, unhealthy connector, outage
+
 **Cadence**:
 How often Sema checks a Feed for new Items: hourly, every three or six hours, or daily. Cadence follows how often the Feed actually publishes unless the user pins it.
 _Avoid_: Interval, poll rate, frequency, schedule

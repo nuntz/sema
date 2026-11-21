@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/feedstatus"
 	"github.com/nuntz/sema/internal/observability"
 	"github.com/nuntz/sema/internal/store"
 )
@@ -25,6 +27,7 @@ type handler struct {
 	store *store.Store
 	queue *sqs.Client
 	url   string
+	emit  func(map[string]float64, map[string]string)
 }
 
 func (h *handler) run(ctx context.Context) error {
@@ -79,8 +82,26 @@ func (h *handler) run(ctx context.Context) error {
 		}
 		enqueued += len(entries)
 	}
-	slog.Info("scheduler complete", "feeds_enqueued", enqueued, "duration_ms", time.Since(started).Milliseconds())
-	observability.Emit(map[string]float64{"FeedsEnqueued": float64(enqueued), "SchedulerDurationMs": float64(time.Since(started).Milliseconds())}, nil)
+	metrics := map[string]float64{"FeedsEnqueued": float64(enqueued)}
+	var fields map[string]string
+	// Feeds' status fields are read after enqueueing so a failed read never
+	// stops fetches; the run then emits no ConnectorsFailing, which the alarm
+	// treats as not breaching.
+	if statuses, err := h.store.FeedStatuses(ctx); err != nil {
+		slog.Error("feed status read failed", "error", err)
+	} else {
+		failing := feedstatus.FailingConnectors(statuses, started)
+		metrics["ConnectorsFailing"] = float64(len(failing))
+		fields = map[string]string{"FailingConnectors": strings.Join(failing, ",")}
+	}
+	duration := time.Since(started).Milliseconds()
+	metrics["SchedulerDurationMs"] = float64(duration)
+	slog.Info("scheduler complete", "feeds_enqueued", enqueued, "duration_ms", duration)
+	emit := h.emit
+	if emit == nil {
+		emit = observability.Emit
+	}
+	emit(metrics, fields)
 	return nil
 }
 

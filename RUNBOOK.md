@@ -332,6 +332,21 @@ after the Send; the `sent_at` in each message body is exact. If the oldest messa
 Destinations would still want, or you don't know why the messages failed, leave them in the queue to
 expire instead of redriving.
 
+### A Connector is failing
+
+The `connectors-failing` alarm fires when every non-muted Feed of a Connector has failed its last two
+fetches in a row or has been Refused for six hours. Each scheduler run judges this from the Feeds'
+stored state, so the alarm stays on while the Feeds back off to one fetch a day; it clears after the
+first full hour with no failing Connector. The metric carries no dimension; the scheduler's log names
+the Connector. In Logs Insights on the scheduler's log group:
+
+```
+filter ConnectorsFailing > 0 | stats latest(FailingConnectors) by bin(1h)
+```
+
+Then look at that Connector's `feed fetch failed` and `feed refused` lines in the feed worker's log
+group for the error. Per-Feed fetch failures are counted by the `fetch-outcomes` saved query.
+
 ## Updating an existing stack
 
 New stacks do not need these migrations. Backfill commands start in read-only mode and report affected rows; inspect that output before running them again with `BACKFILL_ARGS=--apply`.
@@ -529,3 +544,10 @@ Confirm it in production:
 ### Send rollout
 
 Send adds the `deliveries` queue with its dead-letter queue and alarm, the `delivery-worker` Lambda, and the `DELIVERIES_QUEUE_URL` variable on the API. `make deploy` creates all of them; no configuration is required. Items start recording the origin URL of their lead image on ingest or replay, and there is no backfill; every Item with a stored lead image also sends a one-hour signed URL to a per-Send copy of Sema's image under `send/`, which a lifecycle rule deletes after a day. That copy needs the `sema:domain` custom domain, which becomes the API's `PUBLIC_ORIGIN`; without one, Items ingested before the rollout send an empty `images` list.
+
+### Feed Status index rollout
+
+Failing-Connector detection adds the `feed-status` index to the table. It reuses `by-next-fetch`'s keys,
+which every scheduled Feed already carries, so there is no backfill; DynamoDB builds it online during
+`make deploy`, which shows the table as updated, never replaced. Until the index is active the scheduler
+logs `feed status read failed` and emits no `ConnectorsFailing`, while fetches carry on as before.
