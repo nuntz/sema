@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestRemovalDryRunApplyAndRepeat(t *testing.T) {
 	repository := store.New(db, nil, table, "", "")
 	now := time.Now().UTC()
 	for _, feed := range []domain.Feed{
-		{FeedID: "golang", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/golang/.rss", Title: "r/golang", CustomTitle: "Go threads", FaviconKey: "favicons/golang.png"},
+		{FeedID: "golang", Connector: domain.ConnectorReddit, URL: "https://www.reddit.com/r/golang/.rss", SiteURL: "https://www.reddit.com/r/golang/", Tags: []string{"go", "dev"}, Title: "r/golang", CustomTitle: "Go threads", FaviconKey: "favicons/golang.png"},
 		{FeedID: "blog", Connector: domain.ConnectorRSS, URL: "https://example.com/feed", Title: "Example blog", FaviconKey: "favicons/blog.png"},
 	} {
 		feed.PK, feed.SK, feed.NextFetchAt = domain.UserPK("user"), domain.FeedSK(feed.FeedID), domain.Timestamp(now)
@@ -33,7 +34,7 @@ func TestRemovalDryRunApplyAndRepeat(t *testing.T) {
 	for _, item := range []domain.Item{
 		// Ingested before the Reddit Connector existed, under the Feed's original title.
 		{ItemID: "stale", FeedID: "golang", Title: "Generics in practice", FeedTitle: "r/golang"},
-		{ItemID: "frozen", FeedID: "golang", Title: "Iterators", Connector: domain.ConnectorReddit, FeedTitle: "Go threads", FaviconKey: "favicons/golang.png"},
+		{ItemID: "frozen", FeedID: "golang", Title: "Iterators", Connector: domain.ConnectorReddit, FeedTitle: "Go threads", FaviconKey: "favicons/golang.png", FeedURL: "https://www.reddit.com/r/golang/", FeedTags: []string{"go", "dev"}},
 		{ItemID: "article", FeedID: "blog", Title: "An article", Connector: domain.ConnectorRSS, FeedTitle: "Old blog title"},
 	} {
 		item.PK, item.SK, item.HeartedTS = domain.UserPK("user"), domain.ArchiveSK(now, item.ItemID), domain.Timestamp(now)
@@ -53,6 +54,7 @@ func TestRemovalDryRunApplyAndRepeat(t *testing.T) {
 		}
 		byID := make(map[string]domain.Item, len(items))
 		for _, item := range items {
+			slices.Sort(item.FeedTags) // a string set comes back in any order
 			byID[item.ItemID] = item
 		}
 		return byID
@@ -102,6 +104,7 @@ func TestRemovalDryRunApplyAndRepeat(t *testing.T) {
 	after := kept()
 	want := before["stale"]
 	want.Connector, want.FeedTitle, want.FaviconKey = domain.ConnectorReddit, "Go threads", "favicons/golang.png"
+	want.FeedURL, want.FeedTags = "https://www.reddit.com/r/golang/", []string{"dev", "go"}
 	if !reflect.DeepEqual(after["stale"], want) {
 		t.Fatalf("stale = %+v, want %+v", after["stale"], want)
 	}

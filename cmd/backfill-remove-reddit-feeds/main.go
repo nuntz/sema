@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/nuntz/sema/internal/domain"
+	"github.com/nuntz/sema/internal/send"
 	"github.com/nuntz/sema/internal/store"
 )
 
@@ -95,11 +97,19 @@ func removeUserFeeds(ctx context.Context, repository feedStore, user string, app
 }
 
 // freeze writes onto a Kept Item what the API serves while its Feed exists,
-// so it looks the same once the Feed is gone.
+// so it looks the same once the Feed is gone, and the Feed URL and Tags Send
+// reads from the Feed, so a Send of it carries the same payload.
 func freeze(item domain.Item, feed domain.Feed) (domain.Item, bool) {
 	frozen := domain.PresentWithFeed(item, feed)
-	changed := frozen.Connector != item.Connector || frozen.FeedTitle != item.FeedTitle || frozen.FaviconKey != item.FaviconKey
+	frozen.FeedURL, frozen.FeedTags = send.FeedURL(feed), feed.Tags
+	changed := frozen.Connector != item.Connector || frozen.FeedTitle != item.FeedTitle || frozen.FaviconKey != item.FaviconKey ||
+		frozen.FeedURL != item.FeedURL || !sameTags(frozen.FeedTags, item.FeedTags)
 	return frozen, changed
+}
+
+// sameTags compares Tags as the string sets they are stored as.
+func sameTags(a, b []string) bool {
+	return slices.Equal(slices.Sorted(slices.Values(a)), slices.Sorted(slices.Values(b)))
 }
 
 func main() {
