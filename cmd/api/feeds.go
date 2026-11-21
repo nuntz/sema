@@ -530,5 +530,5 @@ func decorateExtraction(feeds []domain.Feed) {
 // redditEnded refuses a Reddit address wherever a Feed could be added from
 // one, with a stable kind the web app keys its explanation on (ADR 0009).
 func redditEnded() events.APIGatewayV2HTTPResponse {
-	return response(http.StatusUnprocessableEntity, map[string]string{"error": reddit.EndedExplanation, "kind": "reddit_ended"})
+	return response(http.StatusUnprocessableEntity, map[string]string{"error": reddit.EndedExplanation, "kind": reddit.EndedKind})
 }
