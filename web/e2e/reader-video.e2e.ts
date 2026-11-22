@@ -1,3 +1,5 @@
+import { animationsFinished } from "./animations";
+import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 import { logPlayerStates, stubYouTube } from "./youtube-stub";
 
@@ -71,6 +73,10 @@ test("reader dwell continues after iframe blur and pauses on player pause", asyn
   await page.goto("/e2e/header-fixture.html?view=reader&media=video");
   await page.keyboard.press("i");
   await expect(page.locator("iframe")).toHaveAttribute("data-state", "1");
+  // The Pause click below lands in the player's cross-origin iframe, so
+  // Playwright's stability check can't see the reader sliding the iframe in;
+  // a press aimed mid-slide can miss it and still count as a click (#70).
+  await animationsFinished(openReader(page));
   await page.evaluate(() => window.dispatchEvent(new Event("blur")));
   await page.clock.runFor(31_000);
   const elapsed = Number(await page.locator("body").getAttribute("data-dwell"));
