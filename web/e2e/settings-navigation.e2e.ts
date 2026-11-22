@@ -1,5 +1,5 @@
 import { nextPageTop, pageUpLanding } from "./grid-paging";
-import { resizeGrid } from "./grid-resize";
+import { resizeGrid, settledScrollExtent } from "./grid-resize";
 import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
@@ -838,8 +838,8 @@ for (const width of [1280, 390]) {
     await openApp(page);
     await resizeGrid(page, width, 420);
     const grid = page.locator(".grid-scroll");
-    const maxTop = await grid.evaluate((element) => {
-      const maxTop = element.scrollHeight - element.clientHeight;
+    const maxTop = await settledScrollExtent(page);
+    await grid.evaluate((element, maxTop) => {
       element.scrollTop = maxTop - 40;
       for (const method of ["scrollBy", "scrollTo"] as const) {
         element[method] = new Proxy(element[method], {
@@ -860,8 +860,7 @@ for (const width of [1280, 390]) {
           },
         });
       }
-      return maxTop;
-    });
+    }, maxTop);
     await page.keyboard.press("Space");
     await expect
       .poll(() => grid.evaluate((element) => element.scrollTop))
