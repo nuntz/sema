@@ -14,12 +14,13 @@ TIMEOUT="${TIMEOUT:-1800}"
 POLL="${POLL:-30}"
 started="$(date +%s)"
 
-# latest_run prints "id|status|conclusion|createdAt" for the newest ci run of SHA on master, or
-# nothing when there is none yet or GitHub didn't answer (both are retried).
+# latest_run prints "id|status|conclusion|createdAt|startedAt" for the newest ci run of SHA on
+# master, or nothing when there is none yet or GitHub didn't answer (both are retried). startedAt
+# is the current attempt's start: a re-run keeps the run's createdAt but resets startedAt.
 latest_run() {
   gh run list --workflow ci.yml --branch master --commit "$SHA" --limit 1 \
-    --json databaseId,status,conclusion,createdAt \
-    -q '.[0] | select(.) | "\(.databaseId)|\(.status)|\(.conclusion)|\(.createdAt)"' 2>/dev/null || true
+    --json databaseId,status,conclusion,createdAt,startedAt \
+    -q '.[0] | select(.) | "\(.databaseId)|\(.status)|\(.conclusion)|\(.createdAt)|\(.startedAt)"' 2>/dev/null || true
 }
 
 while :; do
@@ -28,13 +29,17 @@ while :; do
     echo "No finished ci run for ${SHA:0:7} after ${TIMEOUT}s" >&2
     exit 1
   fi
-  IFS="|" read -r id status conclusion created <<<"$(latest_run)" || true
+  IFS="|" read -r id status conclusion created attempt_started <<<"$(latest_run)" || true
   if [[ -z "${id:-}" ]]; then
     sleep "$POLL"
     continue
   fi
   if [[ "$status" == completed ]]; then break; fi
-  age=$((now - $(date -d "$created" +%s)))
+  # Queued since the later of the two, so a re-run isn't timed from its first attempt.
+  queued_since="$(date -d "$created" +%s)"
+  attempt_since="$(date -d "${attempt_started:-$created}" +%s 2>/dev/null || echo 0)"
+  ((attempt_since > queued_since)) && queued_since="$attempt_since"
+  age=$((now - queued_since))
   if [[ "$status" == queued ]] && ((age > QUEUE_LIMIT)); then
     echo "ci run $id for ${SHA:0:7} has been queued for ${age}s without starting." >&2
     echo "It can't be cancelled; start a fresh run: gh workflow run ci.yml --ref master" >&2
