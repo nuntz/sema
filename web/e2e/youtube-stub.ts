@@ -35,7 +35,13 @@ export async function seekPlayer(player: Locator, seconds: number) {
   }, seconds);
 }
 
-/** Serve the player protocol from its real cross-origin iframe boundary. */
+/**
+ * Serve the player protocol from its real cross-origin iframe boundary.
+ * Playing is reported 400ms after the app's playVideo, as a real player
+ * buffers first, so a test that acts before its player plays, such as Escape
+ * on a Peek that can only Dock a live video, fails on every run rather than
+ * on a busy CI runner (#68).
+ */
 export async function stubYouTube(
   page: Page,
   failure = false,
@@ -58,7 +64,7 @@ export async function stubYouTube(
           if (${failure}) send({event:'onError', info:150});
           else { send({event:'onReady'}); state(-1); }
         } else if (message.event === 'command') {
-          if (message.func === 'playVideo') state(1);
+          if (message.func === 'playVideo') setTimeout(() => state(1), 400);
           if (message.func === 'pauseVideo') state(2);
           if (message.func === 'seekTo') { seconds = message.args[0]; seek(); }
         }
