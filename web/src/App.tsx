@@ -785,9 +785,12 @@ export function App(props: {
 
   const closeReader = () => beginReaderClose(true);
 
+  // Opening an Item while the reader is still leaving cancels that exit, or
+  // its timer would clear the Item just opened (#69).
   const openReaderHistory = () => {
-    if (readerID()) return;
+    if (readerID() && !readerClosing()) return;
     window.clearTimeout(readerCloseTimer);
+    readerCloseTimer = undefined;
     setReaderClosing(false);
     setReaderReveal(0);
     setReaderDragging(false);

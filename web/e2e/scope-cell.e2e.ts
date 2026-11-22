@@ -1,4 +1,5 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
+import { animationsFinished } from "./animations";
 import { expect, type Page, test } from "./test";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
@@ -410,7 +411,13 @@ for (const grouped of [false, true]) {
         await page
           .locator(`[data-item-id="${item.item_id}"] .cell-main`)
           .click();
-        await expect(page.locator(".reader")).toBeVisible();
+        // The previous reader is still leaving when this click lands, so wait
+        // for one that shows this Item and isn't leaving (#69).
+        await expect(
+          page
+            .locator(".reader:not(.closing)")
+            .getByRole("heading", { name: item.title, exact: true }),
+        ).toBeVisible();
         await page.keyboard.press("Escape");
       }
     }
@@ -858,4 +865,31 @@ test("phone Tag chips drop as soon as their Items are read", async ({
     page.getByRole("heading", { name: "You're all caught up" }),
   ).toBeVisible();
   await expect(chips).toHaveCount(0);
+});
+
+// The reader stays mounted for its 220ms exit, and the grid takes clicks once
+// it has slid past a cell, before that exit ends. Pausing the clock holds the
+// exit's timer while the slide runs on real time, so the click lands inside
+// that window every run rather than one in a hundred (#69).
+test("opening an Item while the reader leaves shows it", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openGrid(page);
+  const reader = page.locator(".reader");
+  await page.locator('[data-item-id="Today unread"] .cell-main').click();
+  await expect(reader).toBeVisible();
+  // Short of the first poll, so no reload lands mid-test.
+  await page.clock.pauseAt(new Date("2026-09-08T02:01:00Z"));
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveClass(/closing/);
+  await animationsFinished(reader);
+  await page.locator('[data-item-id="Older unread"] .cell-main').click();
+  await page.clock.runFor(1000);
+  await expect(reader).not.toHaveClass(/closing/);
+  await expect(
+    reader.getByRole("heading", { name: "Older unread" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveClass(/closing/);
+  await page.clock.runFor(1000);
+  await expect(reader).toHaveCount(0);
 });
