@@ -1531,31 +1531,48 @@ func (s *Store) batchGetRows(ctx context.Context, keys []map[string]types.Attrib
 
 func (s *Store) batchGetRowsWithConsistency(ctx context.Context, keys []map[string]types.AttributeValue, consistent bool) ([]map[string]types.AttributeValue, error) {
 	rows := make([]map[string]types.AttributeValue, 0, len(keys))
+	err := s.batchGet(ctx, keys, types.KeysAndAttributes{ConsistentRead: aws.Bool(consistent)}, "item", func(row map[string]types.AttributeValue) error {
+		rows = append(rows, row)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// batchGet reads keys in BatchGetItem chunks shaped like shape, passing every
+// returned row to visit, and retries unprocessed keys with backoff. Unprocessed
+// keys are not SDK errors, so nothing else backs off, and retrying at once
+// keeps hitting the same hot partition.
+func (s *Store) batchGet(ctx context.Context, keys []map[string]types.AttributeValue, shape types.KeysAndAttributes, lookups string, visit func(map[string]types.AttributeValue) error) error {
 	for offset := 0; offset < len(keys); offset += 100 {
 		pending := keys[offset:min(offset+100, len(keys))]
 		for attempt := 0; len(pending) > 0 && attempt < 8; attempt++ {
 			if attempt > 0 {
-				// Unprocessed keys are not SDK errors, so nothing else backs off.
-				// Retrying at once keeps hitting the same hot partition.
 				backoff := min(50*time.Millisecond<<(attempt-1), 2*time.Second)
 				if err := s.sleep(ctx, backoff+time.Duration(rand.Int64N(int64(backoff)))); err != nil {
-					return nil, err
+					return err
 				}
 			}
-			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
-				Keys: pending, ConsistentRead: aws.Bool(consistent),
-			}}})
+			chunk := shape
+			chunk.Keys = pending
+			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: chunk}})
 			if err != nil {
-				return nil, err
+				return err
 			}
-			rows = append(rows, response.Responses[s.table]...)
+			for _, row := range response.Responses[s.table] {
+				if err := visit(row); err != nil {
+					return err
+				}
+			}
 			pending = response.UnprocessedKeys[s.table].Keys
 		}
 		if len(pending) > 0 {
-			return nil, fmt.Errorf("%d item lookups were throttled", len(pending))
+			return fmt.Errorf("%d %s lookups were throttled", len(pending), lookups)
 		}
 	}
-	return rows, nil
+	return nil
 }
 
 func (s *Store) UserIDs(ctx context.Context) ([]string, error) {
@@ -2684,31 +2701,22 @@ func (s *Store) signalValues(ctx context.Context, userID string, itemIDs []strin
 		seen[itemID] = true
 		keys = append(keys, key(domain.UserPK(userID), domain.SignalSK(itemID)))
 	}
-	for offset := 0; offset < len(keys); offset += 100 {
-		pending := keys[offset:min(offset+100, len(keys))]
-		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
-			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {
-				Keys: pending, ProjectionExpression: aws.String("SK, #value"), ExpressionAttributeNames: map[string]string{"#value": "value"},
-				ConsistentRead: aws.Bool(consistent),
-			}}})
-			if err != nil {
-				return nil, err
-			}
-			for _, row := range response.Responses[s.table] {
-				var signal struct {
-					SK    string `dynamodbav:"SK"`
-					Value int    `dynamodbav:"value"`
-				}
-				if err := attributevalue.UnmarshalMap(row, &signal); err != nil {
-					return nil, err
-				}
-				result[strings.TrimPrefix(signal.SK, "S#")] = signal.Value
-			}
-			pending = response.UnprocessedKeys[s.table].Keys
+	err := s.batchGet(ctx, keys, types.KeysAndAttributes{
+		ProjectionExpression: aws.String("SK, #value"), ExpressionAttributeNames: map[string]string{"#value": "value"},
+		ConsistentRead: aws.Bool(consistent),
+	}, "signal", func(row map[string]types.AttributeValue) error {
+		var signal struct {
+			SK    string `dynamodbav:"SK"`
+			Value int    `dynamodbav:"value"`
 		}
-		if len(pending) > 0 {
-			return nil, fmt.Errorf("%d signal lookups were throttled", len(pending))
+		if err := attributevalue.UnmarshalMap(row, &signal); err != nil {
+			return err
 		}
+		result[strings.TrimPrefix(signal.SK, "S#")] = signal.Value
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -2903,23 +2911,14 @@ func (s *Store) ResolveRead(ctx context.Context, userID string, items []domain.I
 		keys = append(keys, key(domain.UserPK(userID), domain.ReadSK(item.ItemID)))
 	}
 	read := make(map[string]bool)
-	for offset := 0; offset < len(keys); offset += 100 {
-		pending := keys[offset:min(offset+100, len(keys))]
-		for attempt := 0; len(pending) > 0 && attempt < 4; attempt++ {
-			response, err := s.db.BatchGetItem(ctx, &dynamodb.BatchGetItemInput{RequestItems: map[string]types.KeysAndAttributes{s.table: {Keys: pending, ProjectionExpression: aws.String("SK")}}})
-			if err != nil {
-				return err
-			}
-			for _, row := range response.Responses[s.table] {
-				if value, ok := row["SK"].(*types.AttributeValueMemberS); ok {
-					read[strings.TrimPrefix(value.Value, "R#")] = true
-				}
-			}
-			pending = response.UnprocessedKeys[s.table].Keys
+	err := s.batchGet(ctx, keys, types.KeysAndAttributes{ProjectionExpression: aws.String("SK")}, "read-state", func(row map[string]types.AttributeValue) error {
+		if value, ok := row["SK"].(*types.AttributeValueMemberS); ok {
+			read[strings.TrimPrefix(value.Value, "R#")] = true
 		}
-		if len(pending) > 0 {
-			return fmt.Errorf("%d read-state lookups were throttled", len(pending))
-		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	for i := range items {
 		items[i].Read = read[items[i].ItemID]

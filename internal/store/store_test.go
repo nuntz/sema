@@ -1547,7 +1547,9 @@ func TestSignalValuesRetriesUnprocessedKeys(t *testing.T) {
 		return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {second}}}, nil
 	}}
 
-	values, err := New(db, nil, "table", "", "").SignalValues(context.Background(), "user", []string{"first", "second", "first"})
+	repository := New(db, nil, "table", "", "")
+	repository.sleep = func(context.Context, time.Duration) error { return nil }
+	values, err := repository.SignalValues(context.Background(), "user", []string{"first", "second", "first"})
 	if err != nil || calls != 2 || len(values) != 2 || values["first"] != 1 || values["second"] != -1 {
 		t.Fatalf("SignalValues = %#v, calls %d, %v", values, calls, err)
 	}
@@ -2526,5 +2528,68 @@ func TestFeedLoadsAreStronglyConsistent(t *testing.T) {
 	}
 	if _, err := repository.Feeds(context.Background(), "user"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBatchLookupsWaitOutThrottledPartition(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored map[string]types.AttributeValue
+		lookup func(*testing.T, *Store) error
+	}{
+		{
+			name:   "signals",
+			stored: map[string]types.AttributeValue{"SK": &types.AttributeValueMemberS{Value: domain.SignalSK("item")}, "value": &types.AttributeValueMemberN{Value: "1"}},
+			lookup: func(t *testing.T, repository *Store) error {
+				values, err := repository.SignalValues(context.Background(), "user", []string{"item"})
+				if err == nil && values["item"] != 1 {
+					t.Errorf("values = %v, want item boosted", values)
+				}
+				return err
+			},
+		},
+		{
+			name:   "read state",
+			stored: map[string]types.AttributeValue{"SK": &types.AttributeValueMemberS{Value: domain.ReadSK("item")}},
+			lookup: func(t *testing.T, repository *Store) error {
+				items := []domain.Item{{ItemID: "item"}}
+				err := repository.ResolveRead(context.Background(), "user", items, nil)
+				if err == nil && !items[0].Read {
+					t.Error("item not resolved as read")
+				}
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			db := &fakeDynamoDB{batchGet: func(input *dynamodb.BatchGetItemInput) (*dynamodb.BatchGetItemOutput, error) {
+				calls++
+				if calls <= 2 {
+					return &dynamodb.BatchGetItemOutput{UnprocessedKeys: map[string]types.KeysAndAttributes{"table": {Keys: input.RequestItems["table"].Keys}}}, nil
+				}
+				return &dynamodb.BatchGetItemOutput{Responses: map[string][]map[string]types.AttributeValue{"table": {test.stored}}}, nil
+			}}
+			repository := New(db, nil, "table", "", "")
+			floors := []time.Duration{50 * time.Millisecond, 100 * time.Millisecond}
+			sleeps := 0
+			repository.sleep = func(_ context.Context, delay time.Duration) error {
+				if sleeps >= len(floors) {
+					t.Fatalf("unexpected sleep %d", sleeps+1)
+				}
+				if floor := floors[sleeps]; delay < floor || delay >= 2*floor {
+					t.Errorf("sleep %d = %s, want [%s, %s)", sleeps+1, delay, floor, 2*floor)
+				}
+				sleeps++
+				return nil
+			}
+			if err := test.lookup(t, repository); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 3 || sleeps != 2 {
+				t.Fatalf("calls=%d sleeps=%d, want 3 calls and 2 sleeps", calls, sleeps)
+			}
+		})
 	}
 }
