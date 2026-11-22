@@ -11,6 +11,10 @@ declare global {
       b: DOMRectReadOnly,
       slack?: number,
     ): boolean;
+    /** How many times each grid cell was added to the page, by Item or Story. */
+    cellMounts?: Record<string, number>;
+    /** Each grid row's `top` when it first mounted, by its first cell. */
+    rowFirstTops?: Record<string, number>;
   }
 }
 
@@ -2230,6 +2234,113 @@ test("overscan photos prefetch just outside the viewport and explicitly decode",
     )
     .toBe(true);
   await expect(target).toHaveAttribute("data-decode-attempted", "true");
+});
+
+test("a Story Lead's measured height moves the grid's cells without remounting them", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1470, height: 833 });
+  await page.route("**/remount-fixture/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="teal"/></svg>',
+    }),
+  );
+  const photo = (index: number) => ({
+    ...item(`remount-${index}`, "feed", `Photo ${index}`, 0.9, "L"),
+    media_url: `/remount-fixture/photo-${index}.svg`,
+    media_w: 640,
+    media_h: 480,
+    favicon_url: "/remount-fixture/favicon.svg",
+  });
+  // The lead's measured height differs from the layout's first estimate, so
+  // the measurement moves every row below the Story (#82).
+  await stubFrontPage(
+    page,
+    [
+      {
+        story_id: "remount-story",
+        source_count: 3,
+        order_key: 0.95,
+        size: "L",
+        items: [photo(100), photo(101), photo(102)],
+      },
+    ],
+    Array.from({ length: 24 }, (_, index) => photo(index)),
+    [],
+  );
+  // Count every grid cell element the page creates, including ones a relayout
+  // replaces before the test looks. A cell Solid only moves is counted once.
+  // Note where each row first mounted, so the test can tell the measurement
+  // moved rows, with or without remounting them.
+  await page.addInitScript(() => {
+    const mounts: Record<string, number> = {};
+    const firstTops: Record<string, number> = {};
+    const seen = new WeakSet<Element>();
+    window.cellMounts = mounts;
+    window.rowFirstTops = firstTops;
+    new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          const rows = [
+            ...(node.matches(".grid-row") ? [node] : []),
+            ...node.querySelectorAll(".grid-row"),
+          ];
+          for (const row of rows) {
+            const key = row
+              .querySelector(".grid-cell")
+              ?.getAttribute("data-item-id");
+            if (key && !(key in firstTops))
+              firstTops[key] = Number.parseFloat(
+                (row as HTMLElement).style.top,
+              );
+          }
+          const cells = [
+            ...(node.matches(".grid-cell") ? [node] : []),
+            ...node.querySelectorAll(".grid-cell"),
+          ];
+          for (const cell of cells) {
+            if (seen.has(cell)) continue;
+            seen.add(cell);
+            const story = cell.getAttribute("data-story-id");
+            const key = story
+              ? `story:${story}`
+              : (cell.getAttribute("data-item-id") ?? "?");
+            mounts[key] = (mounts[key] ?? 0) + 1;
+          }
+        }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  await page.goto("/");
+  await expect(
+    page.locator('[data-story-id="remount-story"][data-lead-measured]'),
+  ).toBeVisible();
+  await expect(page.locator('[data-item-id="remount-0"]')).toBeVisible();
+  // The counts are final once the measurement's relayout has landed: rows
+  // below the Story sit lower than where they first mounted. This holds
+  // whether the grid moved those rows or remounted them.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll<HTMLElement>(".grid-row")].filter(
+            (row) => {
+              const key = row
+                .querySelector(".grid-cell")
+                ?.getAttribute("data-item-id");
+              const first = key ? window.rowFirstTops?.[key] : undefined;
+              return (
+                first !== undefined && Number.parseFloat(row.style.top) > first
+              );
+            },
+          ).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  const mounts = await page.evaluate(() => window.cellMounts ?? {});
+  expect(mounts["story:remount-story"]).toBeDefined();
+  expect(Object.entries(mounts).filter(([, count]) => count !== 1)).toEqual([]);
 });
 
 for (const width of [1470, 390]) {

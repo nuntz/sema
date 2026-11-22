@@ -976,9 +976,35 @@ function sameLayoutRow(left: LayoutRow, right: LayoutRow): boolean {
 }
 
 /**
+ * Name what a cell shows: `story:<id>` for a Story, else its Item ID, which is
+ * also the cell's focus ID. A relayout that only moves or resizes the cell
+ * keeps the key, so the grid keeps its DOM, decoded images included (#82).
+ */
+export function layoutCellKey(cell: LayoutCell): string {
+  return cell.story ? `story:${cell.story.story_id}` : cell.item.item_id;
+}
+
+/**
+ * Key rows by their first cell, in order. A relayout that moves a row or
+ * resizes its cells keeps its key; one that starts it with a different cell
+ * doesn't. A repeated key, which `justify` never produces, gets a suffix so
+ * keys stay unique.
+ */
+export function keyLayoutRows(rows: LayoutRow[]): Map<string, LayoutRow> {
+  const keyed = new Map<string, LayoutRow>();
+  rows.forEach((row, index) => {
+    const first = row.cells[0];
+    const key = first ? layoutCellKey(first) : `row:${index}`;
+    keyed.set(keyed.has(key) ? `${key}#${index}` : key, row);
+  });
+  return keyed;
+}
+
+/**
  * Preserve row references when a relayout leaves their item and geometry
- * unchanged. Solid's keyed list then keeps those rows mounted while pagination
- * appends or reflows only the tail of the grid.
+ * unchanged, so memos downstream of the layout see the same rows while
+ * pagination appends or reflows only the tail of the grid. The grid mounts
+ * rows and cells by key (`keyLayoutRows`, `layoutCellKey`), not by reference.
  */
 export function reuseLayoutRows(
   previous: LayoutRow[],
@@ -986,16 +1012,17 @@ export function reuseLayoutRows(
 ): LayoutRow[] {
   if (previous.length === 0 || next.length === 0) return next;
 
-  const previousByFirstItem = new Map<string, LayoutRow>();
+  const firstKey = (row: LayoutRow) =>
+    row.cells[0] ? layoutCellKey(row.cells[0]) : undefined;
+  const previousByFirstCell = new Map<string, LayoutRow>();
   for (const row of previous) {
-    const firstID = row.cells[0]?.item.item_id;
-    if (firstID && !previousByFirstItem.has(firstID))
-      previousByFirstItem.set(firstID, row);
+    const key = firstKey(row);
+    if (key && !previousByFirstCell.has(key)) previousByFirstCell.set(key, row);
   }
 
   return next.map((row) => {
-    const firstID = row.cells[0]?.item.item_id;
-    const prior = firstID ? previousByFirstItem.get(firstID) : undefined;
+    const key = firstKey(row);
+    const prior = key ? previousByFirstCell.get(key) : undefined;
     return prior && sameLayoutRow(prior, row) ? prior : row;
   });
 }

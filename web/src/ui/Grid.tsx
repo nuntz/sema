@@ -1,4 +1,5 @@
 import {
+  type Accessor,
   createEffect,
   createMemo,
   createSignal,
@@ -25,7 +26,10 @@ import type { GridActions, GridModel } from "../grid-model";
 import {
   gridCanvasPadding,
   justify,
+  keyLayoutRows,
+  type LayoutCell,
   type LayoutRow,
+  layoutCellKey,
   measuredHeight,
   reuseLayoutRows,
   totalHeight,
@@ -117,6 +121,17 @@ interface GridProps {
   onHomeReady?(action: (() => void) | undefined): void;
   onRefresh(): Promise<number>;
   onScrollPosition?(top: number): void;
+}
+
+/**
+ * The lookup's latest defined value. A keyed row or cell follows its layout
+ * through relayouts, and keeps the last one while its list disposes it after
+ * the key goes away.
+ */
+function lastKnown<T>(lookup: () => T | undefined): Accessor<T> {
+  return createMemo<T | undefined>(
+    (previous) => lookup() ?? previous,
+  ) as Accessor<T>;
 }
 
 export function Grid(props: GridProps) {
@@ -338,6 +353,11 @@ function GridContent(props: GridProps) {
       gridImageLookahead(viewportHeight()),
     ),
   );
+  // The grid mounts rows by their first cell and cells by what they show, not
+  // by layout object, so a relayout that moves rows or resizes cells within
+  // them updates their DOM in place instead of remounting it and fetching its
+  // images again (#82). A cell that changes rows still remounts.
+  const visibleByKey = createMemo(() => keyLayoutRows(visible()));
   const storyList = createMemo(() => props.model.stories ?? []);
   const liveStories = createMemo(
     () => new Map(storyList().map((story) => [story.story_id, story])),
@@ -1182,275 +1202,319 @@ function GridContent(props: GridProps) {
             )}
           </Show>
         </div>
-        <For each={visible()}>
-          {(row) => (
-            <div
-              class="grid-row"
-              style={{
-                top: `${row.top + gridCanvasPadding}px`,
-                height: `${row.height}px`,
-              }}
-            >
-              <For each={row.cells}>
-                {(cell) => {
-                  if (cell.story) {
-                    const storyID = cell.story.story_id;
-                    return (
-                      <StoryCell
-                        archive={props.model.archive}
-                        story={liveStories().get(storyID) ?? cell.story}
-                        cell={cell}
-                        row={row}
-                        focusedID={props.layout.focusedID}
-                        readContext={readContext()}
-                        pressed={pressedID() === `story:${storyID}`}
-                        onExpand={(id) => props.actions.onExpandStory?.(id)}
-                        leadMeasured={
-                          measuredHeight(storyLeadHeights(), storyID) !==
-                          undefined
-                        }
-                        onLeadHeight={recordStoryLeadHeight}
-                        onFocus={(id) => {
-                          if (!pageFocus) props.actions.onFocus(id);
-                        }}
-                        onOpenLead={openStoryLead}
-                        onPeekLead={(story) => {
-                          const lead = story.items[0];
-                          if (!lead) return;
-                          props.actions.onFocus(`story:${story.story_id}`);
-                          void openPeek(lead);
-                        }}
-                        onOpen={props.actions.onOpen}
-                        onExternalOpen={props.actions.onExternalOpen}
-                        onHeart={props.actions.onHeart}
-                        onSignal={props.actions.onSignal}
-                        onApplyFeed={props.actions.onApplyFeed}
-                        onMore={(story) => {
-                          const lead = story.items[0];
-                          if (lead) openSheet(lead, story);
-                        }}
-                        onLongPressStart={(event, story) => {
-                          const lead = story.items[0];
-                          if (lead) startLongPress(event, lead, story);
-                        }}
-                        onLongPressMove={moveLongPressGesture}
-                        onLongPressEnd={cancelLongPress}
-                      />
+        <For each={[...visibleByKey().keys()]}>
+          {(rowKey) => {
+            const row = lastKnown(() => visibleByKey().get(rowKey));
+            const cellsByKey = createMemo(
+              () =>
+                new Map(row().cells.map((cell) => [layoutCellKey(cell), cell])),
+            );
+            return (
+              <div
+                class="grid-row"
+                style={{
+                  top: `${row().top + gridCanvasPadding}px`,
+                  height: `${row().height}px`,
+                }}
+              >
+                <For each={[...cellsByKey().keys()]}>
+                  {(cellKey) => {
+                    const cell = lastKnown<LayoutCell>(() =>
+                      cellsByKey().get(cellKey),
                     );
-                  }
-                  const item = createMemo(
-                    () => liveItems().get(cell.item.item_id) ?? cell.item,
-                  );
-                  const expiring = () =>
-                    props.model.cell(item()).lifetime &&
-                    itemExpiryState(item(), clockNow()) !== "none";
-                  const expiryName = () =>
-                    expiring()
-                      ? `, ${expirySentence(item().published_ts, clockNow())}`
-                      : "";
-                  const cellSignal = () =>
-                    props.model.cell(item()).signal ? item().signal : 0;
-                  const signalFresh = createSignalFresh(cellSignal);
-                  const explanation = createMemo(() => whyText(item()));
-                  const readVisuals = createMemo(() =>
-                    props.model.cell(item()),
-                  );
-                  const primaryRoute = createMemo(() =>
-                    redditPrimaryRoute(item()),
-                  );
-                  const [mediaSize, setMediaSize] = createSignal({
-                    width: 0,
-                    height: 0,
-                  });
-                  return (
-                    <article
-                      class="grid-cell"
-                      classList={{
-                        focused: item().item_id === props.layout.focusedID,
-                        read: readVisuals().dimmed,
-                        "is-read": readVisuals().dimmed,
-                        "all-items-cell": readContext() === "all-items",
-                        "archive-cell": props.model.archive,
-                        "text-cell": !item().media_url,
-                        "video-cell":
-                          item().media_type === "video" || isVideoItem(item()),
-                        "reddit-cell": isRedditItem(item()),
-                        [`reddit-${item().post_type ?? "unknown"}`]:
-                          isRedditItem(item()),
-                        "span-2": cell.span === 2,
-                        "tall-hero": cell.tall === true,
-                        "hero-cell": row.kind === "hero",
-                        "pair-cell": row.kind === "pair",
-                        "sub-cell": row.kind === "span" && cell.span !== 2,
-                        "compact-cell": row.kind === "compact",
-                        [`size-${cell.effectiveSize.toLowerCase()}`]: true,
-                        pressed: pressedID() === item().item_id,
-                      }}
-                      style={{
-                        left: `${cell.left}px`,
-                        top: `${cell.offsetY ?? 0}px`,
-                        width: `${cell.width}px`,
-                        height: `${cell.height ?? row.height}px`,
-                      }}
-                      data-signal={cellSignal()}
-                      data-signal-fresh={
-                        !props.model.archive && signalFresh() ? "" : undefined
-                      }
-                      data-item-id={item().item_id}
-                      onMouseEnter={() => {
-                        if (!pageFocus) props.actions.onFocus(item().item_id);
-                      }}
-                      onDblClick={() => {
-                        if (primaryRoute().kind !== "external")
-                          openPrimary(item());
-                      }}
-                      onPointerDown={(event) => startLongPress(event, item())}
-                      onPointerMove={moveLongPressGesture}
-                      onPointerUp={cancelLongPress}
-                      onPointerCancel={cancelLongPress}
-                    >
-                      <Show when={item().media_url}>
-                        <ResponsiveImage
-                          ref={(image) => {
-                            const observer = new ResizeObserver(([entry]) => {
-                              if (entry)
-                                setMediaSize({
-                                  width: entry.contentRect.width,
-                                  height: entry.contentRect.height,
-                                });
-                            });
-                            observer.observe(image);
-                            onCleanup(() => observer.disconnect());
-                          }}
-                          item={item()}
-                          sizes={cell.width}
-                          alt=""
-                          loading="eager"
-                          deferUntilVisible
-                          maxDimension={768}
-                          width={item().media_w}
-                          height={item().media_h}
-                          onError={(event) =>
-                            event.currentTarget
-                              .closest(".grid-cell")
-                              ?.classList.add("media-failed")
+                    const story = cell().story;
+                    if (story) {
+                      const storyID = story.story_id;
+                      return (
+                        <StoryCell
+                          archive={props.model.archive}
+                          story={
+                            liveStories().get(storyID) ?? cell().story ?? story
                           }
-                        />
-                      </Show>
-                      <Show when={isVideoItem(item()) && item().media_url}>
-                        <button
-                          type="button"
-                          class="video-play"
-                          style={{ top: `${mediaSize().height / 2}px` }}
-                          aria-label={`Play ${headlineText(item().title)}`}
-                          onPointerDown={(event) => event.stopPropagation()}
-                          onDblClick={(event) => event.stopPropagation()}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            props.actions.onFocus(item().item_id);
-                            void openPeek(item());
+                          cell={cell()}
+                          row={row()}
+                          focusedID={props.layout.focusedID}
+                          readContext={readContext()}
+                          pressed={pressedID() === `story:${storyID}`}
+                          onExpand={(id) => props.actions.onExpandStory?.(id)}
+                          leadMeasured={
+                            measuredHeight(storyLeadHeights(), storyID) !==
+                            undefined
+                          }
+                          onLeadHeight={recordStoryLeadHeight}
+                          onFocus={(id) => {
+                            if (!pageFocus) props.actions.onFocus(id);
                           }}
-                        >
-                          <Icon
-                            name="play"
-                            size={cell.effectiveSize === "S" ? 20 : 24}
-                            filled
-                          />
-                        </button>
-                      </Show>
-                      <Show
-                        when={
-                          !props.model.archive &&
-                          props.model.order === "interest" &&
-                          !item().signal &&
-                          whyText(item())
+                          onOpenLead={openStoryLead}
+                          onPeekLead={(story) => {
+                            const lead = story.items[0];
+                            if (!lead) return;
+                            props.actions.onFocus(`story:${story.story_id}`);
+                            void openPeek(lead);
+                          }}
+                          onOpen={props.actions.onOpen}
+                          onExternalOpen={props.actions.onExternalOpen}
+                          onHeart={props.actions.onHeart}
+                          onSignal={props.actions.onSignal}
+                          onApplyFeed={props.actions.onApplyFeed}
+                          onMore={(story) => {
+                            const lead = story.items[0];
+                            if (lead) openSheet(lead, story);
+                          }}
+                          onLongPressStart={(event, story) => {
+                            const lead = story.items[0];
+                            if (lead) startLongPress(event, lead, story);
+                          }}
+                          onLongPressMove={moveLongPressGesture}
+                          onLongPressEnd={cancelLongPress}
+                        />
+                      );
+                    }
+                    const item = createMemo(
+                      () => liveItems().get(cell().item.item_id) ?? cell().item,
+                    );
+                    const expiring = () =>
+                      props.model.cell(item()).lifetime &&
+                      itemExpiryState(item(), clockNow()) !== "none";
+                    const expiryName = () =>
+                      expiring()
+                        ? `, ${expirySentence(item().published_ts, clockNow())}`
+                        : "";
+                    const cellSignal = () =>
+                      props.model.cell(item()).signal ? item().signal : 0;
+                    const signalFresh = createSignalFresh(cellSignal);
+                    const explanation = createMemo(() => whyText(item()));
+                    const readVisuals = createMemo(() =>
+                      props.model.cell(item()),
+                    );
+                    const primaryRoute = createMemo(() =>
+                      redditPrimaryRoute(item()),
+                    );
+                    const [mediaSize, setMediaSize] = createSignal({
+                      width: 0,
+                      height: 0,
+                    });
+                    return (
+                      <article
+                        class="grid-cell"
+                        classList={{
+                          focused: item().item_id === props.layout.focusedID,
+                          read: readVisuals().dimmed,
+                          "is-read": readVisuals().dimmed,
+                          "all-items-cell": readContext() === "all-items",
+                          "archive-cell": props.model.archive,
+                          "text-cell": !item().media_url,
+                          "video-cell":
+                            item().media_type === "video" ||
+                            isVideoItem(item()),
+                          "reddit-cell": isRedditItem(item()),
+                          [`reddit-${item().post_type ?? "unknown"}`]:
+                            isRedditItem(item()),
+                          "span-2": cell().span === 2,
+                          "tall-hero": cell().tall === true,
+                          "hero-cell": row().kind === "hero",
+                          "pair-cell": row().kind === "pair",
+                          "sub-cell":
+                            row().kind === "span" && cell().span !== 2,
+                          "compact-cell": row().kind === "compact",
+                          [`size-${cell().effectiveSize.toLowerCase()}`]: true,
+                          pressed: pressedID() === item().item_id,
+                        }}
+                        style={{
+                          left: `${cell().left}px`,
+                          top: `${cell().offsetY ?? 0}px`,
+                          width: `${cell().width}px`,
+                          height: `${cell().height ?? row().height}px`,
+                        }}
+                        data-signal={cellSignal()}
+                        data-signal-fresh={
+                          !props.model.archive && signalFresh() ? "" : undefined
                         }
+                        data-item-id={item().item_id}
+                        onMouseEnter={() => {
+                          if (!pageFocus) props.actions.onFocus(item().item_id);
+                        }}
+                        onDblClick={() => {
+                          if (primaryRoute().kind !== "external")
+                            openPrimary(item());
+                        }}
+                        onPointerDown={(event) => startLongPress(event, item())}
+                        onPointerMove={moveLongPressGesture}
+                        onPointerUp={cancelLongPress}
+                        onPointerCancel={cancelLongPress}
                       >
-                        <span class="ranking-hint">{whyText(item())}</span>
-                      </Show>
-                      <div class="cell-scrim" />
-                      <SignalMarker value={cellSignal()} />
-                      <div class="cell-corner">
-                        <SignalLabel value={cellSignal()} />
-                        <Show
-                          when={!(expiring() && cell.effectiveSize === "S")}
-                        >
-                          <UnreadDot visible={readVisuals().unreadDot} />
-                        </Show>
-                        <div
-                          class="cell-corner-meta"
-                          classList={{ "has-expiry": expiring() }}
-                        >
-                          <Show
-                            when={props.model.archive}
-                            fallback={
-                              <Show
-                                when={expiring()}
-                                fallback={
-                                  <span
-                                    class="cell-age"
-                                    title={publishedDate(item().published_ts)}
-                                  >
-                                    {relativeTime(item().published_ts)}
-                                  </span>
-                                }
-                              >
-                                <ExpiryPill
-                                  published={item().published_ts}
-                                  now={clockNow()}
-                                  compact={cell.effectiveSize === "S"}
-                                  unread={!item().read}
-                                />
-                              </Show>
+                        <Show when={item().media_url}>
+                          <ResponsiveImage
+                            ref={(image) => {
+                              const observer = new ResizeObserver(([entry]) => {
+                                if (entry)
+                                  setMediaSize({
+                                    width: entry.contentRect.width,
+                                    height: entry.contentRect.height,
+                                  });
+                              });
+                              observer.observe(image);
+                              onCleanup(() => observer.disconnect());
+                            }}
+                            item={item()}
+                            sizes={cell().width}
+                            alt=""
+                            loading="eager"
+                            deferUntilVisible
+                            maxDimension={768}
+                            width={item().media_w}
+                            height={item().media_h}
+                            onError={(event) =>
+                              event.currentTarget
+                                .closest(".grid-cell")
+                                ?.classList.add("media-failed")
                             }
+                          />
+                        </Show>
+                        <Show when={isVideoItem(item()) && item().media_url}>
+                          <button
+                            type="button"
+                            class="video-play"
+                            style={{ top: `${mediaSize().height / 2}px` }}
+                            aria-label={`Play ${headlineText(item().title)}`}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onDblClick={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.actions.onFocus(item().item_id);
+                              void openPeek(item());
+                            }}
                           >
-                            <span
-                              class="cell-age"
-                              title={publishedDate(
-                                item().hearted_ts || item().published_ts,
-                              )}
-                            >
-                              {`kept ${relativeTime(
-                                item().hearted_ts || item().published_ts,
-                              )}`}
-                            </span>
-                          </Show>
-                          <Show when={!props.model.archive}>
-                            <span class="cell-rank">
-                              {rankBand(cell.effectiveSize)}
-                            </span>
-                          </Show>
-                        </div>
-                      </div>
-                      <Show when={item().hearted}>
-                        <span class="kept-marker" aria-hidden="true">
-                          <Icon name="keep" size={14} filled={true} />
-                        </span>
-                      </Show>
-                      <Show
-                        when={
-                          primaryRoute().kind === "external" &&
-                          item().external_url
-                        }
-                        fallback={
-                          <span class="cell-main-parts">
-                            <button
-                              type="button"
-                              class="cell-main"
-                              onClick={() => {
-                                if (suppressOpenID === item().item_id) {
-                                  suppressOpenID = "";
-                                  return;
-                                }
-                                openPrimary(item());
-                              }}
-                              aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                            <Icon
+                              name="play"
+                              size={cell().effectiveSize === "S" ? 20 : 24}
+                              filled
                             />
+                          </button>
+                        </Show>
+                        <Show
+                          when={
+                            !props.model.archive &&
+                            props.model.order === "interest" &&
+                            !item().signal &&
+                            whyText(item())
+                          }
+                        >
+                          <span class="ranking-hint">{whyText(item())}</span>
+                        </Show>
+                        <div class="cell-scrim" />
+                        <SignalMarker value={cellSignal()} />
+                        <div class="cell-corner">
+                          <SignalLabel value={cellSignal()} />
+                          <Show
+                            when={!(expiring() && cell().effectiveSize === "S")}
+                          >
+                            <UnreadDot visible={readVisuals().unreadDot} />
+                          </Show>
+                          <div
+                            class="cell-corner-meta"
+                            classList={{ "has-expiry": expiring() }}
+                          >
+                            <Show
+                              when={props.model.archive}
+                              fallback={
+                                <Show
+                                  when={expiring()}
+                                  fallback={
+                                    <span
+                                      class="cell-age"
+                                      title={publishedDate(item().published_ts)}
+                                    >
+                                      {relativeTime(item().published_ts)}
+                                    </span>
+                                  }
+                                >
+                                  <ExpiryPill
+                                    published={item().published_ts}
+                                    now={clockNow()}
+                                    compact={cell().effectiveSize === "S"}
+                                    unread={!item().read}
+                                  />
+                                </Show>
+                              }
+                            >
+                              <span
+                                class="cell-age"
+                                title={publishedDate(
+                                  item().hearted_ts || item().published_ts,
+                                )}
+                              >
+                                {`kept ${relativeTime(
+                                  item().hearted_ts || item().published_ts,
+                                )}`}
+                              </span>
+                            </Show>
+                            <Show when={!props.model.archive}>
+                              <span class="cell-rank">
+                                {rankBand(cell().effectiveSize)}
+                              </span>
+                            </Show>
+                          </div>
+                        </div>
+                        <Show when={item().hearted}>
+                          <span class="kept-marker" aria-hidden="true">
+                            <Icon name="keep" size={14} filled={true} />
+                          </span>
+                        </Show>
+                        <Show
+                          when={
+                            primaryRoute().kind === "external" &&
+                            item().external_url
+                          }
+                          fallback={
+                            <span class="cell-main-parts">
+                              <button
+                                type="button"
+                                class="cell-main"
+                                onClick={() => {
+                                  if (suppressOpenID === item().item_id) {
+                                    suppressOpenID = "";
+                                    return;
+                                  }
+                                  openPrimary(item());
+                                }}
+                                aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                              />
+                              <CellCopy
+                                item={item()}
+                                unreadDot={readVisuals().unreadDot}
+                                archive={props.model.archive}
+                                effectiveSize={cell().effectiveSize}
+                                explanation={explanation()}
+                                dimmed={readVisuals().dimmed}
+                                onUndo={() => props.actions.onSignal(item(), 0)}
+                                onApplyFeed={() =>
+                                  props.actions.onApplyFeed(item())
+                                }
+                              />
+                            </span>
+                          }
+                        >
+                          <span class="cell-main-parts">
+                            <a
+                              class="cell-main"
+                              href={item().external_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={() =>
+                                props.actions.onExternalOpen(item())
+                              }
+                              aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                            >
+                              <span class="sr-only">
+                                Open {headlineText(item().title)}
+                              </span>
+                            </a>
                             <CellCopy
                               item={item()}
                               unreadDot={readVisuals().unreadDot}
                               archive={props.model.archive}
-                              effectiveSize={cell.effectiveSize}
+                              effectiveSize={cell().effectiveSize}
                               explanation={explanation()}
                               dimmed={readVisuals().dimmed}
                               onUndo={() => props.actions.onSignal(item(), 0)}
@@ -1459,79 +1523,52 @@ function GridContent(props: GridProps) {
                               }
                             />
                           </span>
-                        }
-                      >
-                        <span class="cell-main-parts">
+                        </Show>
+                        <Show when={isRedditItem(item())}>
                           <a
-                            class="cell-main"
-                            href={item().external_url}
+                            class="reddit-discussion"
+                            href={item().url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={() => props.actions.onExternalOpen(item())}
-                            aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                            aria-label="Discussion on Reddit"
+                            data-tooltip="Discussion on Reddit"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.actions.onDiscussion(item());
+                            }}
                           >
-                            <span class="sr-only">
-                              Open {headlineText(item().title)}
-                            </span>
+                            <Icon name="discussion" size={13} />
                           </a>
-                          <CellCopy
+                        </Show>
+                        <Show when={!isVideoItem(item()) || !item().media_url}>
+                          <PeekPill
                             item={item()}
-                            unreadDot={readVisuals().unreadDot}
-                            archive={props.model.archive}
-                            effectiveSize={cell.effectiveSize}
-                            explanation={explanation()}
-                            dimmed={readVisuals().dimmed}
-                            onUndo={() => props.actions.onSignal(item(), 0)}
-                            onApplyFeed={() =>
-                              props.actions.onApplyFeed(item())
-                            }
+                            size={cell().effectiveSize}
+                            onPeek={() => {
+                              props.actions.onFocus(item().item_id);
+                              void openPeek(item());
+                            }}
                           />
-                        </span>
-                      </Show>
-                      <Show when={isRedditItem(item())}>
-                        <a
-                          class="reddit-discussion"
-                          href={item().url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="Discussion on Reddit"
-                          data-tooltip="Discussion on Reddit"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            props.actions.onDiscussion(item());
-                          }}
-                        >
-                          <Icon name="discussion" size={13} />
-                        </a>
-                      </Show>
-                      <Show when={!isVideoItem(item()) || !item().media_url}>
-                        <PeekPill
+                        </Show>
+                        <SignalActions
+                          compact={
+                            !!item().media_url &&
+                            mediaSize().width < fullActionRowWidth
+                          }
                           item={item()}
-                          size={cell.effectiveSize}
-                          onPeek={() => {
-                            props.actions.onFocus(item().item_id);
-                            void openPeek(item());
-                          }}
+                          size={cell().effectiveSize}
+                          archive={props.model.archive}
+                          onSignal={props.actions.onSignal}
+                          onHeart={props.actions.onHeart}
+                          onMore={() => openSheet(item())}
                         />
-                      </Show>
-                      <SignalActions
-                        compact={
-                          !!item().media_url &&
-                          mediaSize().width < fullActionRowWidth
-                        }
-                        item={item()}
-                        size={cell.effectiveSize}
-                        archive={props.model.archive}
-                        onSignal={props.actions.onSignal}
-                        onHeart={props.actions.onHeart}
-                        onMore={() => openSheet(item())}
-                      />
-                    </article>
-                  );
-                }}
-              </For>
-            </div>
-          )}
+                      </article>
+                    );
+                  }}
+                </For>
+              </div>
+            );
+          }}
         </For>
         <Show when={shouldShowEndCard(props.model.hasMore)}>
           <section

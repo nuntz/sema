@@ -1,6 +1,7 @@
 import {
   gridCanvasPadding,
   type LayoutRow,
+  layoutCellKey,
   mobileStoryHeadlineHeight,
   storyHeadlineHeight,
 } from "./justified";
@@ -84,7 +85,7 @@ export function cellRects(rows: LayoutRow[]): LayoutRect[] {
       const bottom =
         top + (cell.height ?? row.height) - (cell.headlineHeight ?? 0);
       const lead = {
-        id: cell.story ? `story:${cell.story.story_id}` : cell.item.item_id,
+        id: layoutCellKey(cell),
         row: { top: row.top, height: row.height, gap: row.gap },
         left,
         right,
