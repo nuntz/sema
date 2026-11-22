@@ -4,14 +4,16 @@
 # is always reverted, even on Ctrl-C. Paste its output into the PR.
 # Usage: scripts/expect-red.sh <patch|-> <spec> [playwright args, such as -g "title"]
 #   <patch> is a `git diff` from the repo root ("-" reads it from stdin); <spec> is relative to
-#   web/ or the repo root. Make one by editing the app, `git diff -- web/src > bug.patch`, then reverting.
+#   web/ or the repo root. Make one against your uncommitted change: `git add` it, plant the bug,
+#   `git diff -- web/src > bug.patch` (the diff from what you staged), then `git checkout -- web/src`
+#   and unstage. For "my fix reverted", `git diff -R -- web/src > bug.patch` is the patch.
 # Exit codes: 0 red as expected, 1 still green, 2 for a usage error, a patch that doesn't apply,
 # no test run, or an interrupt.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 if [[ $# -lt 2 ]]; then
-  sed -n '2,9p' "$0" >&2
+  sed -n '2,11p' "$0" >&2
   exit 2
 fi
 patch_arg="$1"
@@ -29,7 +31,7 @@ trap cleanup EXIT
 if [[ "$patch_arg" == "-" ]]; then cat >"$patch"; else cp "$patch_arg" "$patch"; fi
 
 if ! git apply --check "$patch"; then
-  echo "expect-red: the patch doesn't apply to the working tree" >&2
+  echo "expect-red: the patch doesn't apply to the working tree; if it was diffed from HEAD with your change uncommitted, it carries that change too: stage the change, then diff the plant" >&2
   exit 2
 fi
 git apply "$patch"

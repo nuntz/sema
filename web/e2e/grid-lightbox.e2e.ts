@@ -1,4 +1,5 @@
 import { clickCellTitle, openGrid } from "./grid-fixture";
+import { openReader } from "./reader";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { expect, type Locator, test } from "./test";
 import { stubYouTube } from "./youtube-stub";
@@ -111,7 +112,7 @@ for (const method of ["key", "button"]) {
         .getByRole("button", { name: "Open in reader", exact: true })
         .click();
     await expect(page.locator(".lb-overlay")).toHaveCount(0);
-    await expect(page.locator(".reader")).toBeVisible();
+    await expect(openReader(page)).toBeVisible();
     await page.goBack();
     await expect(page.locator(".reader")).toHaveCount(0);
     await expect(page.locator(".lb-overlay")).toHaveCount(0);

@@ -1,5 +1,6 @@
 import { nextPageTop, pageUpLanding } from "./grid-paging";
 import { resizeGrid } from "./grid-resize";
+import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
 type AppState = { itemRequests: number; readBatchRequests: number };
@@ -780,12 +781,12 @@ test("Space pages a keyboard-focused cell while Enter and o open it", async ({
   await expect(page.locator(".grid-cell.focused")).toBeInViewport();
   const title = await page.locator(".grid-cell.focused h2").innerText();
   await page.keyboard.press("Enter");
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
   await expect(page.locator(".reader h1")).toHaveText(title);
   await page.keyboard.press("Escape");
   await expect(page.locator(".reader")).toHaveCount(0);
   await page.keyboard.press("o");
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
 });
 
 for (const eventType of ["wheel", "touchmove"]) {

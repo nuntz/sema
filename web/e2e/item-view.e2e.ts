@@ -1,4 +1,5 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
+import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
@@ -280,10 +281,10 @@ test("go prefixes expire and pause in inputs and dialogs", async ({ page }) => {
   ).toBeChecked();
   await page.keyboard.press("Escape");
   await page.locator('[data-item-id="Today unread"] .cell-main').click();
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
   await page.keyboard.press("g");
   await page.keyboard.press("t");
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("radio", { name: "Today", exact: true }),
@@ -313,7 +314,7 @@ test("disabling character shortcuts persists and keeps native navigation availab
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("Enter");
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
   await page.keyboard.press("Escape");
   await page.reload();
   await expect(page.locator(".grid-scroll")).toBeVisible();

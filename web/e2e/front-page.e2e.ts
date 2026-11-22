@@ -1,5 +1,6 @@
 import { nextPageTop } from "./grid-paging";
 import { resizeGrid } from "./grid-resize";
+import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
 declare global {
@@ -1794,7 +1795,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
   await expect(related).toBeFocused();
   await expect(related).toHaveCSS("outline-style", "solid");
   await page.keyboard.press("Enter");
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
   await page.keyboard.press("Escape");
   for (const width of [1024, 768, 720, 390]) {
     await resizeGrid(page, width, 900);
@@ -2086,7 +2087,7 @@ for (const theme of ["light", "dark"] as const) {
     );
 
     await page.locator('[data-item-id="photo-space-0"] .cell-main').click();
-    await expect(page.locator(".reader")).toBeVisible();
+    await expect(openReader(page)).toBeVisible();
   });
 }
 
@@ -2489,7 +2490,7 @@ test("grid and reader both use the decode workaround", async ({ page }) => {
     "true",
   );
   await card.locator(".cell-main").click();
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
   await expect(page.locator(".reader .article-lead")).toHaveAttribute(
     "data-decode-attempted",
     "true",

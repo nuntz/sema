@@ -1,5 +1,6 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
 import { animationsFinished } from "./animations";
+import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
@@ -404,7 +405,7 @@ for (const grouped of [false, true]) {
     await expect(count).toHaveText("4");
     if (grouped) {
       await page.locator('[data-story-id="read-sequence"] .story-lead').click();
-      await expect(page.locator(".reader")).toBeVisible();
+      await expect(openReader(page)).toBeVisible();
       await page.keyboard.press("Escape");
     } else {
       for (const item of initial.slice(0, 2)) {
@@ -412,11 +413,12 @@ for (const grouped of [false, true]) {
           .locator(`[data-item-id="${item.item_id}"] .cell-main`)
           .click();
         // The previous reader is still leaving when this click lands, so wait
-        // for one that shows this Item and isn't leaving (#69).
+        // for an open one that shows this Item (#69).
         await expect(
-          page
-            .locator(".reader:not(.closing)")
-            .getByRole("heading", { name: item.title, exact: true }),
+          openReader(page).getByRole("heading", {
+            name: item.title,
+            exact: true,
+          }),
         ).toBeVisible();
         await page.keyboard.press("Escape");
       }

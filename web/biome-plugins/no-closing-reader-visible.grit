@@ -1,0 +1,8 @@
+language js
+
+`expect($page.locator(".reader")).toBeVisible($...)` where {
+  register_diagnostic(
+    span = $page,
+    message = "A closing reader still matches .reader through its exit, so this passes on a reader on its way out (#69). Assert openReader(page) from e2e/reader.ts."
+  )
+}

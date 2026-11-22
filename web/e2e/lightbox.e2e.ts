@@ -1,4 +1,5 @@
 import { animationsFinished } from "./animations";
+import { openReader } from "./reader";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { expect, type Page, test } from "./test";
 
@@ -63,14 +64,14 @@ for (const width of [1280, 390]) {
     await page.screenshot({ path: `/tmp/sema-lightbox-${width}.png` });
     await page.keyboard.press("Escape");
     await expect(lightbox).toHaveCount(0);
-    await expect(page.locator(".reader")).toBeVisible();
+    await expect(openReader(page)).toBeVisible();
     await expect(images.first()).toBeFocused();
     if (width === 390) {
       await images.first().press("Enter");
       await expect(lightbox).toBeVisible();
       await page.goBack();
       await expect(lightbox).toHaveCount(0);
-      await expect(page.locator(".reader")).toBeVisible();
+      await expect(openReader(page)).toBeVisible();
       await expect(images.first()).toBeFocused();
     }
     await page.keyboard.press("Escape");
@@ -134,7 +135,7 @@ test("phone paging flips the counter mid-swipe and downward drag dismisses", asy
   await page.mouse.up();
   await expect(overlay).toHaveCount(0);
   await expect(origin).toBeFocused();
-  await expect(page.locator(".reader")).toBeVisible();
+  await expect(openReader(page)).toBeVisible();
 });
 
 test("phone swipe handoff keeps the incoming image centred in both directions", async ({
@@ -469,7 +470,7 @@ for (const width of [1280, 390]) {
     await expect(page.locator(".lb-overlay")).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.locator(".lb-overlay")).toHaveCount(0);
-    await expect(page.locator(".reader")).toBeVisible();
+    await expect(openReader(page)).toBeVisible();
     expect(popupOpened).toBe(false);
     await page.screenshot({ path: `/tmp/sema-reddit-lightbox-${width}.png` });
   });
