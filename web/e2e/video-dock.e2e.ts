@@ -142,6 +142,9 @@ test("Playing another Video Item replaces the Dock", async ({ page }) => {
     "Play Other image",
   );
   await expect(player(page)).toHaveCount(1);
+  // The replacing Play mounts a fresh player, which Docks on Escape only once
+  // it plays; a dismissed Peek that hasn't started ends without a Dock (#68).
+  await expect(player(page)).toHaveAttribute("data-state", "1");
   await page.keyboard.press("Escape");
   await expect(
     page.getByRole("region", { name: "Docked video: Other image" }),
