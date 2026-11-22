@@ -1,5 +1,6 @@
 import { batch, createSignal } from "solid-js";
 import type { AppAPI } from "./api/client";
+import { isStoryCursorID, storyCursorID } from "./cursor";
 import { effectiveGridOrder } from "./grid-scope";
 import type { ItemSession } from "./item-session";
 import { excludeRenderedStoryItems, includeReadForGrid } from "./item-session";
@@ -348,9 +349,9 @@ export function createReadState(
 
   const markBelow = async (anchor: string) => {
     if (mode() === "archive" || markBelowInFlight) return;
-    const loaded = anchor.startsWith("story:")
+    const loaded = isStoryCursorID(anchor)
       ? gridOrder() === "interest" &&
-        stories().some((story) => `story:${story.story_id}` === anchor)
+        stories().some((story) => storyCursorID(story.story_id) === anchor)
       : items().some((item) => item.item_id === anchor) ||
         (gridOrder() === "interest" &&
           stories().some((story) =>

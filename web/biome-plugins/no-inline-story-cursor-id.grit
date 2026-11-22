@@ -1,0 +1,9 @@
+language js
+
+JsTemplateExpression() as $template where {
+  $template <: r"^`story:\$\{[\s\S]*",
+  register_diagnostic(
+    span = $template,
+    message = "Build a Story's Cursor ID with storyCursorID (src/cursor.ts). Since #82 the same ID decides which grid cells stay mounted, so a hand-built copy that drifts breaks focus or remounts cells."
+  )
+}

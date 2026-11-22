@@ -15,6 +15,7 @@ import {
 import { Portal } from "solid-js/web";
 import { clockNow, useClock } from "../clock";
 import { Icon } from "../components/Icon";
+import { cursorID, isStoryCursorID, storyCursorID } from "../cursor";
 import { expirySentence, itemExpiryState } from "../expiry";
 import {
   gridSourceName,
@@ -424,7 +425,7 @@ function GridContent(props: GridProps) {
 
   const openSheet = (item: Item, story?: Story) => {
     cancelLongPress();
-    props.actions.onFocus(story ? `story:${story.story_id}` : item.item_id);
+    props.actions.onFocus(cursorID(item, story));
     if (!sheetItem())
       pushOverlay("action-sheet", () => {
         setSheetItem();
@@ -526,7 +527,7 @@ function GridContent(props: GridProps) {
     longPress = beginLongPress(event.clientX, event.clientY, performance.now());
     longPressItem = item;
     longPressStory = story;
-    const id = story ? `story:${story.story_id}` : item.item_id;
+    const id = cursorID(item, story);
     pressTimer = window.setTimeout(() => {
       if (longPress && !longPress.cancelled) setPressedID(id);
     }, 80);
@@ -832,7 +833,7 @@ function GridContent(props: GridProps) {
   const goHome = () => {
     endRequested = false;
     const first = frontSequence()[0]?.id ?? rows()[0]?.cells[0]?.item.item_id;
-    if (first?.startsWith("story:")) {
+    if (first && isStoryCursorID(first)) {
       programmaticScroll(() => {
         scroller.scrollTop = 0;
       });
@@ -1235,7 +1236,7 @@ function GridContent(props: GridProps) {
                           row={row()}
                           focusedID={props.layout.focusedID}
                           readContext={readContext()}
-                          pressed={pressedID() === `story:${storyID}`}
+                          pressed={pressedID() === storyCursorID(storyID)}
                           onExpand={(id) => props.actions.onExpandStory?.(id)}
                           leadMeasured={
                             measuredHeight(storyLeadHeights(), storyID) !==
@@ -1249,7 +1250,9 @@ function GridContent(props: GridProps) {
                           onPeekLead={(story) => {
                             const lead = story.items[0];
                             if (!lead) return;
-                            props.actions.onFocus(`story:${story.story_id}`);
+                            props.actions.onFocus(
+                              storyCursorID(story.story_id),
+                            );
                             void openPeek(lead);
                           }}
                           onOpen={props.actions.onOpen}

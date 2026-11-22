@@ -8,6 +8,7 @@ import {
 } from "solid-js";
 import { clockNow, useClock } from "../clock";
 import { Icon } from "../components/Icon";
+import { storyCursorID } from "../cursor";
 import { expirySentence, itemExpiryState } from "../expiry";
 import {
   gridSourceName,
@@ -76,7 +77,7 @@ export function StoryCell(props: StoryCellProps) {
   const cellSignal = (item = lead()) =>
     props.archive ? 0 : (item?.signal ?? 0);
   const signalFresh = createSignalFresh(cellSignal);
-  const focusID = () => `story:${props.story.story_id}`;
+  const focusID = () => storyCursorID(props.story.story_id);
   const headlines = createMemo(() =>
     props.story.items.slice(1, 1 + (props.cell.headlineItemCount ?? 0)),
   );

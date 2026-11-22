@@ -23,6 +23,7 @@ import { Icon } from "./components/Icon";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Tooltip } from "./components/Tooltip";
 import { UpdateNotice } from "./components/UpdateNotice";
+import { storyCursorID } from "./cursor";
 import { feedbackPatch } from "./feedback";
 import { createGridModel } from "./grid-model";
 import { effectiveGridOrder, sameGridScope } from "./grid-scope";
@@ -261,7 +262,7 @@ export function App(props: {
     (error) => handleError(error),
   );
   const markBelow = (item: Item) => readState.markBelow(item.item_id);
-  const markStoryBelow = (id: string) => readState.markBelow(`story:${id}`);
+  const markStoryBelow = (id: string) => readState.markBelow(storyCursorID(id));
   const searchActive = createMemo(() => [...searchQuery().trim()].length >= 2);
   const searchOpen = createMemo(
     () => searchFocused() || searchQuery().length > 0,

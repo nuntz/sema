@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { storyCursorID } from "../cursor";
 import type { FrontPageEntry, Item, Story } from "../types";
 import {
   frontPageEntriesForState,
@@ -55,7 +56,7 @@ describe("front-page merging", () => {
         false,
       ).map((entry) =>
         entry.kind === "story"
-          ? `story:${entry.story.story_id}`
+          ? storyCursorID(entry.story.story_id)
           : entry.item.item_id,
       ),
     ).toEqual(["large", "story:first", "medium", "story:middle", "small"]);

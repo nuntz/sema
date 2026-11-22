@@ -1,3 +1,4 @@
+import { storyCursorID } from "../cursor";
 import type { FrontPageEntry, Item, Order, Story } from "../types";
 import { headlineSlice } from "./story-layout";
 
@@ -86,7 +87,7 @@ export function frontPageSequence(
     const lead = story.items[0];
     if (!lead) continue;
     sequence.push({
-      id: `story:${story.story_id}`,
+      id: storyCursorID(story.story_id),
       item: lead,
       kind: "story",
       storyID: story.story_id,
@@ -126,7 +127,7 @@ export function frontPageUnreadIDsAfter(
   const index = entries.findIndex((entry) =>
     entry.kind === "item"
       ? entry.item.item_id === focusedID
-      : focusedID === `story:${entry.story.story_id}` ||
+      : focusedID === storyCursorID(entry.story.story_id) ||
         entry.story.items.some((item) => item.item_id === focusedID),
   );
   if (index < 0) return [];

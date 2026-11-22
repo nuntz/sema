@@ -2303,10 +2303,8 @@ test("a Story Lead's measured height moves the grid's cells without remounting t
           for (const cell of cells) {
             if (seen.has(cell)) continue;
             seen.add(cell);
-            const story = cell.getAttribute("data-story-id");
-            const key = story
-              ? `story:${story}`
-              : (cell.getAttribute("data-item-id") ?? "?");
+            // A Story cell's data-item-id is its Cursor ID, `story:<id>`.
+            const key = cell.getAttribute("data-item-id") ?? "?";
             mounts[key] = (mounts[key] ?? 0) + 1;
           }
         }

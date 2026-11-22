@@ -32,7 +32,8 @@
     "./biome-plugins/no-exact-state-log.grit",
     "./biome-plugins/no-raw-get-animations.grit",
     "./biome-plugins/no-frame-timestamp.grit",
-    "./biome-plugins/no-closing-reader-visible.grit"
+    "./biome-plugins/no-closing-reader-visible.grit",
+    "./biome-plugins/no-inline-story-cursor-id.grit"
   ],
   "overrides": [
     {

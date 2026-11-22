@@ -1,3 +1,4 @@
+import { cursorID } from "../cursor";
 import type { FrontPageEntry, Item, Story } from "../types";
 
 export interface LayoutCell {
@@ -976,12 +977,11 @@ function sameLayoutRow(left: LayoutRow, right: LayoutRow): boolean {
 }
 
 /**
- * Name what a cell shows: `story:<id>` for a Story, else its Item ID, which is
- * also the cell's focus ID. A relayout that only moves or resizes the cell
+ * Key a cell by its Cursor ID. A relayout that only moves or resizes the cell
  * keeps the key, so the grid keeps its DOM, decoded images included (#82).
  */
 export function layoutCellKey(cell: LayoutCell): string {
-  return cell.story ? `story:${cell.story.story_id}` : cell.item.item_id;
+  return cursorID(cell.item, cell.story);
 }
 
 /**

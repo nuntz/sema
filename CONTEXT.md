@@ -136,6 +136,7 @@ _Avoid_: Feed (in this sense), outlet, publisher
 
 **Cursor**:
 The Item or Story the grid's keys act on. Hovering a cell moves the Cursor there.
+Its **Cursor ID** is the Item ID, or `story:<id>` for a Story (`web/src/cursor.ts`); the grid also mounts its cells by Cursor ID (#82).
 _Avoid_: Focus, selection, highlight, active cell
 
 ### Overlays
