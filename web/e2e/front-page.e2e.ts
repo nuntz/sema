@@ -2240,9 +2240,12 @@ for (const width of [1470, 390]) {
     // This test assigns scrollTop after PageDown; finish paging synchronously so
     // its animation cannot overwrite the subsequent virtualization checks.
     await page.emulateMedia({ reducedMotion: "reduce" });
+    // Each entry names the page that asked for it, so a failure shows whether
+    // the image-free page or the one before it made the request.
     const requests: string[] = [];
     await page.route("**/memory-experiment/**", async (route) => {
-      requests.push(route.request().url());
+      const request = route.request();
+      requests.push(`${request.url()} from ${request.headers().referer}`);
       await route.fulfill({
         contentType: "image/svg+xml",
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="teal"/></svg>',
@@ -2276,6 +2279,16 @@ for (const width of [1470, 390]) {
       Array.from({ length: 48 }, (_, index) => photo(index)),
       [],
     );
+    // A page can still request media after the test has stopped waiting on
+    // it: under SEMA_E2E_STRESS=resize a late ResizeObserver callback can make
+    // the images-on grid remount its cells, fetching the favicon and then
+    // every image again, while the next goto is still loading (#67). Unload
+    // the page first, so every request recorded after the clear comes from
+    // the page the test opens next.
+    const leaveAndClearRequests = async () => {
+      await page.goto("about:blank");
+      requests.length = 0;
+    };
     const grid = page.locator(".grid-scroll");
     const geometry = () =>
       grid.evaluate((element) => ({
@@ -2316,7 +2329,7 @@ for (const width of [1470, 390]) {
         ),
     );
     const normal = await geometry();
-    requests.length = 0;
+    await leaveAndClearRequests();
     await page.goto("/?grid-images=off");
     await expect(grid).toHaveAttribute("data-grid-images", "off");
     await expect.poll(geometry).toEqual(normal);
@@ -2343,7 +2356,7 @@ for (const width of [1470, 390]) {
       "/memory-experiment/photo-0.svg",
     );
     await expect.poll(() => requests.length).toBeGreaterThan(0);
-    requests.length = 0;
+    await leaveAndClearRequests();
     await page.goto("/");
     await expect(grid).toHaveAttribute("data-grid-images", "on");
     await expect.poll(() => requests.length).toBeGreaterThan(0);
