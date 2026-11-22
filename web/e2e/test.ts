@@ -1,4 +1,5 @@
-import { test as base, type Page } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
+import { type BrowserContext, test as base, type Page } from "@playwright/test";
 
 export * from "@playwright/test";
 
@@ -22,6 +23,35 @@ if (stress && stress !== "resize" && stress !== "animation")
 // a console.log added to app code while diagnosing shows up without wiring
 // page.on("console") into the spec (#58).
 const forwardConsole = process.env.SEMA_E2E_CONSOLE === "1";
+
+// A failed test gets a "requests" attachment listing every request its pages
+// made, in order, each with its time since the test started, the page that
+// asked (referer) and its frame, so the uploaded results of a CI-only failure
+// show which page made a request (#67). Vite's own module and style requests
+// are left out.
+function logRequests(context: BrowserContext): string[] {
+  const log: string[] = [];
+  const start = Date.now();
+  context.on("request", (request) => {
+    const type = request.resourceType();
+    const url = new URL(request.url());
+    if (
+      (type === "script" || type === "stylesheet") &&
+      url.hostname === "127.0.0.1"
+    )
+      return;
+    let frame: string;
+    try {
+      frame = request.frame().url();
+    } catch {
+      frame = "none (service worker)";
+    }
+    log.push(
+      `+${Date.now() - start}ms ${request.method()} ${type} ${url.href} referer=${request.headers().referer ?? "none"} frame=${frame}`,
+    );
+  });
+  return log;
+}
 
 function delayResizeObservers(ms: number) {
   const Native = window.ResizeObserver;
@@ -60,8 +90,8 @@ function formatSeconds(ms: number) {
 }
 
 // Specs import `test` from here, so every page, popups included, runs under
-// the stress mode and console forwarding when they are set, and fails past
-// maxTimeoutShare.
+// the stress mode and console forwarding when they are set, attaches the
+// request log when they fail, and fails past maxTimeoutShare.
 export const test = base.extend<{ stressMode: undefined }>({
   stressMode: [
     async ({ context }, use, testInfo) => {
@@ -84,7 +114,15 @@ export const test = base.extend<{ stressMode: undefined }>({
             `[page ${message.type()}] ${testInfo.titlePath.at(-1)}: ${message.text()}`,
           ),
         );
+      const requests = logRequests(context);
       await use(undefined);
+      if (testInfo.status !== testInfo.expectedStatus) {
+        // Written to the output directory, which CI uploads on failure; a
+        // body attachment would reach only the reporters.
+        const path = testInfo.outputPath("requests.txt");
+        await writeFile(path, `${requests.join("\n")}\n`);
+        await testInfo.attach("requests", { path, contentType: "text/plain" });
+      }
       if (
         testInfo.status === "passed" &&
         testInfo.timeout > 0 &&

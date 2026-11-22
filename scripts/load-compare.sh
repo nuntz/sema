@@ -8,14 +8,16 @@
 #   <patch> is a `git diff` from the repo root ("-" reads it from stdin), usually the change
 #   reversed: `git diff -R master -- web/src > base.patch` compares against master's code.
 #   <spec> is relative to web/ or the repo root. SEMA_E2E_STRESS and SEMA_E2E_PORT pass through.
-# LOAD_REPEAT (default 48) and LOAD_WORKERS (default nproc) set the load.
+# LOAD_REPEAT (default 48) and LOAD_WORKERS (default nproc) set the load. For a failure CI shows
+#   only mid-suite, set LOAD_WORKERS=1: CI's two workers each run about 178 tests in a row, and
+#   #67 failed 3 of 20 in one warm worker but never across 20 cold ones.
 # Exit codes: 0 when the working tree passed every run, 1 when any failed, 2 for a usage error, a
 # patch that doesn't apply, no test run, or an interrupt.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 if [[ $# -lt 2 ]]; then
-  sed -n '2,13p' "$0" >&2
+  sed -n '2,15p' "$0" >&2
   exit 2
 fi
 patch_arg="$1"
