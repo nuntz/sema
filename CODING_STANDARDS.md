@@ -80,6 +80,10 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 - A new name for a domain concept uses its `CONTEXT.md` term rather than one of its _Avoid_ synonyms, and a concept the glossary lacks gets an entry in the same diff. Names that ship outside the code (an index, metric, alarm or log field) cost a migration to rename, so check those hardest; #74 nearly named an index `feed-health` against Feed Status's _Avoid: Health_.
 - A rule that changes in one doc changes everywhere it is stated, including code comments that restate it; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
+## Fixes
+
+- A fix to code that is duplicated elsewhere fixes every copy in the same diff, or folds the copies into one: search beyond the diff for the pattern it fixes. `3237796` backed off throttled keys in one of three copied BatchGetItem loops, and the other two kept retrying at once until GET /stories returned a 500 (#73).
+
 ## Deletions
 
 - A deletion also removes the struct fields, flags and branches that only the deleted code wrote: trace each field the deleted code set to its remaining writers, and delete the field, with whatever forwards it, when none is left. `deadcode` in `make check` finds unreachable functions, not fields that are still read but never written; #79 left `domain.Entry.PostType` and `ExternalURL` forwarded empty by the feed worker after the Reddit Connector went. The same goes for reads: an attribute in a `ProjectionExpression` that only the deleted code read goes too, since nothing checks the string; #47 left `item_sk` in `ItemKnown`'s identity projection.
