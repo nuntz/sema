@@ -141,29 +141,9 @@ func program(ctx *pulumi.Context, assets programAssets) error {
 			&dynamodb.TableAttributeArgs{Name: pulumi.String("next_fetch_at"), Type: pulumi.String("S")},
 			&dynamodb.TableAttributeArgs{Name: pulumi.String("unread_pk"), Type: pulumi.String("S")},
 		},
-		GlobalSecondaryIndexes: dynamodb.TableGlobalSecondaryIndexArray{
-			&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("PK"), KeyType: pulumi.String("HASH")},
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("score"), KeyType: pulumi.String("RANGE")},
-			}, ProjectionType: pulumi.String("ALL")},
-			&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-next-fetch"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
-			}, ProjectionType: pulumi.String("KEYS_ONLY")},
-			// by-next-fetch's keys with the state the scheduler reads to find failing
-			// Connectors; a separate index because a projection cannot change in place.
-			&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("feed-status"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
-			}, ProjectionType: pulumi.String("INCLUDE"), NonKeyAttributes: pulumi.StringArray{pulumi.String("connector"), pulumi.String("muted"), pulumi.String("error_count"), pulumi.String("refused_since")}},
-			// Sparse: only unread live items carry unread_pk.
-			&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("unread-by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("unread_pk"), KeyType: pulumi.String("HASH")},
-				&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("score"), KeyType: pulumi.String("RANGE")},
-			}, ProjectionType: pulumi.String("ALL")},
-		},
-		Ttl:  &dynamodb.TableTtlArgs{AttributeName: pulumi.String("ttl"), Enabled: pulumi.Bool(true)},
-		Tags: pulumi.StringMap{"app": pulumi.String("sema"), "stack": pulumi.String(stack)},
+		GlobalSecondaryIndexes: tableIndexes(),
+		Ttl:                    &dynamodb.TableTtlArgs{AttributeName: pulumi.String("ttl"), Enabled: pulumi.Bool(true)},
+		Tags:                   pulumi.StringMap{"app": pulumi.String("sema"), "stack": pulumi.String(stack)},
 	})
 	if err != nil {
 		return err
@@ -647,6 +627,33 @@ func rescoreErrorsAlarmArgs(functionName pulumi.StringInput, alarmActions pulumi
 		Dimensions:         pulumi.StringMap{"FunctionName": functionName},
 		AlarmActions:       alarmActions,
 		AlarmDescription:   pulumi.String("rescore failed at least once in the last hour"),
+	}
+}
+
+// tableIndexes are the table's global secondary indexes. The DynamoDB Local
+// table in internal/dynamotest repeats them; TestTableIndexesMatchDynamoDBLocalTable
+// keeps the two in step.
+func tableIndexes() dynamodb.TableGlobalSecondaryIndexArray {
+	return dynamodb.TableGlobalSecondaryIndexArray{
+		&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("PK"), KeyType: pulumi.String("HASH")},
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("score"), KeyType: pulumi.String("RANGE")},
+		}, ProjectionType: pulumi.String("ALL")},
+		&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("by-next-fetch"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
+		}, ProjectionType: pulumi.String("KEYS_ONLY")},
+		// by-next-fetch's keys with the state the scheduler reads to find failing
+		// Connectors; a separate index because a projection cannot change in place.
+		&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("feed-status"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("gsi1pk"), KeyType: pulumi.String("HASH")},
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("next_fetch_at"), KeyType: pulumi.String("RANGE")},
+		}, ProjectionType: pulumi.String("INCLUDE"), NonKeyAttributes: pulumi.StringArray{pulumi.String("connector"), pulumi.String("muted"), pulumi.String("error_count"), pulumi.String("refused_since")}},
+		// Sparse: only unread live items carry unread_pk.
+		&dynamodb.TableGlobalSecondaryIndexArgs{Name: pulumi.String("unread-by-score"), KeySchemas: dynamodb.TableGlobalSecondaryIndexKeySchemaArray{
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("unread_pk"), KeyType: pulumi.String("HASH")},
+			&dynamodb.TableGlobalSecondaryIndexKeySchemaArgs{AttributeName: pulumi.String("score"), KeyType: pulumi.String("RANGE")},
+		}, ProjectionType: pulumi.String("ALL")},
 	}
 }
 

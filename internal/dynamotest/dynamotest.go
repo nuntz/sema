@@ -21,7 +21,8 @@ import (
 )
 
 // NewTable creates a table with Sema's key schema and indexes, drops it when
-// the test finishes, and returns a client for it. It skips the test unless
+// the test finishes, and returns a client for it. Its indexes repeat
+// tableIndexes in infra/main.go, and an infra test fails when the two differ. It skips the test unless
 // DYNAMODB_ENDPOINT is set, or fails it when SEMA_REQUIRE_DYNAMODB is set.
 // Every worktree shares one DynamoDB Local namespace, so the name carries a
 // random suffix as well as the time.

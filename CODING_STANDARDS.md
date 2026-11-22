@@ -76,6 +76,7 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 
 - `RUNBOOK.md`, `README.md` and ADRs describe what is in the tree. A doc that cites a package, stack or job the diff doesn't contain is ahead of the code: hold it back, or mark the ADR proposed.
 - A `CONTEXT.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
+- A new name for a domain concept uses its `CONTEXT.md` term rather than one of its _Avoid_ synonyms, and a concept the glossary lacks gets an entry in the same diff. Names that ship outside the code (an index, metric, alarm or log field) cost a migration to rename, so check those hardest; #74 nearly named an index `feed-health` against Feed Status's _Avoid: Health_.
 - A rule that changes in one doc changes everywhere it is stated, including code comments that restate it; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
 ## Deletions
