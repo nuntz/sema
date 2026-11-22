@@ -86,11 +86,12 @@ jobs:
           name: playwright-report${{ matrix.stress && format('-stress-{0}', matrix.stress) || '' }}-attempt-${{ github.run_attempt }}
           path: /tmp/sema-playwright-report.json
           retention-days: 30
-      # Playwright's per-test output (error context, captured images) for reading a CI-only failure.
+      # Playwright's per-test output (traces, error context, captured images) for reading a CI-only
+      # failure. Artifact names are unique per run, so each attempt gets its own, as the report does.
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results${{ matrix.stress && format('-stress-{0}', matrix.stress) || '' }}
+          name: playwright-results${{ matrix.stress && format('-stress-{0}', matrix.stress) || '' }}-attempt-${{ github.run_attempt }}
           path: /tmp/sema-playwright-results
           retention-days: 30
 

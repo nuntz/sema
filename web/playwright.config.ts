@@ -25,6 +25,10 @@ export default defineConfig({
   use: {
     baseURL: origin,
     ...devices["Desktop Chrome"],
+    // A failed test keeps its trace in outputDir, which CI uploads, so a
+    // CI-only failure shows where each action landed. #70's one failure left
+    // only error-context.md, and nothing local reproduced it.
+    trace: "retain-on-failure",
     // Tests stub every outside request; an unstubbed one fails here rather
     // than depending on what the real site serves CI runners.
     launchOptions: {
