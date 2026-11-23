@@ -179,13 +179,16 @@ function singleImageCellProblems(grid: Element): string[] {
     const onImage = (element: Element | null, what: string) => {
       const r = element?.getBoundingClientRect();
       if (!r || r.width === 0) return problems.push(`${id}: no ${what}`);
-      if (
-        r.top < media.top - 1 ||
-        r.bottom > media.bottom + 1 ||
-        r.left < media.left - 1 ||
-        r.right > media.right + 1
-      )
-        problems.push(`${id}: ${what} is not inside the image`);
+      const out = Math.max(
+        media.top - r.top,
+        r.bottom - media.bottom,
+        media.left - r.left,
+        r.right - media.right,
+      );
+      if (out > 1)
+        problems.push(
+          `${id}: ${what} is ${Math.round(out)}px outside the image`,
+        );
     };
     const title = cell.querySelector(".cell-copy h2");
     const meta = cell.querySelector<HTMLElement>(".cell-meta");
@@ -229,7 +232,9 @@ function singleImageCellProblems(grid: Element): string[] {
     for (const control of [age, cell.querySelector(".peek-pill > span")]) {
       const r = control?.getBoundingClientRect();
       if (t && r && r.width > 0 && window.rectsOverlap(t, r))
-        problems.push(`${id}: title runs into the corner`);
+        problems.push(
+          `${id}: title runs into the corner by ${Math.round(Math.min(t.right, r.right) - Math.max(t.left, r.left))}×${Math.round(Math.min(t.bottom, r.bottom) - Math.max(t.top, r.top))}px`,
+        );
     }
     const unread = /, unread/.test(
       cell.querySelector(".cell-main")?.getAttribute("aria-label") ?? "",
@@ -287,13 +292,16 @@ function storyCellProblems(grid: Element, unread: string[]): string[] {
     const onImage = (element: Element | null, what: string) => {
       const r = visible(element);
       if (!r) return problems.push(`${id}: no ${what}`);
-      if (
-        r.top < media.top - 1 ||
-        r.bottom > media.bottom + 1 ||
-        r.left < media.left - 1 ||
-        r.right > media.right + 1
-      )
-        problems.push(`${id}: ${what} is not inside the image`);
+      const out = Math.max(
+        media.top - r.top,
+        r.bottom - media.bottom,
+        media.left - r.left,
+        r.right - media.right,
+      );
+      if (out > 1)
+        problems.push(
+          `${id}: ${what} is ${Math.round(out)}px outside the image`,
+        );
     };
     const title = cell.querySelector(".story-lead h2, .cell-copy h2");
     const meta = cell.querySelector<HTMLElement>(".story-meta, .cell-meta");
@@ -334,7 +342,9 @@ function storyCellProblems(grid: Element, unread: string[]): string[] {
       visible(cell.querySelector(".peek-pill > span")),
     ])
       if (t && r && window.rectsOverlap(t, r))
-        problems.push(`${id}: title runs into the top of the Lead`);
+        problems.push(
+          `${id}: title runs into the top of the Lead by ${Math.round(Math.min(t.right, r.right) - Math.max(t.left, r.left))}×${Math.round(Math.min(t.bottom, r.bottom) - Math.max(t.top, r.top))}px`,
+        );
     const headlines = cell.querySelector(".story-headlines");
     const dots = [...cell.querySelectorAll(".unread-dot")].filter(
       (dot) => visible(dot) && !headlines?.contains(dot),
@@ -4678,6 +4688,109 @@ test.describe("cell states", () => {
     }
   }
 
+  // Every cell type in every top-band state, so new chrome is measured
+  // against all of them rather than the states its own test thought of: #48
+  // and #54 each shipped a collision in a state no test held (#55).
+  const bandStates = {
+    plain: {},
+    boosted: { signal: 1 },
+    buried: { signal: -1 },
+    kept: { hearted: true, signal: 1 },
+    expiring: expiring,
+    "expiring-boosted": { ...expiring, signal: 1 },
+    "expiring-buried": { ...expiring, signal: -1 },
+    "expiring-kept": { ...expiring, hearted: true, signal: 1 },
+  } as const;
+  const photo = { media_url: "/sema-mark.svg", media_w: 320, media_h: 180 };
+  const bandMatrix = {
+    items: Object.entries(bandStates).flatMap(([state, extra], index) =>
+      (["L", "M", "S"] as const).flatMap((size, s) =>
+        [
+          ["photo", photo],
+          ["text", noPhoto],
+        ].map(([kind, media], k) => ({
+          ...item(
+            `${kind}-${size}-${state}`,
+            "a",
+            `${kind} ${size} ${state} ${long}`,
+            0.9 - (index * 6 + s * 2 + k) / 100,
+            size,
+          ),
+          ...(media as object),
+          ...extra,
+        })),
+      ),
+    ),
+    stories: Object.entries(bandStates)
+      .filter(([state]) => !state.startsWith("expiring-"))
+      .flatMap(([state, extra], index) =>
+        (["L", "M"] as const).flatMap((size, s) =>
+          [
+            ["photo", {}],
+            ["text", noPhoto],
+          ].map(([kind, media], k) => ({
+            ...story(`story-${kind}-${size}-${state}`, 0.99 - index / 100, {
+              ...(media as object),
+              ...extra,
+            }),
+            size,
+            order_key: 0.99 - (index * 4 + s * 2 + k) / 100,
+          })),
+        ),
+      ),
+  };
+  // Collisions #84 owns, pinned so a new one fails and a fixed one must be
+  // struck from this list. Desktop has none.
+  const knownBandProblems = {
+    items: [
+      "photo-L-expiring-kept: span.kept-marker covers h2.",
+      "photo-L-kept: span.kept-marker covers h2.",
+      "photo-S-expiring-kept: span.kept-marker covers h2.",
+      "photo-S-kept: span.kept-marker covers h2.",
+    ],
+    stories: [
+      "story-photo-M-boosted: span.cell-age meets span.story-stack-badge",
+      "story-photo-M-buried: span.cell-age meets span.story-stack-badge",
+      "story-photo-M-expiring: span.expiry-pill meets span.story-stack-badge",
+      "story-photo-M-kept: span.cell-age meets span.story-stack-badge",
+      "story-text-L-kept: span.kept-marker covers h2.",
+      "story-text-M-kept: span.kept-marker meets span.story-stack-badge",
+    ],
+  };
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [320, 1440]) {
+      for (const kind of ["items", "stories"] as const) {
+        test(`keep every top-band state of ${kind} clear of copy at ${width}px in ${theme}`, async ({
+          page,
+        }) => {
+          await page.setViewportSize({ width, height: 9000 });
+          await page.addInitScript(
+            (theme) => localStorage.setItem("sema:theme", theme),
+            theme,
+          );
+          const stories = kind === "stories" ? bandMatrix.stories : [];
+          const items = kind === "items" ? bandMatrix.items : [];
+          await stubFrontPage(page, stories, items, []);
+          await page.goto("/");
+          await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+            stories.length + items.length,
+          );
+          await page.evaluate(() => document.fonts.ready);
+          await expect
+            .poll(() =>
+              page
+                .locator(".grid-scroll")
+                .evaluate(topBandProblems)
+                .then((problems) =>
+                  problems.map((p) => p.replace(/ by [\d×]+px$/, "")).sort(),
+                ),
+            )
+            .toEqual(width < 700 ? knownBandProblems[kind] : []);
+        });
+      }
+    }
+  }
+
   for (const width of [320, 1440]) {
     test(`give Archive cells the Front Page anatomy at ${width}px`, async ({
       page,
@@ -4777,6 +4890,9 @@ function topBandProblems(grid: Element): string[] {
   };
   // Rects that only share an antialiased edge don't count.
   const overlap = (a: DOMRect, b: DOMRect) => window.rectsOverlap(a, b, 1);
+  // How far, so a failure tells a brushed line box from a covered title.
+  const by = (a: DOMRect, b: DOMRect) =>
+    `by ${Math.round(Math.min(a.right, b.right) - Math.max(a.left, b.left))}×${Math.round(Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))}px`;
   const name = (el: Element) =>
     `${el.tagName.toLowerCase()}.${String(el.className).split(" ")[0]}`;
   const problems: string[] = [];
@@ -4797,7 +4913,9 @@ function topBandProblems(grid: Element): string[] {
     for (const b of band)
       for (const c of copy)
         if (overlap(b.getBoundingClientRect(), c.getBoundingClientRect()))
-          problems.push(`${id}: ${name(b)} covers ${name(c)}`);
+          problems.push(
+            `${id}: ${name(b)} covers ${name(c)} ${by(b.getBoundingClientRect(), c.getBoundingClientRect())}`,
+          );
     band.forEach((a, index) => {
       for (const b of band.slice(index + 1))
         if (
@@ -4805,18 +4923,26 @@ function topBandProblems(grid: Element): string[] {
           !b.contains(a) &&
           overlap(a.getBoundingClientRect(), b.getBoundingClientRect())
         )
-          problems.push(`${id}: ${name(a)} meets ${name(b)}`);
+          problems.push(
+            `${id}: ${name(a)} meets ${name(b)} ${by(a.getBoundingClientRect(), b.getBoundingClientRect())}`,
+          );
     });
     const box = cell.getBoundingClientRect();
     for (const b of band) {
       const r = b.getBoundingClientRect();
-      if (r.left < box.left - 1 || r.right > box.right + 1)
-        problems.push(`${id}: ${name(b)} runs out of the cell`);
+      const out = Math.max(box.left - r.left, r.right - box.right);
+      if (out > 1)
+        problems.push(
+          `${id}: ${name(b)} runs out of the cell by ${Math.round(out)}px`,
+        );
     }
     for (const c of copy) {
       const r = c.getBoundingClientRect();
-      if (r.bottom > box.bottom + 1 || r.top < box.top - 1)
-        problems.push(`${id}: ${name(c)} runs out of the cell`);
+      const out = Math.max(r.bottom - box.bottom, box.top - r.top);
+      if (out > 1)
+        problems.push(
+          `${id}: ${name(c)} runs out of the cell by ${Math.round(out)}px`,
+        );
     }
   }
   return problems;

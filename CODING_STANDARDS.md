@@ -36,11 +36,12 @@ These hold for the grid and reader headers, the phone reader, the Peek, and grid
 Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heights live in `web/src/layout/justified.ts`; _(e2e)_ here means `web/e2e/front-page.e2e.ts`.
 
 - Phone rows sit 12px from each side with 8px gaps. Every L Item is a full-width 168px row; M and S Items sit two-up in equal widths, 150px when either is M and 124px for two S; a trailing single keeps half width. _(unit)_
-- A phone Story is a full-width 200px Lead plus a 52px strip per shown Headline. `--story-strip-h` and `mobileStoryHeadlineHeight` state the same 52px. _(unit, e2e)_
+- A phone L Story is a full-width 200px Lead plus a 52px strip per shown Headline; an M Story sits two-up like an M Item. `--story-strip-h` and `mobileStoryHeadlineHeight` state the same 52px. _(unit, e2e)_
 - Desktop row geometry belongs to `justified.ts`: a cell change keeps its rows and the Story Lead's 126px image floor, so only measured copy grows a Story row. _(e2e: Story Lead floor)_
 - An image cell is a media surface: the photo covers the cell, the title and feed name sit on the title scrim at the bottom, and the age and unread dot sit top right. Scrim, title and corner use media tokens in both themes. _(e2e)_
 - A text-only cell (no `media_url`) starts its title at the top, fits its summary to whole lines through `web/src/ui/summary-fit.ts`, and ends on one line of feed name, age and unread dot. It uses page surface tokens. _(e2e)_
 - A cell reserves its Signal why-line only while a Signal shows, on every cell type.
+- No top-band control (corner, markers, actions, Source count, Peek) covers copy, meets another control or leaves its cell, in any cell type and top-band state; the collisions #84 owns are pinned in that test's known list. _(e2e: every top-band state)_
 - A Boost or Bury shows as the top-left marker, plus the why-line on M and L cells; the corner holds only the age (or time-left marker) and the unread dot, and the cell's Open label speaks the Boost or Bury. A phone two-up cell, M or S, uses the compact time-left marker, and its image-cell title drops to two lines while that marker shows. _(e2e)_
 - On a desktop text-only cell, the action row sits on a tray of the cell's own surface, so it covers the title's start only while visible. _(e2e)_
 - The line under an Archive cell's title is the feed name alone, whatever Sema stored for the Item. _(e2e)_
@@ -55,6 +56,7 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 
 - Every unread count shown while Reads are optimistic comes from `createUnreadCounts`' optimistic per-Feed counts; a count display never applies Read's adjustment itself, so the Scope cell, Tag chips and Scope picker can't disagree (#32).
 - A change that must keep grid geometry is proven by a browser test measuring rendered rows, as in "desktop Story Leads keep master's image floor and Headline counts"; `justified.test.ts` injects measured heights, so it can't see a cell that reports a different one (#48).
+- A CSS rule that sets a property on a cell element is checked against every other rule setting that property on that element, and its test covers the states those rules key on: #55's hover tray set the action row's `top` and lost to `:has(.expiry-pill)` rules no test held.
 - Behaviour that depends on the Window is tested in Today or Yesterday, with an Item fetched on a different day from the one it was published, as in `web/src/unread-counts.test.ts`: All holds every Item, and a same-day Item can't tell `fetched_ts` from `published_ts` (#46).
 
 ## Items
@@ -90,7 +92,7 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 
 ## Deletions
 
-- A deletion also removes the struct fields, flags and branches that only the deleted code wrote: trace each field the deleted code set to its remaining writers, and delete the field, with whatever forwards it, when none is left. `deadcode` in `make check` finds unreachable functions, not fields that are still read but never written; #79 left `domain.Entry.PostType` and `ExternalURL` forwarded empty by the feed worker after the Reddit Connector went. The same goes for reads: an attribute in a `ProjectionExpression` that only the deleted code read goes too, since nothing checks the string; #47 left `item_sk` in `ItemKnown`'s identity projection.
+- A deletion also removes the struct fields, flags and branches that only the deleted code wrote: trace each field the deleted code set to its remaining writers, and delete the field, with whatever forwards it, when none is left. `deadcode` in `make check` finds unreachable functions, not fields that are still read but never written; #79 left `domain.Entry.PostType` and `ExternalURL` forwarded empty by the feed worker after the Reddit Connector went. The same goes for reads: an attribute in a `ProjectionExpression` that only the deleted code read goes too, since nothing checks the string; #47 left `item_sk` in `ItemKnown`'s identity projection. A deleted CSS rule's selector is searched in every component first, since one selector can style markup elsewhere: #55 dropped `.cell-meta em` with the Archive tag, and it also styled Search's similarity chip.
 
 ## Backfills
 
