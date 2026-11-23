@@ -2,6 +2,9 @@
 # Reads Playwright's JSON reports (web/playwright.config.ts) and prints, per report, the pass
 # counts, each failing test with its error, and the slowest tests by share of their timeout, the
 # share web/e2e/test.ts fails past half (#65). CI uploads one report per e2e leg and run attempt.
+# Under each failing or flaky test it prints where its trace.zip is: a run's results artifact to
+# download, or a local path. The trace's DOM snapshots show the page before and after each step,
+# so a CI-only failure shows what moved, such as a height that changed after the test read it (#83).
 # Usage: scripts/ci-e2e-report.sh <run-id|report.json> [slowest count, default 5]
 #   A run ID downloads that CI run's reports with gh; a path reads a local report, such as
 #   /tmp/sema-playwright-report.json after `make e2e`.
@@ -11,7 +14,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 if [[ $# -lt 1 || $# -gt 2 ]]; then
-  sed -n '2,9p' "$0" >&2
+  sed -n '2,12p' "$0" >&2
   exit 2
 fi
 source="$1"
@@ -40,9 +43,13 @@ status=0
 for report in "${reports[@]}"; do
   name="$(basename "$(dirname "$report")")"
   echo "== $name"
+  # A run's reports sit beside results artifacts of the same leg and attempt, which hold the traces.
+  run=""
+  if [[ ! -f "$source" ]]; then run="$source"; fi
+  results="${name/playwright-report/playwright-results}"
   # Specs nest in a file's suite and its describe blocks; each spec has one test per project, and
   # its last result is the one that counted.
-  jq -r --argjson slowest "$slowest" '
+  jq -r --argjson slowest "$slowest" --arg run "$run" --arg results "$results" '
     def specs(path): (.specs[]? | . as $spec | .tests[] | {
         title: (path + [$spec.title] | join(" › ")),
         where: "\($spec.file):\($spec.line)",
@@ -56,7 +63,11 @@ for report in "${reports[@]}"; do
     | "\($stats.expected) passed, \($stats.unexpected) failed, \($stats.flaky) flaky, \($stats.skipped) skipped",
       ($tests[] | select(.status == "unexpected" or .status == "flaky")
         | "\n\(.status | ascii_upcase) \(.where) › \(.title)",
-          (.result.errors[]?.message // "" | split("\n")[:12][] | "    " + .)),
+          (.result.errors[]?.message // "" | split("\n")[:12][] | "    " + .),
+          (.result.attachments[]? | select(.name == "trace") | .path
+            | if $run == "" then "    trace: \(.)"
+              else "    trace: \(sub("^/tmp/sema-playwright-results[^/]*/"; "")) in gh run download \($run) -n \($results)"
+              end)),
       "\nslowest:",
       ($tests | map(select(.result.duration != null and .timeout > 0 and .status != "skipped"))
         | sort_by(-(.result.duration / .timeout))[:$slowest][]

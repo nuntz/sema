@@ -421,7 +421,7 @@ async function titleContrast(page: Page, cellSelector: string) {
   // The clip is only the title's backdrop if the title held still while the
   // screenshot was taken; a relayout can move or replace it (#58).
   let geometry = await measure();
-  let png = Buffer.alloc(0);
+  let png: Buffer = Buffer.alloc(0);
   await expect(async () => {
     await title.scrollIntoViewIfNeeded();
     const before = await measure();
@@ -730,11 +730,11 @@ test.describe("mobile front-page Size grammar", () => {
     test(`a Headline strip opens its Member and Lead actions stay on the Lead in ${theme}`, async ({
       page,
     }) => {
-      const members = [
+      const members: Parameters<typeof item>[] = [
         ["strip-lead", "lead", "A Story Lead over its photo", 0.99, "L"],
         ["strip-one", "one", "The first Member's own angle", 0.9, "S"],
         ["strip-two", "two", "The second Member's own angle", 0.8, "S"],
-      ] as const;
+      ];
       const story = {
         story_id: "strip-story",
         source_count: 3,

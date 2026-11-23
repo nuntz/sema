@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { animationsFinished } from "./animations";
+import { settledScrollExtent } from "./scroll-extent";
 import { activateStandalone, simulateStatusBar } from "./standalone";
 import { expect, type Page, test } from "./test";
 
@@ -713,8 +714,8 @@ for (const width of [1280, 390]) {
     await openFixture(page, "reader");
     await page.locator("#reader-last-line").waitFor();
     const scroll = page.locator(".reader-scroll");
-    const maxTop = await scroll.evaluate((element) => {
-      const maxTop = element.scrollHeight - element.clientHeight;
+    const maxTop = await settledScrollExtent(scroll);
+    await scroll.evaluate((element, maxTop) => {
       element.scrollTop = maxTop - 40;
       for (const method of ["scrollBy", "scrollTo"] as const) {
         element[method] = new Proxy(element[method], {
@@ -735,8 +736,7 @@ for (const width of [1280, 390]) {
           },
         });
       }
-      return maxTop;
-    });
+    }, maxTop);
     await page.keyboard.press("Space");
     await expect
       .poll(() => scroll.evaluate((element) => element.scrollTop))

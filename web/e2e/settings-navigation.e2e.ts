@@ -1,6 +1,7 @@
 import { nextPageTop, pageUpLanding } from "./grid-paging";
-import { resizeGrid, settledScrollExtent } from "./grid-resize";
+import { resizeGrid } from "./grid-resize";
 import { openReader } from "./reader";
+import { settledScrollExtent } from "./scroll-extent";
 import { expect, type Page, test } from "./test";
 
 type AppState = { itemRequests: number; readBatchRequests: number };
@@ -838,7 +839,7 @@ for (const width of [1280, 390]) {
     await openApp(page);
     await resizeGrid(page, width, 420);
     const grid = page.locator(".grid-scroll");
-    const maxTop = await settledScrollExtent(page);
+    const maxTop = await settledScrollExtent(grid);
     await grid.evaluate((element, maxTop) => {
       element.scrollTop = maxTop - 40;
       for (const method of ["scrollBy", "scrollTo"] as const) {
