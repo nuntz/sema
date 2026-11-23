@@ -1051,7 +1051,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-stack-badge,
 .refined-grid .story-badges .story-source-count { height: 24px; padding: 0 7px; display: flex; align-items: center; gap: 4px; border-radius: 6px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; }
 .story-stack-badge { position: absolute; top: 7px; left: 7px; z-index: 4; pointer-events: none; transition: opacity 120ms ease-out; }
-.story-stack-badge b, .refined-grid .story-source-count b { font: inherit; }
+.story-stack-badge b, .refined-grid .story-source-count b, .cell-source-count b { font: inherit; }
 .story-cell:has(.cell-actions button:focus-visible) .story-stack-badge { opacity: 0; }
 @media (hover: hover) {
   .story-cell:hover .story-badges, .story-cell:hover .story-stack-badge { opacity: 0; }
@@ -2262,7 +2262,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 .refined-grid :is(.story-meta, .cell-meta) { margin-top: 9px; gap: 7px; }
 .refined-grid :is(.story-meta, .cell-meta) > .source-badge { width: 14px; height: 14px; flex: none; border-radius: 3px; }
-.refined-grid .grid-row > .grid-cell :is(.story-meta > span:not(.source-badge), .story-meta small, .cell-meta > span:not(.source-badge), .cell-feed-filter) {
+.refined-grid .grid-row > .grid-cell :is(.story-meta > span:not(.source-badge), .story-meta small, .cell-meta > span:not(.source-badge), .cell-meta > .cell-source-count, .cell-feed-filter) {
   color: var(--fg-tertiary);
   font: 400 12px/1.2 "IBM Plex Mono", monospace;
 }
@@ -2306,6 +2306,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell.size-m .cell-copy h2 { font: 700 17px/1.22 "Instrument Sans", sans-serif; -webkit-line-clamp: 2; }
 .refined-grid .grid-row > .grid-cell.size-s .cell-copy h2 { font: 700 15px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 2; }
 .refined-grid .grid-row > .grid-cell .cell-meta > :is(.unread-dot, .refined-age, .refined-read-label) { flex: none; }
+/* A phone two-up Story's Source count ends its feed line in the line's own
+   type, so the feed name, not the count, gives way (#84). */
+.cell-source-count { display: inline-flex; flex: none; align-items: center; gap: 3px; }
+.refined-grid .grid-row > .grid-cell:not(.text-cell) .cell-meta > .cell-source-count { color: var(--media-fg-secondary); }
 
 /* Phone cards keep the shared surfaces and copy hierarchy with room for touch. */
 .mobile-refined-grid .grid-row > .grid-cell:not(.story-card) { display: flex; flex-direction: column; }
@@ -2378,8 +2382,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-feed-filter { flex: 0 1 auto; }
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .age-separator { display: inline; }
 /* While a Signal, Kept or time-left marker sits in a text-only cell's top band,
-   the title starts under the band, as a text Story's does under its Source
-   count. The corner then holds only the Signal label or time-left marker: the
+   the title starts under the band, as a desktop text Story's does under its
+   Source count. The corner then holds only the Signal label or time-left marker: the
    age and unread dot stay on the bottom line, and a time-left marker replaces
    that age. Markers keep to the band's one row, and on a phone the title gives
    up whole lines so the bottom line stays in the cell. */
@@ -2391,9 +2395,9 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell.text-cell:not(.story-card)[data-signal="1"] > .kept-marker { top: 14px; left: 42px; }
 /* Right of an S cell's Boost and Bury. */
 .refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card) > .kept-marker { top: 12px; left: calc(var(--cell-inset) + 2 * (var(--cell-action-size-s) + var(--cell-action-gap))); }
-.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):where(.story-cell, [data-signal="1"], [data-signal="-1"], :has(> .kept-marker), :has(> .cell-corner .has-expiry)):is(.size-m, .size-s) .cell-copy h2 { -webkit-line-clamp: 3; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):where([data-signal="1"], [data-signal="-1"], :has(> .kept-marker), :has(> .cell-corner .has-expiry)):is(.size-m, .size-s) .cell-copy h2 { -webkit-line-clamp: 3; }
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card):where([data-signal="1"], [data-signal="-1"]):is(.size-l, .size-m, .size-s) .cell-copy h2,
-.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card):where(.story-cell, :has(> .kept-marker), :has(> .cell-corner .has-expiry)) .cell-copy h2 { -webkit-line-clamp: 2; }
+.mobile-refined-grid .grid-row > .grid-cell.text-cell.size-s:not(.story-card):where(:has(> .kept-marker), :has(> .cell-corner .has-expiry)) .cell-copy h2 { -webkit-line-clamp: 2; }
 
 .refined-sheet .sheet-headline { height: auto; min-height: 76px; padding: 12px 4px; gap: 9px; }
 .refined-sheet .sheet-headline.related-also { min-height: 56px; align-items: center; }
@@ -2470,7 +2474,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell):is(.size-m, .size-s):is([data-signal="1"], [data-signal="-1"]) .cell-copy h2 { -webkit-line-clamp: 2; }
 .mobile-refined-grid .grid-row > .grid-cell.story-card .story-lead h2 { font: 600 22px/1.18 "Instrument Sans", sans-serif; letter-spacing: -.016em; -webkit-line-clamp: 3; }
 
-/* A Story shows its Source count at the top left of the Lead, and its Headline
+/* A Story shows its Source count at the top left of the Lead (a phone two-up
+   Story ends its feed line with it instead, #84), and its Headline
    strip sits directly under the Lead on the page surface. On a phone each
    strip is one 52px tap target: unread dot, feed name and age, then the
    Headline's title on one line. */
@@ -2489,7 +2494,9 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 @media (max-width: 619px) {
   .mobile-refined-grid .story-cell:has(> .kept-marker):not(:has(.signal-mobile-chip)) :is(.story-badges, .story-stack-badge) { left: 28px; }
 }
-.refined-grid .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: var(--cell-badge-clear); }
+/* A phone two-up Story's count is on its feed line, so on a phone its band
+   clears only the markers an Item's does (#84). */
+.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: var(--cell-badge-clear); }
 /* A Headline strip's unread dot leads its feed name and age line. */
 .refined-grid:not(.mobile-refined-grid) .story-headline.related-angle > .unread-dot { margin-top: 4px; }
 .mobile-refined-grid .story-card .story-headlines { border-top: 0; }
@@ -2565,7 +2572,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-cell[data-signal="-1"] > img, .grid-cell[data-signal="-1"] .story-media img { filter: saturate(var(--signal-bury-saturate)); opacity: var(--signal-bury-media-opacity); transition-duration: 140ms; }
 .grid-cell.read[data-signal="-1"] > img, .grid-cell.read[data-signal="-1"] .story-media img { opacity: 1; filter: none; }
 .refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-copy h2, .cell-copy p, .story-lead h2, .story-lead p, .story-related-title) { color: var(--signal-bury-ink); }
-.refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-meta > span:not(.source-badge), .cell-feed-filter, .story-meta > span:not(.source-badge), .story-meta small, .story-related-source, .story-related-source b, .why-hint) { color: var(--signal-bury-meta); }
+.refined-grid .grid-row > .grid-cell[data-signal="-1"] :is(.cell-meta > span:not(.source-badge), .cell-meta > .cell-source-count, .cell-feed-filter, .story-meta > span:not(.source-badge), .story-meta small, .story-related-source, .story-related-source b, .why-hint) { color: var(--signal-bury-meta); }
 .grid-cell[data-signal="-1"] .story-headlines { background: var(--signal-bury-surface); }
 .grid-cell[data-signal="1"] { border-color: var(--signal-boost-border); }
 .grid-cell::after { content: ""; position: absolute; inset: 0; z-index: 3; background: transparent; pointer-events: none; transition: background 120ms ease-out; }
@@ -2586,7 +2593,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 
 /* Feedback controls share the page theme, including over media. */
-.grid-cell .signal-actions { --cell-action-kept-bg: var(--cluster-pressed-down); --cell-action-kept-fg: var(--signal-kept-fg); --cell-action-kept-hover-bg: var(--cluster-pressed-down); --cell-action-kept-hover-fg: var(--signal-action-hover-fg); display: flex; gap: var(--cell-action-gap); opacity: 1; pointer-events: none; }
+.grid-cell :is(.signal-actions, .signal-mobile-chip) { --cell-action-kept-bg: var(--cluster-pressed-down); --cell-action-kept-fg: var(--signal-kept-fg); --cell-action-kept-hover-bg: var(--cluster-pressed-down); --cell-action-kept-hover-fg: var(--signal-action-hover-fg); }
+.grid-cell .signal-actions { display: flex; gap: var(--cell-action-gap); opacity: 1; pointer-events: none; }
 .grid-cell .signal-actions button { width: var(--cell-action-size); height: var(--cell-action-size); margin: 0; border: 1px solid var(--signal-action-border); background: var(--signal-action-bg); color: var(--signal-action-fg); opacity: 0; pointer-events: none; transition: background 120ms ease-out, border-color 120ms ease-out, color 120ms ease-out, opacity 120ms ease-out; }
 .grid-cell .signal-actions button::before { content: none; }
 .grid-cell .signal-actions button .icon, .grid-cell .signal-mobile-chip .icon { color: inherit; }
@@ -2617,8 +2625,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .grid-cell .signal-mobile-chip { position: absolute; z-index: 5; top: 7px; left: 7px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; pointer-events: none; }
   .signal-mobile-chip[data-action="boost"] { background: var(--accent-loud); color: var(--accent-ink); }
   .signal-mobile-chip[data-action="bury"] { background: var(--cluster-pressed-down); border: 1px solid var(--signal-action-active-border); color: var(--signal-action-hover-fg); }
-  .grid-cell:has(.signal-actions button.heart) .kept-marker { display: grid; }
-  .grid-cell:has(.signal-mobile-chip) .kept-marker { top: 42px; opacity: 1; }
+  /* The pressed Keep action's look: a Kept cell's chip speaks its Boost too,
+     so no Kept marker stacks under it into the title (#84). */
+  .signal-mobile-chip[data-action="keep"] { background: var(--cell-action-kept-bg); border: 1px solid var(--signal-action-border); color: var(--cell-action-kept-fg); }
+  .grid-cell:has(.signal-actions button.heart):not(:has(.signal-mobile-chip[data-action="keep"])) .kept-marker { display: grid; }
+  /* A compact cell's actions are More alone, so no Keep action to key on. */
+  .grid-cell:has(.signal-mobile-chip[data-action="keep"]) .kept-marker { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .grid-cell .signal-actions button { transition: none !important; }

@@ -6,6 +6,13 @@ import {
   hoursLeft,
 } from "../expiry";
 
+/** Whether a cell's corner uses the compact time-left marker: an S cell, or a
+ * phone two-up M cell, Item or Story, which is too narrow for the full marker
+ * beside a Signal chip (#55, #84). */
+export function compactExpiry(size: "S" | "M" | "L", phone: boolean): boolean {
+  return size === "S" || (phone && size === "M");
+}
+
 export function ExpiryPill(props: {
   published: string;
   now: number;

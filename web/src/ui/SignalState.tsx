@@ -20,15 +20,23 @@ export function createSignalFresh(value: () => SignalValue) {
   onCleanup(() => clearTimeout(timer));
   return fresh;
 }
-export function SignalMarker(props: { value: SignalValue }) {
+/** A phone cell's Signal chip. A live Kept Item is always Boosted, so a Kept
+ * cell's chip is the Kept one and no Kept marker stacks under it (#84). */
+export function SignalMarker(props: { value: SignalValue; kept?: boolean }) {
+  const action = () =>
+    props.value === 1 ? (props.kept ? "keep" : "boost") : "bury";
   return (
     <Show when={props.value !== 0}>
       <span
         class="signal-mobile-chip"
-        data-action={props.value === 1 ? "boost" : "bury"}
+        data-action={action()}
         aria-hidden="true"
       >
-        <Icon name={props.value === 1 ? "boost" : "bury"} size={14} />
+        <Icon
+          name={action()}
+          size={14}
+          filled={action() === "keep" ? true : undefined}
+        />
       </span>
     </Show>
   );

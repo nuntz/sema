@@ -59,7 +59,7 @@ import { relativeAge, relativeAgo } from "../relative-time";
 import { spokenSignal } from "../signal-feedback";
 import type { Item, Story } from "../types";
 import { isVideoItem } from "../video-item";
-import { ExpiryPill } from "./ExpiryPill";
+import { compactExpiry, ExpiryPill } from "./ExpiryPill";
 import { emptyState } from "./empty-state";
 import { frontPageSequence } from "./front-page";
 import { gridLightboxLead, loadGridLightboxImages } from "./grid-lightbox";
@@ -1225,6 +1225,7 @@ function GridContent(props: GridProps) {
                       return (
                         <StoryCell
                           archive={props.model.archive}
+                          phone={mobile()}
                           story={
                             liveStories().get(storyID) ?? cell().story ?? story
                           }
@@ -1281,11 +1282,8 @@ function GridContent(props: GridProps) {
                         : "";
                     const cellSignal = () =>
                       props.model.cell(item()).signal ? item().signal : 0;
-                    // A phone two-up cell, M or S, is too narrow for the full
-                    // time-left marker beside a Signal chip (#55).
                     const compactCorner = () =>
-                      cell().effectiveSize === "S" ||
-                      (mobile() && cell().effectiveSize === "M");
+                      compactExpiry(cell().effectiveSize, mobile());
                     const signalFresh = createSignalFresh(cellSignal);
                     const explanation = createMemo(() => whyText(item()));
                     const readVisuals = createMemo(() =>
@@ -1407,7 +1405,10 @@ function GridContent(props: GridProps) {
                           <span class="ranking-hint">{whyText(item())}</span>
                         </Show>
                         <div class="cell-scrim" />
-                        <SignalMarker value={cellSignal()} />
+                        <SignalMarker
+                          value={cellSignal()}
+                          kept={item().hearted}
+                        />
                         <div class="cell-corner">
                           <Show when={!(expiring() && compactCorner())}>
                             <UnreadDot visible={readVisuals().unreadDot} />
@@ -2028,6 +2029,8 @@ export function CellCopy(props: {
   dimmed?: boolean;
   onApplyFeed?(): void;
   story?: boolean;
+  /** A phone two-up Story's Source count, which ends its feed line (#84). */
+  sourceCount?: number;
   onUndo?(): void;
 }) {
   const reddit = () => isRedditItem(props.item);
@@ -2083,6 +2086,18 @@ export function CellCopy(props: {
           >
             {gridSourceName(props.item)}
           </button>
+        </Show>
+        <Show when={props.sourceCount}>
+          {(count) => (
+            <small
+              class="cell-source-count"
+              role="img"
+              aria-label={`${count()} sources`}
+            >
+              <Icon name="stack" size={13} />
+              <b>{count()}</b>
+            </small>
+          )}
         </Show>
         <span class="refined-age">
           <span class="age-separator">· </span>

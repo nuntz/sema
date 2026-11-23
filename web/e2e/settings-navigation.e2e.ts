@@ -350,6 +350,9 @@ for (const width of [390, 1280]) {
     await expect(cell.locator(".signal-mobile-chip, .signal-why")).toHaveCount(
       0,
     );
+    // A phone Archive cell shows no Signal chip, so its Kept marker stands
+    // alone (#84).
+    if (width === 390) await expect(cell.locator(".kept-marker")).toBeVisible();
     await cell.locator("button.cell-main").click();
     await expect(page.locator(".app-header--reader")).toBeVisible();
     await expect(

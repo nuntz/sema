@@ -26,7 +26,7 @@ import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
 import { type SignalValue, spokenSignal } from "../signal-feedback";
 import type { Item, Story } from "../types";
-import { ExpiryPill } from "./ExpiryPill";
+import { compactExpiry, ExpiryPill } from "./ExpiryPill";
 import {
   CellCopy,
   FittedSummary,
@@ -48,6 +48,8 @@ interface StoryCellProps {
   focusedID: string;
   readContext: ReadStateContext;
   archive?: boolean;
+  /** The phone layout, where an M Story sits two-up like an M Item. */
+  phone?: boolean;
   pressed: boolean;
   onExpand(storyID: string): void;
   /** The layout has a measured Lead height for this Story; a later re-measure, as after a width change, can still resize its row. */
@@ -87,6 +89,8 @@ export function StoryCell(props: StoryCellProps) {
       ? mobileStoryCardBorderHeight
       : storyCardBorderHeight);
   const editorial = () => props.story.size === "L";
+  const compactCorner = () =>
+    compactExpiry(props.cell.effectiveSize, props.phone ?? false);
   const [copyMetrics, setCopyMetrics] = createSignal({
     height: 0,
     mediaFloor: 0,
@@ -220,7 +224,7 @@ export function StoryCell(props: StoryCellProps) {
             <ExpiryPill
               published={item.published_ts}
               now={clockNow()}
-              compact={props.cell.effectiveSize === "S"}
+              compact={compactCorner()}
               unread={!item.read}
             />
           );
@@ -267,9 +271,7 @@ export function StoryCell(props: StoryCellProps) {
                   </Show>
                   <div class="cell-scrim" />
                   <div class="cell-corner">
-                    <Show
-                      when={!(expiring() && props.cell.effectiveSize === "S")}
-                    >
+                    <Show when={!(expiring() && compactCorner())}>
                       <UnreadDot visible={leadReadVisuals().unreadDot} />
                     </Show>
                     {cornerMeta()}
@@ -279,14 +281,18 @@ export function StoryCell(props: StoryCellProps) {
                       <Icon name="keep" size={14} filled={true} />
                     </span>
                   </Show>
-                  <span
-                    class="story-stack-badge"
-                    role="img"
-                    aria-label={`${props.story.source_count} sources`}
-                  >
-                    <Icon name="stack" size={13} />
-                    <b>{props.story.source_count}</b>
-                  </span>
+                  {/* A phone two-up band has no room for it beside the Signal
+                      chip and the corner, so the feed line holds it (#84). */}
+                  <Show when={!props.phone}>
+                    <span
+                      class="story-stack-badge"
+                      role="img"
+                      aria-label={`${props.story.source_count} sources`}
+                    >
+                      <Icon name="stack" size={13} />
+                      <b>{props.story.source_count}</b>
+                    </span>
+                  </Show>
                   <PrimaryAction
                     item={item}
                     signal={cellSignal(item)}
@@ -305,6 +311,9 @@ export function StoryCell(props: StoryCellProps) {
                     onUndo={() => props.onSignal(item, 0)}
                     dimmed={leadReadVisuals().dimmed}
                     onApplyFeed={() => props.onApplyFeed(item)}
+                    sourceCount={
+                      props.phone ? props.story.source_count : undefined
+                    }
                   />
                   <PeekPill
                     item={item}
@@ -379,9 +388,7 @@ export function StoryCell(props: StoryCellProps) {
                   onMore={() => props.onMore(props.story)}
                 />
                 <div class="story-corner cell-corner">
-                  <Show
-                    when={!(expiring() && props.cell.effectiveSize === "S")}
-                  >
+                  <Show when={!(expiring() && compactCorner())}>
                     <UnreadDot visible={leadReadVisuals().unreadDot} />
                   </Show>
                   {cornerMeta()}
@@ -416,9 +423,7 @@ export function StoryCell(props: StoryCellProps) {
                     </Show>
                   </Show>
                   <div class="story-meta">
-                    <Show
-                      when={!(expiring() && props.cell.effectiveSize === "S")}
-                    >
+                    <Show when={!(expiring() && compactCorner())}>
                       <UnreadDot visible={leadReadVisuals().unreadDot} />
                     </Show>
                     <SourceBadge
@@ -473,7 +478,7 @@ export function StoryCell(props: StoryCellProps) {
           <Icon name="keep" size={14} filled={true} />
         </span>
       </Show>
-      <SignalMarker value={cellSignal()} />
+      <SignalMarker value={cellSignal()} kept={lead()?.hearted} />
       <Show when={editorial() && showHeadlines()}>
         <div class="story-headlines">
           <For each={headlines()}>

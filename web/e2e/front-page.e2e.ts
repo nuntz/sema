@@ -3609,8 +3609,9 @@ test.describe("text-only cells", () => {
                   r.bottom <= box.bottom + 1 &&
                   r.left >= box.left - 1 &&
                   r.right <= box.right + 1;
+                // A phone two-up Story's count is on its feed line (#84).
                 const badge = cell
-                  .querySelector('[role="img"][aria-label$=" sources"]')
+                  .querySelector(".story-stack-badge")
                   ?.getBoundingClientRect();
                 const top = badge?.bottom ?? box.top;
                 if (title.top - top > 16 || title.top < top)
@@ -4739,24 +4740,160 @@ test.describe("cell states", () => {
         ),
       ),
   };
-  // Collisions #84 owns, pinned so a new one fails and a fixed one must be
-  // struck from this list. Desktop has none.
-  const knownBandProblems = {
-    items: [
-      "photo-L-expiring-kept: span.kept-marker covers h2.",
-      "photo-L-kept: span.kept-marker covers h2.",
-      "photo-S-expiring-kept: span.kept-marker covers h2.",
-      "photo-S-kept: span.kept-marker covers h2.",
-    ],
-    stories: [
-      "story-photo-M-boosted: span.cell-age meets span.story-stack-badge",
-      "story-photo-M-buried: span.cell-age meets span.story-stack-badge",
-      "story-photo-M-expiring: span.expiry-pill meets span.story-stack-badge",
-      "story-photo-M-kept: span.cell-age meets span.story-stack-badge",
-      "story-text-L-kept: span.kept-marker covers h2.",
-      "story-text-M-kept: span.kept-marker meets span.story-stack-badge",
-    ],
-  };
+  // A live Kept Item is always Boosted, so on a phone one Kept chip in the
+  // Signal slot speaks both rather than two markers stacking into the title
+  // (#84).
+  test("show a phone Kept cell's Signal as one Kept chip", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 4000 });
+    const kept = { hearted: true, signal: 1 };
+    const items = [
+      { ...item("photo-L-kept", "a", `Kept ${long}`, 0.9, "L"), ...kept },
+      {
+        ...item("photo-L-boosted", "a", `Boosted ${long}`, 0.89, "L"),
+        signal: 1,
+      },
+      {
+        ...item("photo-M-kept", "a", `Kept ${long}`, 0.88, "M"),
+        ...photo,
+        ...kept,
+      },
+      { ...item("text-M-kept", "a", `Kept ${long}`, 0.87, "M"), ...kept },
+      {
+        ...item("photo-S-kept", "a", `Kept ${long}`, 0.86, "S"),
+        ...photo,
+        ...kept,
+      },
+      { ...item("text-S-kept", "a", `Kept ${long}`, 0.85, "S"), ...kept },
+    ];
+    const stories = [
+      story("story-photo-L-kept", 0.99, kept),
+      story("story-text-L-kept", 0.98, { ...noPhoto, ...kept }),
+      { ...story("story-photo-M-kept", 0.97, kept), size: "M" },
+      {
+        ...story("story-text-M-kept", 0.96, { ...noPhoto, ...kept }),
+        size: "M",
+      },
+    ];
+    await stubFrontPage(page, stories, items, []);
+    await page.goto("/");
+    await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+      stories.length + items.length,
+    );
+    for (const id of [
+      ...items.map((i) => i.item_id),
+      ...stories.map((s) => s.story_id),
+    ]) {
+      const cell = page.locator(
+        `.grid-row > .grid-cell:is([data-item-id="${id}"], [data-story-id="${id}"])`,
+      );
+      const chip = cell.locator(".signal-mobile-chip");
+      await expect(chip).toBeVisible();
+      if (id.endsWith("-boosted")) {
+        await expect(chip).toHaveAttribute("data-action", "boost");
+        continue;
+      }
+      await expect(chip).toHaveAttribute("data-action", "keep");
+      await expect(chip.locator(".icon")).toBeVisible();
+      await expect(cell.locator(".kept-marker")).toBeHidden();
+    }
+  });
+
+  // A phone two-up Story's band would hold one more control than an M Item's,
+  // so its Source count ends the feed line instead; full-width and desktop
+  // Stories keep it at the top left (#84).
+  for (const width of [320, 1440]) {
+    test(`put a phone two-up Story's Source count on its feed line at ${width}px`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 3000 });
+      const longFeed = {
+        feed_title: "A feed whose name is far too long for a two-up cell",
+        signal: 1,
+      };
+      const stories = [
+        story("story-photo-L", 0.99, longFeed),
+        { ...story("story-photo-M", 0.98, longFeed), size: "M" },
+        {
+          ...story("story-text-M", 0.97, { ...noPhoto, ...longFeed }),
+          size: "M",
+        },
+      ];
+      await stubFrontPage(page, stories, [], []);
+      await page.goto("/");
+      await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(3);
+      await page.evaluate(() => document.fonts.ready);
+      for (const { story_id, size } of stories) {
+        const cell = page.locator(
+          `.grid-row > .grid-cell[data-story-id="${story_id}"]`,
+        );
+        const count = cell.getByRole("img", { name: "2 sources" });
+        await expect(count).toHaveCount(1);
+        await expect(count).toBeVisible();
+        const onFeedLine = width < 700 && size === "M";
+        await expect(
+          cell.locator(".story-stack-badge, .story-badges .story-source-count"),
+        ).toBeVisible({ visible: !onFeedLine });
+        if (!onFeedLine) continue;
+        await expect(count).toHaveText("2");
+        await expect
+          .poll(() =>
+            cell.evaluate((c) => {
+              const meta = c.querySelector(".cell-meta");
+              const feed = meta?.querySelector(".cell-feed-filter");
+              const count = meta?.querySelector('[role="img"]');
+              if (!meta || !feed || !count) return "missing feed line parts";
+              const m = meta.getBoundingClientRect();
+              const f = feed.getBoundingClientRect();
+              const n = count.getBoundingClientRect();
+              const box = c.getBoundingClientRect();
+              const problems: string[] = [];
+              if (n.left < f.right - 1) problems.push("count before feed name");
+              if (n.top < m.top - 1 || n.bottom > m.bottom + 1)
+                problems.push("count off the feed line");
+              if (n.right > box.right - 1) problems.push("count runs out");
+              if (count.scrollWidth > count.clientWidth)
+                problems.push("count clipped");
+              if (feed.scrollWidth <= feed.clientWidth)
+                problems.push("feed name not shortened");
+              const type = (el: Element) => {
+                const style = getComputedStyle(el);
+                return `${style.fontSize} ${style.fontFamily}`;
+              };
+              if (type(count) !== type(feed))
+                problems.push(`count in ${type(count)}, not ${type(feed)}`);
+              return problems.join(", ");
+            }),
+          )
+          .toBe("");
+      }
+    });
+  }
+
+  // A phone M Story is a two-up cell, so its corner follows an M Item's (#84).
+  test("give a phone M Story an M Item's compact time-left marker", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 320, height: 3000 });
+    const stories = [{ ...story("story-M", 0.99, expiring), size: "M" }];
+    const items = [
+      { ...item("item-M", "a", `M ${long}`, 0.98, "M"), ...photo, ...expiring },
+      { ...item("item-L", "a", `L ${long}`, 0.97, "L"), ...expiring },
+    ];
+    await stubFrontPage(page, stories, items, []);
+    await page.goto("/");
+    await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(3);
+    const corner = (selector: string) =>
+      page.locator(`.grid-row > .grid-cell${selector} .cell-corner`);
+    const storyCorner = corner('[data-story-id="story-M"]');
+    const itemPill = corner('[data-item-id="item-M"]').locator(".expiry-pill");
+    const fullPill = corner('[data-item-id="item-L"]').locator(".expiry-pill");
+    // Six hours are left at the stubbed clock.
+    await expect(fullPill).toHaveText("6h left");
+    await expect(itemPill).toHaveText("6h");
+    await expect(storyCorner.locator(".expiry-pill")).toHaveText("6h");
+    await expect(storyCorner.locator(".unread-dot")).toHaveCount(0);
+  });
+
   for (const theme of ["light", "dark"] as const) {
     for (const width of [320, 1440]) {
       for (const kind of ["items", "stories"] as const) {
@@ -4785,7 +4922,7 @@ test.describe("cell states", () => {
                   problems.map((p) => p.replace(/ by [\d×]+px$/, "")).sort(),
                 ),
             )
-            .toEqual(width < 700 ? knownBandProblems[kind] : []);
+            .toEqual([]);
         });
       }
     }
