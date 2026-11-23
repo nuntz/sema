@@ -4801,7 +4801,7 @@ test.describe("cell states", () => {
   // A phone two-up Story's band would hold one more control than an M Item's,
   // so its Source count ends the feed line instead; full-width and desktop
   // Stories keep it at the top left (#84).
-  for (const width of [320, 1440]) {
+  for (const width of [320, 660, 1440]) {
     test(`put a phone two-up Story's Source count on its feed line at ${width}px`, async ({
       page,
     }) => {
@@ -4894,8 +4894,21 @@ test.describe("cell states", () => {
     await expect(storyCorner.locator(".unread-dot")).toHaveCount(0);
   });
 
+  // From 620 to 723px the grid lays cells out for a phone but the phone CSS
+  // doesn't apply. #85 owns these, pinned so a new collision fails and a
+  // fixed one must be struck from the list.
+  const knownBandProblems: Partial<Record<string, string[]>> = {
+    "items-660": [
+      "photo-M-expiring-boosted: button.boost covers h2.",
+      "photo-M-expiring-buried: button.bury covers h2.",
+      "photo-S-expiring-boosted: button.boost covers h2.",
+      "photo-S-expiring-buried: button.bury covers h2.",
+      "photo-S-expiring-kept: span.kept-marker covers h2.",
+      "photo-S-kept: span.kept-marker covers h2.",
+    ],
+  };
   for (const theme of ["light", "dark"] as const) {
-    for (const width of [320, 1440]) {
+    for (const width of [320, 660, 1440]) {
       for (const kind of ["items", "stories"] as const) {
         test(`keep every top-band state of ${kind} clear of copy at ${width}px in ${theme}`, async ({
           page,
@@ -4922,6 +4935,37 @@ test.describe("cell states", () => {
                   problems.map((p) => p.replace(/ by [\d×]+px$/, "")).sort(),
                 ),
             )
+            .toEqual(knownBandProblems[`${kind}-${width}`] ?? []);
+        });
+      }
+    }
+  }
+
+  // A feed line's parts are styled by selector lists that name each part, so
+  // a new part can miss one: #84's Source count came out 14px on text cells
+  // and kept its colour on Buried ones (light Bury meta matches the plain
+  // feed line, so only dark shows that one).
+  for (const theme of ["light", "dark"] as const) {
+    for (const width of [320, 1440]) {
+      for (const kind of ["items", "stories"] as const) {
+        test(`set every part of a ${kind} feed line in the feed name's type at ${width}px in ${theme}`, async ({
+          page,
+        }) => {
+          await page.setViewportSize({ width, height: 9000 });
+          await page.addInitScript(
+            (theme) => localStorage.setItem("sema:theme", theme),
+            theme,
+          );
+          const stories = kind === "stories" ? bandMatrix.stories : [];
+          const items = kind === "items" ? bandMatrix.items : [];
+          await stubFrontPage(page, stories, items, []);
+          await page.goto("/");
+          await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+            stories.length + items.length,
+          );
+          await page.evaluate(() => document.fonts.ready);
+          await expect
+            .poll(() => page.locator(".grid-scroll").evaluate(feedLineProblems))
             .toEqual([]);
         });
       }
@@ -5010,6 +5054,38 @@ test.describe("cell states", () => {
 // Lists where something in a cell's top band (corner labels, Signal and Kept
 // markers, visible actions, the Source count) covers the cell's copy or
 // another band item, and where copy runs out of its cell.
+function feedLineProblems(grid: Element): string[] {
+  const shown = (el: Element) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const style = getComputedStyle(el);
+    return style.display !== "none" && style.visibility !== "hidden";
+  };
+  const look = (el: Element) => {
+    const style = getComputedStyle(el);
+    return `${style.fontSize} ${style.fontFamily} ${style.color}`;
+  };
+  const problems: string[] = [];
+  for (const cell of grid.querySelectorAll<HTMLElement>(
+    ".grid-row > .grid-cell",
+  )) {
+    const id = cell.dataset.storyId ?? cell.dataset.itemId;
+    for (const line of cell.querySelectorAll(".cell-meta, .story-meta")) {
+      const feed = line.querySelector(":scope > .cell-feed-filter");
+      if (!feed || !shown(line)) continue;
+      for (const part of line.children) {
+        if (part === feed || part.matches(".unread-dot, .source-badge"))
+          continue;
+        if (shown(part) && look(part) !== look(feed))
+          problems.push(
+            `${id}: ${part.tagName.toLowerCase()}.${String(part.className).split(" ")[0]} in ${look(part)}, not ${look(feed)}`,
+          );
+      }
+    }
+  }
+  return problems;
+}
+
 function topBandProblems(grid: Element): string[] {
   const shown = (el: Element) => {
     const r = el.getBoundingClientRect();
