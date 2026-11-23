@@ -4,8 +4,8 @@ import {
   clusterActions,
   nextSignalNotice,
   signalActionLabel,
-  signalLabel,
   signalWhy,
+  spokenSignal,
 } from "./signal-feedback";
 
 describe("cell feedback", () => {
@@ -19,10 +19,10 @@ describe("cell feedback", () => {
   ] as const)("uses reader copy for %s, story=%s", (value, story, text) => {
     expect(signalWhy(value, story)).toBe(text);
   });
-  it("keeps corner labels textual and neutral empty", () => {
-    expect([-1, 0, 1].map((value) => signalLabel(value as -1 | 0 | 1))).toEqual(
-      ["buried", "", "boosted"],
-    );
+  it("speaks a Signal in an Open label and leaves neutral silent", () => {
+    expect(
+      [-1, 0, 1].map((value) => spokenSignal(value as -1 | 0 | 1)),
+    ).toEqual([", buried", "", ", boosted"]);
   });
   it("fits the action cluster to the cell size", () => {
     expect(clusterActions("S")).toEqual(["boost", "bury"]);

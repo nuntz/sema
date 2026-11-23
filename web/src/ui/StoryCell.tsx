@@ -24,6 +24,7 @@ import {
 import { type ReadStateContext, readVisualState } from "../layout/read-state";
 import { whyText } from "../ranking-display";
 import { externalHost, redditPrimaryRoute } from "../reddit-item";
+import { type SignalValue, spokenSignal } from "../signal-feedback";
 import type { Item, Story } from "../types";
 import { ExpiryPill } from "./ExpiryPill";
 import {
@@ -37,12 +38,7 @@ import { PeekPill } from "./PeekPill";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SignalActions } from "./SignalActions";
-import {
-  createSignalFresh,
-  SignalLabel,
-  SignalMarker,
-  SignalWhy,
-} from "./SignalState";
+import { createSignalFresh, SignalMarker, SignalWhy } from "./SignalState";
 import { SourceBadge } from "./SourceBadge";
 
 interface StoryCellProps {
@@ -271,7 +267,6 @@ export function StoryCell(props: StoryCellProps) {
                   </Show>
                   <div class="cell-scrim" />
                   <div class="cell-corner">
-                    <SignalLabel value={cellSignal(item)} />
                     <Show
                       when={!(expiring() && props.cell.effectiveSize === "S")}
                     >
@@ -294,6 +289,7 @@ export function StoryCell(props: StoryCellProps) {
                   </span>
                   <PrimaryAction
                     item={item}
+                    signal={cellSignal(item)}
                     class="cell-main"
                     onFocus={() => props.onFocus(focusID())}
                     onOpen={() => props.onOpenLead(props.story)}
@@ -333,6 +329,7 @@ export function StoryCell(props: StoryCellProps) {
                 <Show when={item.media_url}>
                   <PrimaryAction
                     item={item}
+                    signal={cellSignal(item)}
                     class="story-media-action"
                     tabIndex={-1}
                     onOpen={() => props.onOpenLead(props.story)}
@@ -382,7 +379,6 @@ export function StoryCell(props: StoryCellProps) {
                   onMore={() => props.onMore(props.story)}
                 />
                 <div class="story-corner cell-corner">
-                  <SignalLabel value={cellSignal(item)} />
                   <Show
                     when={!(expiring() && props.cell.effectiveSize === "S")}
                   >
@@ -392,6 +388,7 @@ export function StoryCell(props: StoryCellProps) {
                 </div>
                 <PrimaryAction
                   item={item}
+                  signal={cellSignal(item)}
                   class="story-lead"
                   onFocus={() => props.onFocus(focusID())}
                   onOpen={() => props.onOpenLead(props.story)}
@@ -552,6 +549,8 @@ function PrimaryAction(props: {
   onMouseEnter?(): void;
   tabIndex?: number;
   "data-focus-id"?: string;
+  /** The Lead's Signal, spoken because its marker is aria-hidden. */
+  signal?: SignalValue;
 }) {
   const route = createMemo(() => redditPrimaryRoute(props.item));
   return (
@@ -567,7 +566,7 @@ function PrimaryAction(props: {
           onFocus={props.onFocus}
           onMouseEnter={props.onMouseEnter}
           onClick={props.onOpen}
-          aria-label={`Open ${headlineText(props.item.title)}${itemExpiryState(props.item, clockNow()) !== "none" ? `, ${expirySentence(props.item.published_ts, clockNow())}` : ""}`}
+          aria-label={`Open ${headlineText(props.item.title)}${spokenSignal(props.signal ?? 0)}${itemExpiryState(props.item, clockNow()) !== "none" ? `, ${expirySentence(props.item.published_ts, clockNow())}` : ""}`}
         >
           {props.children}
         </button>
@@ -581,7 +580,7 @@ function PrimaryAction(props: {
         href={props.item.external_url}
         target="_blank"
         rel="noopener noreferrer"
-        aria-label={`Open ${headlineText(props.item.title)} on ${externalHost(props.item.external_url)}${itemExpiryState(props.item, clockNow()) !== "none" ? `, ${expirySentence(props.item.published_ts, clockNow())}` : ""}`}
+        aria-label={`Open ${headlineText(props.item.title)} on ${externalHost(props.item.external_url)}${spokenSignal(props.signal ?? 0)}${itemExpiryState(props.item, clockNow()) !== "none" ? `, ${expirySentence(props.item.published_ts, clockNow())}` : ""}`}
         onFocus={props.onFocus}
         onMouseEnter={props.onMouseEnter}
         onClick={() => props.onExternalOpen(props.item)}

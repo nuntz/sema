@@ -41,6 +41,9 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 - An image cell is a media surface: the photo covers the cell, the title and feed name sit on the title scrim at the bottom, and the age and unread dot sit top right. Scrim, title and corner use media tokens in both themes. _(e2e)_
 - A text-only cell (no `media_url`) starts its title at the top, fits its summary to whole lines through `web/src/ui/summary-fit.ts`, and ends on one line of feed name, age and unread dot. It uses page surface tokens. _(e2e)_
 - A cell reserves its Signal why-line only while a Signal shows, on every cell type.
+- A Boost or Bury shows as the top-left marker, plus the why-line on M and L cells; the corner holds only the age (or time-left marker) and the unread dot, and the cell's Open label speaks the Boost or Bury. A phone two-up cell, M or S, uses the compact time-left marker, and its image-cell title drops to two lines while that marker shows. _(e2e)_
+- On a desktop text-only cell, the action row sits on a tray of the cell's own surface, so it covers the title's start only while visible. _(e2e)_
+- The line under an Archive cell's title is the feed name alone, whatever Sema stored for the Item. _(e2e)_
 - `?grid-images=off` is a memory experiment, not a reader setting: it keeps every cell's geometry, image boxes included. _(e2e: image-free grid)_
 
 ### Safe areas and the installed iOS app

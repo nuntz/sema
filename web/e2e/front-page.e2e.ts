@@ -1,3 +1,4 @@
+import { animationsFinished } from "./animations";
 import { nextPageTop } from "./grid-paging";
 import { resizeGrid } from "./grid-resize";
 import { openReader } from "./reader";
@@ -3902,23 +3903,6 @@ for (const theme of ["dark", "light", "system"] as const) {
     for (const fixture of fixtures) {
       const cell = page.locator(`[data-item-id="${fixture.item_id}"]`);
       await cell.hover();
-      const label = cell.locator(".cell-signal-label");
-      await expect(label).toHaveCSS(
-        "background-color",
-        await cell
-          .locator(".cell-age")
-          .evaluate((el) => getComputedStyle(el).backgroundColor),
-      );
-      await expect(label).toHaveCSS(
-        "color",
-        fixture.signal === 1
-          ? light
-            ? "rgb(95, 122, 12)"
-            : "rgb(214, 242, 75)"
-          : await cell
-              .locator(".cell-age")
-              .evaluate((el) => getComputedStyle(el).color),
-      );
       const more = cell.locator('button[data-action="more"]');
       await expect(more).toHaveCSS("background-color", rest);
       await expect(more.locator(".icon")).toHaveCSS("color", secondary);
@@ -4244,7 +4228,7 @@ for (const width of [390, 1280]) {
 }
 
 test.describe("cell states", () => {
-  // Signal labels fade in; measure them where they settle.
+  // Signal markers and actions fade; measure them where they settle.
   test.beforeEach(({ page }) => page.emulateMedia({ reducedMotion: "reduce" }));
   const long = "with a title long enough to wrap across more than one line";
   const noPhoto = {
@@ -4381,6 +4365,114 @@ test.describe("cell states", () => {
     ],
   };
 
+  // Hover shows the actions over the start of a text-only title, so they sit
+  // on a tray of the cell's own surface instead of over loose words (#55).
+  for (const theme of ["light", "dark"] as const) {
+    test(`put a text-only cell's hovered actions on a tray of its surface in ${theme}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width: 1440, height: 2400 });
+      await page.addInitScript(
+        (theme) => localStorage.setItem("sema:theme", theme),
+        theme,
+      );
+      const cells = [
+        { size: "M", state: "plain", extra: {} },
+        { size: "M", state: "buried", extra: { signal: -1 } },
+        { size: "M", state: "boosted", extra: { signal: 1 } },
+        { size: "S", state: "plain", extra: {} },
+        { size: "M", state: "expiring", extra: expiring },
+      ].map(({ size, state, extra }, index) => ({
+        ...item(
+          `text-${size}-${state}`,
+          "a",
+          `Text ${size} ${state} ${long}`,
+          0.9 - index / 100,
+          size as "S" | "M",
+        ),
+        ...noPhoto,
+        ...extra,
+      }));
+      const stories = [textStory, story("text-l-story", 0.99, { ...noPhoto })];
+      await stubFrontPage(page, stories, cells, []);
+      await page.goto("/");
+      await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+        cells.length + stories.length,
+      );
+      await page.evaluate(() => document.fonts.ready);
+      const targets = [
+        ...cells.map(({ item_id }) => `[data-item-id="${item_id}"]`),
+        ...stories.map(({ story_id }) => `[data-story-id="${story_id}"]`),
+      ];
+      for (const target of targets) {
+        const cell = page.locator(`.grid-row > .grid-cell${target}`);
+        await cell.hover();
+        await expect(cell.locator(".cell-actions button").first()).toHaveCSS(
+          "opacity",
+          "1",
+        );
+        await animationsFinished(cell, { subtree: true });
+        await expect
+          .poll(() =>
+            cell.evaluate((cell) => {
+              const tray = cell.querySelector<HTMLElement>(".cell-actions");
+              if (!tray) return ["no action row"];
+              const problems: string[] = [];
+              const t = tray.getBoundingClientRect();
+              const buttons = [...tray.querySelectorAll("button")].map((b) =>
+                b.getBoundingClientRect(),
+              );
+              for (const b of buttons)
+                if (
+                  b.left < t.left ||
+                  b.right > t.right ||
+                  b.top < t.top ||
+                  b.bottom > t.bottom
+                )
+                  problems.push("a button sits outside the tray");
+              // The buttons keep their inset, so the tray meets the cell's edge.
+              const c = cell.getBoundingClientRect();
+              if (Math.abs(t.top - c.top) > 3 || Math.abs(t.left - c.left) > 3)
+                problems.push(
+                  `tray starts ${Math.round(t.left - c.left)},${Math.round(t.top - c.top)} into the cell`,
+                );
+              // Whatever is on top in each gap between buttons is the tray.
+              // The row ignores the pointer, so let hit-testing see it.
+              tray.style.pointerEvents = "auto";
+              for (const [a, b] of buttons
+                .slice(1)
+                .map((b, i) => [buttons[i], b])) {
+                const hit = document.elementFromPoint(
+                  (a.right + b.left) / 2,
+                  (a.top + a.bottom) / 2,
+                );
+                if (hit !== tray)
+                  problems.push(
+                    `a gap shows ${hit?.tagName.toLowerCase()}.${hit?.className}`,
+                  );
+              }
+              tray.style.pointerEvents = "";
+              const surface = (el: Element) =>
+                getComputedStyle(el).backgroundColor;
+              // The cell's surface, or the Lead shell's that paints it.
+              const own = surface(cell);
+              if (surface(tray) !== own)
+                problems.push(`tray ${surface(tray)} on cell ${own}`);
+              if (/rgba\(.*, 0\)|transparent/.test(surface(tray)))
+                problems.push("tray is transparent");
+              if (
+                cell.matches('[data-signal="1"]') &&
+                !getComputedStyle(tray).backgroundImage.includes("gradient")
+              )
+                problems.push("tray drops the Boost wash");
+              return problems;
+            }),
+          )
+          .toEqual([]);
+      }
+    });
+  }
+
   for (const theme of ["light", "dark"] as const) {
     for (const width of [320, 1440]) {
       test(`keep text-only titles clear of Signal, Kept and time-left markers at ${width}px in ${theme}`, async ({
@@ -4427,6 +4519,107 @@ test.describe("cell states", () => {
         await expect(boosted.locator(".cell-corner .cell-age")).toBeHidden();
       });
 
+      // A phone two-up cell is 144px at 320px, too narrow for a Signal label
+      // beside the age and the Peek control, so the top-left marker alone
+      // shows the Signal (#55).
+      test(`keep a signalled image cell's corner to its age and unread dot at ${width}px in ${theme}`, async ({
+        page,
+      }) => {
+        await page.setViewportSize({ width, height: 2400 });
+        await page.addInitScript(
+          (theme) => localStorage.setItem("sema:theme", theme),
+          theme,
+        );
+        const photo = {
+          media_url: "/sema-mark.svg",
+          media_w: 320,
+          media_h: 180,
+        };
+        const signalled = [
+          { size: "M", state: "boosted", extra: { signal: 1 } },
+          { size: "M", state: "buried", extra: { signal: -1 } },
+          {
+            size: "M",
+            state: "kept-boosted",
+            extra: { hearted: true, signal: 1 },
+          },
+          {
+            size: "M",
+            state: "expiring-boosted",
+            extra: { ...expiring, signal: 1 },
+          },
+          { size: "S", state: "plain-1", extra: {} },
+          { size: "S", state: "plain-2", extra: {} },
+          { size: "S", state: "plain-3", extra: {} },
+          { size: "S", state: "plain-4", extra: {} },
+          { size: "S", state: "plain-5", extra: {} },
+          { size: "S", state: "plain-6", extra: {} },
+          { size: "S", state: "boosted", extra: { signal: 1 } },
+          { size: "S", state: "buried", extra: { signal: -1 } },
+          {
+            size: "S",
+            state: "expiring-buried",
+            extra: { ...expiring, signal: -1 },
+          },
+        ] as const;
+        const cells = signalled.map(({ size, state, extra }, index) => ({
+          ...item(
+            `photo-${size}-${state}`,
+            "a",
+            `Photo ${size} ${state} ${long}`,
+            0.9 - index / 100,
+            size,
+          ),
+          ...photo,
+          ...extra,
+        }));
+        await stubFrontPage(page, [], cells, []);
+        await page.goto("/");
+        await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
+          cells.length,
+        );
+        await page.evaluate(() => document.fonts.ready);
+        await expect
+          .poll(() => page.locator(".grid-scroll").evaluate(topBandProblems))
+          .toEqual([]);
+        for (const { item_id, signal } of cells) {
+          if (!signal) continue;
+          // The marker is aria-hidden, so the Open label speaks the Signal;
+          // that also shows the Signal has rendered before the corner check.
+          await expect(
+            page.locator(`[data-item-id="${item_id}"] .cell-main`),
+          ).toHaveAccessibleName(signal === 1 ? /, boosted\b/ : /, buried\b/);
+          await expect(
+            page.locator(`[data-item-id="${item_id}"] .cell-corner`),
+          ).not.toContainText(/boosted|buried/);
+        }
+        // A Signal leaves the corner as a neutral cell's: the age (or the
+        // time-left marker) and, where the context shows one, the unread dot.
+        await expect
+          .poll(() =>
+            page.locator(".grid-scroll").evaluate((grid) => {
+              const dot = (id: string) => {
+                const el = grid.querySelector<HTMLElement>(
+                  `[data-item-id="${id}"] .cell-corner .unread-dot`,
+                );
+                return !!el && el.checkVisibility({ visibilityProperty: true });
+              };
+              const neutral = dot("photo-S-plain-1");
+              return [
+                ...grid.querySelectorAll<HTMLElement>(
+                  '.grid-cell:is([data-signal="1"], [data-signal="-1"])',
+                ),
+              ]
+                .map((cell) => cell.dataset.itemId ?? "")
+                .filter((id) => !id.includes("expiring") && dot(id) !== neutral)
+                .map(
+                  (id) => `${id}: unread dot ${neutral ? "hidden" : "shown"}`,
+                );
+            }),
+          )
+          .toEqual([]);
+      });
+
       test(`keep a Story's Source count clear of its Lead's actions at ${width}px in ${theme}`, async ({
         page,
       }) => {
@@ -4440,9 +4633,6 @@ test.describe("cell states", () => {
           story("story-buried", 0.98, { signal: -1 }),
           story("story-kept", 0.97, { hearted: true }),
           story("story-kept-boosted", 0.96, { hearted: true, signal: 1 }),
-          // An M Story's cell is too narrow for a Signal label beside its
-          // pressed action and Source count; that crowding predates these
-          // cells and is left as it is.
           story("story-text", 0.95, { ...noPhoto, signal: 1 }),
         ];
         await stubFrontPage(page, stories, [], []);
@@ -4454,6 +4644,20 @@ test.describe("cell states", () => {
         await expect
           .poll(() => page.locator(".grid-scroll").evaluate(topBandProblems))
           .toEqual([]);
+        // A Story's Signal is its Lead's, spoken in the Lead's Open label.
+        for (const { story_id, items } of stories) {
+          const signal = items[0].signal;
+          const lead = page.locator(
+            `.grid-row > .grid-cell[data-story-id="${story_id}"] .story-lead, .grid-row > .grid-cell[data-story-id="${story_id}"] .cell-main`,
+          );
+          await expect(lead).toHaveAccessibleName(
+            signal === 1
+              ? /, boosted\b/
+              : signal === -1
+                ? /, buried\b/
+                : /^(?!.*, (boosted|buried)\b)/,
+          );
+        }
         if (width < 700) return;
         for (const { story_id } of stories) {
           await page
@@ -4499,6 +4703,30 @@ test.describe("cell states", () => {
                 ...noPhoto,
                 ...kept,
               },
+              // Sema stored no article for these.
+              {
+                ...item(
+                  "bodiless-photo",
+                  "a",
+                  `Bodiless photo ${long}`,
+                  0.7,
+                  "L",
+                ),
+                ...kept,
+                has_body: false,
+              },
+              {
+                ...item(
+                  "bodiless-text",
+                  "a",
+                  `Bodiless text ${long}`,
+                  0.6,
+                  "M",
+                ),
+                ...noPhoto,
+                ...kept,
+                has_body: false,
+              },
             ],
             next_cursor: "",
           },
@@ -4514,6 +4742,17 @@ test.describe("cell states", () => {
         .poll(() => grid.evaluate(singleImageCellProblems))
         .toEqual([]);
       await expect.poll(() => grid.evaluate(topBandProblems)).toEqual([]);
+      // The line under the title names the feed, whatever Sema stored (#55):
+      // the feed name alone over a photo, and no tag beside it on a text cell.
+      const metaText = (id: string) =>
+        page
+          .locator(`[data-item-id="${id}"] .cell-meta`)
+          .evaluate((meta) => (meta as HTMLElement).innerText.trim());
+      await expect.poll(() => metaText("bodiless-photo")).toBe("Feed a");
+      await expect.poll(() => metaText("bodiless-text")).toContain("Feed a");
+      await expect(
+        page.locator('[data-item-id="bodiless-text"] .cell-meta'),
+      ).not.toContainText("text only");
     });
   }
 });
@@ -4547,7 +4786,7 @@ function topBandProblems(grid: Element): string[] {
     const id = cell.dataset.storyId ?? cell.dataset.itemId;
     const band = [
       ...cell.querySelectorAll(
-        ".cell-corner :is(.cell-signal-label, .unread-dot, .cell-age, .cell-rank, .expiry-pill), .cell-actions button, .signal-mobile-chip, .kept-marker, .story-source-count, .story-stack-badge, .peek-pill > span",
+        ".cell-corner :is(.unread-dot, .cell-age, .cell-rank, .expiry-pill), .cell-actions button, .signal-mobile-chip, .kept-marker, .story-source-count, .story-stack-badge, .peek-pill > span",
       ),
     ].filter(shown);
     const copy = [
@@ -4569,6 +4808,11 @@ function topBandProblems(grid: Element): string[] {
           problems.push(`${id}: ${name(a)} meets ${name(b)}`);
     });
     const box = cell.getBoundingClientRect();
+    for (const b of band) {
+      const r = b.getBoundingClientRect();
+      if (r.left < box.left - 1 || r.right > box.right + 1)
+        problems.push(`${id}: ${name(b)} runs out of the cell`);
+    }
     for (const c of copy) {
       const r = c.getBoundingClientRect();
       if (r.bottom > box.bottom + 1 || r.top < box.top - 1)

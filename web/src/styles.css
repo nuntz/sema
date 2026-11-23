@@ -2466,6 +2466,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .grid-row > .grid-cell.size-l:not(.story-card):not(.text-cell) .cell-copy h2 { font: 600 19px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
 .mobile-refined-grid .grid-row > .grid-cell.size-m:not(.story-card):not(.text-cell) .cell-copy h2 { font: 500 15px/1.25 "Instrument Sans", sans-serif; -webkit-line-clamp: 3; }
 .mobile-refined-grid .grid-row > .grid-cell.size-s:not(.story-card):not(.text-cell) .cell-copy h2 { -webkit-line-clamp: 3; }
+/* A phone two-up title gives up a line while the Signal marker holds the band (#55). */
+.mobile-refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell):is(.size-m, .size-s):is([data-signal="1"], [data-signal="-1"]) .cell-copy h2 { -webkit-line-clamp: 2; }
 .mobile-refined-grid .grid-row > .grid-cell.story-card .story-lead h2 { font: 600 22px/1.18 "Instrument Sans", sans-serif; letter-spacing: -.016em; -webkit-line-clamp: 3; }
 
 /* A Story shows its Source count at the top left of the Lead, and its Headline
@@ -2569,10 +2571,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-cell::after { content: ""; position: absolute; inset: 0; z-index: 3; background: transparent; pointer-events: none; transition: background 120ms ease-out; }
 .grid-cell[data-signal="1"]::after { background: var(--signal-boost-wash); transition-duration: 160ms; }
 .grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-pulse); }
-.grid-cell .cell-corner .cell-signal-label { padding: 5px 7px; border-radius: 5px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 400 13px/1 "IBM Plex Mono", monospace; white-space: nowrap; animation: signal-label-in 100ms ease-out 40ms both; }
-.grid-cell[data-signal="1"] .cell-corner .cell-signal-label { color: var(--signal-label-ink); animation-delay: 160ms; }
-@keyframes signal-label-in { from { opacity: 0; } to { opacity: 1; } }
-.refined-grid .grid-cell[data-signal]:not([data-signal="0"]) .cell-corner { display: flex; }
 .refined-grid .grid-cell .why-hint.has-signal { display: block; opacity: 1; position: absolute; bottom: 2px; left: 14px; right: 14px; z-index: 4; margin: 0; pointer-events: auto; }
 /* Every cell reserves the why-line under its copy only while a Signal shows it,
    so a neutral cell has no blank band under its feed line. */
@@ -2583,7 +2581,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .signal-why button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 2px; }
 .signal-mobile-chip { display: none; }
 @media (prefers-reduced-motion: reduce) {
-  .grid-cell, .grid-cell::after, .grid-cell > img, .grid-cell .story-media img, .grid-cell .cell-signal-label, .signal-why button { transition: none !important; animation: none !important; }
+  .grid-cell, .grid-cell::after, .grid-cell > img, .grid-cell .story-media img, .signal-why button { transition: none !important; animation: none !important; }
   .grid-cell[data-signal="1"][data-signal-fresh]::after { background: var(--signal-boost-wash); }
 }
 
@@ -2602,6 +2600,16 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .grid-cell.size-s .signal-actions button { width: var(--cell-action-size-s); height: var(--cell-action-size-s); }
 .grid-cell:has(.signal-actions button.heart) .kept-marker { display: none; }
 .grid-cell.size-s .kept-marker { top: 40px; opacity: 1; }
+/* Hovered actions cover the start of a text-only title, so they sit on a tray
+   of the cell's own surface, Signal surfaces included, rather than over loose
+   words (#55). It grows around the buttons by the cell inset wherever the
+   expiry rules put them, so at the cell's edge only its inner corner shows. */
+@media (hover: hover) and (pointer: fine) {
+  .refined-grid .grid-row > .grid-cell:is(.text-cell, .story-card.no-media) .story-lead-shell { background-color: inherit; }
+  .refined-grid .grid-row > .grid-cell:is(.text-cell, .story-card.no-media) .signal-actions { margin: calc(-1 * var(--cell-inset)); padding: var(--cell-inset); border-radius: 10px; transition: background-color 120ms ease-out; }
+  .refined-grid .grid-row > .grid-cell:is(.text-cell, .story-card.no-media):is(:hover, :focus-within) .signal-actions { background-color: inherit; }
+  .refined-grid .grid-row > .grid-cell[data-signal="1"]:is(.text-cell, .story-card.no-media):is(:hover, :focus-within) .signal-actions { background-image: linear-gradient(var(--signal-boost-wash), var(--signal-boost-wash)); }
+}
 .sheet-signal-on { margin-left: auto; font: 400 13px/1 "IBM Plex Mono", monospace; }
 .action-sheet button:disabled { opacity: .4; }
 @media (max-width: 619px) {
@@ -2647,8 +2655,6 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell[data-signal="1"] { border-color: var(--signal-boost-border); }
 .refined-grid.keyboard-focus .grid-cell.focused[data-signal],
 .refined-grid .grid-row > .grid-cell[data-signal]:has(:is(.cell-main, .story-lead):focus-visible) { outline-color: var(--signal-focus); }
-.grid-cell.size-s .cell-corner:has(.cell-signal-label) { top: 38px; }
-.grid-cell .cell-corner:has(.cell-signal-label) > .unread-dot { display: none; }
 
 @media (max-width: 619px) {
   .mobile-refined-grid .grid-cell:has(.signal-mobile-chip) :is(.story-badges, .story-stack-badge) { left: 42px; }

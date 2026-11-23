@@ -309,9 +309,7 @@ test("desktop archive actions appear only while their cell is hovered", async ({
   await expect(cell).toHaveClass(/archive-cell/);
   await expect(cell).toHaveAttribute("data-signal", "0");
   await expect(cell).not.toHaveAttribute("data-signal-fresh");
-  await expect(
-    cell.locator(".signal-mobile-chip, .cell-signal-label"),
-  ).toHaveCount(0);
+  await expect(cell.locator(".signal-mobile-chip")).toHaveCount(0);
 
   await expect(marker).toHaveCount(1);
   await expect(marker).toHaveCSS("opacity", "1");
@@ -349,9 +347,9 @@ for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 800 });
     const cell = page.locator(".grid-cell").first();
     await expect(cell).toHaveAttribute("data-signal", "0");
-    await expect(
-      cell.locator(".signal-mobile-chip, .cell-signal-label, .signal-why"),
-    ).toHaveCount(0);
+    await expect(cell.locator(".signal-mobile-chip, .signal-why")).toHaveCount(
+      0,
+    );
     await cell.locator("button.cell-main").click();
     await expect(page.locator(".app-header--reader")).toBeVisible();
     await expect(

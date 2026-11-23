@@ -56,6 +56,7 @@ import { whyText } from "../ranking-display";
 import type { ReadGeometry } from "../read-state";
 import { externalHost, isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import { relativeAge, relativeAgo } from "../relative-time";
+import { spokenSignal } from "../signal-feedback";
 import type { Item, Story } from "../types";
 import { isVideoItem } from "../video-item";
 import { ExpiryPill } from "./ExpiryPill";
@@ -77,12 +78,7 @@ import { PULL_THRESHOLD, RefreshGate, resistedPull } from "./pull-refresh";
 import { RelatedCoverage } from "./RelatedCoverage";
 import { ResponsiveImage } from "./ResponsiveImage";
 import { SignalActions } from "./SignalActions";
-import {
-  createSignalFresh,
-  SignalLabel,
-  SignalMarker,
-  SignalWhy,
-} from "./SignalState";
+import { createSignalFresh, SignalMarker, SignalWhy } from "./SignalState";
 import { SourceBadge } from "./SourceBadge";
 import { StoryCell } from "./StoryCell";
 import { sheetHeadlineSlice } from "./story-layout";
@@ -1285,6 +1281,11 @@ function GridContent(props: GridProps) {
                         : "";
                     const cellSignal = () =>
                       props.model.cell(item()).signal ? item().signal : 0;
+                    // A phone two-up cell, M or S, is too narrow for the full
+                    // time-left marker beside a Signal chip (#55).
+                    const compactCorner = () =>
+                      cell().effectiveSize === "S" ||
+                      (mobile() && cell().effectiveSize === "M");
                     const signalFresh = createSignalFresh(cellSignal);
                     const explanation = createMemo(() => whyText(item()));
                     const readVisuals = createMemo(() =>
@@ -1408,10 +1409,7 @@ function GridContent(props: GridProps) {
                         <div class="cell-scrim" />
                         <SignalMarker value={cellSignal()} />
                         <div class="cell-corner">
-                          <SignalLabel value={cellSignal()} />
-                          <Show
-                            when={!(expiring() && cell().effectiveSize === "S")}
-                          >
+                          <Show when={!(expiring() && compactCorner())}>
                             <UnreadDot visible={readVisuals().unreadDot} />
                           </Show>
                           <div
@@ -1435,7 +1433,7 @@ function GridContent(props: GridProps) {
                                   <ExpiryPill
                                     published={item().published_ts}
                                     now={clockNow()}
-                                    compact={cell().effectiveSize === "S"}
+                                    compact={compactCorner()}
                                     unread={!item().read}
                                   />
                                 </Show>
@@ -1481,7 +1479,7 @@ function GridContent(props: GridProps) {
                                   }
                                   openPrimary(item());
                                 }}
-                                aria-label={`Open ${headlineText(item().title)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                                aria-label={`Open ${headlineText(item().title)}${spokenSignal(cellSignal())}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                               />
                               <CellCopy
                                 item={item()}
@@ -1507,7 +1505,7 @@ function GridContent(props: GridProps) {
                               onClick={() =>
                                 props.actions.onExternalOpen(item())
                               }
-                              aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
+                              aria-label={`Open ${headlineText(item().title)} on ${externalHost(item().external_url)}${spokenSignal(cellSignal())}${readVisuals().unreadDot ? ", unread" : ""}${expiryName()}`}
                             >
                               <span class="sr-only">
                                 Open {headlineText(item().title)}
@@ -2061,15 +2059,6 @@ export function CellCopy(props: {
       <div class="cell-meta">
         <Show when={!props.archive}>
           <UnreadDot visible={props.unreadDot} />
-        </Show>
-        <Show
-          when={
-            props.archive &&
-            !props.item.has_body &&
-            props.item.media_type !== "video"
-          }
-        >
-          <em>text only</em>
         </Show>
         <SourceBadge
           connector={props.item.connector}

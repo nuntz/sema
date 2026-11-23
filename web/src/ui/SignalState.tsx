@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Icon } from "../components/Icon";
-import { type SignalValue, signalLabel, signalWhy } from "../signal-feedback";
+import { type SignalValue, signalWhy } from "../signal-feedback";
 
 export function createSignalFresh(value: () => SignalValue) {
   const [fresh, setFresh] = createSignal(false);
@@ -19,13 +19,6 @@ export function createSignalFresh(value: () => SignalValue) {
   });
   onCleanup(() => clearTimeout(timer));
   return fresh;
-}
-export function SignalLabel(props: { value: SignalValue }) {
-  return (
-    <Show when={props.value !== 0}>
-      <span class="cell-signal-label">{signalLabel(props.value)}</span>
-    </Show>
-  );
 }
 export function SignalMarker(props: { value: SignalValue }) {
   return (

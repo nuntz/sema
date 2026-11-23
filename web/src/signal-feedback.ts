@@ -15,8 +15,9 @@ export function signalWhy(value: SignalValue, story = false): string {
 export function buryDisabled(item: Pick<Item, "hearted">): boolean {
   return !feedbackEligibility(item).bury;
 }
-export function signalLabel(value: SignalValue): string {
-  return value === 1 ? "boosted" : value === -1 ? "buried" : "";
+/** The Signal as an Open label's suffix, since a cell's marker is aria-hidden. */
+export function spokenSignal(value: SignalValue): string {
+  return value === 1 ? ", boosted" : value === -1 ? ", buried" : "";
 }
 export function signalActionLabel(
   value: SignalValue,
