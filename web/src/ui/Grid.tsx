@@ -26,6 +26,7 @@ import {
 import type { GridActions, GridModel } from "../grid-model";
 import {
   gridCanvasPadding,
+  gridFrame,
   justify,
   keyLayoutRows,
   type LayoutCell,
@@ -118,6 +119,8 @@ interface GridProps {
   onHomeReady?(action: (() => void) | undefined): void;
   onRefresh(): Promise<number>;
   onScrollPosition?(top: number): void;
+  /** Whether the grid lays out a phone, for copy outside it that follows suit. */
+  onPhone?(phone: boolean): void;
 }
 
 /**
@@ -266,10 +269,13 @@ function GridContent(props: GridProps) {
       ),
   );
   const readContext = createMemo(() => props.model.readContext);
-  const contentWidth = createMemo(() =>
-    Math.max(0, width() - (width() < 700 ? 24 : 32)),
-  );
-  const mobile = () => contentWidth() < 700;
+  const sizing = createMemo(() => gridFrame(width()));
+  const contentWidth = () => sizing().contentWidth;
+  const mobile = createMemo(() => sizing().phone);
+  // Report only a measured grid: an unmeasured one reads as a phone.
+  createEffect(() => {
+    if (width() > 0) props.onPhone?.(mobile());
+  });
   const [keyboardFocus, setKeyboardFocus] = createSignal(false);
   const storyHeadlineHeights = createMemo(
     () =>
@@ -306,6 +312,7 @@ function GridContent(props: GridProps) {
         expandedStoryIDs: props.model.expandedStoryIDs,
         storyLeadHeights: storyLeadHeights(),
         storyHeadlineHeights: storyHeadlineHeights(),
+        phone: mobile(),
         storyCardMinHeight: mobile() ? undefined : 310,
       }),
     );

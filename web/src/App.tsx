@@ -120,7 +120,8 @@ export function App(props: {
   const [sendLabel, setSendLabel] = createSignal<string | null>(null);
   const [sendingID, setSendingID] = createSignal("");
   const [feedFilters, setFeedFilters] = createSignal<Feed[]>([]);
-  const scopePhone = createMediaQuery("(max-width: 619px)");
+  // The Scope cell sits in the grid, so its copy follows the grid's phone edge.
+  const [gridPhone, setGridPhone] = createSignal(false);
 
   const [expandedStoryIDs, setExpandedStoryIDs] = createSignal<Set<string>>(
     new Set(),
@@ -257,7 +258,7 @@ export function App(props: {
       unreadOnly,
       feeds: feedFilters,
       feedsScreen: () => view() === "feeds",
-      phone: scopePhone,
+      phone: gridPhone,
     },
     (error) => handleError(error),
   );
@@ -1780,6 +1781,7 @@ export function App(props: {
                   ) : undefined
                 }
                 onRefresh={() => pollNew(true)}
+                onPhone={setGridPhone}
                 onScrollPosition={(top) => {
                   session.scrollTop = top;
                   setScopeCollapse((current) =>

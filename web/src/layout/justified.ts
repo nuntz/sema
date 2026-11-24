@@ -27,6 +27,8 @@ export interface LayoutRow {
 }
 
 export interface JustifyOptions {
+  /** Phone rows; Grid takes it from `gridFrame`. */
+  phone?: boolean;
   completeSegment?: boolean;
   expandedStoryIDs?: ReadonlySet<string>;
   storyLeadHeights?: ReadonlyMap<string, number>;
@@ -37,6 +39,29 @@ export interface JustifyOptions {
 interface LayoutItem extends Item {
   layoutStory?: Story;
   layoutHeadlineMode?: "collapsed" | "expanded";
+}
+
+/**
+ * Where a phone ends for the grid: a grid narrower than this lays out a
+ * phone. The grid's phone CSS keys on the class Grid sets from `phone`, never
+ * on a media query, so markup and CSS switch together. The headers' phone
+ * edge (620px) is separate.
+ */
+export const phoneGridMaxWidth = 724;
+/** Each side's gutter between the grid's edge and its rows. */
+const phoneGutter = 12;
+const desktopGutter = 16;
+
+export interface GridFrame {
+  phone: boolean;
+  contentWidth: number;
+}
+
+/** A grid of this width: whether it is a phone, and the width rows fill. */
+export function gridFrame(gridWidth: number): GridFrame {
+  const phone = gridWidth < phoneGridMaxWidth;
+  const gutter = phone ? phoneGutter : desktopGutter;
+  return { phone, contentWidth: Math.max(0, gridWidth - 2 * gutter) };
 }
 
 const desktopGap = 10;
@@ -575,7 +600,7 @@ export function justify(
   const items = toLayoutItems(entries, options);
   const paginationOpen = hasMore && !options.completeSegment;
   const finalFeed = !hasMore;
-  if (containerWidth < 700)
+  if (options.phone)
     return layoutStoryHeadlines(
       mobileRows(items, containerWidth, paginationOpen),
       true,

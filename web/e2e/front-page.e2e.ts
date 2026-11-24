@@ -4894,19 +4894,51 @@ test.describe("cell states", () => {
     await expect(storyCorner.locator(".unread-dot")).toHaveCount(0);
   });
 
-  // From 620 to 723px the grid lays cells out for a phone but the phone CSS
-  // doesn't apply. #85 owns these, pinned so a new collision fails and a
-  // fixed one must be struck from the list.
-  const knownBandProblems: Partial<Record<string, string[]>> = {
-    "items-660": [
-      "photo-M-expiring-boosted: button.boost covers h2.",
-      "photo-M-expiring-buried: button.bury covers h2.",
-      "photo-S-expiring-boosted: button.boost covers h2.",
-      "photo-S-expiring-buried: button.bury covers h2.",
-      "photo-S-expiring-kept: span.kept-marker covers h2.",
-      "photo-S-kept: span.kept-marker covers h2.",
-    ],
-  };
+  // A phone grid is one narrower than 724px, and its CSS follows the grid
+  // rather than the viewport, so the rows' gutters switch with the layout
+  // (#85). The grid's width is the viewport less any scrollbar.
+  for (const [gridWidth, phone, gutter] of [
+    [723, true, 12],
+    [724, false, 16],
+  ] as const) {
+    test(`sets rows ${gutter}px from each side of a ${gridWidth}px grid`, async ({
+      page,
+    }) => {
+      await stubFrontPage(
+        page,
+        [],
+        [item("edge-m", "m", "A medium Item", 0.9, "M")],
+        [],
+      );
+      await page.setViewportSize({ width: 900, height: 900 });
+      await page.goto("/");
+      const grid = page.locator(".grid-scroll");
+      const scrollbar =
+        900 - (await grid.evaluate((element) => element.clientWidth));
+      await resizeGrid(page, gridWidth + scrollbar, 900);
+      await expect(grid).toHaveAttribute(
+        "data-layout-width",
+        String(gridWidth),
+      );
+      await expect(grid).toHaveClass(
+        phone ? /mobile-refined-grid/ : /^(?!.*mobile-refined-grid)/,
+      );
+      const insets = await page
+        .locator(".grid-row")
+        .first()
+        .evaluate((row) => {
+          const scroller = row.closest(".grid-scroll") as HTMLElement;
+          const box = row.getBoundingClientRect();
+          const edge = scroller.getBoundingClientRect();
+          return [
+            box.left - edge.left,
+            edge.left + scroller.clientWidth - box.right,
+          ];
+        });
+      expect(insets).toEqual([gutter, gutter]);
+    });
+  }
+
   for (const theme of ["light", "dark"] as const) {
     for (const width of [320, 660, 1440]) {
       for (const kind of ["items", "stories"] as const) {
@@ -4935,7 +4967,7 @@ test.describe("cell states", () => {
                   problems.map((p) => p.replace(/ by [\d×]+px$/, "")).sort(),
                 ),
             )
-            .toEqual(knownBandProblems[`${kind}-${width}`] ?? []);
+            .toEqual([]);
         });
       }
     }

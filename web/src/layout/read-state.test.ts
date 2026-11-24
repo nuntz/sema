@@ -249,7 +249,9 @@ describe("read state", () => {
         { ...make(102), item_id: "hidden" },
       ],
     };
-    const rows = justify([{ kind: "story", story }], 500);
+    const rows = justify([{ kind: "story", story }], 500, false, {
+      phone: true,
+    });
 
     expect(
       scrollReadCandidates(

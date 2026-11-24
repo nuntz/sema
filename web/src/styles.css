@@ -1750,6 +1750,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 
 @media (max-width: 700px) {
+  /* The phone type scale; a phone grid sets the same scale on itself below,
+     since it can be wider than this. Change both together. */
   :root {
     --type-xs: 0.875rem;
     --type-sm: 1rem;
@@ -1767,33 +1769,61 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .related-panel { width: 100%; height: 76%; border: 1px solid var(--control-wash-strong); border-bottom: 0; border-radius: 14px 14px 0 0; animation-name: sheet-in; touch-action: pan-y; }
   .related-grabber { position: relative; width: 44px; height: 44px; margin: 0 auto -33px; display: block; flex: none; }
   .related-panel > header { min-height: 66px; padding-top: 8px; }
-  .grid-row { left: 12px; right: 12px; }
-  .mobile-story-card { border-radius: 10px; transition: height 180ms ease-out; }
-  .end-of-feed { left: 12px; right: 12px; }
-  .grid-cell { border-radius: 10px; }
-  .grid-cell .cell-corner { top: 8px; right: 8px; gap: 6px; }
-  .grid-cell .unread-dot { width: 8px; height: 8px; }
-  .span-2 .cell-copy { padding: 68px 12px 12px; }
-  .tall-hero .cell-copy { height: var(--scrim-h-mobile-l); padding: 12px; }
-  .hero-cell .cell-copy { height: var(--scrim-h-mobile-l-run); padding: var(--cell-pad-compact); }
-  .pair-cell .cell-copy { height: 70%; padding: var(--cell-pad-compact); }
-  .hero-cell .cell-copy h2, .pair-cell .cell-copy h2 { font-size: var(--type-md); line-height: 1.32; -webkit-line-clamp: 3; }
-  .hero-cell .cell-copy p, .pair-cell .cell-copy p { display: none; }
-  .hero-cell.text-cell .cell-copy, .pair-cell.text-cell .cell-copy { padding: var(--cell-pad-compact); }
-  .hero-cell.text-cell .cell-copy h2, .pair-cell.text-cell .cell-copy h2 { padding-right: 30px; -webkit-line-clamp: 3; }
-  .cell-actions { display: none; }
-  .cell-actions button { width: 44px; height: 44px; }
-  .cell-actions .icon { width: var(--icon-20); height: var(--icon-20); stroke-width: var(--icon-stroke-20); }
-  .cell-actions .icon-fillable[data-on="true"] { stroke-width: var(--icon-stroke-filled); }
-  .cell-actions button.copy-link { display: none; }
-  .cell-copy h2 { font-size: var(--type-md); -webkit-line-clamp: 3; }
-  .size-l .cell-copy h2 { font-size: var(--type-lg); -webkit-line-clamp: 2; }
-  .grid-cell.hero-cell .cell-copy h2, .grid-cell.pair-cell .cell-copy h2 { font-size: var(--type-md); line-height: 1.32; -webkit-line-clamp: 3; }
-  .size-l .cell-copy p { -webkit-line-clamp: 1; font-size: var(--type-sm); }
-  .cell-meta > span { font-size: var(--type-xs); }
-  .cell-age { display: block; }
-  .grid-cell:not(.archive-cell):hover .cell-age, .grid-cell:not(.archive-cell).focused .cell-age, .grid-cell:not(.archive-cell):focus-within .cell-age { opacity: 1; }
-  .cell-rank { display: none; }
+  :where(.search-results) .grid-cell { border-radius: 10px; }
+  :where(.search-results) .grid-cell .cell-corner { top: 8px; right: 8px; gap: 6px; }
+  :where(.search-results) .grid-cell .unread-dot { width: 8px; height: 8px; }
+  :where(.search-results) .cell-actions { display: none; }
+  :where(.search-results) .cell-actions button { width: 44px; height: 44px; }
+  :where(.search-results) .cell-actions .icon { width: var(--icon-20); height: var(--icon-20); stroke-width: var(--icon-stroke-20); }
+  :where(.search-results) .cell-actions .icon-fillable[data-on="true"] { stroke-width: var(--icon-stroke-filled); }
+  :where(.search-results) .cell-actions button.copy-link { display: none; }
+  :where(.search-results) .cell-copy h2 { font-size: var(--type-md); -webkit-line-clamp: 3; }
+  :where(.search-results) .cell-meta > span { font-size: var(--type-xs); }
+  :where(.search-results) .cell-age { display: block; }
+  :where(.search-results) .grid-cell:not(.archive-cell):hover .cell-age, :where(.search-results) .grid-cell:not(.archive-cell).focused .cell-age, :where(.search-results) .grid-cell:not(.archive-cell):focus-within .cell-age { opacity: 1; }
+}
+/* The grid's phone CSS follows the grid's own edge (`phoneGridMaxWidth` in
+   layout/justified.ts) through the class Grid sets, not the viewport (#85).
+   :where() keeps each rule's specificity as it was under the media query. */
+/* The phone type scale of the 700px :root block above. */
+.mobile-refined-grid {
+  --type-xs: 0.875rem;
+  --type-sm: 1rem;
+  --type-md: 1.125rem;
+  --type-lg: 1.25rem;
+  --type-xl: 1.5rem;
+  --type-2xl: 1.875rem;
+  --type-display: 2rem;
+  --type-chip: 0.875rem;
+}
+:where(.mobile-refined-grid) .grid-row { left: 12px; right: 12px; }
+:where(.mobile-refined-grid) .mobile-story-card { border-radius: 10px; transition: height 180ms ease-out; }
+:where(.mobile-refined-grid) .end-of-feed { left: 12px; right: 12px; }
+:where(.mobile-refined-grid) .grid-cell { border-radius: 10px; }
+:where(.mobile-refined-grid) .grid-cell .cell-corner { top: 8px; right: 8px; gap: 6px; }
+:where(.mobile-refined-grid) .grid-cell .unread-dot { width: 8px; height: 8px; }
+:where(.mobile-refined-grid) .span-2 .cell-copy { padding: 68px 12px 12px; }
+:where(.mobile-refined-grid) .tall-hero .cell-copy { height: var(--scrim-h-mobile-l); padding: 12px; }
+:where(.mobile-refined-grid) .hero-cell .cell-copy { height: var(--scrim-h-mobile-l-run); padding: var(--cell-pad-compact); }
+:where(.mobile-refined-grid) .pair-cell .cell-copy { height: 70%; padding: var(--cell-pad-compact); }
+:where(.mobile-refined-grid) .hero-cell .cell-copy h2, :where(.mobile-refined-grid) .pair-cell .cell-copy h2 { font-size: var(--type-md); line-height: 1.32; -webkit-line-clamp: 3; }
+:where(.mobile-refined-grid) .hero-cell .cell-copy p, :where(.mobile-refined-grid) .pair-cell .cell-copy p { display: none; }
+:where(.mobile-refined-grid) .hero-cell.text-cell .cell-copy, :where(.mobile-refined-grid) .pair-cell.text-cell .cell-copy { padding: var(--cell-pad-compact); }
+:where(.mobile-refined-grid) .hero-cell.text-cell .cell-copy h2, :where(.mobile-refined-grid) .pair-cell.text-cell .cell-copy h2 { padding-right: 30px; -webkit-line-clamp: 3; }
+:where(.mobile-refined-grid) .cell-actions { display: none; }
+:where(.mobile-refined-grid) .cell-actions button { width: 44px; height: 44px; }
+:where(.mobile-refined-grid) .cell-actions .icon { width: var(--icon-20); height: var(--icon-20); stroke-width: var(--icon-stroke-20); }
+:where(.mobile-refined-grid) .cell-actions .icon-fillable[data-on="true"] { stroke-width: var(--icon-stroke-filled); }
+:where(.mobile-refined-grid) .cell-actions button.copy-link { display: none; }
+:where(.mobile-refined-grid) .cell-copy h2 { font-size: var(--type-md); -webkit-line-clamp: 3; }
+:where(.mobile-refined-grid) .size-l .cell-copy h2 { font-size: var(--type-lg); -webkit-line-clamp: 2; }
+:where(.mobile-refined-grid) .grid-cell.hero-cell .cell-copy h2, :where(.mobile-refined-grid) .grid-cell.pair-cell .cell-copy h2 { font-size: var(--type-md); line-height: 1.32; -webkit-line-clamp: 3; }
+:where(.mobile-refined-grid) .size-l .cell-copy p { -webkit-line-clamp: 1; font-size: var(--type-sm); }
+:where(.mobile-refined-grid) .cell-meta > span { font-size: var(--type-xs); }
+:where(.mobile-refined-grid) .cell-age { display: block; }
+:where(.mobile-refined-grid) .grid-cell:not(.archive-cell):hover .cell-age, :where(.mobile-refined-grid) .grid-cell:not(.archive-cell).focused .cell-age, :where(.mobile-refined-grid) .grid-cell:not(.archive-cell):focus-within .cell-age { opacity: 1; }
+:where(.mobile-refined-grid) .cell-rank { display: none; }
+@media (max-width: 700px) {
   .article { width: 100%; padding: 22px 22px 64px; }
   .article-kicker { display: none; }
   .article h1 { margin-bottom: 12px; font-size: 30px; line-height: 1.2; }
@@ -2210,13 +2240,18 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .mute-row input:checked + i::after { transform: translateX(16px); }
   .video-media-band { max-height: 250px; }
   .video-provider-strip { padding: 0 10px; gap: 8px; }
-  .reddit-cell .reddit-discussion { width: 28px; height: 28px; right: 6px; bottom: 6px; }
-  .reddit-cell .reddit-discussion .icon { width: 15px; height: 15px; }
-  .reddit-cell .cell-copy { padding-right: 42px; }
-  .reddit-domain { display: none; }
+  :where(.search-results, .related-panel) .reddit-cell .reddit-discussion { width: 28px; height: 28px; right: 6px; bottom: 6px; }
+  :where(.search-results, .related-panel) .reddit-cell .reddit-discussion .icon { width: 15px; height: 15px; }
+  :where(.search-results, .related-panel) .reddit-cell .cell-copy { padding-right: 42px; }
+  :where(.search-results, .related-panel) .reddit-domain { display: none; }
   .reddit-provider-strip { padding: 0 10px; gap: 8px; }
   .reddit-source-line > span { text-overflow: ellipsis; }
 }
+/* A phone grid's Reddit cells, on the grid's edge like its other cells (#85). */
+:where(.mobile-refined-grid) .reddit-cell .reddit-discussion { width: 28px; height: 28px; right: 6px; bottom: 6px; }
+:where(.mobile-refined-grid) .reddit-cell .reddit-discussion .icon { width: 15px; height: 15px; }
+:where(.mobile-refined-grid) .reddit-cell .cell-copy { padding-right: 42px; }
+:where(.mobile-refined-grid) .reddit-domain { display: none; }
 
 /* Shared desktop grid anatomy; surfaces and states follow the theme tokens. */
 .refined-grid .grid-row > .grid-cell {
@@ -2485,15 +2520,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .story-source-count .icon { color: currentColor; }
 /* The Source count moves right of a pressed Boost, Bury or Keep, as it moves
    right of the phone Signal chip, and right of a phone Kept marker. */
-@media (min-width: 620px) {
-  .refined-grid .story-cell { --cell-action-step: calc(var(--cell-action-size) + var(--cell-action-gap)); }
-  .refined-grid .story-cell:has(.signal-actions .boost[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + var(--cell-action-step)); }
-  .refined-grid .story-cell:has(.signal-actions .bury[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + 2 * var(--cell-action-step)); }
-  .refined-grid .story-cell:has(.signal-actions .heart[aria-pressed="true"]):has(.signal-actions :is(.boost, .bury)[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + 3 * var(--cell-action-step)); }
-}
-@media (max-width: 619px) {
-  .mobile-refined-grid .story-cell:has(> .kept-marker):not(:has(.signal-mobile-chip)) :is(.story-badges, .story-stack-badge) { left: 28px; }
-}
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell { --cell-action-step: calc(var(--cell-action-size) + var(--cell-action-gap)); }
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .boost[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + var(--cell-action-step)); }
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .bury[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + 2 * var(--cell-action-step)); }
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .heart[aria-pressed="true"]):has(.signal-actions :is(.boost, .bury)[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + 3 * var(--cell-action-step)); }
+.mobile-refined-grid .story-cell:has(> .kept-marker):not(:has(.signal-mobile-chip)) :is(.story-badges, .story-stack-badge) { left: 28px; }
 /* A phone two-up Story's count is on its feed line, so on a phone its band
    clears only the markers an Item's does (#84). */
 .refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: var(--cell-badge-clear); }
@@ -2513,20 +2544,16 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .scope-cell__count { font-weight: 600; color: var(--scope-count-ink); }
 .scope-cell .source-badge { align-self: center; flex: none; }
 .source-badge.badge-22 { width: 22px; height: 22px; }
-@media (max-width: 619px) {
-  .scope-cell { left: 12px; right: 12px; font-size: 24px; gap: 12px; }
-  .scope-cell__title { max-width: var(--scope-title-max-sm); }
-  .scope-cell__meta { font-size: 12px; }
-}
+:where(.mobile-refined-grid) .scope-cell { left: 12px; right: 12px; font-size: 24px; gap: 12px; }
+:where(.mobile-refined-grid) .scope-cell__title { max-width: var(--scope-title-max-sm); }
+:where(.mobile-refined-grid) .scope-cell__meta { font-size: 12px; }
 
-@media (max-width: 619px) {
-  .end-of-feed.closed-empty h2 { font-size: 26px; }
-  .end-of-feed.closed-empty p { font-size: 15px; }
-  .empty-actions { gap: 10px; }
-  .end-of-feed.closed-empty button { height: 38px; min-height: 38px; padding: 0 15px; border: 1px solid var(--line-rule); border-radius: 7px; }
-  .end-of-feed.closed-empty button:first-child { background: var(--accent-block); color: var(--accent-ink); }
-  .empty-key { display: none; }
-}
+:where(.mobile-refined-grid) .end-of-feed.closed-empty h2 { font-size: 26px; }
+:where(.mobile-refined-grid) .end-of-feed.closed-empty p { font-size: 15px; }
+:where(.mobile-refined-grid) .empty-actions { gap: 10px; }
+:where(.mobile-refined-grid) .end-of-feed.closed-empty button { height: 38px; min-height: 38px; padding: 0 15px; border: 1px solid var(--line-rule); border-radius: 7px; }
+:where(.mobile-refined-grid) .end-of-feed.closed-empty button:first-child { background: var(--accent-block); color: var(--accent-ink); }
+:where(.mobile-refined-grid) .empty-key { display: none; }
 
 
 .update-notice {
@@ -2620,18 +2647,16 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 .sheet-signal-on { margin-left: auto; font: 400 13px/1 "IBM Plex Mono", monospace; }
 .action-sheet button:disabled { opacity: .4; }
-@media (max-width: 619px) {
-  .grid-cell .signal-actions { display: none; }
-  .grid-cell .signal-mobile-chip { position: absolute; z-index: 5; top: 7px; left: 7px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; pointer-events: none; }
-  .signal-mobile-chip[data-action="boost"] { background: var(--accent-loud); color: var(--accent-ink); }
-  .signal-mobile-chip[data-action="bury"] { background: var(--cluster-pressed-down); border: 1px solid var(--signal-action-active-border); color: var(--signal-action-hover-fg); }
-  /* The pressed Keep action's look: a Kept cell's chip speaks its Boost too,
-     so no Kept marker stacks under it into the title (#84). */
-  .signal-mobile-chip[data-action="keep"] { background: var(--cell-action-kept-bg); border: 1px solid var(--signal-action-border); color: var(--cell-action-kept-fg); }
-  .grid-cell:has(.signal-actions button.heart):not(:has(.signal-mobile-chip[data-action="keep"])) .kept-marker { display: grid; }
-  /* A compact cell's actions are More alone, so no Keep action to key on. */
-  .grid-cell:has(.signal-mobile-chip[data-action="keep"]) .kept-marker { display: none; }
-}
+:where(.mobile-refined-grid) .grid-cell .signal-actions { display: none; }
+:where(.mobile-refined-grid) .grid-cell .signal-mobile-chip { position: absolute; z-index: 5; top: 7px; left: 7px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; pointer-events: none; }
+:where(.mobile-refined-grid) .signal-mobile-chip[data-action="boost"] { background: var(--accent-loud); color: var(--accent-ink); }
+:where(.mobile-refined-grid) .signal-mobile-chip[data-action="bury"] { background: var(--cluster-pressed-down); border: 1px solid var(--signal-action-active-border); color: var(--signal-action-hover-fg); }
+/* The pressed Keep action's look: a Kept cell's chip speaks its Boost too,
+   so no Kept marker stacks under it into the title (#84). */
+:where(.mobile-refined-grid) .signal-mobile-chip[data-action="keep"] { background: var(--cell-action-kept-bg); border: 1px solid var(--signal-action-border); color: var(--cell-action-kept-fg); }
+:where(.mobile-refined-grid) .grid-cell:has(.signal-actions button.heart):not(:has(.signal-mobile-chip[data-action="keep"])) .kept-marker { display: grid; }
+/* A compact cell's actions are More alone, so no Keep action to key on. */
+:where(.mobile-refined-grid) .grid-cell:has(.signal-mobile-chip[data-action="keep"]) .kept-marker { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .grid-cell .signal-actions button { transition: none !important; }
 }
@@ -2668,9 +2693,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid.keyboard-focus .grid-cell.focused[data-signal],
 .refined-grid .grid-row > .grid-cell[data-signal]:has(:is(.cell-main, .story-lead):focus-visible) { outline-color: var(--signal-focus); }
 
-@media (max-width: 619px) {
-  .mobile-refined-grid .grid-cell:has(.signal-mobile-chip) :is(.story-badges, .story-stack-badge) { left: 42px; }
-}
+.mobile-refined-grid .grid-cell:has(.signal-mobile-chip) :is(.story-badges, .story-stack-badge) { left: 42px; }
 .signal-why { display: flex; align-items: baseline; min-width: 0; }
 .signal-why-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signal-why-undo { flex: none; white-space: pre; }

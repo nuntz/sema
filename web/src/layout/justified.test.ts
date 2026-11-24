@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Item, Story } from "../types";
 import {
+  gridFrame,
   justify,
   type LayoutRow,
   largeRunWeight,
@@ -38,6 +39,14 @@ const item = (
 
 /** Phone content widths: viewport minus the 12px side insets, plus 320. */
 const phoneWidths = [320, 369, 390, 430];
+
+/** `justify` for a phone grid, as Grid passes it from `gridFrame`. */
+const phoneJustify = (
+  entries: Parameters<typeof justify>[0],
+  width: number,
+  hasMore = false,
+  options: Parameters<typeof justify>[3] = {},
+) => justify(entries, width, hasMore, { ...options, phone: true });
 
 const ids = (rows: ReturnType<typeof justify>) =>
   rows.flatMap((row) => row.cells.map((cell) => cell.item.item_id));
@@ -89,6 +98,39 @@ const expectNoOverlaps = (row: ReturnType<typeof justify>[number]) => {
     }
   }
 };
+
+describe("grid frame", () => {
+  it("is a phone grid with 12px gutters below 724px and desktop with 16px from 724px", () => {
+    expect(gridFrame(390)).toEqual({ phone: true, contentWidth: 366 });
+    expect(gridFrame(723)).toEqual({ phone: true, contentWidth: 699 });
+    expect(gridFrame(724)).toEqual({ phone: false, contentWidth: 692 });
+    expect(gridFrame(1440)).toEqual({ phone: false, contentWidth: 1408 });
+  });
+
+  it("has no content width before the grid is measured", () => {
+    expect(gridFrame(0)).toEqual({ phone: true, contentWidth: 0 });
+  });
+
+  it("lays out the rows its frame names, not ones re-derived from the content width", () => {
+    const small = Array.from({ length: 6 }, (_, index) => item(index, "S"));
+    const desktop = gridFrame(724);
+    const phone = gridFrame(723);
+
+    expect(
+      justify(small, desktop.contentWidth, false, { phone: desktop.phone })[0]
+        .cells.length,
+    ).toBeGreaterThan(2);
+    expect(
+      justify(small, phone.contentWidth, false, { phone: phone.phone }).map(
+        (row) => [row.cells.length, row.height],
+      ),
+    ).toEqual([
+      [2, 124],
+      [2, 124],
+      [2, 124],
+    ]);
+  });
+});
 
 describe("17c desktop bands", () => {
   it("lays out an L story as one third of a three-cell L run", () => {
@@ -892,7 +934,7 @@ describe("phone rows ranked by Size", () => {
     const half = (width - 8) / 2;
 
     it("gives every L Item its own full-width 168px row, even in an even run", () => {
-      const rows = justify(
+      const rows = phoneJustify(
         [
           item("portrait", "L", 0.8),
           item("square", "L", 1),
@@ -908,7 +950,7 @@ describe("phone rows ranked by Size", () => {
     });
 
     it("sets M and S two-up in equal widths: 150px with any M, 124px for S+S", () => {
-      const rows = justify(
+      const rows = phoneJustify(
         [
           item("m0", "M"),
           item("m1", "M", 1, false),
@@ -935,7 +977,7 @@ describe("phone rows ranked by Size", () => {
     });
 
     it("keeps a trailing single M or S at half width", () => {
-      const rows = justify(
+      const rows = phoneJustify(
         [item("m", "M"), item("l0", "L"), item("s", "S", 1, false)],
         width,
       );
@@ -948,7 +990,7 @@ describe("phone rows ranked by Size", () => {
     });
 
     it("stacks rows 8px apart", () => {
-      const rows = justify(
+      const rows = phoneJustify(
         [
           item("l", "L"),
           item("m0", "M"),
@@ -969,7 +1011,7 @@ describe("phone rows ranked by Size", () => {
     });
 
     it("gives every L Story its own full-width row instead of pairing two-up", () => {
-      const rows = justify(
+      const rows = phoneJustify(
         [
           { kind: "story", story: largeStory("left", 3) },
           { kind: "story", story: largeStory("right", 4) },
@@ -996,14 +1038,14 @@ describe("phone rows ranked by Size", () => {
         item("s2", "S"),
         item("l1", "L"),
       ];
-      expect(ids(justify(painted, width, true))).toEqual(
+      expect(ids(phoneJustify(painted, width, true))).toEqual(
         painted.map((value) => value.item_id),
       );
 
       const lone = [...painted, item("lone", "S")];
-      const before = justify(lone, width, true);
+      const before = phoneJustify(lone, width, true);
       expect(ids(before)).toEqual(painted.map((value) => value.item_id));
-      const after = justify([...lone, item("partner", "M")], width, true);
+      const after = phoneJustify([...lone, item("partner", "M")], width, true);
       expect(after.slice(0, before.length)).toEqual(before);
       expect(geometry(after.slice(before.length))).toEqual([
         {
@@ -1015,7 +1057,7 @@ describe("phone rows ranked by Size", () => {
         },
       ]);
       expect(
-        ids(justify(lone, width, true, { completeSegment: true })),
+        ids(phoneJustify(lone, width, true, { completeSegment: true })),
       ).toEqual(lone.map((value) => value.item_id));
     });
   });
@@ -1048,7 +1090,7 @@ describe("phone Story rows", () => {
     describe(`at ${width}px`, () => {
       it("is a full-width 200px Lead plus one 52px Headline strip", () => {
         const story = largeStory("pair", 1);
-        const [row, tail] = justify(
+        const [row, tail] = phoneJustify(
           [{ kind: "story", story }, item("tail", "M"), item("next", "S")],
           width,
           false,
@@ -1069,7 +1111,7 @@ describe("phone Story rows", () => {
 
       it("shows the first Headline and a 44px more row when more remain", () => {
         const story = largeStory("more", 3);
-        const [row] = justify(
+        const [row] = phoneJustify(
           [{ kind: "story", story }],
           width,
           false,
@@ -1088,7 +1130,7 @@ describe("phone Story rows", () => {
 
       it("lists every Headline in 52px strips and a 44px show-less row when expanded", () => {
         const story = largeStory("open", 3);
-        const [row] = justify([{ kind: "story", story }], width, false, {
+        const [row] = phoneJustify([{ kind: "story", story }], width, false, {
           ...measured(story),
           expandedStoryIDs: new Set(["open"]),
         });

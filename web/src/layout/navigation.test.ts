@@ -289,6 +289,8 @@ describe("geometric grid navigation", () => {
     const rows = justify(
       [item(0, "L", 1), item(1, "M"), item(2, "S"), item(3, "M")],
       390,
+      false,
+      { phone: true },
     );
     expect(rows.every((row) => row.kind !== "span")).toBe(true);
     expect(nearestCell(rows, "0", "down")).toBe("1");
