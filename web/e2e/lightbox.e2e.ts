@@ -1,3 +1,4 @@
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { openReader } from "./reader";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
@@ -560,7 +561,7 @@ for (const width of [390, 1280]) {
             height: element.getBoundingClientRect().height,
           };
         });
-    if (width < 620) {
+    if (width < phoneViewportMaxWidth) {
       for (const bar of [".lb-top", ".lb-caption"])
         expect((await look(bar)).background, bar).toBe("rgba(6, 7, 8, 0.72)");
     } else {

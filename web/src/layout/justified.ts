@@ -44,8 +44,8 @@ interface LayoutItem extends Item {
 /**
  * Where a phone ends for the grid: a grid narrower than this lays out a
  * phone. The grid's phone CSS keys on the class Grid sets from `phone`, never
- * on a media query, so markup and CSS switch together. The headers' phone
- * edge (620px) is separate.
+ * on a media query, so markup and CSS switch together. The viewport's phone
+ * edge (`phoneViewportMaxWidth`) is separate.
  */
 export const phoneGridMaxWidth = 724;
 /** Each side's gutter between the grid's edge and its rows. */

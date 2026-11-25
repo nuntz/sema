@@ -1,3 +1,4 @@
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { expect, type Page, test } from "./test";
 
 const now = new Date("2026-09-08T02:00:00Z");
@@ -137,7 +138,7 @@ for (const theme of ["dark", "light"] as const) {
     );
   });
 }
-for (const width of [320, 390, 620, 860, 1440]) {
+for (const width of [320, 390, phoneViewportMaxWidth, 860, 1440]) {
   test(`urgent reader pill fits at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await open(page, "dark");
@@ -148,7 +149,7 @@ for (const width of [320, 390, 620, 860, 1440]) {
     );
     await expect(page.locator(".reader .app-header")).toHaveCSS(
       "height",
-      width < 620 ? "44px" : "56px",
+      width < phoneViewportMaxWidth ? "44px" : "56px",
     );
     await expect
       .poll(() =>
@@ -177,7 +178,13 @@ for (const width of [320, 390, 620, 860, 1440]) {
   });
 }
 
-for (const width of [619, 620, 860, 1199, 1200]) {
+for (const width of [
+  phoneViewportMaxWidth - 1,
+  phoneViewportMaxWidth,
+  860,
+  1199,
+  1200,
+]) {
   test(`fresh reader keeps full chrome at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await open(page, "dark");

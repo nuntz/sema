@@ -1,3 +1,4 @@
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { nextPageTop, pageUpLanding } from "./grid-paging";
 import { resizeGrid } from "./grid-resize";
 import { openReader } from "./reader";
@@ -361,7 +362,7 @@ for (const width of [390, 1280]) {
       ),
     ).toHaveCount(0);
     const keep =
-      width < 620
+      width < phoneViewportMaxWidth
         ? page.getByRole("button", { name: "Remove from archive", exact: true })
         : page.locator(".chrome-group--judge button");
     await expect(keep).toBeVisible();
@@ -377,7 +378,7 @@ for (const width of [390, 1280]) {
     );
     await expect(page.locator(".app-header--reader")).toHaveCSS(
       "height",
-      width < 620 ? "44px" : "56px",
+      width < phoneViewportMaxWidth ? "44px" : "56px",
     );
     await page.screenshot({ path: `/tmp/sema-archive-reader-${width}.png` });
   });

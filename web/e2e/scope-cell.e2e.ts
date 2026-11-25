@@ -1,4 +1,5 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
@@ -238,7 +239,7 @@ for (const width of [1440, 393]) {
     await expect(
       page.getByRole("heading", { name: "Nothing unread today" }),
     ).toBeVisible();
-    if (width < 620) {
+    if (width < phoneViewportMaxWidth) {
       await page.getByRole("button", { name: "Show all", exact: true }).click();
       await expect(page.locator(".filter-button")).toHaveAccessibleName(
         /All dates, Unread only/,
@@ -249,7 +250,7 @@ for (const width of [1440, 393]) {
     await expect(
       page.getByRole("heading", { name: "End of #design" }),
     ).toBeVisible();
-    if (width < 620)
+    if (width < phoneViewportMaxWidth)
       await page
         .locator(".end-of-feed")
         .getByRole("button", { name: "Clear tag", exact: true })
@@ -459,7 +460,7 @@ for (const [width, height, theme] of [
     const section = page.locator(".end-of-feed.empty-grid");
     await expect(section.getByRole("heading")).toHaveText("End of #design");
     await expect(section.getByRole("button").first()).toHaveText(
-      width < 620 ? "Clear tagEsc" : "Show read itemsA",
+      width < phoneViewportMaxWidth ? "Clear tagEsc" : "Show read itemsA",
     );
     if (width >= 860)
       await expect(page.locator(".scope-cell__count")).toHaveAttribute(
@@ -475,7 +476,7 @@ for (const [width, height, theme] of [
     if (!cell || !rect) throw new Error("Missing section or scope cell");
     expect(rect.y - cell.y - cell.height).toBe(width < 860 ? 16 : 26);
     const copy = await section.locator(":scope > div").boundingBox();
-    expect(copy?.x).toBe(width < 620 ? 12 : 16);
+    expect(copy?.x).toBe(width < phoneViewportMaxWidth ? 12 : 16);
     await expect
       .poll(() =>
         section.evaluate((el) => getComputedStyle(el, "::before").content),

@@ -1,3 +1,4 @@
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { expect, type Page, test } from "./test";
@@ -50,7 +51,7 @@ for (const width of [390, 1280]) {
     // so the gaps round to their final values while the width is still
     // shrinking (#62). Wait for the FLIP to finish before reading the box.
     await animationsFinished(docked(page));
-    const gap = width >= 620 ? 20 : 12;
+    const gap = width >= phoneViewportMaxWidth ? 20 : 12;
     await expect
       .poll(async () => {
         const box = await docked(page).boundingBox();
@@ -63,7 +64,9 @@ for (const width of [390, 1280]) {
       })
       .toEqual([gap, gap]);
     const box = await docked(page).boundingBox();
-    expect(box?.width).toBeLessThanOrEqual(width >= 620 ? 320 : width * 0.5);
+    expect(box?.width).toBeLessThanOrEqual(
+      width >= phoneViewportMaxWidth ? 320 : width * 0.5,
+    );
     await page.screenshot({ path: `/tmp/sema-dock-grid-${width}.png` });
     // The Dock is not an Overlay: grid keys still work beside it.
     await page.keyboard.press("i");

@@ -2734,7 +2734,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .feed-filters .tag-chip[aria-pressed="true"] { background: var(--control-wash-medium); color: var(--fg-primary); }
 .feed-filters .tag-chip span { font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .feed-filter-tags { display: flex; gap: 7px; padding-left: 8px; border-left: 1px solid var(--line); }
-@media (max-width: 620px) { .feed-filters .tag-chip { min-height: 44px; } }
+@media (max-width: 619px) { .feed-filters .tag-chip { min-height: 44px; } }
 
 .feed-unread { color: var(--fg-secondary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; text-align: right; white-space: nowrap; }
 .feed-unread.zero { color: var(--fg-quaternary); }
@@ -2744,7 +2744,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .feed-triage > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .feed-triage button { padding: 5px 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .feed-triage button:disabled { opacity: .5; cursor: wait; }
-@media (max-width: 620px) { .feed-triage button { min-height: 44px; } }
+@media (max-width: 619px) { .feed-triage button { min-height: 44px; } }
 
 /* Compact scope controls: the strip overlays the grid top and slides under the header when collapsed. */
 .grid-top-slot { display: flow-root; }

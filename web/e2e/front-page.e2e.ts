@@ -1,4 +1,5 @@
 import { phoneGridMaxWidth } from "../src/layout/justified";
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { nextPageTop } from "./grid-paging";
 import { resizeGrid } from "./grid-resize";
@@ -4955,13 +4956,11 @@ test.describe("cell states", () => {
   // The band changes at each phone edge, so it is checked just below and at
   // each one, the headers' on the viewport and the grid's on the grid, as well
   // as at the narrowest phone and two desktop widths: a fixed list missed the
-  // narrow desktop grid (#87). The headers' edge is a styles.css media query,
-  // so it has no constant to import.
-  const headerPhoneMaxWidth = 620;
+  // narrow desktop grid (#87).
   const bandWidths: ({ viewport: number } | { grid: number })[] = [
     { viewport: 320 },
-    { viewport: headerPhoneMaxWidth - 1 },
-    { viewport: headerPhoneMaxWidth },
+    { viewport: phoneViewportMaxWidth - 1 },
+    { viewport: phoneViewportMaxWidth },
     { grid: phoneGridMaxWidth - 1 },
     { grid: phoneGridMaxWidth },
     { viewport: 960 },
@@ -5008,9 +5007,7 @@ test.describe("cell states", () => {
               page
                 .locator(".grid-scroll")
                 .evaluate(topBandProblems)
-                .then((problems) =>
-                  problems.map((p) => p.replace(/ by [\d×]+px$/, "")).sort(),
-                ),
+                .then((problems) => problems.sort()),
             )
             .toEqual([]);
         });
@@ -5190,6 +5187,11 @@ function topBandProblems(grid: Element): string[] {
     ".grid-row > .grid-cell",
   )) {
     const id = cell.dataset.storyId ?? cell.dataset.itemId;
+    const box = cell.getBoundingClientRect();
+    // The cell's width, so a failure tells a nudge from a band too full for
+    // its cell (#87).
+    const report = (problem: string) =>
+      problems.push(`${id}: ${problem} in a ${Math.round(box.width)}px cell`);
     const band = [
       ...cell.querySelectorAll(
         ".cell-corner :is(.unread-dot, .cell-age, .cell-rank, .expiry-pill), .cell-actions button, .signal-mobile-chip, .kept-marker, .story-source-count, .peek-pill > span",
@@ -5203,8 +5205,8 @@ function topBandProblems(grid: Element): string[] {
     for (const b of band)
       for (const c of copy)
         if (overlap(b.getBoundingClientRect(), c.getBoundingClientRect()))
-          problems.push(
-            `${id}: ${name(b)} covers ${name(c)} ${by(b.getBoundingClientRect(), c.getBoundingClientRect())}`,
+          report(
+            `${name(b)} covers ${name(c)} ${by(b.getBoundingClientRect(), c.getBoundingClientRect())}`,
           );
     band.forEach((a, index) => {
       for (const b of band.slice(index + 1))
@@ -5213,26 +5215,21 @@ function topBandProblems(grid: Element): string[] {
           !b.contains(a) &&
           overlap(a.getBoundingClientRect(), b.getBoundingClientRect())
         )
-          problems.push(
-            `${id}: ${name(a)} meets ${name(b)} ${by(a.getBoundingClientRect(), b.getBoundingClientRect())}`,
+          report(
+            `${name(a)} meets ${name(b)} ${by(a.getBoundingClientRect(), b.getBoundingClientRect())}`,
           );
     });
-    const box = cell.getBoundingClientRect();
     for (const b of band) {
       const r = b.getBoundingClientRect();
       const out = Math.max(box.left - r.left, r.right - box.right);
       if (out > 1)
-        problems.push(
-          `${id}: ${name(b)} runs out of the cell by ${Math.round(out)}px`,
-        );
+        report(`${name(b)} runs out of the cell by ${Math.round(out)}px`);
     }
     for (const c of copy) {
       const r = c.getBoundingClientRect();
       const out = Math.max(r.bottom - box.bottom, box.top - r.top);
       if (out > 1)
-        problems.push(
-          `${id}: ${name(c)} runs out of the cell by ${Math.round(out)}px`,
-        );
+        report(`${name(c)} runs out of the cell by ${Math.round(out)}px`);
     }
   }
   return problems;

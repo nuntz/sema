@@ -1,4 +1,5 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
@@ -90,7 +91,7 @@ async function openGrid(page: Page) {
 
 test.use({ timezoneId: "America/Vancouver" });
 
-for (const width of [1440, 860, 620, 393, 320]) {
+for (const width of [1440, 860, phoneViewportMaxWidth, 393, 320]) {
   test(`calendar views include read items and fit at ${width}px`, async ({
     page,
   }) => {

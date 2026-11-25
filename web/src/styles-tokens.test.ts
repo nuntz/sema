@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { phoneViewportMaxWidth } from "./viewport";
 
 const srcDir = join(import.meta.dirname);
 const styles = readFileSync(join(srcDir, "styles.css"), "utf8");
@@ -127,5 +128,28 @@ describe("styles.css grid edge", () => {
       .map(([, declarations]) => typeScale(declarations));
     expect(viewportScale).toHaveLength(1);
     expect(typeScale(block(".mobile-refined-grid"))).toEqual(viewportScale[0]);
+  });
+});
+
+// The viewport's phone edge is one constant, so tests can take their widths
+// from it. A query a pixel off it switches part of the page at another width,
+// as the tag chips' and Feed triage's `max-width: 620px` did (#87).
+describe("styles.css viewport phone edge", () => {
+  it("states the viewport phone edge as phoneViewportMaxWidth", () => {
+    const offEdge = widthQueries().flatMap(({ query }) =>
+      [...query.matchAll(/\((max|min)-width:\s*(\d+)px\)/g)]
+        .filter(
+          ([, , px]) => Math.abs(Number(px) - phoneViewportMaxWidth) <= 10,
+        )
+        .filter(
+          ([, bound, px]) =>
+            Number(px) !==
+            (bound === "max"
+              ? phoneViewportMaxWidth - 1
+              : phoneViewportMaxWidth),
+        )
+        .map(() => query.trim()),
+    );
+    expect([...new Set(offEdge)]).toEqual([]);
   });
 });

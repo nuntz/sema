@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { phoneViewportMaxWidth } from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { settledScrollExtent } from "./scroll-extent";
 import { activateStandalone, simulateStatusBar } from "./standalone";
@@ -829,8 +830,8 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   for (const [view, width] of [
     ["grid", 1544],
     ["reader", 1544],
-    ["grid", 620],
-    ["reader", 620],
+    ["grid", phoneViewportMaxWidth],
+    ["reader", phoneViewportMaxWidth],
     ["grid", 390],
     ["reader", 390],
   ] as const) {
@@ -861,7 +862,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
         controls: controls.map((element) => element.getBoundingClientRect()),
       };
     });
-    const phoneReader = view === "reader" && width < 620;
+    const phoneReader = view === "reader" && width < phoneViewportMaxWidth;
     expect(geometry.header.height).toBe(phoneReader || width <= 430 ? 44 : 56);
     if (width > 430 && !phoneReader) {
       expect(geometry.mark.x).toBe(20);
@@ -885,7 +886,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   await openFixture(page, "reader");
   await expect(page.locator(".chrome-overflow")).toBeHidden();
 
-  await page.setViewportSize({ width: 619, height: 780 });
+  await page.setViewportSize({ width: phoneViewportMaxWidth - 1, height: 780 });
   await openFixture(page, "reader");
   await expect(page.locator(".chrome-overflow")).toBeHidden();
   await expect(page.locator(".reader-slot__text")).toBeVisible();
@@ -900,7 +901,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
   ).toBeHidden();
   await expect(page.locator(".chrome-overflow")).toBeVisible();
 
-  await page.setViewportSize({ width: 620, height: 780 });
+  await page.setViewportSize({ width: phoneViewportMaxWidth, height: 780 });
   await openFixture(page, "reader");
   await expect(
     page.locator(".chrome-group--judge .chrome-btn__label").first(),
@@ -980,7 +981,7 @@ test("phone reader exposes six native actions and clears the final line", async 
   expect(clearance).toBeGreaterThanOrEqual(0);
 });
 
-for (const width of [620, 860, 900, 1024]) {
+for (const width of [phoneViewportMaxWidth, 860, 900, 1024]) {
   test(`grid controls stay inside the header at ${width}px`, async ({
     page,
   }) => {
