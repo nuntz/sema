@@ -9,6 +9,7 @@ import {
 import { Icon } from "../components/Icon";
 import { isRedditItem, redditPrimaryRoute } from "../reddit-item";
 import type { Item } from "../types";
+import { phoneViewportQuery } from "../viewport";
 import { relativeTime } from "./Grid";
 import { isEditingTarget } from "./keyboard";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -34,7 +35,7 @@ export function RelatedPanel(props: {
   const [focusedID, setFocusedID] = createSignal("");
   const sheetDrag = useSheetDrag({
     panel: () => panel,
-    enabled: () => window.matchMedia("(max-width: 700px)").matches,
+    enabled: () => window.matchMedia(phoneViewportQuery).matches,
     scrollTop: (target) =>
       target instanceof Node && body?.contains(target) ? body.scrollTop : 0,
     onDismiss: props.onClose,
@@ -195,7 +196,7 @@ export function RelatedPanel(props: {
                       <Show when={item.media_url}>
                         <ResponsiveImage
                           item={item}
-                          sizes="(max-width: 700px) calc((100vw - 36px) / 2), 192px"
+                          sizes={`${phoneViewportQuery} calc((100vw - 36px) / 2), 192px`}
                           alt=""
                         />
                       </Show>

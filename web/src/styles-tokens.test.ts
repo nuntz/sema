@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { phoneGridMaxWidth } from "./layout/justified";
 import { phoneViewportMaxWidth } from "./viewport";
 
 const srcDir = join(import.meta.dirname);
@@ -59,6 +60,13 @@ function typeScale(declarations: string): Record<string, string> {
     [...declarations.matchAll(/(--type-[\w-]+)\s*:\s*([^;]+);/g)].map(
       ([, name, value]) => [name, value.trim()],
     ),
+  );
+}
+
+// Each width bound in `text`, as "max-width: 723px".
+function widthBounds(text: string): string[] {
+  return [...text.matchAll(/\(((?:max|min)-width):\s*(\d+)px\)/g)].map(
+    ([, bound, px]) => `${bound}: ${px}px`,
   );
 }
 
@@ -122,7 +130,9 @@ describe("styles.css grid edge", () => {
 
   it("gives a phone grid the phone type scale of narrow viewports", () => {
     const viewportScale = widthQueries()
-      .filter(({ query }) => query === "(max-width: 700px)")
+      .filter(
+        ({ query }) => query === `(max-width: ${phoneViewportMaxWidth - 1}px)`,
+      )
       .flatMap(({ body }) => rules(body))
       .filter(([selector]) => selector === ":root")
       .map(([, declarations]) => typeScale(declarations));
@@ -135,21 +145,48 @@ describe("styles.css grid edge", () => {
 // from it. A query a pixel off it switches part of the page at another width,
 // as the tag chips' and Feed triage's `max-width: 620px` did (#87).
 describe("styles.css viewport phone edge", () => {
-  it("states the viewport phone edge as phoneViewportMaxWidth", () => {
-    const offEdge = widthQueries().flatMap(({ query }) =>
-      [...query.matchAll(/\((max|min)-width:\s*(\d+)px\)/g)]
-        .filter(
-          ([, , px]) => Math.abs(Number(px) - phoneViewportMaxWidth) <= 10,
-        )
-        .filter(
-          ([, bound, px]) =>
-            Number(px) !==
-            (bound === "max"
-              ? phoneViewportMaxWidth - 1
-              : phoneViewportMaxWidth),
-        )
-        .map(() => query.trim()),
+  // One phone edge for the chrome and the grid (#86): a viewport narrower
+  // than the grid's edge gets the phone chrome, so a phone grid never sits
+  // under desktop chrome on a device without a classic scrollbar.
+  it("puts the viewport phone edge at the grid's phone edge", () => {
+    expect(phoneViewportMaxWidth).toBe(phoneGridMaxWidth);
+  });
+
+  // Width steps inside a range, which are not phone edges: the small-phone
+  // header, the finish card's stacked layout, the desktop header's
+  // compaction, and the wide reader.
+  const steps = new Set([
+    "max-width: 430px",
+    "max-width: 520px",
+    "max-width: 859px",
+    "max-width: 1199px",
+    "min-width: 1200px",
+  ]);
+
+  it("switches at the viewport phone edge or a named step", () => {
+    const edge = new Set([
+      `max-width: ${phoneViewportMaxWidth - 1}px`,
+      `min-width: ${phoneViewportMaxWidth}px`,
+    ]);
+    const stray = widthQueries().flatMap(({ query }) =>
+      widthBounds(query)
+        .filter((width) => !edge.has(width) && !steps.has(width))
+        .map(() => query),
     );
-    expect([...new Set(offEdge)]).toEqual([]);
+    expect([...new Set(stray)]).toEqual([]);
+  });
+
+  // TypeScript's media queries and sizes= hints build the edge from
+  // phoneViewportMaxWidth, so a literal width here is a step or a stray edge,
+  // as RelatedPanel's and ConfirmRemove's 700px were (#86).
+  it("builds TypeScript's phone-edge queries from phoneViewportMaxWidth", () => {
+    const literal = sourceFiles(srcDir)
+      .filter((path) => /\.tsx?$/.test(path) && !/\.test\.tsx?$/.test(path))
+      .flatMap((path) =>
+        widthBounds(readFileSync(path, "utf8"))
+          .filter((width) => !steps.has(width))
+          .map((width) => `${path.slice(srcDir.length + 1)} (${width})`),
+      );
+    expect(literal).toEqual([]);
   });
 });

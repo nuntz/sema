@@ -841,7 +841,7 @@ body { background: var(--bg); }
    the iOS 26+ edge blur (only under a status bar), and the tint follows whatever is on top:
    the reader's page material; a lightbox or Video Peek scrim; the image lightbox's top bar
    while its controls show (awake, or zoomed, where they never idle away). */
-@media (display-mode: standalone) and (max-width: 619px) {
+@media (display-mode: standalone) and (max-width: 723px) {
   :root { --bar-top: calc(var(--safe-top) + min(var(--safe-top) * 1000, 16px)); }
   :root:has(.reader), :root:has(.reader) body { background: var(--bg); }
   :root:has(.lb-overlay), :root:has(.lb-overlay) body { background: var(--lb-tint-scrim); }
@@ -1298,7 +1298,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reader-title { color: var(--chrome-fg-primary); font: 500 15px/1.25 "Instrument Sans", sans-serif; letter-spacing: 0; opacity: 0; }
 .app-header[data-scrolled] .reader-crumb { opacity: 0; }
 .app-header[data-scrolled] .reader-title { opacity: 1; }
-@media (min-width: 620px) {
+@media (min-width: 724px) {
   .app-header--reader .chrome-btn--prev .chrome-btn__label { display: none; }
   .app-header--reader[data-scrolled] .chrome-btn--quiet, .app-header--reader[data-scrolled] .chrome-btn--hold { width: var(--control-icon-w); padding: 0; justify-content: center; }
   .app-header--reader[data-scrolled] .chrome-btn--quiet { background: var(--surface-chrome); color: var(--chrome-fg-quaternary); }
@@ -1398,12 +1398,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .lb-help > div { margin-top: 12px; }
 .lb-help p { color: var(--fg-secondary); font-size: 12px; }
 .lb-help kbd { white-space: nowrap; font: inherit; }
-@media (min-width: 620px) { .lb-overlay[data-idle] :is(.lb-top, .lb-nav) { opacity: .55; } }
-@media (min-width: 620px) {
+@media (min-width: 724px) { .lb-overlay[data-idle] :is(.lb-top, .lb-nav) { opacity: .55; } }
+@media (min-width: 724px) {
   .lb-caption { bottom: 20px; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 40px); box-sizing: border-box; padding: 12px 16px; border-radius: 8px; background: var(--lb-control); backdrop-filter: blur(14px); }
   .lb-caption .lb-caption-previous { top: 12px; left: 16px; right: 16px; }
 }
-@media (max-width: 619px) {
+@media (max-width: 723px) {
   .lb-top { top: 0; left: 0; right: 0; height: calc(44px + var(--bar-top)); padding: var(--bar-top) 12px 0; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-bottom: .5px solid rgba(244,242,238,.14); }
   .lb-caption { padding: 16px 20px 30px; background: rgba(6,7,8,.72); backdrop-filter: blur(18px); border-top: .5px solid rgba(244,242,238,.14); }
   .lb-caption p { color: #c7ccd3; }
@@ -1631,7 +1631,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .chrome-btn--collapse-2 .chrome-btn__label, .reader-slot__text { display: none; }
 }
 
-@media (max-width: 619px) {
+@media (max-width: 723px) {
   .reader .app-header--reader, .reader-bottom-actions {
     background: var(--reader-bar-bg);
     box-shadow: none;
@@ -1709,12 +1709,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 }
 
 @supports not (backdrop-filter: blur(1px)) {
-  @media (max-width: 619px) {
+  @media (max-width: 723px) {
     .reader .app-header--reader, .reader-bottom-actions, .reader-action-sheet { background: var(--reader-bar-solid); }
   }
 }
 
-@media (max-width: 619px) and (prefers-reduced-motion: reduce) {
+@media (max-width: 723px) and (prefers-reduced-motion: reduce) {
   .reader-bottom-actions, .reader-bottom-actions__row { transition: none; }
 }
 
@@ -1746,9 +1746,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
   .tooltip-bubble { display: none !important; }
 }
 
-@media (max-width: 700px) {
+@media (max-width: 723px) {
   /* The phone type scale; a phone grid sets the same scale on itself below,
-     since it can be wider than this. styles-tokens.test.ts holds them equal. */
+     since a scrollbar can leave a phone grid in a wider viewport.
+     styles-tokens.test.ts holds them equal. */
   :root {
     --type-xs: 0.875rem;
     --type-sm: 1rem;
@@ -1782,7 +1783,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 /* The grid's phone CSS follows the grid's own edge (`phoneGridMaxWidth` in
    layout/justified.ts) through the class Grid sets, not the viewport (#85).
    :where() keeps each rule's specificity as it was under the media query. */
-/* The phone type scale of the 700px :root block above. */
+/* The phone type scale of the viewport phone edge's :root block above. */
 .mobile-refined-grid {
   --type-xs: 0.875rem;
   --type-sm: 1rem;
@@ -1820,7 +1821,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 :where(.mobile-refined-grid) .cell-age { display: block; }
 :where(.mobile-refined-grid) .grid-cell:not(.archive-cell):hover .cell-age, :where(.mobile-refined-grid) .grid-cell:not(.archive-cell).focused .cell-age, :where(.mobile-refined-grid) .grid-cell:not(.archive-cell):focus-within .cell-age { opacity: 1; }
 :where(.mobile-refined-grid) .cell-rank { display: none; }
-@media (max-width: 700px) {
+@media (max-width: 723px) {
   .article { width: 100%; padding: 22px 22px 64px; }
   .article-kicker { display: none; }
   .article h1 { margin-bottom: 12px; font-size: 30px; line-height: 1.2; }
@@ -2204,7 +2205,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .reddit-source-line > span { min-width: 0; overflow: hidden; color: var(--fg-quaternary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; white-space: nowrap; text-overflow: ellipsis; }
 .reddit-source-line + .article-summary { margin: 0 0 28px; }
 
-@media (max-width: 700px) {
+@media (max-width: 723px) {
   .feed-manager { width: calc(100% - 32px); padding-top: 18px; }
   .feed-sort select { width: 42px; padding: 0; appearance: none; color: transparent; }
   .feed-sort > .sort-icon { left: 13px; }
@@ -2577,7 +2578,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .update-dots i:nth-child(3) { animation-delay: .32s; }
 @keyframes update-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes update-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
-@media (max-width: 619px) {
+@media (max-width: 723px) {
   .update-notice { padding: 0 12px; }
   .update-meta { display: none; }
 }
@@ -2659,7 +2660,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .signal-hint > i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--signal-label-ink); }
 .signal-hint button { padding: 0; color: var(--signal-label-ink); background: transparent; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .signal-hint button:focus-visible { outline: 2px solid var(--signal-focus); outline-offset: 3px; }
-@media (max-width: 619px) {
+@media (max-width: 723px) {
   .signal-hint { position: fixed; z-index: 110; left: 14px; right: 14px; bottom: calc(20px + env(safe-area-inset-bottom) - var(--viewport-gap)); height: 46px; padding: 0 14px; gap: 8px; border-radius: 11px; background: var(--surface-raised-hover); border: 1px solid var(--line-rule); font-size: 13px; }
   .signal-hint > i { display: none; }
   .signal-hint button { margin-left: auto; min-height: 44px; }
@@ -2715,12 +2716,12 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .article .reader-deadline--urgent { color: var(--reader-deadline-urgent); }
 .app-header--reader .reader-slot__text:has(.reader-life) { display: grid; }
 
-@media (min-width: 620px) and (max-width: 1199px) {
+@media (min-width: 724px) and (max-width: 1199px) {
   .app-header--reader:has(.reader-life) :is(.chrome-group--secondary, .chrome-btn--original, .reader-leave-divider) { display: none; }
   .app-header--reader:has(.reader-life) .chrome-group--judge .chrome-btn { width: var(--control-icon-w); padding: 0; justify-content: center; }
   .app-header--reader:has(.reader-life) .chrome-group--judge .chrome-btn__label { display: none; }
 }
-@media (min-width: 620px) and (max-width: 859px) {
+@media (min-width: 724px) and (max-width: 859px) {
   .app-header--reader:has(.reader-life) .chrome-group--page .chrome-btn { width: var(--control-icon-w); padding: 0; justify-content: center; }
   .app-header--reader:has(.reader-life) .chrome-group--page .chrome-btn span { display: none; }
   .app-header--reader:has(.reader-life) .chrome-group { margin-left: 4px; }
@@ -2734,7 +2735,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .feed-filters .tag-chip[aria-pressed="true"] { background: var(--control-wash-medium); color: var(--fg-primary); }
 .feed-filters .tag-chip span { font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; }
 .feed-filter-tags { display: flex; gap: 7px; padding-left: 8px; border-left: 1px solid var(--line); }
-@media (max-width: 619px) { .feed-filters .tag-chip { min-height: 44px; } }
+@media (max-width: 723px) { .feed-filters .tag-chip { min-height: 44px; } }
 
 .feed-unread { color: var(--fg-secondary); font: 400 var(--type-xs)/1 "IBM Plex Mono", monospace; text-align: right; white-space: nowrap; }
 .feed-unread.zero { color: var(--fg-quaternary); }
@@ -2744,7 +2745,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .feed-triage > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .feed-triage button { padding: 5px 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .feed-triage button:disabled { opacity: .5; cursor: wait; }
-@media (max-width: 619px) { .feed-triage button { min-height: 44px; } }
+@media (max-width: 723px) { .feed-triage button { min-height: 44px; } }
 
 /* Compact scope controls: the strip overlays the grid top and slides under the header when collapsed. */
 .grid-top-slot { display: flow-root; }
@@ -2823,16 +2824,16 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
 .video-dock-action:hover { background: var(--control-wash-strong); }
 .video-dock-action:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .video-stage[data-mode="dock"] .video-failure { gap: 6px; font-size: 11px; text-align: center; }
-@media (min-width: 620px) {
+@media (min-width: 724px) {
   .video-stage { --dock-gap: 20px; --dock-w: 320px; }
 }
 /* Phones take 44px touches; the frame clips, so the strip grows rather than the iframe losing taps. */
-@media (max-width: 619px) {
+@media (max-width: 723px) {
   .video-dock-strip { height: 44px; gap: 0; }
   .video-dock-action { width: 44px; height: 44px; }
 }
 /* The phone reader's toolbar owns the bottom edge; the Dock rides above it. */
-@media (max-width: 619px) {
+@media (max-width: 723px) {
   body:has(.reader:not(.closing) .reader-bottom-actions) .video-stage[data-mode="dock"] { bottom: calc(var(--reader-bottom-h) + var(--reader-bottom-pad) + var(--dock-gap) - var(--viewport-gap)); }
   body:has(.reader:not(.closing) .reader-bottom-actions.collapsed) .video-stage[data-mode="dock"] { bottom: calc(28px + var(--reader-bottom-pad) + var(--dock-gap) - var(--viewport-gap)); }
 }

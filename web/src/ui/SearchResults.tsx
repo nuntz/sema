@@ -12,6 +12,7 @@ import {
   visibleSearchSections,
 } from "../search";
 import type { Item, SearchResponse } from "../types";
+import { phoneViewportQuery } from "../viewport";
 import { relativeTime } from "./Grid";
 import { isEditingTarget } from "./keyboard";
 import { ResponsiveImage } from "./ResponsiveImage";
@@ -224,7 +225,7 @@ function ResultCell(props: {
       <Show when={props.item.media_url}>
         <ResponsiveImage
           item={props.item}
-          sizes="(max-width: 700px) calc((100vw - 36px) / 2), 240px"
+          sizes={`${phoneViewportQuery} calc((100vw - 36px) / 2), 240px`}
           alt=""
         />
       </Show>

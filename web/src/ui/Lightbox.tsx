@@ -10,6 +10,7 @@ import {
 import { Portal } from "solid-js/web";
 import { Icon } from "../components/Icon";
 import { createMediaQuery } from "../media-query";
+import { phoneViewportQuery } from "../viewport";
 import { imageIndex, lightboxBindings, lightboxCommand } from "./lightbox-keys";
 import { lightboxTap } from "./lightbox-pointer";
 import { fittedRect, type LightboxImage, originalSource } from "./lightbox-set";
@@ -27,7 +28,7 @@ export function Lightbox(props: {
   onClose(): void;
   onOpenReader?(): void;
 }) {
-  const phone = createMediaQuery("(max-width: 619px)");
+  const phone = createMediaQuery(phoneViewportQuery);
   const reduced = createMediaQuery("(prefers-reduced-motion: reduce)");
   const origin = props.images[props.initialIndex].element;
   const [index, setIndex] = createSignal(props.initialIndex);

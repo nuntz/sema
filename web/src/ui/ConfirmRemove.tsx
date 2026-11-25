@@ -1,4 +1,5 @@
 import { onCleanup, onMount } from "solid-js";
+import { phoneViewportQuery } from "../viewport";
 import { useSheetDrag } from "./use-sheet-drag";
 
 export function ConfirmRemove(props: { onCancel(): void; onConfirm(): void }) {
@@ -8,7 +9,7 @@ export function ConfirmRemove(props: { onCancel(): void; onConfirm(): void }) {
   const previous = document.activeElement;
   const sheetDrag = useSheetDrag({
     panel: () => card,
-    enabled: () => window.matchMedia("(max-width: 700px)").matches,
+    enabled: () => window.matchMedia(phoneViewportQuery).matches,
     onDismiss: props.onCancel,
   });
 

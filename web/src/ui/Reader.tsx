@@ -35,6 +35,7 @@ import {
 import { signalActionLabel } from "../signal-feedback";
 import type { Item } from "../types";
 import { isVideoItem, videoItemID, videoItemURL } from "../video-item";
+import { phoneViewportMaxWidth, phoneViewportQuery } from "../viewport";
 import {
   type PlaybackState,
   type VideoPlayer as Player,
@@ -234,9 +235,9 @@ export function Reader(props: ReaderProps) {
   createEffect(() => {
     if (!props.active || props.closing) stopPageScroll();
   });
-  const narrowHeader = createMediaQuery("(max-width: 619px)");
+  const narrowHeader = createMediaQuery(phoneViewportQuery);
   const mediumHeader = createMediaQuery(
-    "(min-width: 620px) and (max-width: 1199px)",
+    `(min-width: ${phoneViewportMaxWidth}px) and (max-width: 1199px)`,
   );
   const showExpiryPill = () =>
     showLifetime() && hoursLeft(props.item.published_ts, now()) <= 48;
@@ -1331,7 +1332,7 @@ export function Reader(props: ReaderProps) {
                         : undefined,
                   }}
                   item={props.item}
-                  sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                  sizes={`${phoneViewportQuery} calc(100vw - 44px), 640px`}
                   alt=""
                   width={props.item.media_w}
                   height={props.item.media_h}
@@ -1683,7 +1684,7 @@ function RedditDestinationCard(props: { item: Item; onClickThrough(): void }) {
         <span class="reddit-media-band">
           <ResponsiveImage
             item={props.item}
-            sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+            sizes={`${phoneViewportQuery} calc(100vw - 44px), 640px`}
             alt=""
             width={props.item.media_w}
             height={props.item.media_h}
@@ -1801,7 +1802,7 @@ function RedditImageCard(props: {
               <ResponsiveImage
                 class="reddit-full-image reddit-lead-image"
                 item={props.item}
-                sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                sizes={`${phoneViewportQuery} calc(100vw - 44px), 640px`}
                 alt={props.item.title}
                 width={props.item.media_w}
                 height={props.item.media_h}
@@ -1932,7 +1933,7 @@ function VideoMediaCard(props: {
               {(_itemID) => (
                 <ResponsiveImage
                   item={props.item}
-                  sizes="(max-width: 700px) calc(100vw - 44px), 640px"
+                  sizes={`${phoneViewportQuery} calc(100vw - 44px), 640px`}
                   alt=""
                   width={props.item.media_w}
                   height={props.item.media_h}

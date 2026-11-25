@@ -138,7 +138,15 @@ for (const theme of ["dark", "light"] as const) {
     );
   });
 }
-for (const width of [320, 390, phoneViewportMaxWidth, 860, 1440]) {
+for (const width of [
+  320,
+  390,
+  phoneViewportMaxWidth - 1,
+  phoneViewportMaxWidth,
+  859,
+  860,
+  1440,
+]) {
   test(`urgent reader pill fits at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await open(page, "dark");

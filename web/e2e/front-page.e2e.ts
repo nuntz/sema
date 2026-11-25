@@ -3568,7 +3568,7 @@ test.describe("text-only cells", () => {
         await stubFrontPage(page, [story], items, []);
         await page.goto("/");
         await expect(page.locator(".grid-cell").first()).toBeVisible();
-        if (width < 700) {
+        if (width < phoneViewportMaxWidth) {
           await page.locator(".filter-button").click();
           await page
             .getByRole("switch", { name: "Unread only", exact: true })
@@ -3761,7 +3761,7 @@ test.describe("text-only cells", () => {
         const lead = page.locator('[data-story-id="text-large-story"]');
         await expect(lead).toBeVisible();
         // All, not Unread, so the Lead shows its unread dot.
-        if (width < 700) {
+        if (width < phoneViewportMaxWidth) {
           await page.locator(".filter-button").click();
           await page
             .getByRole("switch", { name: "Unread only", exact: true })
@@ -3777,7 +3777,7 @@ test.describe("text-only cells", () => {
         const title = lead.locator(".story-lead h2");
         await expect(title).toHaveCSS(
           "font-size",
-          width < 700 ? "22px" : "27px",
+          width < phoneGridMaxWidth ? "22px" : "27px",
         );
         await expect(title).toHaveCSS("font-weight", "600");
         await expect(lead.locator(".story-lead p")).toHaveText(longSummary);
@@ -4517,7 +4517,7 @@ test.describe("cell states", () => {
           .poll(() => page.locator(".grid-scroll").evaluate(topBandProblems))
           .toEqual([]);
         // Hovered actions stay in the band of a marked cell.
-        for (const cell of width < 700
+        for (const cell of width < phoneGridMaxWidth
           ? []
           : textCells.filter(({ item_id }) => !item_id.includes("plain"))) {
           await page.locator(`[data-item-id="${cell.item_id}"]`).hover();
@@ -4682,7 +4682,7 @@ test.describe("cell states", () => {
                 : /^(?!.*, (boosted|buried)\b)/,
           );
         }
-        if (width < 700) return;
+        if (width < phoneGridMaxWidth) return;
         for (const { story_id } of stories) {
           await page
             .locator(`.grid-row > .grid-cell[data-story-id="${story_id}"]`)
@@ -4953,10 +4953,56 @@ test.describe("cell states", () => {
     });
   }
 
-  // The band changes at each phone edge, so it is checked just below and at
-  // each one, the headers' on the viewport and the grid's on the grid, as well
-  // as at the narrowest phone and two desktop widths: a fixed list missed the
-  // narrow desktop grid (#87).
+  // The chrome and the grid share one phone edge (#86). With overlay
+  // scrollbars, as on a phone or tablet, the grid is as wide as the viewport,
+  // so the grid's layout, the phone type scale and the reader's bars switch
+  // together: all phone just below the edge, all desktop at it.
+  test.describe("on a touch device", () => {
+    test.use({ hasTouch: true, isMobile: true });
+    for (const width of [phoneViewportMaxWidth - 1, phoneViewportMaxWidth]) {
+      const phone = width < phoneViewportMaxWidth;
+      test(`switches the chrome and the grid together at a ${width}px viewport`, async ({
+        page,
+      }) => {
+        await stubFrontPage(
+          page,
+          [],
+          [item("edge-m", "m", "A medium Item", 0.9, "M")],
+          [],
+        );
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto("/");
+        const grid = page.locator(".grid-scroll");
+        await expect(grid).toHaveAttribute("data-layout-width", String(width));
+        await expect(grid).toHaveClass(
+          phone ? /mobile-refined-grid/ : /^(?!.*mobile-refined-grid)/,
+        );
+        await expect
+          .poll(() =>
+            page.evaluate(() =>
+              getComputedStyle(document.documentElement)
+                .getPropertyValue("--type-sm")
+                .trim(),
+            ),
+          )
+          .toBe(phone ? "1rem" : "0.9375rem");
+
+        await page.locator('[data-item-id="edge-m"] .cell-main').click();
+        await expect(openReader(page).locator(".app-header")).toHaveCSS(
+          "height",
+          phone ? "44px" : "56px",
+        );
+        const bottomBar = page.locator(".reader-bottom-actions");
+        if (phone) await expect(bottomBar).toBeVisible();
+        else await expect(bottomBar).toBeHidden();
+      });
+    }
+  });
+
+  // The band changes at the phone edge, so it is checked just below and at
+  // it, measured on the viewport and on the grid (a scrollbar narrows the
+  // grid, so the two differ on desktop), as well as at the narrowest phone
+  // and two desktop widths: a fixed list missed the narrow desktop grid (#87).
   const bandWidths: ({ viewport: number } | { grid: number })[] = [
     { viewport: 320 },
     { viewport: phoneViewportMaxWidth - 1 },
