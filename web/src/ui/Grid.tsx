@@ -2036,7 +2036,7 @@ export function CellCopy(props: {
   dimmed?: boolean;
   onApplyFeed?(): void;
   story?: boolean;
-  /** A phone two-up Story's Source count, which ends its feed line (#84). */
+  /** An M Story's Source count, which ends its feed line (#84, #87). */
   sourceCount?: number;
   onUndo?(): void;
 }) {

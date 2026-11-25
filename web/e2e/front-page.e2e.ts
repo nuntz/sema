@@ -1,3 +1,4 @@
+import { phoneGridMaxWidth } from "../src/layout/justified";
 import { animationsFinished } from "./animations";
 import { nextPageTop } from "./grid-paging";
 import { resizeGrid } from "./grid-resize";
@@ -316,13 +317,28 @@ function storyCellProblems(grid: Element, unread: string[]): string[] {
     const m = visible(meta);
     if (t && m && m.top < t.bottom)
       problems.push(`${id}: feed line is not under the title`);
-    if (!meta || !feed || meta.innerText.trim() !== feed.innerText.trim())
-      problems.push(`${id}: feed line reads "${meta?.innerText.trim()}"`);
-    const badge = visible(
-      cell.querySelector('[role="img"][aria-label$=" sources"]'),
+    // An M Story's Source count ends its feed line; an L Story's is at the
+    // top left (#87).
+    const count = cell.querySelector<HTMLElement>(
+      '[role="img"][aria-label$=" sources"]',
     );
-    if (!badge || badge.top - lead.top > 14 || badge.left - lead.left > 14)
-      problems.push(`${id}: Source count is not at the top left`);
+    const countOnFeedLine = cell.classList.contains("size-m");
+    const words = (text: string | undefined) =>
+      (text ?? "").trim().split(/\s+/).join(" ");
+    const feedLine = countOnFeedLine
+      ? `${feed?.innerText} ${count?.innerText}`
+      : feed?.innerText;
+    if (!meta || !feed || words(meta.innerText) !== words(feedLine))
+      problems.push(`${id}: feed line reads "${meta?.innerText.trim()}"`);
+    let badge: DOMRect | undefined;
+    if (countOnFeedLine) {
+      if (!count || !visible(count) || !meta?.contains(count))
+        problems.push(`${id}: Source count is not on the feed line`);
+    } else {
+      badge = visible(count);
+      if (!badge || badge.top - lead.top > 14 || badge.left - lead.left > 14)
+        problems.push(`${id}: Source count is not at the top left`);
+    }
     const corner = cell.querySelector(".cell-corner");
     const c = visible(corner);
     if (!c || c.top - lead.top > 14 || lead.right - c.right > 60)
@@ -963,8 +979,8 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
     "Medium story lead",
   );
   await expect(storyCell.locator(".cell-meta")).toContainText("Feed one");
-  const storyBadge = storyCell.getByLabel("2 sources");
-  await expect(storyBadge).toBeVisible();
+  const storyCount = storyCell.locator(".cell-meta").getByLabel("2 sources");
+  await expect(storyCount).toBeVisible();
   await expect(storyCell.locator(".story-badges")).toHaveCount(0);
   await expect(storyCell.locator(".cell-rank")).toHaveText("top 40%");
   await expect(storyCell.locator(".story-headlines")).toHaveCount(0);
@@ -973,10 +989,10 @@ test("M story cells use singleton anatomy and lead-scoped sheet actions", async 
     .toEqual([]);
   await page.screenshot({ path: "/tmp/sema-medium-story.png" });
 
+  // The feed line's count stays under hover, unlike the band's chips.
   await storyCell.hover();
-  await expect(storyBadge).toHaveCSS("opacity", "0");
-  await storyBadge.click({ force: true });
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(storyCell.locator(".cell-actions")).toHaveCSS("opacity", "1");
+  await expect(storyCount).toHaveCSS("opacity", "1");
   await storyCell.getByRole("button", { name: "More actions" }).focus();
   await page.keyboard.press("Enter");
   const sheet = page.getByRole("dialog", {
@@ -3609,12 +3625,8 @@ test.describe("text-only cells", () => {
                   r.bottom <= box.bottom + 1 &&
                   r.left >= box.left - 1 &&
                   r.right <= box.right + 1;
-                // A phone two-up Story's count is on its feed line (#84).
-                const badge = cell
-                  .querySelector(".story-stack-badge")
-                  ?.getBoundingClientRect();
-                const top = badge?.bottom ?? box.top;
-                if (title.top - top > 16 || title.top < top)
+                // An M Story's count is on its feed line (#84, #87).
+                if (title.top - box.top > 16 || title.top < box.top)
                   problems.push(`${id}: title not at top`);
                 if (box.bottom - metaBox.bottom > 16)
                   problems.push(`${id}: bottom line not at bottom`);
@@ -4798,11 +4810,12 @@ test.describe("cell states", () => {
     }
   });
 
-  // A phone two-up Story's band would hold one more control than an M Item's,
-  // so its Source count ends the feed line instead; full-width and desktop
-  // Stories keep it at the top left (#84).
-  for (const width of [320, 660, 1440]) {
-    test(`put a phone two-up Story's Source count on its feed line at ${width}px`, async ({
+  // An M Story's band would hold one more control than an M Item's, which
+  // a phone two-up or narrow desktop cell has no room for, so its Source
+  // count ends the feed line instead; L Stories keep it at the top left (#84,
+  // #87).
+  for (const width of [320, 660, 960, 1440]) {
+    test(`put an M Story's Source count on its feed line at ${width}px`, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: 3000 });
@@ -4829,9 +4842,9 @@ test.describe("cell states", () => {
         const count = cell.getByRole("img", { name: "2 sources" });
         await expect(count).toHaveCount(1);
         await expect(count).toBeVisible();
-        const onFeedLine = width < 700 && size === "M";
+        const onFeedLine = size === "M";
         await expect(
-          cell.locator(".story-stack-badge, .story-badges .story-source-count"),
+          cell.locator(".story-badges .story-source-count"),
         ).toBeVisible({ visible: !onFeedLine });
         if (!onFeedLine) continue;
         await expect(count).toHaveText("2");
@@ -4939,13 +4952,33 @@ test.describe("cell states", () => {
     });
   }
 
+  // The band changes at each phone edge, so it is checked just below and at
+  // each one, the headers' on the viewport and the grid's on the grid, as well
+  // as at the narrowest phone and two desktop widths: a fixed list missed the
+  // narrow desktop grid (#87). The headers' edge is a styles.css media query,
+  // so it has no constant to import.
+  const headerPhoneMaxWidth = 620;
+  const bandWidths: ({ viewport: number } | { grid: number })[] = [
+    { viewport: 320 },
+    { viewport: headerPhoneMaxWidth - 1 },
+    { viewport: headerPhoneMaxWidth },
+    { grid: phoneGridMaxWidth - 1 },
+    { grid: phoneGridMaxWidth },
+    { viewport: 960 },
+    { viewport: 1440 },
+  ];
   for (const theme of ["light", "dark"] as const) {
-    for (const width of [320, 660, 1440]) {
+    for (const width of bandWidths) {
+      const at =
+        "grid" in width
+          ? `on a ${width.grid}px grid`
+          : `at ${width.viewport}px`;
       for (const kind of ["items", "stories"] as const) {
-        test(`keep every top-band state of ${kind} clear of copy at ${width}px in ${theme}`, async ({
+        test(`keep every top-band state of ${kind} clear of copy ${at} in ${theme}`, async ({
           page,
         }) => {
-          await page.setViewportSize({ width, height: 9000 });
+          const viewport = "grid" in width ? width.grid : width.viewport;
+          await page.setViewportSize({ width: viewport, height: 9000 });
           await page.addInitScript(
             (theme) => localStorage.setItem("sema:theme", theme),
             theme,
@@ -4954,6 +4987,18 @@ test.describe("cell states", () => {
           const items = kind === "items" ? bandMatrix.items : [];
           await stubFrontPage(page, stories, items, []);
           await page.goto("/");
+          if ("grid" in width) {
+            // The grid is the viewport less any scrollbar.
+            const grid = page.locator(".grid-scroll");
+            const scrollbar =
+              viewport -
+              (await grid.evaluate((element) => element.clientWidth));
+            await resizeGrid(page, width.grid + scrollbar, 9000);
+            await expect(grid).toHaveAttribute(
+              "data-layout-width",
+              String(width.grid),
+            );
+          }
           await expect(page.locator(".grid-row > .grid-cell")).toHaveCount(
             stories.length + items.length,
           );
@@ -5147,7 +5192,7 @@ function topBandProblems(grid: Element): string[] {
     const id = cell.dataset.storyId ?? cell.dataset.itemId;
     const band = [
       ...cell.querySelectorAll(
-        ".cell-corner :is(.unread-dot, .cell-age, .cell-rank, .expiry-pill), .cell-actions button, .signal-mobile-chip, .kept-marker, .story-source-count, .story-stack-badge, .peek-pill > span",
+        ".cell-corner :is(.unread-dot, .cell-age, .cell-rank, .expiry-pill), .cell-actions button, .signal-mobile-chip, .kept-marker, .story-source-count, .peek-pill > span",
       ),
     ].filter(shown);
     const copy = [

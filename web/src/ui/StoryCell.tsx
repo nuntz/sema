@@ -154,7 +154,7 @@ export function StoryCell(props: StoryCellProps) {
     const target = event.target as HTMLElement;
     if (
       target.closest(
-        ".story-headlines, .story-actions, .cell-actions, .story-more, .story-stack-badge",
+        ".story-headlines, .story-actions, .cell-actions, .story-more",
       )
     )
       return;
@@ -281,18 +281,6 @@ export function StoryCell(props: StoryCellProps) {
                       <Icon name="keep" size={14} filled={true} />
                     </span>
                   </Show>
-                  {/* A phone two-up band has no room for it beside the Signal
-                      chip and the corner, so the feed line holds it (#84). */}
-                  <Show when={!props.phone}>
-                    <span
-                      class="story-stack-badge"
-                      role="img"
-                      aria-label={`${props.story.source_count} sources`}
-                    >
-                      <Icon name="stack" size={13} />
-                      <b>{props.story.source_count}</b>
-                    </span>
-                  </Show>
                   <PrimaryAction
                     item={item}
                     signal={cellSignal(item)}
@@ -311,9 +299,11 @@ export function StoryCell(props: StoryCellProps) {
                     onUndo={() => props.onSignal(item, 0)}
                     dimmed={leadReadVisuals().dimmed}
                     onApplyFeed={() => props.onApplyFeed(item)}
-                    sourceCount={
-                      props.phone ? props.story.source_count : undefined
-                    }
+                    // An M Story's band has no room for its Source count
+                    // beside the Signal markers, the corner and the Peek, on
+                    // a phone or a narrow desktop cell, so its feed line
+                    // holds it (#84, #87).
+                    sourceCount={props.story.source_count}
                   />
                   <PeekPill
                     item={item}

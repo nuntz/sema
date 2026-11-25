@@ -1047,14 +1047,11 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .story-more:hover { background: var(--surface-raised-hover); color: var(--fg-secondary); }
 .story-expand { position: absolute; right: 10px; bottom: 9px; z-index: 4; min-width: 28px; height: 24px; padding: 0 7px; border-radius: 5px; background: var(--story-badge-bg); color: var(--media-fg-secondary); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; }
 .story-expand:hover { color: var(--media-fg-primary); }
-/* The Source count chip: an M Story's own badge, or an L Story's in its badges. */
-.story-stack-badge,
+/* An L Story's Source count chip, in its badges. An M Story's ends its feed line. */
 .refined-grid .story-badges .story-source-count { height: 24px; padding: 0 7px; display: flex; align-items: center; gap: 4px; border-radius: 6px; background: var(--cell-label-bg); color: var(--cell-label-fg); font: 500 var(--type-chip)/1 "IBM Plex Mono", monospace; }
-.story-stack-badge { position: absolute; top: 7px; left: 7px; z-index: 4; pointer-events: none; transition: opacity 120ms ease-out; }
-.story-stack-badge b, .refined-grid .story-source-count b, .cell-source-count b { font: inherit; }
-.story-cell:has(.cell-actions button:focus-visible) .story-stack-badge { opacity: 0; }
+.refined-grid .story-source-count b, .cell-source-count b { font: inherit; }
 @media (hover: hover) {
-  .story-cell:hover .story-badges, .story-cell:hover .story-stack-badge { opacity: 0; }
+  .story-cell:hover .story-badges { opacity: 0; }
 }
 .end-of-feed { position: absolute; left: 16px; right: 16px; display: grid; place-items: center; border-top: 1px solid var(--hairline); text-align: center; }
 .end-of-feed.empty-grid { border-top: 0; }
@@ -2341,7 +2338,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid .grid-row > .grid-cell.size-m .cell-copy h2 { font: 700 17px/1.22 "Instrument Sans", sans-serif; -webkit-line-clamp: 2; }
 .refined-grid .grid-row > .grid-cell.size-s .cell-copy h2 { font: 700 15px/1.2 "Instrument Sans", sans-serif; -webkit-line-clamp: 2; }
 .refined-grid .grid-row > .grid-cell .cell-meta > :is(.unread-dot, .refined-age, .refined-read-label) { flex: none; }
-/* A phone two-up Story's Source count ends its feed line in the line's own
+/* An M Story's Source count ends its feed line in the line's own
    type, so the feed name, not the count, gives way (#84). */
 .cell-source-count { display: inline-flex; flex: none; align-items: center; gap: 3px; }
 .refined-grid .grid-row > .grid-cell:not(.text-cell) .cell-meta > .cell-source-count { color: var(--media-fg-secondary); }
@@ -2417,7 +2414,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .cell-feed-filter { flex: 0 1 auto; }
 .mobile-refined-grid .grid-row > .grid-cell.text-cell:not(.story-card) .age-separator { display: inline; }
 /* While a Signal, Kept or time-left marker sits in a text-only cell's top band,
-   the title starts under the band, as a desktop text Story's does under its
+   the title starts under the band, as a text L Story's does under its
    Source count. The corner then holds only the Signal label or time-left marker: the
    age and unread dot stay on the bottom line, and a time-left marker replaces
    that age. Markers keep to the band's one row, and on a phone the title gives
@@ -2509,8 +2506,8 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .mobile-refined-grid .grid-row > .grid-cell:not(.story-card):not(.text-cell):is(.size-m, .size-s):is([data-signal="1"], [data-signal="-1"]) .cell-copy h2 { -webkit-line-clamp: 2; }
 .mobile-refined-grid .grid-row > .grid-cell.story-card .story-lead h2 { font: 600 22px/1.18 "Instrument Sans", sans-serif; letter-spacing: -.016em; -webkit-line-clamp: 3; }
 
-/* A Story shows its Source count at the top left of the Lead (a phone two-up
-   Story ends its feed line with it instead, #84), and its Headline
+/* An L Story shows its Source count at the top left of the Lead (an M Story
+   ends its feed line with it instead, #84, #87), and its Headline
    strip sits directly under the Lead on the page surface. On a phone each
    strip is one 52px tap target: unread dot, feed name and age, then the
    Headline's title on one line. */
@@ -2521,13 +2518,10 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 /* The Source count moves right of a pressed Boost, Bury or Keep, as it moves
    right of the phone Signal chip, and right of a phone Kept marker. */
 .refined-grid:where(:not(.mobile-refined-grid)) .story-cell { --cell-action-step: calc(var(--cell-action-size) + var(--cell-action-gap)); }
-.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .boost[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + var(--cell-action-step)); }
-.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .bury[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + 2 * var(--cell-action-step)); }
-.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .heart[aria-pressed="true"]):has(.signal-actions :is(.boost, .bury)[aria-pressed="true"]) :is(.story-badges, .story-stack-badge) { left: calc(var(--cell-inset) + 3 * var(--cell-action-step)); }
-.mobile-refined-grid .story-cell:has(> .kept-marker):not(:has(.signal-mobile-chip)) :is(.story-badges, .story-stack-badge) { left: 28px; }
-/* A phone two-up Story's count is on its feed line, so on a phone its band
-   clears only the markers an Item's does (#84). */
-.refined-grid:not(.mobile-refined-grid) .grid-row > .grid-cell.text-cell.story-cell .cell-copy { padding-top: var(--cell-badge-clear); }
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .boost[aria-pressed="true"]) .story-badges { left: calc(var(--cell-inset) + var(--cell-action-step)); }
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .bury[aria-pressed="true"]) .story-badges { left: calc(var(--cell-inset) + 2 * var(--cell-action-step)); }
+.refined-grid:where(:not(.mobile-refined-grid)) .story-cell:has(.signal-actions .heart[aria-pressed="true"]):has(.signal-actions :is(.boost, .bury)[aria-pressed="true"]) .story-badges { left: calc(var(--cell-inset) + 3 * var(--cell-action-step)); }
+.mobile-refined-grid .story-cell:has(> .kept-marker):not(:has(.signal-mobile-chip)) .story-badges { left: 28px; }
 /* A Headline strip's unread dot leads its feed name and age line. */
 .refined-grid:not(.mobile-refined-grid) .story-headline.related-angle > .unread-dot { margin-top: 4px; }
 .mobile-refined-grid .story-card .story-headlines { border-top: 0; }
@@ -2693,7 +2687,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .refined-grid.keyboard-focus .grid-cell.focused[data-signal],
 .refined-grid .grid-row > .grid-cell[data-signal]:has(:is(.cell-main, .story-lead):focus-visible) { outline-color: var(--signal-focus); }
 
-.mobile-refined-grid .grid-cell:has(.signal-mobile-chip) :is(.story-badges, .story-stack-badge) { left: 42px; }
+.mobile-refined-grid .grid-cell:has(.signal-mobile-chip) .story-badges { left: 42px; }
 .signal-why { display: flex; align-items: baseline; min-width: 0; }
 .signal-why-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .signal-why-undo { flex: none; white-space: pre; }
