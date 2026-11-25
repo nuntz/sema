@@ -1751,7 +1751,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 
 @media (max-width: 700px) {
   /* The phone type scale; a phone grid sets the same scale on itself below,
-     since it can be wider than this. Change both together. */
+     since it can be wider than this. styles-tokens.test.ts holds them equal. */
   :root {
     --type-xs: 0.875rem;
     --type-sm: 1rem;

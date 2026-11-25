@@ -37,6 +37,7 @@ export default defineConfig({
   },
   webServer: {
     command: `bun run dev --host 127.0.0.1 --port ${port} --strictPort`,
+    env: { SEMA_E2E_SERVER: "1" },
     url: `${origin}/e2e/header-fixture.html`,
     reuseExistingServer: false,
   },

@@ -53,6 +53,9 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       proxy: { "/api": env.SEMA_API_ORIGIN || "http://localhost:8787" },
+      // An e2e run serves the code it started with, so an edit made during
+      // the run can't hot-reload into a test that is measuring the page.
+      ...(env.SEMA_E2E_SERVER ? { hmr: false, watch: null } : {}),
     },
     build: { target: "es2022" },
     test: { environment: "node" },
