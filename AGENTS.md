@@ -10,7 +10,7 @@ Change an `R#` marker and its `unread_pk` in one transaction conditioned on the 
 
 Per-user caching and its version rows live in the Request snapshot (`cmd/api/internal/requestsnapshot`); see ADRs 0005–0007.
 
-Whether a surface moves depends on the input behind it (`web/src/input-modality.ts`, #88); besides `styles.css`, the Peeks and the Dock animate through `element.animate` in `Lightbox.tsx` and `VideoStage.tsx`.
+Whether a surface moves depends on the input behind it (`web/src/input-modality.ts`, #88). A surface's motion is split between `styles.css` (transitions and keyframes) and `element.animate` in `Lightbox.tsx` and `VideoStage.tsx`, so gating one leaves the other running.
 
 Video playback keeps one fixed iframe host positioned over its slot, because moving the iframe reloads it; read `docs/adr/0003-video-dock-fixed-iframe-host.md` before changing the Peek, the reader's player, or the Dock.
 

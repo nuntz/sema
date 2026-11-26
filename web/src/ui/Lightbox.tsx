@@ -205,8 +205,7 @@ export function Lightbox(props: {
     swipeTarget = undefined;
     const target = imageIndex(next, 0, props.images.length);
     if (target === index()) {
-      // The bump at either end stays for a key too (#89): it opens or closes
-      // nothing and delays nothing, and it is the only sign the key was heard.
+      // Stays for a key too (input-modality.ts).
       if (!reduced() && props.images.length > 1)
         frame.animate(
           [

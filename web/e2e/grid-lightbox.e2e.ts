@@ -1,4 +1,8 @@
-import { animationsFinished, animationTimeline } from "./animations";
+import {
+  animationsFinished,
+  animationTimeline,
+  startedAnimations,
+} from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { openReader } from "./reader";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
@@ -196,7 +200,10 @@ test("the image Peek moves for a pointer, not a key", async ({ page }) => {
   await expect(overlay).toBeVisible();
   await expect.poll(offFinal).toEqual([0, 0, 0, 0]);
   await expect.poll(opacity).toBe("1");
-  await expect.poll(chromeOpacity).toBe("1");
+  // Only the sharp image's fade as it loads, which is no motion of the Peek's.
+  await expect
+    .poll(() => startedAnimations(overlay, { except: [".lb-sharp"] }))
+    .toEqual([]);
   await watchClose();
   await page.keyboard.press("Escape");
   await expect.poll(lingered).toBe(false);

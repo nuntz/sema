@@ -33,8 +33,11 @@ export function createInputModality(target: EventTarget = window) {
      * delay; with no input yet, it stays put. */
     slidesCoreNavigation: () => last === "touch",
     /** An occasional surface, a Peek, the reader's image lightbox or the
-     * Dock, moves for any pointer and never for a key; with no input yet, it
-     * moves. */
+     * Dock, opens, closes, Docks and Expands with motion for any pointer and
+     * in place for a key; with no input yet, it moves. Motion that isn't the
+     * surface's own stays for a key: the bump when a key reaches either end
+     * of a Peek's images, the only sign it was heard, and an image's fade as
+     * its sharp version loads (#89). */
     movesOccasionalSurface: () => last !== "keyboard",
     dispose() {
       target.removeEventListener("keydown", onKey, capture);
