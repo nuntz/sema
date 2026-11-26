@@ -1,5 +1,9 @@
 import { phoneViewportMaxWidth } from "../src/viewport";
-import { animationsFinished, animationTimeline } from "./animations";
+import {
+  animationsFinished,
+  animationTimeline,
+  startedAnimations,
+} from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { expect, type Page, test } from "./test";
 import { logPlayerStates, seekPlayer, stubYouTube } from "./youtube-stub";
@@ -101,13 +105,16 @@ test("the video Peek's scrim and stage move for a pointer, not a key", async ({
       return Math.round(window.innerWidth - box.right);
     });
 
+  const layer = page.locator(".video-layer");
   await hold(true);
   await page.keyboard.press("i");
   await expect(page.locator(".video-peek")).toBeVisible();
+  await expect.poll(() => startedAnimations(layer)).toEqual([]);
   await expect.poll(opacity).toBe("1");
   await expect(player(page)).toHaveAttribute("data-state", "1");
   await page.keyboard.press("Escape");
   await expect(docked(page)).toBeVisible();
+  await expect.poll(() => startedAnimations(layer)).toEqual([]);
   await expect.poll(opacity).toBe("0");
   await expect.poll(rightGap).toBe(20);
 

@@ -3,6 +3,6 @@ language js
 `$element.getAnimations($...)` where {
   register_diagnostic(
     span = $element,
-    message = "Wait with animationsFinished (e2e/animations.ts). It polls, so an animation that starts after the call still counts, and it skips infinite and paused ones."
+    message = "Wait with animationsFinished, or list what a step started with startedAnimations (e2e/animations.ts). animationsFinished polls, so an animation that starts after the call still counts, and it skips infinite and paused ones."
   )
 }

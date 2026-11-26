@@ -7,7 +7,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
  * call it once the change that starts the animation is visible. Infinite and
  * paused animations never finish and are skipped. `subtree` includes
  * descendants; `page.locator("html")` with `subtree` covers the document.
- * `bun run lint` keeps `getAnimations` here (no-raw-get-animations.grit). */
+ * `bun run lint` keeps `getAnimations` in this file (no-raw-get-animations.grit). */
 export async function animationsFinished(
   locator: Locator,
   { subtree = false } = {},
@@ -16,7 +16,7 @@ export async function animationsFinished(
     .poll(() =>
       locator.evaluate(
         (element, subtree) =>
-          // biome-ignore lint/plugin: this is the one place specs read animations.
+          // biome-ignore lint/plugin: this and startedAnimations are the only places specs read animations.
           element
             .getAnimations({ subtree })
             .filter(
@@ -28,6 +28,48 @@ export async function animationsFinished(
       ),
     )
     .toBe(0);
+}
+
+/** Every animation on `locator` and its descendants, each as "what on which
+ * element": a CSS animation's name, `transition:<property>`, or `animate()`
+ * for one started from script, then the target's classes. A test proving a
+ * surface opens in place polls this for the full list with the timeline held
+ * (`animationTimeline`), rather than the properties its author thought of: a
+ * held animation stays listed, whatever element and property it moves (#89).
+ * `except` names selectors whose motion isn't the surface's, such as an image
+ * that fades in once it loads. Infinite animations, such as a spinner, are
+ * skipped, as in `animationsFinished`. Poll for the list the step settles on:
+ * a timer the page runs, such as the Lightbox's idle dimming after 3s, adds
+ * its own transitions to a poll that runs that long. */
+export function startedAnimations(
+  locator: Locator,
+  { except = [] as string[] } = {},
+) {
+  return locator.evaluate((element, except) => {
+    const describe = (animation: Animation) => {
+      if (animation instanceof CSSAnimation) return animation.animationName;
+      if (animation instanceof CSSTransition)
+        return `transition:${animation.transitionProperty}`;
+      return "animate()";
+    };
+    return (
+      // biome-ignore lint/plugin: this and animationsFinished are the only places specs read animations.
+      element
+        .getAnimations({ subtree: true })
+        .filter(
+          (animation) => animation.effect?.getTiming().iterations !== Infinity,
+        )
+        .flatMap((animation) => {
+          const target = (animation.effect as KeyframeEffect | null)?.target;
+          if (!target || except.some((selector) => target.matches(selector)))
+            return [];
+          return [
+            `${describe(animation)} on .${[...target.classList].join(".")}`,
+          ];
+        })
+        .sort()
+    );
+  }, except);
 }
 
 /** Freezes the page's animation timeline (`hold(true)`) or lets it run again,

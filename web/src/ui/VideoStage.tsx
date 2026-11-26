@@ -105,7 +105,12 @@ function Stage(props: {
       // Moving or in place, the scrim follows the stage.
       const mayAnimate = props.mayAnimate();
       layer.toggleAttribute("data-instant", !mayAnimate);
+      // The Dock's `bottom` transition rides the reader's toolbar; the switch
+      // itself lands at once, then moves only by the FLIP below.
+      stage.style.transition = "none";
       stage.dataset.mode = next;
+      stage.getBoundingClientRect();
+      stage.style.transition = "";
       syncTabbable();
       if (
         !mayAnimate ||
