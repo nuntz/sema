@@ -1,5 +1,9 @@
 import { phoneViewportMaxWidth } from "../src/viewport";
-import { animationsFinished } from "./animations";
+import {
+  animationsFinished,
+  animationTimeline,
+  startedAnimations,
+} from "./animations";
 import { openReader } from "./reader";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
 import { expect, type Page, test } from "./test";
@@ -79,6 +83,125 @@ for (const width of [1280, 390]) {
     await expect(page.locator(".reader")).toHaveCount(0);
   });
 }
+
+// The reader's image lightbox follows the Peek's policy (input-modality.ts):
+// a pointer grows it from its image and shrinks it back, a key opens and
+// closes it in place. Written like grid-lightbox's `the image Peek moves for
+// a pointer, not a key`: each step holds the animation timeline, so its polls
+// read the first frame of whatever it started, and a close is read in the
+// microtask after the task that closed it, where a lightbox leaving in place
+// has already unmounted and one that animates is still waiting out its shrink.
+test("the reader's image lightbox moves for a pointer, not a key", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.goto("/e2e/header-fixture.html?view=reader&lightbox=1");
+  const hold = await animationTimeline(page);
+  const origin = page.locator(".article-body img.lb-openable").first();
+  await origin.scrollIntoViewIfNeeded();
+  const overlay = page.locator(".lb-overlay");
+  const frame = page.locator(".lb-frame");
+  const opacity = () =>
+    page
+      .locator(".lb-scrim")
+      .evaluate((element) => getComputedStyle(element).opacity);
+  // The top bar, whose entrance waits for a grow to land.
+  const chromeOpacity = () =>
+    page
+      .locator(".lb-top")
+      .evaluate((element) => getComputedStyle(element).opacity);
+  // How far the frame's painted box sits from its laid-out one: zero once
+  // nothing transforms it.
+  const offFinal = () =>
+    frame.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const laidOut = element as HTMLElement;
+      return [
+        box.left - laidOut.offsetLeft,
+        box.top - laidOut.offsetTop,
+        box.width - laidOut.offsetWidth,
+        box.height - laidOut.offsetHeight,
+      ].map((value) => Math.round(value) || 0);
+    });
+  // The frame's painted box against the article's image, which a growing
+  // open starts from.
+  const offOrigin = () =>
+    page.evaluate(() => {
+      const frame = document.querySelector(".lb-frame");
+      const from = document.querySelector(".article-body img.lb-openable");
+      if (!frame || !from) return "missing the frame or the article's image";
+      const box = frame.getBoundingClientRect();
+      const image = from.getBoundingClientRect();
+      return [
+        box.left - image.left,
+        box.top - image.top,
+        box.width - image.width,
+        box.height - image.height,
+      ].map((value) => Math.round(value) || 0);
+    });
+  const watchClose = () =>
+    page.evaluate(() => {
+      const record = window as Window & { lightboxLingered?: boolean };
+      record.lightboxLingered = undefined;
+      const observer = new MutationObserver((records) => {
+        observer.disconnect();
+        record.lightboxLingered = records[0].target.isConnected;
+      });
+      observer.observe(document.body, {
+        subtree: true,
+        attributeFilter: ["data-closing"],
+      });
+    });
+  const lingered = () =>
+    page.evaluate(
+      () =>
+        (window as Window & { lightboxLingered?: boolean }).lightboxLingered,
+    );
+
+  await hold(true);
+  await origin.focus();
+  await origin.press("Enter");
+  await expect(overlay).toBeVisible();
+  await expect.poll(offFinal).toEqual([0, 0, 0, 0]);
+  await expect.poll(opacity).toBe("1");
+  // Only the sharp image's fade as it loads, which is no motion of the
+  // lightbox's.
+  await expect
+    .poll(() => startedAnimations(overlay, { except: [".lb-sharp"] }))
+    .toEqual([]);
+  // Only the caption a key opens on arrives in place: the next image's
+  // caption still crossfades in (an unclassed <p>) as a key reaches it.
+  await page.keyboard.press("j");
+  await expect(page.locator(".lb-counter")).toHaveText("2 / 3");
+  await expect
+    .poll(() => startedAnimations(page.locator(".lb-caption")))
+    .toContain("lb-fade on .");
+  await watchClose();
+  await page.keyboard.press("Escape");
+  await expect.poll(lingered).toBe(false);
+  await expect(overlay).toHaveCount(0);
+  await expect(origin).toBeFocused();
+
+  await origin.click();
+  await expect(overlay).toBeVisible();
+  await expect.poll(offOrigin).toEqual([0, 0, 0, 0]);
+  await expect.poll(opacity).toBe("0");
+  await expect.poll(chromeOpacity).toBe("0");
+  await hold(false);
+  await animationsFinished(overlay, { subtree: true });
+  await expect.poll(offFinal).toEqual([0, 0, 0, 0]);
+  await expect.poll(opacity).toBe("1");
+
+  await hold(true);
+  await watchClose();
+  await page
+    .getByRole("button", { name: "Close lightbox", exact: true })
+    .click();
+  await expect.poll(lingered).toBe(true);
+  await hold(false);
+  await expect(overlay).toHaveCount(0);
+  await expect(origin).toBeFocused();
+});
 
 test("desktop zoom, help, body failure and inline keyboard entry", async ({
   page,

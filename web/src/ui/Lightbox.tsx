@@ -65,6 +65,8 @@ export function Lightbox(props: {
   // A pointer grows the image from its cell, the chrome landing with it; a
   // key opens it all in place.
   const opensInPlace = !props.mayAnimate();
+  // Set once the Lightbox mounts, so only the caption it opens on is in place.
+  let opened = false;
   let swipeTarget: number | undefined;
   let dialog!: HTMLDivElement;
   let frame!: HTMLDivElement;
@@ -389,6 +391,7 @@ export function Lightbox(props: {
     }
   };
   onMount(() => {
+    opened = true;
     const siblings = Array.from(document.body.children).filter(
       (element): element is HTMLElement =>
         element instanceof HTMLElement && !element.contains(dialog),
@@ -811,7 +814,16 @@ export function Lightbox(props: {
         <Show when={caption() || previousCaption() || phone()}>
           <footer class="lb-caption lb-chrome" ref={trackCaptionHeight}>
             <Show when={caption()} keyed>
-              {(text) => <p id="lb-caption">{text}</p>}
+              {(text) => {
+                // The caption a key opens on arrives in place; a later one
+                // still crossfades with the caption it replaces (#89, #90).
+                const inPlace = opensInPlace && !opened;
+                return (
+                  <p id="lb-caption" data-in-place={inPlace ? "" : undefined}>
+                    {text}
+                  </p>
+                );
+              }}
             </Show>
             <Show when={previousCaption()}>
               {(text) => (
