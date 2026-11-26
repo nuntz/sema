@@ -25,6 +25,9 @@ import {
 export function Lightbox(props: {
   images: LightboxImage[];
   initialIndex: number;
+  /** Whether opening or closing now may move (input-modality.ts): a key
+   * opens and closes it in place, scrim included. */
+  mayAnimate(): boolean;
   onClose(): void;
   onOpenReader?(): void;
 }) {
@@ -59,6 +62,9 @@ export function Lightbox(props: {
   const [closing, setClosing] = createSignal(false);
   const [dragging, setDragging] = createSignal(false);
   const [rebasing, setRebasing] = createSignal(false);
+  // A pointer grows the image from its cell, the chrome landing with it; a
+  // key opens it all in place.
+  const opensInPlace = !props.mayAnimate();
   let swipeTarget: number | undefined;
   let dialog!: HTMLDivElement;
   let frame!: HTMLDivElement;
@@ -155,7 +161,13 @@ export function Lightbox(props: {
     closeOverlay("lightbox");
     return true;
   };
-  const close = (dismiss = false) =>
+  // A key closes in place and hands over at once, as the reader's in-place
+  // close skips READER_EXIT_MS.
+  const close = (dismiss = false) => {
+    if (!props.mayAnimate()) {
+      if (leave()) props.onClose();
+      return;
+    }
     leave(() => {
       const duration = reduced() ? (dismiss ? 0 : 90) : dismiss ? 200 : 140;
       const destination = origin.getBoundingClientRect();
@@ -181,6 +193,7 @@ export function Lightbox(props: {
       );
       closeTimer = window.setTimeout(props.onClose, duration);
     });
+  };
   // A Flip's reader takes the Peek's place at once, so nothing flies back to
   // the cell: the Peek unmounts as the reader opens.
   const openReader = () => {
@@ -192,6 +205,8 @@ export function Lightbox(props: {
     swipeTarget = undefined;
     const target = imageIndex(next, 0, props.images.length);
     if (target === index()) {
+      // The bump at either end stays for a key too (#89): it opens or closes
+      // nothing and delays nothing, and it is the only sign the key was heard.
       if (!reduced() && props.images.length > 1)
         frame.animate(
           [
@@ -417,26 +432,28 @@ export function Lightbox(props: {
     resize?.observe(dialog);
     const from = origin.getBoundingClientRect();
     const to = rect();
-    frame.animate(
-      reduced()
-        ? [{ opacity: 0 }, { opacity: 1 }]
-        : [
-            {
-              transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`,
-              transformOrigin: "0 0",
-              borderRadius: "4px",
-            },
-            {
-              transform: "none",
-              transformOrigin: "0 0",
-              borderRadius: "0px",
-            },
-          ],
-      { duration: reduced() ? 90 : 180, easing: "cubic-bezier(.2,.8,.25,1)" },
-    );
-    scrim.animate([{ opacity: 0 }, { opacity: 1 }], {
-      duration: reduced() ? 90 : 180,
-    });
+    if (!opensInPlace) {
+      frame.animate(
+        reduced()
+          ? [{ opacity: 0 }, { opacity: 1 }]
+          : [
+              {
+                transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`,
+                transformOrigin: "0 0",
+                borderRadius: "4px",
+              },
+              {
+                transform: "none",
+                transformOrigin: "0 0",
+                borderRadius: "0px",
+              },
+            ],
+        { duration: reduced() ? 90 : 180, easing: "cubic-bezier(.2,.8,.25,1)" },
+      );
+      scrim.animate([{ opacity: 0 }, { opacity: 1 }], {
+        duration: reduced() ? 90 : 180,
+      });
+    }
     onCleanup(() => {
       resize?.disconnect();
       window.removeEventListener("keydown", onKey, true);
@@ -604,6 +621,7 @@ export function Lightbox(props: {
         data-closing={closing() ? "" : undefined}
         data-dragging={dragging() ? "" : undefined}
         data-rebasing={rebasing() ? "" : undefined}
+        data-instant={opensInPlace ? "" : undefined}
         onPointerDown={pointerDown}
         onPointerMove={pointerMove}
         onPointerUp={pointerEnd}

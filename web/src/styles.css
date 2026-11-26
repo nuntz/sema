@@ -1370,6 +1370,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .lb-counter, .lb-ratio { display: flex; align-items: center; height: 44px; padding: 0 14px; border-radius: 8px; background: var(--lb-control); backdrop-filter: blur(14px); font: 500 13px/1 "IBM Plex Mono", monospace; letter-spacing: .04em; white-space: nowrap; }
 .lb-ratio { color: var(--media-fg-secondary); }
 .lb-chrome, .lb-nav { transition: opacity 160ms linear; animation: lb-chrome-in 180ms linear; }
+.lb-overlay[data-instant] :is(.lb-chrome, .lb-nav) { animation: none; }
 .lb-overlay[data-closing] :is(.lb-chrome, .lb-zone, .lb-dots, .lb-strip, .lb-minimap, .lb-help) { opacity: 0; pointer-events: none; }
 .lb-caption { position: absolute; bottom: 0; left: 0; right: 0; padding: 24px 20px 26px; pointer-events: none; }
 .lb-caption p { max-width: 640px; margin: 0 auto; text-align: center; color: #c7ccd3; font: 400 14px/1.55 "Instrument Sans", sans-serif; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; animation: lb-fade 120ms linear; }

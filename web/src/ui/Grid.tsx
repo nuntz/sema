@@ -113,6 +113,8 @@ interface GridProps {
   actions: GridActions;
   /** Names the Send action; absent when the user has no enabled Destination. */
   sendLabel?: string;
+  /** Whether the image Peek opening or closing now may move (input-modality.ts). */
+  peekMayAnimate(): boolean;
   onPassed(geometry: ReadGeometry): void;
   onFinishAndClear(): void;
   onReachedEnd(): void;
@@ -1750,6 +1752,7 @@ function GridContent(props: GridProps) {
           <Lightbox
             images={state().images}
             initialIndex={state().index}
+            mayAnimate={props.peekMayAnimate}
             onClose={closePeek}
             onOpenReader={
               redditPrimaryRoute(state().item).kind === "external"

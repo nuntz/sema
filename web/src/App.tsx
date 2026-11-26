@@ -1749,6 +1749,7 @@ export function App(props: {
               <Grid
                 model={gridModel()}
                 sendLabel={sendLabel() ?? undefined}
+                peekMayAnimate={inputModality.movesOccasionalSurface}
                 pendingNewCount={pendingNew().length}
                 layout={{
                   scrollTarget: scrollTarget(),
@@ -1872,6 +1873,7 @@ export function App(props: {
                 closing={readerClosing()}
                 enteredInPlace={readerEnteredInPlace()}
                 leavesInPlace={readerLeavesInPlace()}
+                lightboxMayAnimate={inputModality.movesOccasionalSurface}
                 onClose={closeReader}
                 onReveal={(progress, dragging) => {
                   setReaderReveal(progress);

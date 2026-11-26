@@ -32,8 +32,9 @@ export function createInputModality(target: EventTarget = window) {
      * lands. A key or a mouse repeats it all day, so any slide reads as
      * delay; with no input yet, it stays put. */
     slidesCoreNavigation: () => last === "touch",
-    /** An occasional surface, a Peek or the Dock, moves for any pointer and
-     * never for a key; with no input yet, it moves. */
+    /** An occasional surface, a Peek, the reader's image lightbox or the
+     * Dock, moves for any pointer and never for a key; with no input yet, it
+     * moves. */
     movesOccasionalSurface: () => last !== "keyboard",
     dispose() {
       target.removeEventListener("keydown", onKey, capture);

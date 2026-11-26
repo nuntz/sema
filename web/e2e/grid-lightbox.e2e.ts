@@ -1,3 +1,4 @@
+import { animationsFinished, animationTimeline } from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { openReader } from "./reader";
 import { activateStandalone, rootTint, simulateStatusBar } from "./standalone";
@@ -120,6 +121,108 @@ for (const method of ["key", "button"]) {
     await expect(cell).toHaveClass(/is-read/);
   });
 }
+
+// A pointer grows the image Peek from its cell and shrinks it back; a key
+// opens and closes it in place, scrim included (input-modality.ts), as the
+// video Peek does. Each step holds the animation timeline, so its polls read
+// the first frame of whatever it started, and a move or fade that ran would
+// hold there. A close's last frame is the Peek gone, so a close is read where
+// it starts: in the microtask after the task that closed it, a Peek leaving in
+// place has already unmounted, while one that animates waits out its motion.
+test("the image Peek moves for a pointer, not a key", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  const { cell } = await openGrid(page);
+  const hold = await animationTimeline(page);
+  const overlay = page.locator(".lb-overlay");
+  const frame = page.locator(".lb-frame");
+  const opacity = () =>
+    page
+      .locator(".lb-scrim")
+      .evaluate((element) => getComputedStyle(element).opacity);
+  // The top bar, whose entrance waits for a grow to land.
+  const chromeOpacity = () =>
+    page
+      .locator(".lb-top")
+      .evaluate((element) => getComputedStyle(element).opacity);
+  // How far the frame's painted box sits from its laid-out one: zero once
+  // nothing transforms it.
+  const offFinal = () =>
+    frame.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const laidOut = element as HTMLElement;
+      return [
+        box.left - laidOut.offsetLeft,
+        box.top - laidOut.offsetTop,
+        box.width - laidOut.offsetWidth,
+        box.height - laidOut.offsetHeight,
+      ].map((value) => Math.round(value) || 0);
+    });
+  // The frame's painted box against the cell's image, which a growing open
+  // starts from.
+  const offCell = () =>
+    page.evaluate(() => {
+      const frame = document.querySelector(".lb-frame");
+      const origin = document.querySelector('[data-item-id="peek"] img');
+      if (!frame || !origin) return "missing the frame or the cell's image";
+      const box = frame.getBoundingClientRect();
+      const from = origin.getBoundingClientRect();
+      return [
+        box.left - from.left,
+        box.top - from.top,
+        box.width - from.width,
+        box.height - from.height,
+      ].map((value) => Math.round(value) || 0);
+    });
+  const watchClose = () =>
+    page.evaluate(() => {
+      const record = window as Window & { peekLingered?: boolean };
+      record.peekLingered = undefined;
+      const observer = new MutationObserver((records) => {
+        observer.disconnect();
+        record.peekLingered = records[0].target.isConnected;
+      });
+      observer.observe(document.body, {
+        subtree: true,
+        attributeFilter: ["data-closing"],
+      });
+    });
+  const lingered = () =>
+    page.evaluate(
+      () => (window as Window & { peekLingered?: boolean }).peekLingered,
+    );
+
+  await hold(true);
+  await page.keyboard.press("i");
+  await expect(overlay).toBeVisible();
+  await expect.poll(offFinal).toEqual([0, 0, 0, 0]);
+  await expect.poll(opacity).toBe("1");
+  await expect.poll(chromeOpacity).toBe("1");
+  await watchClose();
+  await page.keyboard.press("Escape");
+  await expect.poll(lingered).toBe(false);
+  await expect(overlay).toHaveCount(0);
+  await expect(cell.locator(".cell-main")).toBeFocused();
+
+  await cell.hover();
+  await cell.locator(".peek-pill").click();
+  await expect(overlay).toBeVisible();
+  await expect.poll(offCell).toEqual([0, 0, 0, 0]);
+  await expect.poll(opacity).toBe("0");
+  await expect.poll(chromeOpacity).toBe("0");
+  await hold(false);
+  await animationsFinished(overlay, { subtree: true });
+  await expect.poll(offFinal).toEqual([0, 0, 0, 0]);
+  await expect.poll(opacity).toBe("1");
+
+  await hold(true);
+  await watchClose();
+  await page
+    .getByRole("button", { name: "Close lightbox", exact: true })
+    .click();
+  await expect.poll(lingered).toBe(true);
+  await hold(false);
+  await expect(overlay).toHaveCount(0);
+});
 
 // A Flip's reader takes the Peek's place: it doesn't slide in from the side,
 // even for the touch that would slide any other open in (input-modality.ts).

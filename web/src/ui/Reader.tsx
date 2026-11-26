@@ -99,6 +99,8 @@ interface ReaderProps {
   enteredInPlace: boolean;
   /** Leaves without its slide-out (input-modality.ts). */
   leavesInPlace: boolean;
+  /** Whether the image lightbox opening or closing now may move (input-modality.ts). */
+  lightboxMayAnimate(): boolean;
   onClose(): void;
   onReveal(progress: number, dragging: boolean): void;
   onHome(): void;
@@ -1549,6 +1551,7 @@ export function Reader(props: ReaderProps) {
           <Lightbox
             images={state().images}
             initialIndex={state().index}
+            mayAnimate={props.lightboxMayAnimate}
             onClose={() => setLightbox(undefined)}
           />
         )}

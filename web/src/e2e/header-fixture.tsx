@@ -1,10 +1,11 @@
 // biome-ignore-all lint/a11y/useSemanticElements: The fixture mirrors the required button-based radio controls.
 
-import { createSignal, For, Show } from "solid-js";
+import { createSignal, For, onCleanup, Show } from "solid-js";
 import { render } from "solid-js/web";
 import { APIClient } from "../api/client";
 import { AppHeader } from "../components/AppHeader";
 import { Icon } from "../components/Icon";
+import { createInputModality } from "../input-modality";
 import { ITEM_WINDOWS } from "../item-view";
 import { createMediaQuery } from "../media-query";
 import type { Item } from "../types";
@@ -180,6 +181,9 @@ function GridHeaderFixture() {
 
 function ReaderFixture() {
   const [open, setOpen] = createSignal(true);
+  // The image lightbox follows the app's motion policy, as under App.
+  const inputModality = createInputModality();
+  onCleanup(() => inputModality.dispose());
   if (parameters.has("lightbox")) pushOverlay("reader", () => setOpen(false));
   const media = parameters.get("media");
   const reddit = parameters.get("reddit");
@@ -247,6 +251,7 @@ function ReaderFixture() {
         closing={false}
         enteredInPlace={false}
         leavesInPlace={false}
+        lightboxMayAnimate={inputModality.movesOccasionalSurface}
         onClose={() => {
           if (parameters.has("lightbox")) setOpen(false);
         }}
