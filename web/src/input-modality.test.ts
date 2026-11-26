@@ -69,8 +69,13 @@ describe("input modality", () => {
     const modality = createInputModality(target);
     modality.dispose();
 
-    target.dispatchEvent(new Event("keydown"));
-    target.dispatchEvent(new Event("touchstart"));
-    expect(modality.last()).toBeUndefined();
+    for (const event of [
+      new Event("keydown"),
+      pointerDown("touch"),
+      new Event("touchstart"),
+    ]) {
+      target.dispatchEvent(event);
+      expect(modality.last(), event.type).toBeUndefined();
+    }
   });
 });

@@ -18,10 +18,12 @@ export function createInputModality(target: EventTarget = window) {
   const onTouch = () => {
     last = "touch";
   };
-  target.addEventListener("keydown", onKey, true);
-  target.addEventListener("pointerdown", onPointer, true);
-  // Removal passes the same options, which some runtimes need to match it.
+  // Each removal passes the options object its listener was added with:
+  // Node 24's EventTarget keeps a capture listener removed with `true`.
+  const capture = { capture: true };
   const touchOptions = { capture: true, passive: true };
+  target.addEventListener("keydown", onKey, capture);
+  target.addEventListener("pointerdown", onPointer, capture);
   target.addEventListener("touchstart", onTouch, touchOptions);
   return {
     last: () => last,
@@ -34,8 +36,8 @@ export function createInputModality(target: EventTarget = window) {
      * never for a key; with no input yet, it moves. */
     movesOccasionalSurface: () => last !== "keyboard",
     dispose() {
-      target.removeEventListener("keydown", onKey, true);
-      target.removeEventListener("pointerdown", onPointer, true);
+      target.removeEventListener("keydown", onKey, capture);
+      target.removeEventListener("pointerdown", onPointer, capture);
       target.removeEventListener("touchstart", onTouch, touchOptions);
     },
   };
