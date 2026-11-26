@@ -20,10 +20,9 @@ export function createInputModality(target: EventTarget = window) {
   };
   target.addEventListener("keydown", onKey, true);
   target.addEventListener("pointerdown", onPointer, true);
-  target.addEventListener("touchstart", onTouch, {
-    capture: true,
-    passive: true,
-  });
+  // Removal passes the same options, which some runtimes need to match it.
+  const touchOptions = { capture: true, passive: true };
+  target.addEventListener("touchstart", onTouch, touchOptions);
   return {
     last: () => last,
     /** Core navigation, the reader, slides only for touch: its swipe-back
@@ -37,7 +36,7 @@ export function createInputModality(target: EventTarget = window) {
     dispose() {
       target.removeEventListener("keydown", onKey, true);
       target.removeEventListener("pointerdown", onPointer, true);
-      target.removeEventListener("touchstart", onTouch, true);
+      target.removeEventListener("touchstart", onTouch, touchOptions);
     },
   };
 }
