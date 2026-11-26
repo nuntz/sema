@@ -27,6 +27,7 @@ import { storyCursorID } from "./cursor";
 import { feedbackPatch } from "./feedback";
 import { createGridModel } from "./grid-model";
 import { effectiveGridOrder, sameGridScope } from "./grid-scope";
+import { createInputModality } from "./input-modality";
 import { createItemSession } from "./item-session";
 import { ITEM_WINDOWS, type ItemWindow, scopeSummary } from "./item-view";
 import {
@@ -136,6 +137,13 @@ export function App(props: {
   const [readerClosing, setReaderClosing] = createSignal(false);
   const [readerReveal, setReaderReveal] = createSignal(0);
   const [readerDragging, setReaderDragging] = createSignal(false);
+  // How the reader came in and how it leaves, each settled once at its
+  // moment (input-modality.ts holds the policy). Entering in place holds
+  // for the reader's whole visit, or a swipe would restart its slide-in.
+  const [readerEnteredInPlace, setReaderEnteredInPlace] = createSignal(false);
+  const [readerLeavesInPlace, setReaderLeavesInPlace] = createSignal(false);
+  const inputModality = createInputModality();
+  onCleanup(() => inputModality.dispose());
   const [confirmRemove, setConfirmRemove] = createSignal<Item>();
   const [keysOpen, setKeysOpen] = createSignal(false);
   const [characterShortcuts, setCharacterShortcuts] = createSignal(
@@ -775,6 +783,7 @@ export function App(props: {
     setReaderID("");
     setReaderItem();
     setReaderClosing(false);
+    setReaderLeavesInPlace(false);
     setReaderReveal(0);
     setReaderDragging(false);
   };
@@ -782,13 +791,15 @@ export function App(props: {
   const beginReaderClose = (popHistory: boolean) => {
     if (!readerID() || readerClosing()) return;
     if (popHistory) closeOverlay("reader");
+    const inPlace = !inputModality.slidesCoreNavigation();
+    setReaderLeavesInPlace(inPlace);
     setReaderClosing(true);
     setReaderReveal(1);
     setReaderDragging(false);
-    const duration = window.matchMedia("(prefers-reduced-motion: reduce)")
-      .matches
-      ? 0
-      : READER_EXIT_MS;
+    const duration =
+      inPlace || window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? 0
+        : READER_EXIT_MS;
     readerCloseTimer = window.setTimeout(finishReaderClose, duration);
   };
 
@@ -796,10 +807,14 @@ export function App(props: {
 
   // Opening an Item while the reader is still leaving cancels that exit, or
   // its timer would clear the Item just opened (#69).
-  const openReaderHistory = () => {
+  // A Flip's reader takes the place of the Peek it leaves, so it doesn't slide
+  // in from the side even for touch.
+  const openReaderHistory = ({ flip = false } = {}) => {
     if (readerID() && !readerClosing()) return;
     window.clearTimeout(readerCloseTimer);
     readerCloseTimer = undefined;
+    setReaderEnteredInPlace(flip || !inputModality.slidesCoreNavigation());
+    setReaderLeavesInPlace(false);
     setReaderClosing(false);
     setReaderReveal(0);
     setReaderDragging(false);
@@ -944,9 +959,15 @@ export function App(props: {
     const handoff = dock.take(itemID);
     setVideoPlayback(handoff && { itemID, ...handoff });
   };
-  const markOpened = (item: Item, archive = item.archived === true) => {
+  const markOpened = (
+    item: Item,
+    {
+      archive = item.archived === true,
+      flip = false,
+    }: { archive?: boolean; flip?: boolean } = {},
+  ) => {
     resumeVideo(item.item_id);
-    openReaderHistory();
+    openReaderHistory({ flip });
     setReaderItem(item);
     recordOpened(item, archive);
     setReaderArchive(archive);
@@ -983,9 +1004,11 @@ export function App(props: {
     if (view() === "feeds") void closeFeedsAndSettings();
   };
 
+  const flipToReader = (item: Item) => markOpened(item, { flip: true });
+
   const flipVideo = (item: Item) => {
     leaveFeedsForVideo();
-    markOpened(item);
+    flipToReader(item);
   };
 
   const expandDock = () => {
@@ -994,7 +1017,7 @@ export function App(props: {
     leaveFeedsForVideo();
     const readerOpen = !!readerID() && !readerClosing();
     if (expandTarget(video, readerOpen) === "peek") dock.expandToPeek();
-    else markOpened(video.item, video.archive);
+    else markOpened(video.item, { archive: video.archive });
   };
 
   // Overlays cover the Dock, except those that act as pages beside it.
@@ -1738,6 +1761,7 @@ export function App(props: {
                   readerReveal: readerReveal(),
                   readerOpen: Boolean(readerID()),
                   readerDragging: readerDragging(),
+                  readerLeavesInPlace: readerLeavesInPlace(),
                 }}
                 actions={{
                   onClearScope: () =>
@@ -1750,6 +1774,7 @@ export function App(props: {
                   onSelectView: (view) => void selectWindow(view),
                   onFocus: setFocusedID,
                   onOpen: markOpened,
+                  onFlip: flipToReader,
                   onVideoPeek: peekVideo,
                   onOpenStoryLead: markStoryOpened,
                   onExternalOpen: openExternalItem,
@@ -1815,7 +1840,7 @@ export function App(props: {
               active={keyboard().owner === "search"}
               linkActionID={linkActionID()}
               onFocus={setSearchFocusedID}
-              onOpen={(item, archive) => markOpened(item, archive)}
+              onOpen={(item, archive) => markOpened(item, { archive })}
               onExternalOpen={openExternalItem}
               onDiscussion={recordClickThrough}
               onSignal={setSignal}
@@ -1845,6 +1870,8 @@ export function App(props: {
                   selectedIndex() < frontPageItems().length - 1
                 }
                 closing={readerClosing()}
+                enteredInPlace={readerEnteredInPlace()}
+                leavesInPlace={readerLeavesInPlace()}
                 onClose={closeReader}
                 onReveal={(progress, dragging) => {
                   setReaderReveal(progress);
@@ -1893,7 +1920,7 @@ export function App(props: {
                 onWalk={openRelated}
                 onOpen={(item) => {
                   closeRelated();
-                  markOpened(item, item.archived === true);
+                  markOpened(item);
                 }}
                 onExternalOpen={openExternalItem}
                 onDiscussion={recordClickThrough}
@@ -1967,6 +1994,7 @@ export function App(props: {
       <VideoStage
         dock={dock}
         covered={dockCovered()}
+        mayAnimate={inputModality.movesOccasionalSurface}
         onExpand={expandDock}
         onFlip={flipVideo}
         onOriginal={recordClickThrough}

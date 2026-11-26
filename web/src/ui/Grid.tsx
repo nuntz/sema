@@ -107,6 +107,8 @@ interface GridProps {
     readerOpen: boolean;
     readerReveal: number;
     readerDragging: boolean;
+    /** The reader is leaving in place (input-modality.ts), so the grid under it doesn't slide back. */
+    readerLeavesInPlace: boolean;
   };
   actions: GridActions;
   /** Names the Send action; absent when the user has no enabled Destination. */
@@ -1118,6 +1120,7 @@ function GridContent(props: GridProps) {
         "keyboard-focus": keyboardFocus() && !overlayOnTop(),
         "reader-underlay": props.reader.readerOpen,
         "reader-underlay-dragging": props.reader.readerDragging,
+        "reader-underlay-in-place": props.reader.readerLeavesInPlace,
       }}
       style={{ "--reader-reveal": props.reader.readerReveal }}
       ref={scroller}
@@ -1754,7 +1757,7 @@ function GridContent(props: GridProps) {
                 : () => {
                     const item = state().item;
                     closePeek(false);
-                    openPrimary(item);
+                    props.actions.onFlip(item);
                   }
             }
           />

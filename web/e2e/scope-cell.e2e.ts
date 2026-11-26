@@ -1,7 +1,7 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
 import { compactHeaderMaxWidth, phoneViewportMaxWidth } from "../src/viewport";
-import { animationsFinished } from "./animations";
-import { openReader } from "./reader";
+import { animationsFinished, animationTimeline } from "./animations";
+import { openReader, touchReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
 const makeItem = (id: string, fetched: string, read = false) => ({
@@ -888,29 +888,99 @@ test("phone Tag chips drop as soon as their Items are read", async ({
   await expect(chips).toHaveCount(0);
 });
 
-// The reader stays mounted for its 220ms exit, and the grid takes clicks once
-// it has slid past a cell, before that exit ends. Pausing the clock holds the
-// exit's timer while the slide runs on real time, so the click lands inside
-// that window every run rather than one in a hundred (#69).
-test("opening an Item while the reader leaves shows it", async ({ page }) => {
+// A touch close keeps the reader mounted for its 220ms exit, and the grid
+// takes clicks once the reader has slid past a cell, before that exit ends.
+// Pausing the clock holds the exit's timer while the slide runs on real time,
+// so the click lands inside that window every run rather than one in a hundred
+// (#69). A key or a mouse closes it without the slide, so a tap closes it.
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("opening an Item while the reader leaves shows it", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await openGrid(page);
+    const reader = page.locator(".reader");
+    await page.locator('[data-item-id="Today unread"] .cell-main').tap();
+    await expect(openReader(page)).toHaveCSS("animation-name", "reader-in");
+    // Short of the first poll, so no reload lands mid-test.
+    await page.clock.pauseAt(new Date("2026-09-08T02:01:00Z"));
+    await reader.locator(".reader-back").tap();
+    await expect(reader).toHaveClass(/closing/);
+    await expect(reader).toHaveCSS("transition-duration", "0.22s");
+    await animationsFinished(reader);
+    await page.locator('[data-item-id="Older unread"] .cell-main').tap();
+    await page.clock.runFor(1000);
+    await expect(reader).not.toHaveClass(/closing/);
+    await expect(
+      reader.getByRole("heading", { name: "Older unread" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(reader).toHaveClass(/closing/);
+    await page.clock.runFor(1000);
+    await expect(reader).toHaveCount(0);
+  });
+});
+
+// Opening and closing the reader by a key or a mouse comes in and leaves in
+// place, with the grid under it still (input-modality.ts); touch keeps the
+// slide (above). The held timeline would keep a slide that ran at its start,
+// short of where the reader sits, for as long as each poll runs.
+test("the reader opens and closes in place by key and mouse", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await openGrid(page);
   const reader = page.locator(".reader");
-  await page.locator('[data-item-id="Today unread"] .cell-main').click();
-  await expect(reader).toBeVisible();
-  // Short of the first poll, so no reload lands mid-test.
+  const readerX = () => reader.evaluate((el) => el.getBoundingClientRect().x);
+  const hold = await animationTimeline(page);
+  await hold(true);
+  // Short of the first poll, so no reload lands mid-test. The paused clock
+  // holds each closing reader mounted.
   await page.clock.pauseAt(new Date("2026-09-08T02:01:00Z"));
+
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(openReader(page)).toBeVisible();
+  await expect.poll(readerX).toBe(0);
   await page.keyboard.press("Escape");
   await expect(reader).toHaveClass(/closing/);
-  await animationsFinished(reader);
-  await page.locator('[data-item-id="Older unread"] .cell-main').click();
-  await page.clock.runFor(1000);
-  await expect(reader).not.toHaveClass(/closing/);
-  await expect(
-    reader.getByRole("heading", { name: "Older unread" }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(reader).toHaveClass(/closing/);
+  await expect.poll(readerX).toBe(1440);
+  await expect(page.locator(".grid-scroll")).toHaveCSS(
+    "transition-duration",
+    "0s",
+  );
   await page.clock.runFor(1000);
   await expect(reader).toHaveCount(0);
+
+  await page.locator('[data-item-id="Today unread"] .cell-main').click();
+  await expect(openReader(page)).toBeVisible();
+  await expect.poll(readerX).toBe(0);
+  await reader.locator(".reader-back").click();
+  await expect(reader).toHaveClass(/closing/);
+  await expect.poll(readerX).toBe(1440);
+  await page.clock.runFor(1000);
+  await expect(reader).toHaveCount(0);
+});
+
+// A reader that came in place still follows a swipe-back from its first move:
+// starting the swipe must not restart the slide-in it skipped, which the held
+// timeline would keep at the right edge.
+test("a swipe on a reader opened in place follows the finger", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await openGrid(page);
+  const reader = page.locator(".reader");
+  const hold = await animationTimeline(page);
+  await hold(true);
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(openReader(page)).toBeVisible();
+  await touchReader(page, "touchstart", 300);
+  await touchReader(page, "touchmove", 420);
+  await expect(reader).toHaveClass(/swiping/);
+  await expect
+    .poll(() => reader.evaluate((el) => el.getBoundingClientRect().x))
+    .toBeLessThan(720);
+  await expect(reader).toHaveCSS("animation-name", "none");
 });

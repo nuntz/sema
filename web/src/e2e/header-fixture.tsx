@@ -245,6 +245,8 @@ function ReaderFixture() {
         canPrevious={true}
         canNext={true}
         closing={false}
+        enteredInPlace={false}
+        leavesInPlace={false}
         onClose={() => {
           if (parameters.has("lightbox")) setOpen(false);
         }}

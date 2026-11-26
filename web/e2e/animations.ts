@@ -1,4 +1,4 @@
-import { expect, type Locator } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 /** Waits until nothing on `locator` is still animating, so a measurement reads
  * where the layout settles rather than an animation's tail. A proxy such as a
@@ -28,4 +28,19 @@ export async function animationsFinished(
       ),
     )
     .toBe(0);
+}
+
+/** Freezes the page's animation timeline (`hold(true)`) or lets it run again,
+ * so a check reads the first frame of whatever a step starts, and a value an
+ * animation would still be moving is final: a slide that ran would sit at its
+ * start for as long as the check polls. Releasing restores the playback rate
+ * SEMA_E2E_STRESS=animation sets (./test.ts). Chromium only. */
+export async function animationTimeline(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Animation.enable");
+  const running = process.env.SEMA_E2E_STRESS === "animation" ? 0.1 : 1;
+  return (held: boolean) =>
+    cdp.send("Animation.setPlaybackRate", {
+      playbackRate: held ? 0 : running,
+    });
 }

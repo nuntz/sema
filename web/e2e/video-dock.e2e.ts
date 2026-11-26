@@ -1,5 +1,5 @@
 import { phoneViewportMaxWidth } from "../src/viewport";
-import { animationsFinished } from "./animations";
+import { animationsFinished, animationTimeline } from "./animations";
 import { clickCellTitle, openGrid } from "./grid-fixture";
 import { expect, type Page, test } from "./test";
 import { logPlayerStates, seekPlayer, stubYouTube } from "./youtube-stub";
@@ -34,7 +34,7 @@ for (const width of [390, 1280]) {
     await page.keyboard.press("i");
     await expect(player(page)).toHaveAttribute("data-state", "1");
     const original = await player(page).elementHandle();
-    await page.locator(".lb-scrim").click({ position: { x: 4, y: 4 } });
+    await page.locator(".video-scrim").click({ position: { x: 4, y: 4 } });
     await expect(docked(page)).toBeVisible();
     await expect(page.locator(".video-peek")).toHaveCount(0);
     await expect
@@ -74,6 +74,63 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: `/tmp/sema-dock-expand-${width}.png` });
   });
 }
+
+// A pointer fades the video Peek's scrim in as the Peek opens, and Docking
+// fades it out below the stage as the stage moves to the corner; a key opens
+// and Docks in place, scrim and stage alike (input-modality.ts). Each step
+// holds the animation timeline, so its polls read the first frame of whatever
+// it started, and a fade or move that ran would hold there.
+test("the video Peek's scrim and stage move for a pointer, not a key", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await stubYouTube(page);
+  await openGrid(page, "youtube");
+  const scrim = page.locator(".video-scrim");
+  const hold = await animationTimeline(page);
+  const scrimStyle = () =>
+    scrim.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { opacity: style.opacity, zIndex: style.zIndex };
+    });
+  const opacity = async () => (await scrimStyle()).opacity;
+  // The Dock sits 20px off the right edge; a Peek spans the window.
+  const rightGap = () =>
+    stage(page).evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return Math.round(window.innerWidth - box.right);
+    });
+
+  await hold(true);
+  await page.keyboard.press("i");
+  await expect(page.locator(".video-peek")).toBeVisible();
+  await expect.poll(opacity).toBe("1");
+  await expect(player(page)).toHaveAttribute("data-state", "1");
+  await page.keyboard.press("Escape");
+  await expect(docked(page)).toBeVisible();
+  await expect.poll(opacity).toBe("0");
+  await expect.poll(rightGap).toBe(20);
+
+  await docked(page).getByRole("button", { name: "Expand video" }).click();
+  await expect(page.locator(".video-peek")).toBeVisible();
+  await expect.poll(opacity).toBe("0");
+  await expect.poll(rightGap).toBe(20);
+  await hold(false);
+  await animationsFinished(page.locator(".video-layer"), { subtree: true });
+  await expect.poll(opacity).toBe("1");
+  await expect.poll(rightGap).toBe(0);
+
+  await hold(true);
+  await scrim.click({ position: { x: 4, y: 4 } });
+  await expect(docked(page)).toBeVisible();
+  // Still covering the page, but already below the stage on its way out.
+  await expect.poll(scrimStyle).toEqual({ opacity: "1", zIndex: "64" });
+  await expect.poll(rightGap).toBe(0);
+  await hold(false);
+  await animationsFinished(page.locator(".video-layer"), { subtree: true });
+  await expect.poll(opacity).toBe("0");
+  await expect.poll(rightGap).toBe(20);
+});
 
 test("the Cursor draws no ring under a Peek, and does beside the Dock", async ({
   page,

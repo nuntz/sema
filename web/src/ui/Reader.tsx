@@ -95,6 +95,10 @@ interface ReaderProps {
   canPrevious: boolean;
   canNext: boolean;
   closing: boolean;
+  /** Came in without its slide-in (input-modality.ts, or a Flip), for the whole visit. */
+  enteredInPlace: boolean;
+  /** Leaves without its slide-out (input-modality.ts). */
+  leavesInPlace: boolean;
   onClose(): void;
   onReveal(progress: number, dragging: boolean): void;
   onHome(): void;
@@ -948,7 +952,12 @@ export function Reader(props: ReaderProps) {
   return (
     <section
       class="reader"
-      classList={{ closing: props.closing, swiping: swiping() }}
+      classList={{
+        closing: props.closing,
+        swiping: swiping(),
+        "entered-in-place": props.enteredInPlace,
+        "leaves-in-place": props.leavesInPlace,
+      }}
       style={{ "--reader-panel-x": `${panelX()}px` }}
       role="dialog"
       aria-modal="true"

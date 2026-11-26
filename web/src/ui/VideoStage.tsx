@@ -26,6 +26,8 @@ export function VideoStage(props: {
   dock: VideoDock;
   /** Another Overlay covers the Dock, which then waits dimmed and inert. */
   covered: boolean;
+  /** Whether a Peek opening, Docking or Expanding now may move (input-modality.ts). */
+  mayAnimate(): boolean;
   onExpand(): void;
   onFlip(item: Item): void;
   onOriginal(item: Item): void;
@@ -39,6 +41,7 @@ export function VideoStage(props: {
           videoKey={video().key}
           start={video().start}
           covered={props.covered}
+          mayAnimate={props.mayAnimate}
           onExpand={props.onExpand}
           onFlip={() => props.onFlip(video().item)}
           onOriginal={() => props.onOriginal(video().item)}
@@ -54,12 +57,15 @@ function Stage(props: {
   videoKey: number;
   start: number;
   covered: boolean;
+  mayAnimate(): boolean;
   onExpand(): void;
   onFlip(): void;
   onOriginal(): void;
 }) {
   let layer!: HTMLDivElement;
   let stage!: HTMLDivElement;
+  // The Peek on top, if any, lends its close to the scrim.
+  let closePeek: (() => void) | undefined;
   let player: VideoPlayerHandle | undefined;
   const [state, setState] = createSignal<StageState>("loading");
   const mode = () => props.dock.mode();
@@ -96,9 +102,13 @@ function Stage(props: {
       const first = stage.dataset.mode
         ? stage.getBoundingClientRect()
         : undefined;
+      // Moving or in place, the scrim follows the stage.
+      const mayAnimate = props.mayAnimate();
+      layer.toggleAttribute("data-instant", !mayAnimate);
       stage.dataset.mode = next;
       syncTabbable();
       if (
+        !mayAnimate ||
         !first?.width ||
         window.matchMedia("(prefers-reduced-motion: reduce)").matches
       )
@@ -149,10 +159,20 @@ function Stage(props: {
       {/* Peeked, this layer is the dialog. It contains the stage, so the
           player sits inside the modal and Shift+Tab out of it lands here. */}
       <div ref={layer} class="video-layer">
+        {/* The scrim outlives its Peek, so it can fade out under the stage
+            as the stage moves to the Dock. */}
+        <div
+          class="video-scrim"
+          aria-hidden="true"
+          onClick={() => closePeek?.()}
+        />
         <Show when={!docked()}>
           <VideoPeek
             item={props.item}
             layer={() => layer}
+            provideClose={(close) => {
+              closePeek = close;
+            }}
             stage={() => stage}
             state={state}
             onDismiss={() => props.dock.dismissPeek()}

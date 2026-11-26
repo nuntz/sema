@@ -121,6 +121,25 @@ for (const method of ["key", "button"]) {
   });
 }
 
+// A Flip's reader takes the Peek's place: it doesn't slide in from the side,
+// even for the touch that would slide any other open in (input-modality.ts).
+// A reader that slides carries `reader-in` for its whole visit, so its
+// computed animation can't read `none` on any run that slid.
+test.describe("on a touch screen", () => {
+  test.use({ hasTouch: true });
+
+  test("a Flip opens the reader in place", async ({ page }) => {
+    await openGrid(page);
+    await page.keyboard.press("i");
+    await expect(page.locator(".lb-overlay")).toBeVisible();
+    await page
+      .getByRole("button", { name: "Open in reader", exact: true })
+      .tap();
+    await expect(openReader(page)).toBeVisible();
+    await expect(openReader(page)).toHaveCSS("animation-name", "none");
+  });
+});
+
 test("reader lightbox does not offer or respond to the reader flip", async ({
   page,
 }) => {

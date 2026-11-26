@@ -11,6 +11,8 @@ import { closeOverlay, keyOwnership, pushOverlay } from "./overlay-history";
 export function VideoPeek(props: {
   item: Item;
   layer(): HTMLElement;
+  /** Lends this Peek's close to the Stage's scrim while the Peek is up. */
+  provideClose(close: (() => void) | undefined): void;
   stage(): HTMLElement;
   state(): string;
   onDismiss(): void;
@@ -111,11 +113,13 @@ export function VideoPeek(props: {
         ]?.focus();
       }
     };
+    props.provideClose(() => close());
     window.addEventListener("keydown", key, true);
     document.addEventListener("fullscreenchange", returnFocus);
     stage.addEventListener("pointerleave", returnFocus);
     onCleanup(() => {
       closing = true;
+      props.provideClose(undefined);
       window.removeEventListener("keydown", key, true);
       document.removeEventListener("fullscreenchange", returnFocus);
       stage.removeEventListener("pointerleave", returnFocus);
@@ -131,5 +135,5 @@ export function VideoPeek(props: {
         previous.focus({ preventScroll: true });
     });
   });
-  return <div class="lb-scrim" onClick={() => close()} aria-hidden="true" />;
+  return null;
 }

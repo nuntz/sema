@@ -979,7 +979,7 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
 .new-items-pill:focus-visible { outline-color: var(--accent-loud); }
 .grid-scroll { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior-y: none; overflow-anchor: none; scrollbar-color: var(--scrollbar-thumb) transparent; contain: strict; }
 .grid-scroll.reader-underlay { transform: translate3d(calc((var(--reader-reveal, 0) - 1) * 20vw), 0, 0); filter: brightness(calc(.9 + var(--reader-reveal, 0) * .1)); transition: transform 220ms cubic-bezier(.2, .75, .2, 1), filter 220ms ease-out; }
-.grid-scroll.reader-underlay-dragging { transition: none; }
+.grid-scroll.reader-underlay-dragging, .grid-scroll.reader-underlay-in-place { transition: none; }
 .searching > .grid-scroll, .searching > .cold-start, .searching > .archive-empty, .searching > .filtered-empty { visibility: hidden; }
 .search-results { position: absolute; inset: calc(var(--hdr-h) + var(--safe-top)) 0 0; z-index: 16; overflow: auto; padding: 0 16px 42px; background: var(--bg); scrollbar-color: var(--scrollbar-thumb) transparent; }
 .search-section { margin-top: 26px; }
@@ -1281,6 +1281,9 @@ button:hover .icon, a:hover .icon, button[aria-pressed="true"] .icon { color: va
    The slide-in animation and the snap-back transition are composited while they run anyway. */
 .reader.swiping { transition: none; will-change: transform; }
 .reader.closing { transform: translate3d(100%, 0, 0); will-change: transform; }
+/* Entering or leaving in place: input-modality.ts holds the policy. */
+.reader.entered-in-place { animation: none; }
+.reader.closing.leaves-in-place { transition: none; }
 @keyframes reader-in { from { transform: translate3d(100%, 0, 0); } }
 .reader-back { width: var(--control-h); height: var(--control-h); margin-left: var(--brand-to-next); padding: 0; display: flex; align-items: center; justify-content: center; flex: none; border: 1px solid var(--chrome-border-control); border-radius: var(--control-radius); background: transparent; color: var(--chrome-fg-tertiary); }
 .reader-back:hover { background: var(--surface-chrome-hover); color: var(--chrome-fg-primary); }
@@ -2817,6 +2820,13 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
   transition: bottom 200ms cubic-bezier(.32, .72, 0, 1), filter 160ms ease-out;
 }
 .video-stage.is-covered { filter: brightness(.45); }
+/* The video Peek's scrim fades in with its Peek and out under the stage as it
+   Docks, in the Peek's curve. Peeked, it sits in the dialog below the stage;
+   Docking, it drops just below the Dock. When it moves: input-modality.ts. */
+.video-scrim { position: fixed; inset: 0; z-index: 64; background: var(--lb-scrim); opacity: 0; pointer-events: none; transition: opacity 180ms cubic-bezier(.2,.8,.25,1); }
+.video-peek > .video-scrim { z-index: auto; opacity: 1; pointer-events: auto; }
+@starting-style { .video-peek > .video-scrim { opacity: 0; } }
+.video-layer[data-instant] > .video-scrim { transition: none; }
 .video-dock-strip { height: 32px; padding-left: 10px; display: flex; align-items: center; gap: 2px; color: var(--chrome-fg-secondary); font: var(--chrome-font); }
 .video-dock-strip[hidden] { display: none; }
 .video-dock-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2838,7 +2848,7 @@ a.video-provider-strip { color: inherit; text-decoration: none; }
   body:has(.reader:not(.closing) .reader-bottom-actions.collapsed) .video-stage[data-mode="dock"] { bottom: calc(28px + var(--reader-bottom-pad) + var(--dock-gap) - var(--viewport-gap)); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .video-stage { transition: none; }
+  .video-stage, .video-scrim { transition: none; }
 }
 
 /* Installed iOS apps report a layout viewport one status bar short of the screen

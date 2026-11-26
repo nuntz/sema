@@ -146,38 +146,45 @@ export function Lightbox(props: {
   };
   const openOriginal = () =>
     window.open(current().src, "_blank", "noopener,noreferrer");
-  const close = (dismiss = false) => {
-    if (closing()) return;
+  // Leaves once: marks the Peek closing, runs this way out's motion, then
+  // hands the keyboard back. False when it is already leaving.
+  const leave = (motion?: () => void) => {
+    if (closing()) return false;
     setClosing(true);
-    const duration = reduced() ? (dismiss ? 0 : 90) : dismiss ? 200 : 140;
-    const destination = origin.getBoundingClientRect();
-    const visible = frame.getBoundingClientRect();
-    const startTransform = `translate(${visible.left - rect().left}px, ${visible.top - rect().top}px) scale(${visible.width / rect().width}, ${visible.height / rect().height})`;
-    frame.animate(
-      reduced()
-        ? [{ opacity: 1 }, { opacity: 0 }]
-        : [
-            { transform: startTransform, transformOrigin: "0 0", opacity: 1 },
-            {
-              transform: `translate(${destination.left - rect().left}px, ${destination.top - rect().top}px) scale(${destination.width / rect().width}, ${destination.height / rect().height})`,
-              transformOrigin: "0 0",
-              borderRadius: "4px",
-              opacity: destination.width && visible.width ? 1 : 0,
-            },
-          ],
-      { duration, easing: "cubic-bezier(.2,.8,.25,1)", fill: "forwards" },
-    );
-    scrim.animate(
-      [{ opacity: getComputedStyle(scrim).opacity }, { opacity: 0 }],
-      { duration, fill: "forwards" },
-    );
+    motion?.();
     closeOverlay("lightbox");
-    closeTimer = window.setTimeout(props.onClose, duration);
+    return true;
   };
+  const close = (dismiss = false) =>
+    leave(() => {
+      const duration = reduced() ? (dismiss ? 0 : 90) : dismiss ? 200 : 140;
+      const destination = origin.getBoundingClientRect();
+      const visible = frame.getBoundingClientRect();
+      const startTransform = `translate(${visible.left - rect().left}px, ${visible.top - rect().top}px) scale(${visible.width / rect().width}, ${visible.height / rect().height})`;
+      frame.animate(
+        reduced()
+          ? [{ opacity: 1 }, { opacity: 0 }]
+          : [
+              { transform: startTransform, transformOrigin: "0 0", opacity: 1 },
+              {
+                transform: `translate(${destination.left - rect().left}px, ${destination.top - rect().top}px) scale(${destination.width / rect().width}, ${destination.height / rect().height})`,
+                transformOrigin: "0 0",
+                borderRadius: "4px",
+                opacity: destination.width && visible.width ? 1 : 0,
+              },
+            ],
+        { duration, easing: "cubic-bezier(.2,.8,.25,1)", fill: "forwards" },
+      );
+      scrim.animate(
+        [{ opacity: getComputedStyle(scrim).opacity }, { opacity: 0 }],
+        { duration, fill: "forwards" },
+      );
+      closeTimer = window.setTimeout(props.onClose, duration);
+    });
+  // A Flip's reader takes the Peek's place at once, so nothing flies back to
+  // the cell: the Peek unmounts as the reader opens.
   const openReader = () => {
-    if (!props.onOpenReader || closing()) return;
-    close();
-    props.onOpenReader();
+    if (props.onOpenReader && leave()) props.onOpenReader();
   };
   const navigate = (next: number) => {
     if (closing()) return;

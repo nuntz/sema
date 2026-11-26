@@ -1,26 +1,5 @@
-import { expect, type Page, test } from "./test";
-
-async function touch(page: Page, type: string, x: number) {
-  return page.locator(".reader-scroll").evaluate(
-    (target, { type, x }) => {
-      const point = new Touch({
-        identifier: 1,
-        target,
-        clientX: x,
-        clientY: 300,
-      });
-      return target.dispatchEvent(
-        new TouchEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          touches: type === "touchend" || type === "touchcancel" ? [] : [point],
-          changedTouches: [point],
-        }),
-      );
-    },
-    { type, x },
-  );
-}
+import { touchReader as touch } from "./reader";
+import { expect, test } from "./test";
 
 for (const standalone of [false, true]) {
   test(`reader leaves edge back gestures to the browser (standalone=${standalone})`, async ({
