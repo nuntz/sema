@@ -26,6 +26,9 @@ test:
 # It runs the unit tests against DynamoDB Local (scripts/with-dynamodb-local.sh), starting a
 # container when DYNAMODB_ENDPOINT isn't set. The browser tests are CI's separate e2e job: make e2e.
 check:
+	@# The unit tests run on Bun's runtime (bun --bun vitest), so a green check needs CI's Bun:
+	@# Node 26 here passed a listener test CI's Node 24 failed, twice (#88).
+	@want="$$(cat .bun-version)"; have="$$(bun --version)"; if [ "$$have" != "$$want" ]; then echo "Bun $$have, but CI runs $$want (.bun-version). Install it: curl -fsSL https://bun.sh/install | bash -s bun-v$$want" >&2; exit 1; fi
 	bash scripts/lint-ci-files.sh
 	bash scripts/lint-doc-paths.sh
 	@unformatted="$$(gofmt -l .)"; if [ -n "$$unformatted" ]; then echo "gofmt needed: $$unformatted" >&2; exit 1; fi

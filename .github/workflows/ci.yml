@@ -45,7 +45,7 @@ jobs:
           node-version: 24.22.1
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version-file: .bun-version
       # The same checks as a local `make check`: lint, format, vet, unit tests, the web build, and
       # reproducible Lambda ZIPs.
       - run: make check
@@ -71,7 +71,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
         working-directory: web
       - name: Install Chromium for Playwright
@@ -127,7 +127,7 @@ jobs:
             infra/go.sum
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.4
+          bun-version-file: .bun-version
 
       # `pulumi up` runs `make build` itself; building first fails fast, before AWS credentials,
       # and guards the SPA against an empty client ID. The second build finds the ZIPs up to date.

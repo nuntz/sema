@@ -1,8 +1,11 @@
 language js
 
-`expect(await $locator.evaluate($...))` where {
+or {
+  `expect(await $locator.evaluate($...))`,
+  `expect($read)` where { $read <: contains `$locator.boundingBox()` }
+} as $oneShot where {
   register_diagnostic(
-    span = $locator,
-    message = "A one-shot read passes or fails on whatever the page shows at that instant. Poll it: expect.poll(() => locator.evaluate(…))."
+    span = $oneShot,
+    message = "A one-shot read passes or fails on whatever the page shows at that instant. Poll it: expect.poll(() => locator.evaluate(…)), or expect.poll(() => locator.boundingBox())."
   )
 }

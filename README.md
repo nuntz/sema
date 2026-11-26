@@ -127,7 +127,7 @@ The first attempt runs while the user waits, so the toast reports what the Desti
 ## Prerequisites
 
 - Go 1.26.10+. `make lambdas` builds with the `toolchain` version in `go.mod`, which is what CI uses, and downloads it on first use.
-- Bun 1.4.4 and Node.js 24, the versions CI uses.
+- The Bun in `.bun-version`, which CI installs and `make check` requires, since the unit tests run on its runtime; and Node.js 24 for Playwright and the web build.
 - The Pulumi CLI 3 and the AWS CLI.
 - `zip` and `sha256sum` on `PATH`.
 - An AWS account in `us-east-1`, with Bedrock model access to:

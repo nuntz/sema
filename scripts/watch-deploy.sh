@@ -55,9 +55,23 @@ for _ in 1 2 3 4 5; do
 done
 echo "ci run $id for ${SHA:0:7}: $conclusion"
 echo "$jobs"
+# failure_lines prints why a job failed: its log's test failures, assertion errors and error
+# annotations, without the log's colour codes. gh run view --log refuses while any other job still
+# runs, so it reads the job's log from the API (#88). An e2e leg names its tests better through
+# scripts/ci-e2e-report.sh, which it points at.
+failure_lines() {
+  local job_id
+  job_id="$(gh run view "$id" --json jobs -q ".jobs[] | select(.name == \"$1\") | .databaseId" 2>/dev/null)" || true
+  [[ -n "$job_id" ]] || return 0
+  gh api --allow-escape-sequences "repos/{owner}/{repo}/actions/jobs/$job_id/logs" 2>/dev/null |
+    sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g; s/^[0-9T:.Z-]+ //' |
+    grep -E 'FAIL |AssertionError|Error:|##\[error\]' | head -n 20 >&2 || true
+  if [[ "$1" == e2e* ]]; then echo "Its failing tests: scripts/ci-e2e-report.sh $id" >&2; fi
+}
 succeeded() {
   if ! grep -qx "$1 success" <<<"$jobs"; then
     echo "$1 did not succeed, so ${SHA:0:7} is not deployed" >&2
+    failure_lines "$1"
     exit 1
   fi
 }

@@ -444,9 +444,12 @@ test("headers clear the status bar and tint it in standalone", async ({
   await openFixture(page, "grid");
   await simulateStatusBar(page, 47);
   await expect.poll(() => headerHeight(page)).toBe(44 + 47);
-  expect(
-    (await page.locator(".header-filter-summary").boundingBox())?.y,
-  ).toBeGreaterThanOrEqual(47);
+  await expect
+    .poll(
+      async () =>
+        (await page.locator(".header-filter-summary").boundingBox())?.y,
+    )
+    .toBeGreaterThanOrEqual(47);
 
   // iOS tints the status bar from the root background, so it must match the header.
   await activateStandalone(page);

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "vitest run",
+    "test": "bun --bun vitest run",
     "test:e2e": "playwright test",
     "lint": "biome check . && tsc -p e2e",
     "format": "biome format --write ."
