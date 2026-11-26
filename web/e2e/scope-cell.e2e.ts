@@ -156,16 +156,21 @@ for (const width of [1440, 393]) {
         ? "Latest · Unread30"
         : "All30 unread items · 2 feeds",
     );
-    const heading = await (width < compactHeaderMaxWidth
-      ? page.locator(".tag-strip")
-      : cell
-    ).boundingBox();
-    const first = await page
-      .locator('[data-item-id="Today unread"]')
-      .boundingBox();
-    if (!first || !heading)
-      throw new Error("Scope cell or first card is missing");
-    expect(first.y).toBeGreaterThanOrEqual(heading.y + heading.height);
+    // Polled: the grid lays out under the heading from a ResizeObserver, so a
+    // single read can land before it does (SEMA_E2E_STRESS=resize in CI).
+    const heading =
+      width < compactHeaderMaxWidth ? page.locator(".tag-strip") : cell;
+    await expect
+      .poll(async () => {
+        const [top, first] = await Promise.all([
+          heading.boundingBox(),
+          page.locator('[data-item-id="Today unread"]').boundingBox(),
+        ]);
+        if (!first || !top) return "missing the heading or the first card";
+        const gap = Math.round(first.y - (top.y + top.height));
+        return gap >= 0 ? "below the heading" : `${-gap}px over the heading`;
+      })
+      .toBe("below the heading");
     await page.keyboard.press("m");
     await expect(count).toHaveText("29");
     await page.keyboard.press("a");
