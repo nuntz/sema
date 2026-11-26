@@ -11,6 +11,11 @@ import type { Item } from "../types";
 import { pushOverlay } from "../ui/overlay-history";
 import { Reader } from "../ui/Reader";
 import "../styles.css";
+import {
+  compactHeaderMaxWidth,
+  narrowerThan,
+  smallPhoneMaxWidth,
+} from "../viewport";
 
 /*
  * The page behind `/e2e/header-fixture.html`, for header and reader specs.
@@ -66,8 +71,10 @@ const item: Item = {
 };
 
 function GridHeaderFixture() {
-  const phone = createMediaQuery("(max-width: 430px)");
-  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
+  const phone = createMediaQuery(narrowerThan(smallPhoneMaxWidth));
+  const compactDisplayControls = createMediaQuery(
+    narrowerThan(compactHeaderMaxWidth),
+  );
   return (
     <AppHeader view="grid" onHome={() => undefined}>
       <div class="header-display-controls">

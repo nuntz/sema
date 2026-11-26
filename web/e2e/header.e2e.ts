@@ -1,5 +1,10 @@
 import { writeFile } from "node:fs/promises";
-import { phoneViewportMaxWidth } from "../src/viewport";
+import {
+  compactHeaderMaxWidth,
+  phoneViewportMaxWidth,
+  smallPhoneMaxWidth,
+  wideReaderMinWidth,
+} from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { settledScrollExtent } from "./scroll-extent";
 import { activateStandalone, simulateStatusBar } from "./standalone";
@@ -250,7 +255,7 @@ test("desktop reader progress follows the article measure inside the band", asyn
 test("scrolled reader title uses sans without overflowing desktop chrome", async ({
   page,
 }) => {
-  for (const width of [1200, 1280, 1400, 1524]) {
+  for (const width of [wideReaderMinWidth, 1280, 1400, 1524]) {
     await page.setViewportSize({ width, height: 900 });
     await openFixture(page, "reader", "loaded");
     await scrollReaderPastHeadline(page);
@@ -863,8 +868,10 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
       };
     });
     const phoneReader = view === "reader" && width < phoneViewportMaxWidth;
-    expect(geometry.header.height).toBe(phoneReader || width <= 430 ? 44 : 56);
-    if (width > 430 && !phoneReader) {
+    expect(geometry.header.height).toBe(
+      phoneReader || width < smallPhoneMaxWidth ? 44 : 56,
+    );
+    if (width >= smallPhoneMaxWidth && !phoneReader) {
       expect(geometry.mark.x).toBe(20);
       expect(geometry.mark.y).toBe(18);
     } else {
@@ -873,7 +880,7 @@ test("responsive chrome visibility, semantics, and overflow stay valid", async (
     }
     expect(
       geometry.controls.every((control) =>
-        width <= 430 || phoneReader
+        width < smallPhoneMaxWidth || phoneReader
           ? control.height >= 44
           : control.height >= 30,
       ),
@@ -981,7 +988,7 @@ test("phone reader exposes six native actions and clears the final line", async 
   expect(clearance).toBeGreaterThanOrEqual(0);
 });
 
-for (const width of [phoneViewportMaxWidth, 860, 900, 1024]) {
+for (const width of [phoneViewportMaxWidth, compactHeaderMaxWidth, 900, 1024]) {
   test(`grid controls stay inside the header at ${width}px`, async ({
     page,
   }) => {
@@ -1009,12 +1016,12 @@ for (const width of [phoneViewportMaxWidth, 860, 900, 1024]) {
       );
     }
     await expect(page.locator(".header-filter-summary")).toBeVisible({
-      visible: width < 860,
+      visible: width < compactHeaderMaxWidth,
     });
   });
 }
 
-for (const width of [390, 430, 859]) {
+for (const width of [390, smallPhoneMaxWidth - 1, compactHeaderMaxWidth - 1]) {
   test(`the filter summary is the one raised trailing control at ${width}px`, async ({
     page,
   }) => {
@@ -1030,7 +1037,7 @@ for (const width of [390, 430, 859]) {
       background: bare.background,
     });
     expect(await material(".search-trigger")).toEqual(bare);
-    if (width <= 430)
+    if (width < smallPhoneMaxWidth)
       expect(await material(".grid-overflow-trigger")).toEqual(bare);
   });
 }

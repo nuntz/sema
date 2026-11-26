@@ -2,7 +2,12 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { phoneGridMaxWidth } from "./layout/justified";
-import { phoneViewportMaxWidth } from "./viewport";
+import {
+  compactHeaderMaxWidth,
+  phoneViewportMaxWidth,
+  smallPhoneMaxWidth,
+  wideReaderMinWidth,
+} from "./viewport";
 
 const srcDir = join(import.meta.dirname);
 const styles = readFileSync(join(srcDir, "styles.css"), "utf8");
@@ -152,40 +157,41 @@ describe("styles.css viewport phone edge", () => {
     expect(phoneViewportMaxWidth).toBe(phoneGridMaxWidth);
   });
 
-  // Width steps inside a range, which are not phone edges: the small-phone
-  // header, the finish card's stacked layout, the desktop header's
-  // compaction, and the wide reader.
-  const steps = new Set([
-    "max-width: 430px",
+  // Both bounds of each edge viewport.ts names: the phone edge, and the
+  // steps inside a range (the small-phone header, the header's compaction,
+  // the wide reader). The finish card's stacked layout is a CSS-only step.
+  const bounds = new Set([
+    ...[
+      phoneViewportMaxWidth,
+      smallPhoneMaxWidth,
+      compactHeaderMaxWidth,
+      wideReaderMinWidth,
+    ].flatMap((width) => [
+      `max-width: ${width - 1}px`,
+      `min-width: ${width}px`,
+    ]),
     "max-width: 520px",
-    "max-width: 859px",
-    "max-width: 1199px",
-    "min-width: 1200px",
   ]);
 
   it("switches at the viewport phone edge or a named step", () => {
-    const edge = new Set([
-      `max-width: ${phoneViewportMaxWidth - 1}px`,
-      `min-width: ${phoneViewportMaxWidth}px`,
-    ]);
     const stray = widthQueries().flatMap(({ query }) =>
       widthBounds(query)
-        .filter((width) => !edge.has(width) && !steps.has(width))
+        .filter((width) => !bounds.has(width))
         .map(() => query),
     );
     expect([...new Set(stray)]).toEqual([]);
   });
 
-  // TypeScript's media queries and sizes= hints build the edge from
-  // phoneViewportMaxWidth, so a literal width here is a step or a stray edge,
-  // as RelatedPanel's and ConfirmRemove's 700px were (#86).
-  it("builds TypeScript's phone-edge queries from phoneViewportMaxWidth", () => {
+  // TypeScript's media queries and sizes= hints build their widths from
+  // viewport.ts, so a literal width here is a stray edge, as RelatedPanel's
+  // and ConfirmRemove's 700px were (#86).
+  it("builds TypeScript's media queries from viewport.ts", () => {
     const literal = sourceFiles(srcDir)
       .filter((path) => /\.tsx?$/.test(path) && !/\.test\.tsx?$/.test(path))
       .flatMap((path) =>
-        widthBounds(readFileSync(path, "utf8"))
-          .filter((width) => !steps.has(width))
-          .map((width) => `${path.slice(srcDir.length + 1)} (${width})`),
+        widthBounds(readFileSync(path, "utf8")).map(
+          (width) => `${path.slice(srcDir.length + 1)} (${width})`,
+        ),
       );
     expect(literal).toEqual([]);
   });

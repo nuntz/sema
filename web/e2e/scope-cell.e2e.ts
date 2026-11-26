@@ -1,5 +1,5 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
-import { phoneViewportMaxWidth } from "../src/viewport";
+import { compactHeaderMaxWidth, phoneViewportMaxWidth } from "../src/viewport";
 import { animationsFinished } from "./animations";
 import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
@@ -144,15 +144,19 @@ for (const width of [1440, 393]) {
     await page.setViewportSize({ width, height: 900 });
     const requests = await openGrid(page);
     const cell = page.locator(
-      width < 860 ? ".header-filter-summary" : ".scope-cell",
+      width < compactHeaderMaxWidth ? ".header-filter-summary" : ".scope-cell",
     );
     const count = page.locator(
-      width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
+      width < compactHeaderMaxWidth
+        ? ".filter-button .scope-count"
+        : ".scope-cell__count",
     );
     await expect(cell).toHaveText(
-      width < 860 ? "Latest · Unread30" : "All30 unread items · 2 feeds",
+      width < compactHeaderMaxWidth
+        ? "Latest · Unread30"
+        : "All30 unread items · 2 feeds",
     );
-    const heading = await (width < 860
+    const heading = await (width < compactHeaderMaxWidth
       ? page.locator(".tag-strip")
       : cell
     ).boundingBox();
@@ -168,7 +172,9 @@ for (const width of [1440, 393]) {
     await page.keyboard.press("g");
     await page.keyboard.press("t");
     await expect(cell).toHaveText(
-      width < 860 ? "Latest · Today18" : "Today18 items · 2 feeds",
+      width < compactHeaderMaxWidth
+        ? "Latest · Today18"
+        : "Today18 items · 2 feeds",
     );
     const request = requests.findLast(
       (url) => url.pathname === "/api/feeds/counts",
@@ -181,7 +187,7 @@ for (const width of [1440, 393]) {
     );
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^design/ }).click();
-    if (width < 860) {
+    if (width < compactHeaderMaxWidth) {
       await expect(page.locator(".active-tag-chip .tag-chip-name")).toHaveText(
         "design",
       );
@@ -191,10 +197,12 @@ for (const width of [1440, 393]) {
     await page.keyboard.press("#");
     await page.getByRole("option", { name: /^Daily/ }).click();
     const scopeTitle = page.locator(
-      width < 860 ? ".active-tag-chip .tag-chip-name" : ".scope-cell__title",
+      width < compactHeaderMaxWidth
+        ? ".active-tag-chip .tag-chip-name"
+        : ".scope-cell__title",
     );
     await expect(scopeTitle).toHaveText("Daily");
-    if (width < 860) {
+    if (width < compactHeaderMaxWidth) {
       await expect(count).toHaveText("10");
       await page.locator(".filter-button").click();
       const sheet = page.getByRole("dialog", { name: "Filter", exact: true });
@@ -228,7 +236,7 @@ for (const width of [1440, 393]) {
     ).toBeVisible();
     await page.keyboard.press("g");
     await page.keyboard.press("t");
-    if (width >= 860)
+    if (width >= compactHeaderMaxWidth)
       await expect(page.locator(".scope-cell")).toHaveText(
         "Today0 unread items",
       );
@@ -256,7 +264,7 @@ for (const width of [1440, 393]) {
         .getByRole("button", { name: "Clear tag", exact: true })
         .click();
     else await page.keyboard.press("Escape");
-    if (width < 860)
+    if (width < compactHeaderMaxWidth)
       await expect(page.locator(".active-tag-chip")).toHaveCount(0);
     else
       await expect(page.locator(".scope-cell__title")).not.toHaveText(
@@ -275,11 +283,15 @@ for (const width of [1280, 768, 390])
       await page.keyboard.press("a");
       await expect(
         page.locator(
-          width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
+          width < compactHeaderMaxWidth
+            ? ".filter-button .scope-count"
+            : ".scope-cell__count",
         ),
       ).toHaveText("1,204");
       const meta = page.locator(
-        width < 860 ? ".filter-button .scope-count" : ".scope-cell__meta",
+        width < compactHeaderMaxWidth
+          ? ".filter-button .scope-count"
+          : ".scope-cell__meta",
       );
       await expect
         .poll(() => meta.evaluate((el) => el.scrollHeight))
@@ -462,7 +474,7 @@ for (const [width, height, theme] of [
     await expect(section.getByRole("button").first()).toHaveText(
       width < phoneViewportMaxWidth ? "Clear tagEsc" : "Show read itemsA",
     );
-    if (width >= 860)
+    if (width >= compactHeaderMaxWidth)
       await expect(page.locator(".scope-cell__count")).toHaveAttribute(
         "data-zero",
         "true",
@@ -470,11 +482,15 @@ for (const [width, height, theme] of [
     else
       await expect(page.locator(".filter-button .scope-count")).toHaveText("0");
     const cell = await page
-      .locator(width < 860 ? ".tag-strip-spacer" : ".scope-cell")
+      .locator(
+        width < compactHeaderMaxWidth ? ".tag-strip-spacer" : ".scope-cell",
+      )
       .boundingBox();
     const rect = await section.boundingBox();
     if (!cell || !rect) throw new Error("Missing section or scope cell");
-    expect(rect.y - cell.y - cell.height).toBe(width < 860 ? 16 : 26);
+    expect(rect.y - cell.y - cell.height).toBe(
+      width < compactHeaderMaxWidth ? 16 : 26,
+    );
     const copy = await section.locator(":scope > div").boundingBox();
     expect(copy?.x).toBe(width < phoneViewportMaxWidth ? 12 : 16);
     await expect
@@ -754,14 +770,16 @@ for (const width of [390, 768, 1280])
       await openGrid(page);
       await expect(
         page.locator(
-          width < 860 ? ".filter-button .scope-count" : ".scope-cell__count",
+          width < compactHeaderMaxWidth
+            ? ".filter-button .scope-count"
+            : ".scope-cell__count",
         ),
       ).toHaveText("30");
       await page.screenshot({
         path: `/tmp/sema-drop25-${width}-${theme}.png`,
         animations: "disabled",
       });
-      if (width < 860) {
+      if (width < compactHeaderMaxWidth) {
         await page.locator(".filter-button").click();
         await expect(
           page.getByRole("dialog", { name: "Filter", exact: true }),

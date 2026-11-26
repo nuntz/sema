@@ -1835,7 +1835,7 @@ test("Direction A keeps light stories readable and related coverage actionable",
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
       .toBeLessThanOrEqual(width);
-    if (width >= 768) {
+    if (width >= phoneGridMaxWidth) {
       await expect
         .poll(() => grid.evaluate(storyCellProblems, unreadLeads))
         .toEqual([]);

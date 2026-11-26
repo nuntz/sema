@@ -96,6 +96,11 @@ import { VideoStage } from "./ui/VideoStage";
 import { createUnreadCounts } from "./unread-counts";
 import { createUpdateNotice, type UpdateState } from "./update-notice";
 import { createVideoDock, expandTarget } from "./video-dock";
+import {
+  compactHeaderMaxWidth,
+  narrowerThan,
+  smallPhoneMaxWidth,
+} from "./viewport";
 import { listenForWindowReturn } from "./window-activity";
 
 type Toast = {
@@ -151,8 +156,10 @@ export function App(props: {
     initialToolbarCollapseState(),
   );
   const [headerMenu, setHeaderMenu] = createSignal<HeaderMenu>();
-  const phoneHeader = createMediaQuery("(max-width: 430px)");
-  const compactDisplayControls = createMediaQuery("(max-width: 859px)");
+  const phoneHeader = createMediaQuery(narrowerThan(smallPhoneMaxWidth));
+  const compactDisplayControls = createMediaQuery(
+    narrowerThan(compactHeaderMaxWidth),
+  );
   const [tagFilterOpen, setTagFilterOpen] = createSignal(false);
   const [tagOpenRequest, setTagOpenRequest] =
     createSignal<TagFilterOpenRequest>();

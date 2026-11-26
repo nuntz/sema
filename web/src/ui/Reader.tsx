@@ -35,7 +35,12 @@ import {
 import { signalActionLabel } from "../signal-feedback";
 import type { Item } from "../types";
 import { isVideoItem, videoItemID, videoItemURL } from "../video-item";
-import { phoneViewportMaxWidth, phoneViewportQuery } from "../viewport";
+import {
+  narrowerThan,
+  phoneViewportMaxWidth,
+  phoneViewportQuery,
+  wideReaderMinWidth,
+} from "../viewport";
 import {
   type PlaybackState,
   type VideoPlayer as Player,
@@ -237,7 +242,7 @@ export function Reader(props: ReaderProps) {
   });
   const narrowHeader = createMediaQuery(phoneViewportQuery);
   const mediumHeader = createMediaQuery(
-    `(min-width: ${phoneViewportMaxWidth}px) and (max-width: 1199px)`,
+    `(min-width: ${phoneViewportMaxWidth}px) and ${narrowerThan(wideReaderMinWidth)}`,
   );
   const showExpiryPill = () =>
     showLifetime() && hoursLeft(props.item.published_ts, now()) <= 48;

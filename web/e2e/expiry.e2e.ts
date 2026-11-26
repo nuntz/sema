@@ -1,4 +1,8 @@
-import { phoneViewportMaxWidth } from "../src/viewport";
+import {
+  compactHeaderMaxWidth,
+  phoneViewportMaxWidth,
+  wideReaderMinWidth,
+} from "../src/viewport";
 import { expect, type Page, test } from "./test";
 
 const now = new Date("2026-09-08T02:00:00Z");
@@ -143,8 +147,8 @@ for (const width of [
   390,
   phoneViewportMaxWidth - 1,
   phoneViewportMaxWidth,
-  859,
-  860,
+  compactHeaderMaxWidth - 1,
+  compactHeaderMaxWidth,
   1440,
 ]) {
   test(`urgent reader pill fits at ${width}px`, async ({ page }) => {
@@ -189,9 +193,9 @@ for (const width of [
 for (const width of [
   phoneViewportMaxWidth - 1,
   phoneViewportMaxWidth,
-  860,
-  1199,
-  1200,
+  compactHeaderMaxWidth,
+  wideReaderMinWidth - 1,
+  wideReaderMinWidth,
 ]) {
   test(`fresh reader keeps full chrome at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -199,7 +203,7 @@ for (const width of [
     await page.locator('[data-item-id="fresh"] .cell-main').click();
     await expect(page.locator(".reader-life")).toHaveCount(0);
     await expect(page.locator(".reader-deadline")).toBeVisible();
-    if (width >= 860) {
+    if (width >= compactHeaderMaxWidth) {
       await expect(page.locator(".chrome-group--secondary")).toBeVisible();
       await expect(
         page.locator(".chrome-group--judge .chrome-btn__label").first(),

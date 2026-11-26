@@ -1,5 +1,5 @@
 import { INITIAL_POLL_INTERVAL } from "../src/item-session";
-import { phoneViewportMaxWidth } from "../src/viewport";
+import { compactHeaderMaxWidth, phoneViewportMaxWidth } from "../src/viewport";
 import { openReader } from "./reader";
 import { expect, type Page, test } from "./test";
 
@@ -91,15 +91,22 @@ async function openGrid(page: Page) {
 
 test.use({ timezoneId: "America/Vancouver" });
 
-for (const width of [1440, 860, phoneViewportMaxWidth, 393, 320]) {
+for (const width of [
+  1440,
+  compactHeaderMaxWidth,
+  phoneViewportMaxWidth,
+  393,
+  320,
+]) {
   test(`calendar views include read items and fit at ${width}px`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 900 });
     const requests = await openGrid(page);
-    if (width <= 859) await page.locator(".filter-button").click();
+    if (width < compactHeaderMaxWidth)
+      await page.locator(".filter-button").click();
     const group =
-      width <= 859
+      width < compactHeaderMaxWidth
         ? page
             .getByRole("dialog", { name: "Filter" })
             .getByRole("radiogroup", { name: "Items shown" })
@@ -107,16 +114,17 @@ for (const width of [1440, 860, phoneViewportMaxWidth, 393, 320]) {
     await expect(group.getByRole("radio")).toHaveCount(3);
     await page
       .getByRole("switch", {
-        name: width <= 859 ? "Unread only" : "Unread",
+        name: width < compactHeaderMaxWidth ? "Unread only" : "Unread",
         exact: true,
       })
       .uncheck();
     await group.getByRole("radio", { name: "Today", exact: true }).click();
-    if (width <= 859) await page.locator(".filter-button").click();
+    if (width < compactHeaderMaxWidth)
+      await page.locator(".filter-button").click();
     await expect(
       group.getByRole("radio", { name: "Today", exact: true }),
     ).toBeChecked();
-    if (width <= 859)
+    if (width < compactHeaderMaxWidth)
       await page.getByRole("button", { name: "Close filter" }).click();
     await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
     await expect(page.locator('[data-item-id="Yesterday read"]')).toHaveCount(
@@ -133,17 +141,20 @@ for (const width of [1440, 860, phoneViewportMaxWidth, 393, 320]) {
       );
       expect(request?.searchParams.get("include_read")).toBe("true");
     }
-    if (width <= 859) await page.locator(".filter-button").click();
+    if (width < compactHeaderMaxWidth)
+      await page.locator(".filter-button").click();
     await group.getByRole("radio", { name: "Yesterday", exact: true }).click();
     await expect(page.locator('[data-item-id="Yesterday read"]')).toBeVisible();
     await expect(page.locator('[data-item-id="Today unread"]')).toHaveCount(0);
-    if (width <= 859) await page.locator(".filter-button").click();
+    if (width < compactHeaderMaxWidth)
+      await page.locator(".filter-button").click();
     await group.getByRole("radio", { name: "All", exact: true }).click();
     await expect(page.locator('[data-item-id="Older unread"]')).toBeVisible();
     await expect(page.locator('[data-item-id="Today read"]')).toBeVisible();
     expect(requests.at(-1)?.searchParams.has("fetched_from")).toBe(false);
     expect(requests.at(-1)?.searchParams.has("fetched_before")).toBe(false);
-    if (width <= 859) await page.locator(".filter-button").click();
+    if (width < compactHeaderMaxWidth)
+      await page.locator(".filter-button").click();
     const bounds = await group.boundingBox();
     if (!bounds) throw new Error("Items shown control is missing");
     expect(bounds.x).toBeGreaterThanOrEqual(0);

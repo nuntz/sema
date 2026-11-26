@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { responsiveMediaSource } from "./media-image";
+import { phoneViewportQuery } from "./viewport";
 
 describe("responsiveMediaSource", () => {
   test("builds ordered width descriptors and exact rounded grid size", () => {
@@ -29,9 +30,9 @@ describe("responsiveMediaSource", () => {
           media_url: "/lead.jpg",
           media_variants: [{ url: "/lead-384.jpg", width: 384, height: 256 }],
         },
-        "(max-width: 700px) calc(100vw - 44px), 640px",
+        `${phoneViewportQuery} calc(100vw - 44px), 640px`,
       ).sizes,
-    ).toBe("(max-width: 700px) calc(100vw - 44px), 640px");
+    ).toBe(`${phoneViewportQuery} calc(100vw - 44px), 640px`);
   });
 
   test("leaves legacy items on their plain src fallback", () => {
