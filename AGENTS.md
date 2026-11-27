@@ -1,5 +1,12 @@
 # Repository Guidelines
 
+## Binding documents
+
+- `CODING_STANDARDS.md`: the rules a reviewer applies to every diff, the UI contracts included.
+- `DESIGN.md`: the visual system (tokens, type roles, named rules), binding for all UI code.
+- `PRODUCT.md`: who Sema is for and what it must stay; its terminology follows `GLOSSARY.md`.
+- `GLOSSARY.md`: the domain vocabulary and the synonyms to avoid.
+
 ## Project Structure & Module Organization
 
 `cmd/<name>/` contains Go Lambda entry points and maintenance tools; reusable packages live in `internal/`, with `*_test.go` beside code. The SolidJS/TypeScript PWA lives in `web/`: `src/` holds code and unit tests, `e2e/` browser tests, and `public/` assets. `infra/` is a separate Pulumi Go module. Treat `bin/` and `web/dist/` as generated.
@@ -51,12 +58,12 @@ Keep credentials out of Git. Store the browser OAuth ID in `web/.env.local`, and
 
 ### Issue tracker
 
-Issues live in GitHub Issues (`nuntz/sema`) via the `gh` CLI. See `~/repos/home/docs/agents/issue-tracker.md`.
+Issues live in GitHub Issues (`nuntz/sema`) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
-Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `~/repos/home/docs/agents/triage-labels.md`.
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: glossary in `CONTEXT.md`, ADRs in `docs/adr/`. See `docs/agents/domain.md`.
+Single-context: glossary in `GLOSSARY.md`, ADRs in `docs/adr/`. See `docs/agents/domain.md`.

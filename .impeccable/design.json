@@ -1,0 +1,359 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-27T01:07:12+00:00",
+  "title": "Design System: Sema",
+  "extensions": {
+    "colorMeta": {
+      "marker-lime": {
+        "role": "primary",
+        "displayName": "Marker Lime",
+        "canonical": "oklch(91.1% 0.187 119)",
+        "tonalRamp": [
+          "oklch(15% 0.081 119)",
+          "oklch(25% 0.109 119)",
+          "oklch(35% 0.136 119)",
+          "oklch(48% 0.171 119)",
+          "oklch(60% 0.176 119)",
+          "oklch(72% 0.144 119)",
+          "oklch(84% 0.111 119)",
+          "oklch(95% 0.081 119)"
+        ]
+      },
+      "deep-marker": {
+        "role": "primary",
+        "displayName": "Deep Marker",
+        "canonical": "oklch(53.9% 0.129 124)"
+      },
+      "marker-ink": {
+        "role": "primary",
+        "displayName": "Marker Ink"
+      },
+      "bone": {
+        "role": "secondary",
+        "displayName": "Bone",
+        "canonical": "oklch(92.5% 0.007 89)",
+        "tonalRamp": [
+          "oklch(15% 0.005 89)",
+          "oklch(25% 0.007 89)",
+          "oklch(35% 0.009 89)",
+          "oklch(48% 0.011 89)",
+          "oklch(60% 0.011 89)",
+          "oklch(72% 0.009 89)",
+          "oklch(84% 0.007 89)",
+          "oklch(95% 0.005 89)"
+        ]
+      },
+      "bone-deep": {
+        "role": "secondary",
+        "displayName": "Bone (on paper)"
+      },
+      "alarm": {
+        "role": "tertiary",
+        "displayName": "Alarm",
+        "canonical": "oklch(69.7% 0.194 19)",
+        "tonalRamp": [
+          "oklch(15% 0.081 19)",
+          "oklch(25% 0.109 19)",
+          "oklch(35% 0.136 19)",
+          "oklch(48% 0.171 19)",
+          "oklch(60% 0.176 19)",
+          "oklch(72% 0.144 19)",
+          "oklch(84% 0.111 19)",
+          "oklch(95% 0.081 19)"
+        ]
+      },
+      "alarm-deep": {
+        "role": "tertiary",
+        "displayName": "Alarm (on paper)"
+      },
+      "darkroom": {
+        "role": "neutral",
+        "displayName": "Darkroom",
+        "canonical": "oklch(15.4% 0.005 264)",
+        "tonalRamp": [
+          "#0b0c0e",
+          "#101113",
+          "#17181a",
+          "#1f2124",
+          "#2a2c30",
+          "#323335",
+          "#47494d",
+          "#8b8f96"
+        ]
+      },
+      "chrome-on-paper": {
+        "role": "neutral",
+        "displayName": "Chrome on Paper"
+      },
+      "print-white": {
+        "role": "neutral",
+        "displayName": "Print White"
+      },
+      "proof-paper": {
+        "role": "neutral",
+        "displayName": "Proof Paper",
+        "canonical": "oklch(94.0% 0.007 89)",
+        "tonalRamp": [
+          "#14161a",
+          "#3d434b",
+          "#5c6169",
+          "#71767e",
+          "#c9c5bc",
+          "#dcd8d0",
+          "#e3e0d9",
+          "#edebe6"
+        ]
+      },
+      "paper-ink": {
+        "role": "neutral",
+        "displayName": "Paper Ink"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Reader article title only."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Story Lead title."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Grid cell titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Summaries, settings, sheet rows."
+      },
+      "reading": {
+        "displayName": "Reading",
+        "purpose": "Article bodies at a 640px measure; weight 300 on dark, 400 on paper."
+      },
+      "reading-heading": {
+        "displayName": "Reading Heading",
+        "purpose": "Headings in article bodies; empty-state titles."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "All chrome and bookkeeping text."
+      },
+      "label-regular": {
+        "displayName": "Label (regular)",
+        "purpose": "Feed names, ages, chips."
+      }
+    },
+    "shadows": [
+      {
+        "name": "raised",
+        "value": "none (dark) / 0 1px 2px rgba(28,26,22,.07) (light)",
+        "purpose": "Raised controls; flat on dark."
+      },
+      {
+        "name": "menu",
+        "value": "0 10px 24px rgba(0,0,0,.45)",
+        "purpose": "Menus."
+      },
+      {
+        "name": "popover",
+        "value": "0 8px 22px rgba(0,0,0,.45)",
+        "purpose": "Popovers."
+      },
+      {
+        "name": "tooltip",
+        "value": "0 6px 18px rgba(0,0,0,.45)",
+        "purpose": "Tooltips."
+      },
+      {
+        "name": "toast",
+        "value": "0 8px 24px rgba(0,0,0,.45)",
+        "purpose": "Toasts."
+      },
+      {
+        "name": "action-sheet",
+        "value": "0 -18px 50px rgba(0,0,0,.42)",
+        "purpose": "Phone action sheet."
+      },
+      {
+        "name": "drawer",
+        "value": "-18px 0 50px rgba(0,0,0,.45)",
+        "purpose": "Feeds drawer."
+      },
+      {
+        "name": "dialog",
+        "value": "0 24px 70px rgba(0,0,0,.55)",
+        "purpose": "Dialogs."
+      },
+      {
+        "name": "confirm",
+        "value": "0 18px 44px rgba(0,0,0,.55)",
+        "purpose": "Confirm card."
+      }
+    ],
+    "motion": [
+      {
+        "name": "transition",
+        "value": "220ms ease",
+        "purpose": "Default state transition (--transition)."
+      },
+      {
+        "name": "cell-state",
+        "value": "120ms ease-out",
+        "purpose": "Cell hover, border and opacity changes."
+      },
+      {
+        "name": "sheet-in",
+        "value": "180ms ease-out",
+        "purpose": "Sheets, drawers and scrims entering."
+      },
+      {
+        "name": "reader-slide",
+        "value": "200-220ms cubic-bezier(.2, .75, .2, 1)",
+        "purpose": "Reader slide and underlay, pointer/touch only."
+      },
+      {
+        "name": "toolbar",
+        "value": "200ms cubic-bezier(.32, .72, 0, 1)",
+        "purpose": "Phone reader toolbar collapse."
+      },
+      {
+        "name": "unread-dot-exit",
+        "value": "140ms cubic-bezier(.4, 0, 1, 1)",
+        "purpose": "Unread dot scale-and-fade on Read."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-phone",
+        "value": "430px"
+      },
+      {
+        "name": "phone-wide",
+        "value": "520px"
+      },
+      {
+        "name": "phone-edge",
+        "value": "724px"
+      },
+      {
+        "name": "grid-header",
+        "value": "860px"
+      },
+      {
+        "name": "wide",
+        "value": "1200px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one action that moves the user on; Marker Lime fill.",
+      "html": "<button class=\"ds-btn-primary\">Import OPML</button>",
+      "css": ".ds-btn-primary { min-height: 34px; padding: 0 15px; border: 0; border-radius: var(--control-radius, 7px); background: var(--primary-button-bg, #d6f24b); color: var(--primary-button-ink, #12160a); font: 600 0.8125rem/1 'Instrument Sans', system-ui, sans-serif; cursor: pointer; transition: background 120ms ease-out; } .ds-btn-primary:hover { background: var(--primary-button-hover, #c8e63c); } .ds-btn-primary:active { background: var(--primary-button-active, #b9d72f); } .ds-btn-primary:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--primary-button-ring, #f4f2ee); }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "nav",
+      "refersTo": "segmented",
+      "description": "Header switch for order and Window; active item gets an inset Marker Lime fill.",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\"><button class=\"ds-seg__item\" role=\"radio\" aria-checked=\"false\"><span>Today</span></button><button class=\"ds-seg__item\" role=\"radio\" aria-checked=\"false\"><span>Yesterday</span></button><button class=\"ds-seg__item\" role=\"radio\" aria-checked=\"true\"><span>All</span></button></div>",
+      "css": ".ds-seg { display: inline-flex; height: 30px; align-items: center; border-radius: 8px; background: var(--surface-chrome-raised, #17181a); } .ds-seg__item { position: relative; height: 30px; padding: 0 14px; border: 0; background: transparent; color: var(--chrome-segment-inactive-fg, #a8aeb6); font: 500 0.8125rem/1 'IBM Plex Mono', monospace; letter-spacing: 0.01em; cursor: pointer; } .ds-seg__item::before { content: ''; position: absolute; inset: 3px 1px; border-radius: 6px; background: transparent; } .ds-seg__item > span { position: relative; } .ds-seg__item:hover { color: var(--chrome-fg-primary, #f4f2ee); } .ds-seg__item[aria-checked='true'] { color: var(--chrome-segment-active-fg, #12160a); } .ds-seg__item[aria-checked='true']::before { background: var(--chrome-segment-active-bg, #d6f24b); } .ds-seg__item:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--accent-loud, #d6f24b); }"
+    },
+    {
+      "name": "Tag Chip",
+      "kind": "chip",
+      "refersTo": "tag-chip",
+      "description": "A Feed's Tag: hairline capsule, mono text.",
+      "html": "<span class=\"ds-tag-chip\">#science</span>",
+      "css": ".ds-tag-chip { display: inline-flex; height: 22px; padding: 0 9px; align-items: center; border: 1px solid var(--line-heavy, rgba(255,255,255,.14)); border-radius: 11px; color: var(--fg-tertiary, #a8aeb6); font: 400 0.8125rem/1 'IBM Plex Mono', monospace; white-space: nowrap; } .ds-tag-chip:focus-within { box-shadow: 0 0 0 2px rgba(214,242,75,.5); }"
+    },
+    {
+      "name": "Header Scope Chip",
+      "kind": "chip",
+      "refersTo": "header-scope-chip",
+      "description": "The active Scope; the one bone object in the header.",
+      "html": "<button class=\"ds-scope-chip\">Low Orbit</button>",
+      "css": ".ds-scope-chip { height: 30px; padding: 0 12px; border: 0; border-radius: 7px; background: var(--header-chip-bg, #e8e6e1); color: var(--header-chip-fg, #12160a); font: 500 0.8125rem/1 'IBM Plex Mono', monospace; cursor: pointer; } .ds-scope-chip:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--accent-loud, #d6f24b); }"
+    },
+    {
+      "name": "Image Grid Cell",
+      "kind": "card",
+      "refersTo": "grid-cell",
+      "description": "A frame on the sheet: photo covers the cell, title and feed on a dark bottom scrim, age and unread dot top right.",
+      "html": "<article class=\"ds-cell\"><div class=\"ds-cell__img\"></div><span class=\"ds-cell__corner\"><span class=\"ds-cell__age\">7h</span><span class=\"ds-dot\"></span></span><div class=\"ds-cell__copy\"><h2>A comet is falling apart, and astronomers are thrilled</h2><span class=\"ds-cell__feed\">Low Orbit</span></div></article>",
+      "css": ".ds-cell { position: relative; width: 320px; height: 168px; overflow: hidden; border: 1px solid var(--hairline, rgba(255,255,255,.07)); border-radius: 10px; background: var(--media-tint-m, #1c1f25); transition: border-color 120ms ease-out; } .ds-cell:hover { border-color: rgba(255,255,255,.18); } .ds-cell__img { position: absolute; inset: 0; background: linear-gradient(160deg, #1b2a4a, #0b0c0e 70%); } .ds-cell__corner { position: absolute; top: 7px; right: 7px; display: flex; align-items: center; gap: 6px; } .ds-cell__age { padding: 4px 7px; border-radius: 4px; background: rgba(6,7,9,.62); color: #c7ccd3; font: 400 0.8125rem/1 'IBM Plex Mono', monospace; } .ds-dot { width: 7px; height: 7px; border-radius: 50%; background: #d6f24b; } .ds-cell__copy { position: absolute; inset: auto 0 0; padding: 36px 14px 12px; background: linear-gradient(to top, rgba(6,7,9,.95), rgba(6,7,9,.8) 60%, rgba(6,7,9,0)); } .ds-cell__copy h2 { margin: 0 0 6px; color: #f4f2ee; font: 500 1.0625rem/1.32 'Instrument Sans', system-ui, sans-serif; } .ds-cell__feed { color: #c7ccd3; font: 400 0.8125rem/1 'IBM Plex Mono', monospace; }"
+    },
+    {
+      "name": "Text Grid Cell",
+      "kind": "card",
+      "refersTo": "grid-cell",
+      "description": "A cell with no Lead Image: title at top, fitted summary, one mono line of feed, age and unread dot.",
+      "html": "<article class=\"ds-text-cell\"><h2>Writing a tiny compiler in a weekend, then living with it for a year</h2><p>The parser took a day. The error messages took the next eleven months.</p><span class=\"ds-text-cell__meta\">Small Engines · 4h <span class=\"ds-dot\"></span></span></article>",
+      "css": ".ds-text-cell { width: 240px; padding: 14px; display: flex; flex-direction: column; gap: 7px; border: 1px solid var(--hairline, rgba(255,255,255,.07)); border-radius: 10px; background: var(--surface, #14161a); } .ds-text-cell h2 { margin: 0; color: var(--fg-primary, #f4f2ee); font: 500 1.0625rem/1.32 'Instrument Sans', system-ui, sans-serif; } .ds-text-cell p { margin: 0; color: var(--fg-tertiary, #a8aeb6); font: 400 0.9375rem/1.45 'Instrument Sans', system-ui, sans-serif; } .ds-text-cell__meta { display: flex; align-items: center; gap: 6px; color: var(--fg-tertiary, #a8aeb6); font: 400 0.8125rem/1 'IBM Plex Mono', monospace; } .ds-dot { width: 7px; height: 7px; border-radius: 50%; background: #d6f24b; }"
+    },
+    {
+      "name": "Action Sheet",
+      "kind": "custom",
+      "refersTo": "action-sheet",
+      "description": "Phone Overlay rising from the bottom: 14px top corners, grabber, 48px rows.",
+      "html": "<div class=\"ds-sheet\"><div class=\"ds-sheet__grabber\"></div><button class=\"ds-sheet__row\">Keep</button><button class=\"ds-sheet__row\">Boost</button><button class=\"ds-sheet__row\">Send</button></div>",
+      "css": ".ds-sheet { width: 360px; padding: 7px 16px 12px; display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.1); border-bottom: 0; border-radius: 14px 14px 0 0; background: var(--panel, #101216); box-shadow: 0 -18px 50px rgba(0,0,0,.42); } .ds-sheet__grabber { width: 34px; height: 4px; margin: 0 auto 10px; border-radius: 2px; background: rgba(255,255,255,.16); } .ds-sheet__row { height: 48px; padding: 0 4px; border: 0; border-bottom: 1px solid rgba(255,255,255,.07); background: transparent; color: var(--fg-primary, #f4f2ee); font: 500 0.9375rem/1 'Instrument Sans', system-ui, sans-serif; text-align: left; cursor: pointer; } .ds-sheet__row:last-child { border-bottom: 0; } .ds-sheet__row:hover { background: rgba(255,255,255,.045); } .ds-sheet__row:focus-visible { outline: 0; box-shadow: inset 0 0 0 2px #d6f24b; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Contact Sheet",
+    "overview": "Sema is a photographer's proof sheet for the day's Feeds. Frames sit edge to edge on a justified grid, the important ones printed larger, and the user goes down the sheet with a grease pencil, marking what to keep and letting the rest go. Interest is told by Size and position, so the chrome never has to shout: it is the dark border of the sheet, printed in small mono type like the edge print on film, with one marker colour reserved for what needs a mark.\n\nThe system is dense and quiet. Images and titles carry the page; controls are small, mono-labelled and tightly grouped, and stay out of the way until a hand or key reaches for them. Reading happens in a serif, Newsreader, at a comfortable 640px measure. Light and dark themes share one structure: the page turns from Darkroom to Proof Paper, but the header, the Peek and every image surface stay dark, because they are the frame and the darkroom, not the paper.\n\nMotion is short and mechanical (90–220ms), follows the input that caused it, and never decorates.",
+    "keyCharacteristics": [
+      "A justified grid of image and text cells, with three Sizes (small, medium, large) as the main hierarchy.",
+      "Dark chrome and dark media surfaces in both themes.",
+      "One accent, Marker Lime, spent only on state: unread, active, focus, the primary action.",
+      "Three typefaces with fixed jobs: Instrument Sans for titles, IBM Plex Mono for metadata and chrome, Newsreader for reading.",
+      "Flat at rest. Only Overlays, menus and toasts cast shadows."
+    ],
+    "rules": [
+      {
+        "name": "The Grease Pencil Rule",
+        "body": "Marker Lime marks state and nothing else: unread, active, focused, or the one primary action. If removing the lime would lose no information, it doesn't belong there.",
+        "section": "colors"
+      },
+      {
+        "name": "The Dark Frame Rule",
+        "body": "The header, the Peek, media scrims, cell labels over images and the Dock stay dark in both themes. Only the page and the surfaces that sit on it follow the theme.",
+        "section": "colors"
+      },
+      {
+        "name": "The Edge Print Rule",
+        "body": "Anything that is bookkeeping is mono: a feed name, an age, a count, a Tag, a control label. Anything that is content is sans or serif. In the header, the scrolled reader title is the only sans text.",
+        "section": "typography"
+      },
+      {
+        "name": "The Three Faces Rule",
+        "body": "Instrument Sans, IBM Plex Mono and Newsreader cover every role. Don't add a fourth face or a new weight outside 300–600.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Sheet Rule",
+        "body": "Nothing that lives in the grid or the header casts a shadow at rest. A shadow means the thing is floating above the sheet and will go away.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** spend Marker Lime (#d6f24b) only on state: unread, active, focus, or the single primary action (The Grease Pencil Rule).",
+      "**Do** switch accent text and lines to Deep Marker (#5f7a0c) on Proof Paper; lime stays a fill there.",
+      "**Do** keep the header, the Peek, media scrims and cell labels over images dark in both themes (The Dark Frame Rule).",
+      "**Do** set every bookkeeping string (feed name, age, count, Tag, control label) in IBM Plex Mono (The Edge Print Rule).",
+      "**Do** take chrome heights, insets and the 724px phone edge from `CODING_STANDARDS.md`, and extend its e2e specs when a change touches a measured rule.",
+      "**Do** gate motion on the input behind it: slide for pointer and touch, appear in place for keys."
+    ],
+    "donts": [
+      "**Don't** set Marker Lime as text on Proof Paper or on white; it fails contrast.",
+      "**Don't** give cells, the header or controls a shadow at rest (The Flat Sheet Rule).",
+      "**Don't** add a fourth typeface or weights outside 300–600 (The Three Faces Rule).",
+      "**Don't** show interest with badges, scores or colour; Size and position already show it.",
+      "**Don't** let a top-band control (corner, markers, actions, Source count, Peek) cover a cell's copy or meet another control."
+    ]
+  }
+}

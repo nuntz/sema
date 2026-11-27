@@ -4,6 +4,8 @@ Rules a reviewer applies to a diff. Mechanical rules live in tooling (`make chec
 
 ## UI contracts
 
+UI code must follow `DESIGN.md`: its tokens, type roles and named rules. The contracts below are the parts with fixed measurements.
+
 These hold for the grid and reader headers, the phone reader, the Peek, and grid cells. Rules marked _(e2e)_ are asserted by `web/e2e/header.e2e.ts` unless their section names another spec; check the rest by reading the diff, and extend that spec when a change touches a rule it doesn't cover.
 
 ### Desktop headers (724px and wider)
@@ -88,8 +90,8 @@ Front Page, Chrono, Scope and Archive cells share one anatomy (#48). Phone heigh
 ## Docs and decisions
 
 - `RUNBOOK.md`, `README.md` and ADRs describe what is in the tree. A doc that cites a package, stack or job the diff doesn't contain is ahead of the code: hold it back, or mark the ADR proposed.
-- A `CONTEXT.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
-- A new name for a domain concept uses its `CONTEXT.md` term rather than one of its _Avoid_ synonyms, and a concept the glossary lacks gets an entry in the same diff. Names that ship outside the code (an index, metric, alarm or log field) cost a migration to rename, so check those hardest; #74 nearly named an index `feed-health` against Feed Status's _Avoid: Health_.
+- A `GLOSSARY.md` definition the diff relies on describes what the code does; when they disagree, the diff corrects whichever is wrong (#46).
+- A new name for a domain concept uses its `GLOSSARY.md` term rather than one of its _Avoid_ synonyms, and a concept the glossary lacks gets an entry in the same diff. Names that ship outside the code (an index, metric, alarm or log field) cost a migration to rename, so check those hardest; #74 nearly named an index `feed-health` against Feed Status's _Avoid: Health_.
 - A rule that changes in one doc changes everywhere it is stated, including code comments that restate it, which cite the issue that set the rule, so search for that number (`#84`) as well as the wording; AGENTS.md, RUNBOOK.md and README.md must not contradict each other.
 
 ## Fixes

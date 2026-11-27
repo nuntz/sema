@@ -2,7 +2,7 @@
 
 Send posts one Item to the user's Destination as a signed webhook. Any receiver can implement it, and Sema says nothing about what the Destination does with the Item. Because receivers outside Sema depend on the payload, it is a public contract: within `version: 1` we only add optional fields. Code and docs never name a specific Destination, so the contract never takes on one receiver's shape.
 
-Payload fields use the `CONTEXT.md` vocabulary (`kept`, `feed`, feed `tags`).
+Payload fields use the `GLOSSARY.md` vocabulary (`kept`, `feed`, feed `tags`).
 
 ## Images
 
